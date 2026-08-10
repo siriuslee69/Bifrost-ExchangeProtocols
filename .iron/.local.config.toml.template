@@ -1,0 +1,5 @@
+# Local machine settings for this repository.
+# Copy to `.iron/.local.config.toml` and keep that file ignored in git.
+
+root = "C:/ChangeMe/CodingMain"
+

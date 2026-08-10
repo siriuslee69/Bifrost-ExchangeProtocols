@@ -1,0 +1,174 @@
+## -------------------------------------------------------------------------
+## Bifrost Config <- transport defaults, immutable AME layout, and initial tier
+## -------------------------------------------------------------------------
+
+import std/[os, strutils]
+
+import ./ame/types
+import ./ame/level1/exchange_paths
+import ./ame/level1/suites
+import ./fomke/types
+import ../analysis_pragmas
+
+type
+  BifrostConfig* {.role: configurator.} = object
+    maxTcpFrameBytes*: uint32
+    maxDacFrameBytes*: int
+    defaultAmeInboxCapacity*: int
+    defaultTimeoutMs*: int
+    peerTrustRequired*: bool
+    tmeAeadPregeneration*: bool
+    ggAeadPregeneration*: bool
+    fomkePregenerationMessages*: int
+    fomkePregenerationPayloadBytes*: int
+    ameLayout*: AmeSuiteLayout
+    ameInitialTier*: AmeMaskTier
+
+var
+  bifrostRuntimeConfig*: BifrostConfig
+
+proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
+  ## Build safe runtime defaults with an explicit two-KEM hybrid path.
+  result.maxTcpFrameBytes = uint32(defaultAmeMaxFrameBytes)
+  result.maxDacFrameBytes = defaultAmeMaxFrameBytes
+  result.defaultAmeInboxCapacity = defaultAmeInboxCapacity
+  result.defaultTimeoutMs = 4000
+  result.peerTrustRequired = true
+  result.tmeAeadPregeneration = false
+  result.ggAeadPregeneration = true
+  result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
+  result.fomkePregenerationPayloadBytes = fomkeDefaultPreparedPayloadBytes
+  result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms([
+    akaFireSaber, akaX25519]))
+  result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
+
+proc fomkePregenerationEnabledFor*(c: BifrostConfig,
+    a: FomkeMessageCipher): bool {.role: parser.} =
+  ## c/a: runtime policy and selected FOMKE message construction.
+  case a
+  of fmcTmeAead:
+    result = c.tmeAeadPregeneration
+  of fmcGgAead:
+    result = c.ggAeadPregeneration
+
+proc hexNibble(c: char): uint8 {.role: parser.} =
+  ## c: one hexadecimal character.
+  if c >= '0' and c <= '9':
+    return uint8(ord(c) - ord('0'))
+  if c >= 'a' and c <= 'f':
+    return uint8(ord(c) - ord('a') + 10)
+  if c >= 'A' and c <= 'F':
+    return uint8(ord(c) - ord('A') + 10)
+  raise newException(ValueError, "Bifrost config contains invalid hexadecimal data")
+
+proc decodeConfigHex(s: string): seq[uint8] {.role: parser.} =
+  ## s: even-length canonical suite hexadecimal text.
+  var
+    clean: string = s.strip(chars = {' ', '\t', '"', '\''})
+    i: int = 0
+  if clean.len == 0 or (clean.len and 1) != 0:
+    raise newException(ValueError, "Bifrost AME hex value length is invalid")
+  result = newSeq[uint8](clean.len div 2)
+  while i < result.len:
+    result[i] = (hexNibble(clean[i * 2]) shl 4) or hexNibble(clean[i * 2 + 1])
+    i = i + 1
+
+proc encodeConfigHex*(A: openArray[uint8]): string {.role: wrapper.} =
+  ## A: bytes rendered as lowercase hexadecimal text.
+  const digits = "0123456789abcdef"
+  var i: int = 0
+  result = newString(A.len * 2)
+  while i < A.len:
+    result[i * 2] = digits[int(A[i] shr 4)]
+    result[i * 2 + 1] = digits[int(A[i] and 0x0f'u8)]
+    i = i + 1
+
+proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
+  ## c: parsed configuration validated before use.
+  result = c
+  if c.maxTcpFrameBytes == 0'u32 or
+      c.maxTcpFrameBytes > uint32(defaultAmeMaxFrameBytes):
+    raise newException(ValueError, "Bifrost maxTcpFrameBytes is invalid")
+  if c.maxDacFrameBytes <= 0 or c.maxDacFrameBytes > defaultAmeMaxFrameBytes:
+    raise newException(ValueError, "Bifrost maxDacFrameBytes is invalid")
+  if c.defaultAmeInboxCapacity <= 0 or c.defaultTimeoutMs <= 0:
+    raise newException(ValueError, "Bifrost AME runtime defaults are invalid")
+  if c.fomkePregenerationMessages <= 0 or
+      c.fomkePregenerationMessages > fomkeMaxPreparedMessages:
+    raise newException(ValueError,
+      "Bifrost FOMKE pregeneration message count is invalid")
+  if c.fomkePregenerationPayloadBytes < 0 or
+      c.fomkePregenerationPayloadBytes > int(fomkeMaxCiphertextBytes):
+    raise newException(ValueError,
+      "Bifrost FOMKE pregeneration payload size is invalid")
+  if c.fomkePregenerationPayloadBytes > 0 and
+      c.fomkePregenerationMessages >
+      fomkeMaxPreparedStreamBytes div c.fomkePregenerationPayloadBytes:
+    raise newException(ValueError,
+      "Bifrost FOMKE pregeneration cache is too large")
+  discard encodeAmeSuiteLayout(c.ameLayout)
+  validateAmeTier(c.ameLayout, c.ameInitialTier)
+
+proc applyBifrostConfig*(c: BifrostConfig) {.role: stateController.} =
+  ## c: caller-selected defaults validated before becoming process state.
+  bifrostRuntimeConfig = sanitizeBifrostConfig(c)
+
+proc currentBifrostConfig*(): BifrostConfig {.role: wrapper.} =
+  ## Return the active process defaults, initializing them on first use.
+  if bifrostRuntimeConfig.maxTcpFrameBytes == 0'u32:
+    bifrostRuntimeConfig = defaultBifrostConfig()
+  result = bifrostRuntimeConfig
+
+proc parseBool(v: string): bool {.role: parser.} =
+  ## v: simple TOML boolean text.
+  var clean: string = v.strip().toLowerAscii()
+  if clean == "true":
+    return true
+  if clean == "false":
+    return false
+  raise newException(ValueError, "Bifrost config bool is invalid")
+
+proc parseBifrostConfigText*(text: string,
+    base: BifrostConfig = defaultBifrostConfig()): BifrostConfig {.role: parser.} =
+  ## text/base: simple key-value config text and starting defaults.
+  var
+    line: string = ""
+    parts: seq[string] = @[]
+    key: string = ""
+    value: string = ""
+  result = base
+  for raw in text.splitLines:
+    line = raw.split('#', maxsplit = 1)[0].strip()
+    if line.len == 0 or line[0] == '[':
+      continue
+    parts = line.split('=', maxsplit = 1)
+    if parts.len != 2:
+      raise newException(ValueError, "Bifrost config line must be key = value")
+    key = parts[0].strip().toLowerAscii()
+    value = parts[1].strip()
+    case key
+    of "maxtcpframebytes": result.maxTcpFrameBytes = uint32(parseUInt(value))
+    of "maxdacframebytes": result.maxDacFrameBytes = parseInt(value)
+    of "defaultameinboxcapacity": result.defaultAmeInboxCapacity = parseInt(value)
+    of "defaulttimeoutms": result.defaultTimeoutMs = parseInt(value)
+    of "peertrustrequired": result.peerTrustRequired = parseBool(value)
+    of "tmeaeadpregeneration": result.tmeAeadPregeneration = parseBool(value)
+    of "ggaeadpregeneration": result.ggAeadPregeneration = parseBool(value)
+    of "fomkepregenerationmessages":
+      result.fomkePregenerationMessages = parseInt(value)
+    of "fomkepregenerationpayloadbytes":
+      result.fomkePregenerationPayloadBytes = parseInt(value)
+    of "amelayouthex":
+      result.ameLayout = decodeAmeSuiteLayout(decodeConfigHex(value))
+    of "ameinitialtierhex":
+      result.ameInitialTier = decodeAmeMaskTier(result.ameLayout,
+        decodeConfigHex(value))
+    else: raise newException(ValueError, "unknown Bifrost config key: " & key)
+  result = sanitizeBifrostConfig(result)
+
+proc loadBifrostConfigFile*(path: string = "config.toml"): BifrostConfig {.
+    role: orchestrator.} =
+  ## path: configuration file to read and validate.
+  if not fileExists(path):
+    raise newException(IOError, "Bifrost config file is missing: " & path)
+  result = parseBifrostConfigText(readFile(path))

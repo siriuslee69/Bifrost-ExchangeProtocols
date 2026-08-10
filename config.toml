@@ -1,0 +1,23 @@
+# Bifrost production defaults.
+# Keep peerTrustRequired true for exposed services. Disable it only in local
+# tests or toy examples where peer authority verification is intentionally absent.
+
+maxTcpFrameBytes = 16777216
+maxDacFrameBytes = 16777216
+defaultAmeInboxCapacity = 64
+defaultTimeoutMs = 4000
+peerTrustRequired = true
+
+# FOMKE future-message cache policy. GGAEAD favors low latency by default.
+# TMEAEAD keeps future key/stream material out of memory unless explicitly enabled.
+[fomke]
+tmeAeadPregeneration = false
+ggAeadPregeneration = true
+fomkePregenerationMessages = 8
+fomkePregenerationPayloadBytes = 256
+
+# Canonical immutable AME layout and initial mask tier.
+# Tier masks are KEM, cipher, MAC, hash, signature, KDF in MSB-first order.
+[ame]
+ameLayoutHex = "0202010f01100110011002160213"
+ameInitialTierHex = "0101000000c0808080c0c0"

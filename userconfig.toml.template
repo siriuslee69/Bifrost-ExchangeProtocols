@@ -1,0 +1,13 @@
+# Optional client/user overrides. Copy to userconfig.toml; keep that file local.
+# Production clients and services should keep peerTrustRequired true.
+
+defaultTimeoutMs = 4000
+peerTrustRequired = true
+
+# Optional AME strength overrides. A weak client should lower ameMaxTier; a
+# strong fixed link can set ameStrengthMode = "instant". A live session only
+# ever climbs, so there is no downgrade setting.
+[ame]
+# ameStrengthMode = "cascade"
+# ameMaxTier = "MediumPlus"
+# ameRequiredTier = "Medium"

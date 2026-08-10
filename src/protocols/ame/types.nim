@@ -1,0 +1,365 @@
+## -------------------------------------------------------------------------
+## AME Types <- immutable algorithm layouts, mask tiers, and exchange state
+## -------------------------------------------------------------------------
+
+import ../types
+import ../transport/types as transport_types
+import ../dac/level0/transport as dac_transport
+import ../../analysis_pragmas
+
+const
+  ameMagic* = [uint8('A'), uint8('M'), uint8('E'), uint8('2')]
+  ameFormatVersion* = 2'u16
+  ameFrameHeaderLen* = 36
+  ameMaxAlgorithmSlots* = 8
+  ameProtectionKeyLen* = 32
+  ameProtectionAuthTagLen* = 32
+
+type
+  AmePacketKind* = enum
+    ampkUnknown = 0x00'u8,
+    ampkAgreementProposal = 0x01'u8,
+    ampkAgreementAccept = 0x02'u8,
+    ampkAgreementReject = 0x03'u8,
+    ampkExchangeKeys = 0x04'u8,
+    ampkExchangeEnvelopes = 0x05'u8,
+    ampkEpochReady = 0x06'u8,
+    ampkLaneData = 0x07'u8,
+    ampkProblem = 0x08'u8,
+    ampkPing = 0x09'u8,
+    ampkPong = 0x0A'u8
+
+  AmeMessageClass* = enum
+    amcStatus = 0x00'u8,
+    amcTelemetry = 0x01'u8,
+    amcControl = 0x02'u8,
+    amcProfile = 0x03'u8,
+    amcUserdata = 0x04'u8,
+    amcSecret = 0x05'u8,
+    amcArchive = 0x06'u8,
+    amcRecovery = 0x07'u8
+
+  AmeKemAlgorithm* = enum
+    akaFireSaber = 0x01'u8,
+    akaNtruHps4096821 = 0x02'u8,
+    akaKyber1024 = 0x03'u8,
+    akaFrodo1344Aes = 0x04'u8,
+    akaMcEliece8192 = 0x05'u8,
+    akaSaber = 0x06'u8,
+    akaNtruHps2048677 = 0x07'u8,
+    akaKyber768 = 0x08'u8,
+    akaFrodo976Aes = 0x09'u8,
+    akaMcEliece6960 = 0x0A'u8,
+    akaLightSaber = 0x0B'u8,
+    akaNtruHps2048509 = 0x0C'u8,
+    akaFrodo640Aes = 0x0D'u8,
+    akaMcEliece6688 = 0x0E'u8,
+    akaX25519 = 0x0F'u8
+
+  AmeCipherAlgorithm* = enum
+    acaXChaCha20 = 0x01'u8,
+    acaGimli = 0x02'u8,
+    acaAesCtr = 0x03'u8,
+    acaChaCha20 = 0x04'u8
+
+  AmeMacAlgorithm* = enum
+    amaBlake3 = 0x01'u8,
+    amaGimli = 0x02'u8,
+    amaPoly1305 = 0x03'u8,
+    amaSha3 = 0x04'u8
+
+  AmeHashAlgorithm* = enum
+    ahaBlake3 = 0x01'u8,
+    ahaSha3 = 0x02'u8,
+    ahaShake256 = 0x03'u8,
+    ahaGimliXof = 0x04'u8
+
+  AmeSignatureAlgorithm* = enum
+    asaEd25519 = 0x01'u8,
+    asaEd448 = 0x02'u8,
+    asaDilithium44 = 0x03'u8,
+    asaDilithium65 = 0x04'u8,
+    asaDilithium87 = 0x05'u8,
+    asaFalcon512 = 0x06'u8,
+    asaFalcon1024 = 0x07'u8,
+    asaSphincsShake128f = 0x08'u8,
+    asaEd25519Falcon512Hybrid = 0x09'u8,
+    asaEd25519Falcon1024Hybrid = 0x0a'u8
+
+  AmeKdfAlgorithm* = enum
+    akfaBlake3 = 0x01'u8,
+    akfaSha3Shake256 = 0x02'u8,
+    akfaGimliXof = 0x03'u8,
+    akfaArgon2id = 0x04'u8
+
+  AmeKemAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeKemAlgorithm]
+
+  AmeCipherAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeCipherAlgorithm]
+
+  AmeMacAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeMacAlgorithm]
+
+  AmeHashAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeHashAlgorithm]
+
+  AmeSignatureAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeSignatureAlgorithm]
+
+  AmeKdfAlgorithms* {.role: configurator.} = object
+    length*: uint8
+    algorithms*: array[ameMaxAlgorithmSlots, AmeKdfAlgorithm]
+
+  AmeSuiteLayout* {.role: configurator.} = object
+    kems*: AmeKemAlgorithms
+    ciphers*: AmeCipherAlgorithms
+    macs*: AmeMacAlgorithms
+    hashes*: AmeHashAlgorithms
+    signatures*: AmeSignatureAlgorithms
+    kdfs*: AmeKdfAlgorithms
+
+  AmeTierMasks* {.role: configurator.} = object
+    kem*: uint8
+    cipher*: uint8
+    mac*: uint8
+    hash*: uint8
+    signature*: uint8
+    kdf*: uint8
+
+  AmeMaskTier* {.role: truthState.} = object
+    tierId*: uint32
+    masks*: AmeTierMasks
+
+  AmeAgreementProposal* {.role: truthState.} = object
+    proposalId*: uint32
+    layout*: AmeSuiteLayout
+    initialTier*: AmeMaskTier
+
+  AmeAgreementDecision* {.role: truthState.} = object
+    proposalId*: uint32
+    accepted*: bool
+    selectionHash*: ByteSeq
+    reason*: string
+
+  AmeExchangeRequest* {.role: truthState.} = object
+    targetTier*: AmeMaskTier
+    exchangeMask*: uint8
+
+  AmeKemEnvelope* {.role: truthState.} = object
+    ciphertext*: ByteSeq
+    senderPublicKey*: ByteSeq
+
+  AmeExchangeKeys* {.role: truthState.} = object
+    request*: AmeExchangeRequest
+    publicKeys*: seq[ByteSeq]
+    secretKeys*: seq[ByteSeq]
+
+  AmeExchangeResult* {.role: truthState.} = object
+    request*: AmeExchangeRequest
+    envelopes*: seq[AmeKemEnvelope]
+    sharedSecrets*: seq[ByteSeq]
+
+  AmeExchangeOffer* {.role: truthState.} = object
+    requestId*: uint32
+    baseEpochId*: uint32
+    request*: AmeExchangeRequest
+    publicKeys*: seq[ByteSeq]
+    signatures*: seq[ByteSeq]
+
+  AmeExchangeReply* {.role: truthState.} = object
+    requestId*: uint32
+    baseEpochId*: uint32
+    request*: AmeExchangeRequest
+    envelopes*: seq[AmeKemEnvelope]
+    signatures*: seq[ByteSeq]
+
+  AmeExchangeState* {.role: truthState.} = object
+    algorithms*: AmeKemAlgorithms
+    activeMask*: uint8
+    generation*: array[ameMaxAlgorithmSlots, uint32]
+    sharedSecrets*: array[ameMaxAlgorithmSlots, ByteSeq]
+
+  AmeProtectedMessage* {.role: truthState.} = object
+    payload*: ByteSeq
+    authTag*: ByteSeq
+
+  AmeFrameHeader* {.role: truthState.} = object
+    magic*: array[4, uint8]
+    formatVersion*: uint16
+    packetKind*: AmePacketKind
+    messageClass*: AmeMessageClass
+    sessionId*: uint64
+    rootLaneId*: uint32
+    parentLaneId*: uint32
+    laneId*: uint32
+    sequence*: uint32
+    payloadLen*: uint32
+
+  AmeDecodedFrame* {.role: truthState.} = object
+    header*: AmeFrameHeader
+    payload*: ByteSeq
+
+  AmeIdentitySigningKey* {.role: truthState.} = object
+    algorithm*: AmeSignatureAlgorithm
+    publicKey*: ByteSeq
+
+  AmeIdentityBundle* {.role: truthState.} = object
+    subjectKeyId*: string
+    signingKeys*: seq[AmeIdentitySigningKey]
+
+  AmeAuthoritySignature* {.role: truthState.} = object
+    authority*: string
+    algorithm*: AmeSignatureAlgorithm
+    authorityPublicKey*: ByteSeq
+    signature*: ByteSeq
+
+  AmeAuthorityRoot* {.role: configurator.} = object
+    authority*: string
+    algorithm*: AmeSignatureAlgorithm
+    publicKey*: ByteSeq
+
+  AmePeerTrustResult* {.role: truthState.} = object
+    ok*: bool
+    authority*: string
+    algorithm*: AmeSignatureAlgorithm
+    subjectKeyId*: string
+    err*: string
+
+# ---- session / connection state (session state) ----
+
+const
+  ameSessionProtocolLongName* = "Adaptive Message Encryption"
+  ameProtectedBodyHeaderLen* = 12
+  defaultAmeInboxCapacity* = 64
+  defaultAmeMaxFrameBytes* = 16_777_216
+  ameBytesPerMiB* = 1_048_576'u64
+  ameSessionProtocolId* = "bifrost.ame.session"
+  ameHandshakeNonceLen* = 32
+  ameCertificateVersion* = 2'u8
+
+type
+  AmeCompressionAlgorithm* = enum
+    aczNone = 0x00'u8,
+    aczEirRle = 0x01'u8
+
+  AmeCompressionPolicy* {.role: configurator.} = object
+    algorithm*: AmeCompressionAlgorithm
+    maxPlaintextBytes*: uint32
+    maxEncodedBytes*: uint32
+    maxExpansionRatio*: uint16
+
+  AmeCarrier* = enum
+    acrTcp,
+    acrDac
+
+  AmeEndpointRole* = enum
+    aerInitiator,
+    aerResponder
+
+  AmeTrafficDirection* = enum
+    atdInitiatorToResponder,
+    atdResponderToInitiator
+
+  AmePathTriggerKind* = enum
+    aptManual = 0x00'u8,
+    aptTransferredMiB = 0x01'u8,
+    aptElapsedMs = 0x02'u8
+
+  AmePathTrigger* {.role: configurator.} = object
+    kind*: AmePathTriggerKind
+    threshold*: uint64
+    enabled*: bool
+    fired*: bool
+
+  AmeTierPath* {.role: truthState.} = object
+    layout*: AmeSuiteLayout
+    tierCount*: uint8
+    tiers*: array[ameMaxAlgorithmSlots, AmeMaskTier]
+    triggers*: array[ameMaxAlgorithmSlots, AmePathTrigger]
+    transferredBytes*: uint64
+    elapsedMs*: uint64
+    dueMask*: uint8
+    currentTierId*: uint32
+    inFlightTierId*: uint32
+
+  AmeTierStep* {.role: truthState.} = object
+    available*: bool
+    targetTier*: AmeMaskTier
+    exchangeMask*: uint8
+    request*: AmeExchangeRequest
+
+  AmeEpochKeySet* {.role: truthState.} = object
+    epochId*: uint32
+    layout*: AmeSuiteLayout
+    tier*: AmeMaskTier
+    exchange*: AmeExchangeState
+    transcriptSalt*: ByteSeq
+
+  AmeAuthPackage* {.role: truthState.} = object
+    current*: AmeEpochKeySet
+    retiring*: AmeEpochKeySet
+    retiringFramesLeft*: int
+    sessionId*: uint64
+    endpointRole*: AmeEndpointRole
+    localSignatureSecretKeys*: seq[ByteSeq]
+    peerSignaturePublicKeys*: seq[ByteSeq]
+
+  AmePendingExchange* {.role: truthState.} = object
+    active*: bool
+    offer*: AmeExchangeOffer
+    secretKeys*: seq[ByteSeq]
+
+  AmePendingIncomingExchange* {.role: truthState.} = object
+    active*: bool
+    requestId*: uint32
+    request*: AmeExchangeRequest
+    candidate*: AmeEpochKeySet
+
+  AmeReplayWindow* {.role: truthState.} = object
+    initialized*: bool
+    highest*: uint32
+    bitmap*: uint64
+
+  AmeProtectedBody* {.role: truthState.} = object
+    epochId*: uint32
+    nonce*: ByteSeq
+    authTag*: ByteSeq
+    payload*: ByteSeq
+
+  AmePacket* {.role: truthState.} = object
+    payload*: ByteSeq
+    carrier*: AmeCarrier
+    remoteDac*: dac_transport.DacAddress
+    remoteTcp*: transport_types.TcpAddress
+    sessionId*: uint64
+    rootLaneId*: uint32
+    parentLaneId*: uint32
+    laneId*: uint32
+    ameSequence*: uint32
+    dacSequence*: uint32
+
+  AmeOpenResult* {.role: truthState.} = object
+    ok*: bool
+    packet*: AmePacket
+    err*: string
+
+  AmeSessionInfo* {.role: truthState.} = object
+    layoutBytes*: int
+    tierId*: uint32
+    tierMasks*: AmeTierMasks
+    activeKemMask*: uint8
+    epochId*: uint32
+    sessionId*: uint64
+    laneId*: uint32
+    pending*: int
+    capacity*: int
+    transferredBytes*: uint64
+    peerTrustRequired*: bool
+    peerTrusted*: bool
+    peerAuthority*: string

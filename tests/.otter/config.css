@@ -1,0 +1,13 @@
+:root {
+  --otter-color-background: #101a21;
+  --otter-color-gradient: #8a969b;
+  --otter-color-surface: #0b151c;
+  --otter-color-border: #8abdc9;
+  --otter-color-text: #dce8ed;
+  --otter-color-muted: #8ca4ae;
+  --otter-color-primary: #73d7d0;
+  --otter-color-secondary: #cf7ba9;
+  --otter-color-success: #73d7a7;
+  --otter-color-failure: #ff718b;
+  --otter-color-running: #e4bd72;
+}

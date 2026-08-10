@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bifrost LAN</title>
+  <script src="/webui.js"></script>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="signal-grid"></div>
+  <div class="aurora aurora-left"></div>
+  <div class="aurora aurora-right"></div>
+
+  <header class="top-panel glass">
+    <div class="brand-mark">B</div>
+    <div class="brand-copy">
+      <span class="eyebrow">DIRECT SIGNAL</span>
+      <strong>BIFROST LAN</strong>
+    </div>
+    <div id="status-pill" class="status-pill">STARTING</div>
+  </header>
+
+  <aside class="edge-panel left-panel glass">
+    <span class="edge-glyph">N</span>
+    <div class="edge-copy">
+      <label for="peer-host">PEER</label>
+      <input id="peer-host" value="" placeholder="peer ip" autocomplete="off" />
+      <small>TCP :48371</small>
+    </div>
+  </aside>
+
+  <aside class="edge-panel right-panel glass">
+    <span class="edge-glyph magenta">S</span>
+    <div class="edge-copy">
+      <label>STATE</label>
+      <strong id="local-address">0.0.0.0:48371</strong>
+      <small>direct local network</small>
+    </div>
+  </aside>
+
+  <main class="conversation glass">
+    <div class="conversation-head">
+      <div>
+        <span class="eyebrow">OPEN CHANNEL</span>
+        <h1>Machine / Local Peer</h1>
+      </div>
+      <div class="live-badge"><i></i> LIVE</div>
+    </div>
+    <div id="messages" class="messages">
+      <div class="empty-state">
+        <span class="diamond">B</span>
+        <strong>Channel ready</strong>
+        <small>Messages remain on your local network.</small>
+      </div>
+    </div>
+  </main>
+
+  <footer class="composer glass">
+    <button id="clear-button" class="icon-button" title="Clear local message view">X</button>
+    <textarea id="message-body" rows="1" placeholder="write a direct message"></textarea>
+    <button id="send-button" class="send-button"><span>SEND</span><b>&gt;</b></button>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

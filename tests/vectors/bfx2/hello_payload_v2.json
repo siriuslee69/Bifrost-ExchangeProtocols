@@ -1,0 +1,22 @@
+{
+  "schemaId": 900,
+  "schemaVersion": 1,
+  "flags": 1,
+  "payload": {
+    "kind": "hello",
+    "fromNode": "node-a",
+    "toNode": "node-b",
+    "sentAt": 55,
+    "payloadHash": [
+      1,
+      2,
+      3
+    ],
+    "payload": [
+      10,
+      20,
+      30
+    ]
+  },
+  "notes": "Generic BFX2 envelope vector for Nim and TS parity."
+}

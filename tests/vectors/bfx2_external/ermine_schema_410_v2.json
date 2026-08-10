@@ -1,0 +1,7 @@
+{
+  "schemaId": 410,
+  "schemaVersion": 1,
+  "flags": 1,
+  "payloadHex": "010203",
+  "notes": "BFX2 external bridge vector for the Ermine reserved schema block."
+}
