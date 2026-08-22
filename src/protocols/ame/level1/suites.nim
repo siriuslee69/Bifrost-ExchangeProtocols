@@ -2,11 +2,12 @@
 ## AME Suite Layouts <- immutable slots and independently selected mask tiers
 ## -------------------------------------------------------------------------
 
-import protocols/wrapper/helpers/algorithms as tyr_alg
-import protocols/wrapper/helpers/signature_support
-import protocols/custom_crypto/blake3 as tyr_blake3
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
-import protocols/custom_crypto/sha3 as tyr_sha3
+
+import ./signatures
+import ./symmetric
+
+
+
 
 import ../../types
 import ../types
@@ -20,51 +21,57 @@ template requirePathLength(n: int, what: string) =
 
 proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
     AmeCipherAlgorithms {.role: wrapper.} =
-  ## A: immutable ordered symmetric-cipher slots.
+  ## A: immutable ordered symmetric-cipher slots. A slot whose primitive
+  ## this build left out is refused here, before any session uses it.
   var i: int = 0
   requirePathLength(A.len, "cipher")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeCipherBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
 proc initAmeMacAlgorithms*(A: openArray[AmeMacAlgorithm]):
     AmeMacAlgorithms {.role: wrapper.} =
-  ## A: immutable ordered keyed-authentication slots.
+  ## A: ordered keyed-authentication slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "MAC")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeMacBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
 proc initAmeHashAlgorithms*(A: openArray[AmeHashAlgorithm]):
     AmeHashAlgorithms {.role: wrapper.} =
-  ## A: immutable ordered transcript-hash slots.
+  ## A: ordered transcript-hash slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "hash")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeHashBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
 proc initAmeSignatureAlgorithms*(A: openArray[AmeSignatureAlgorithm]):
     AmeSignatureAlgorithms {.role: wrapper.} =
-  ## A: immutable ordered signature slots.
+  ## A: ordered signature slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "signature")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeSigBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
 proc initAmeKdfAlgorithms*(A: openArray[AmeKdfAlgorithm]):
     AmeKdfAlgorithms {.role: wrapper.} =
-  ## A: immutable ordered KDF slots.
+  ## A: ordered KDF slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "KDF")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeKdfBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
@@ -154,12 +161,15 @@ proc initAmeSuiteLayout*(kems: AmeKemAlgorithms,
 proc defaultAmeLayout*(kems: AmeKemAlgorithms): AmeSuiteLayout {.
     role: wrapper.} =
   ## kems: caller-selected KEM slots combined with conservative fixed slots.
+  ## Every non-KEM slot comes from what this build carries, so the default
+  ## layout is always runnable; a full build gives the same slots it always
+  ## did (XChaCha20, BLAKE3, BLAKE3, Ed25519 + Falcon512, BLAKE3 + GimliXof).
   result = initAmeSuiteLayout(kems,
-    initAmeCipherAlgorithms([acaXChaCha20]),
-    initAmeMacAlgorithms([amaBlake3]),
-    initAmeHashAlgorithms([ahaBlake3]),
-    initAmeSignatureAlgorithms([asaEd25519, asaFalcon512]),
-    initAmeKdfAlgorithms([akfaBlake3, akfaGimliXof]))
+    initAmeCipherAlgorithms([defaultAmeCipherSlot()]),
+    initAmeMacAlgorithms([defaultAmeMacSlot()]),
+    initAmeHashAlgorithms([defaultAmeHashSlot()]),
+    initAmeSignatureAlgorithms(defaultAmeSigSlots()),
+    initAmeKdfAlgorithms(defaultAmeKdfSlots()))
 
 proc initAmeTierMasks*(kem, cipher, mac, hash, signature,
     kdf: uint8): AmeTierMasks {.role: wrapper.} =
@@ -337,39 +347,7 @@ proc tiersEquivalent*(A, B: AmeMaskTier): bool {.role: parser.} =
   ## A/B: stable tier ids and all family masks compared byte-for-byte.
   result = encodeAmeMaskTier(A) == encodeAmeMaskTier(B)
 
-proc toTyrCipher*(a: AmeCipherAlgorithm): tyr_alg.StreamCipherAlgorithm {.
-    role: wrapper.} =
-  ## a: AME wire cipher mapped to Tyr execution.
-  case a
-  of acaXChaCha20: result = tyr_alg.scaXChaCha20
-  of acaGimli: result = tyr_alg.scaGimliStream
-  of acaAesCtr: result = tyr_alg.scaAesCtr
-  of acaChaCha20: result = tyr_alg.scaChaCha20
 
-proc toTyrMac*(a: AmeMacAlgorithm): tyr_alg.MacAlgorithm {.role: wrapper.} =
-  ## a: AME wire MAC mapped to Tyr execution.
-  case a
-  of amaBlake3: result = tyr_alg.maBlake3
-  of amaGimli: result = tyr_alg.maGimli
-  of amaPoly1305: result = tyr_alg.maPoly1305
-  of amaSha3: result = tyr_alg.maSha3
-
-proc toTyrSignature*(a: AmeSignatureAlgorithm): tyr_alg.SignatureAlgorithm {.
-    role: wrapper.} =
-  ## a: AME wire signature mapped to Tyr execution.
-  case a
-  of asaEd25519: result = tyr_alg.saEd25519
-  of asaEd448: result = tyr_alg.saEd448
-  of asaDilithium44: result = tyr_alg.saDilithium0
-  of asaDilithium65: result = tyr_alg.saDilithium1
-  of asaDilithium87: result = tyr_alg.saDilithium2
-  of asaFalcon512: result = tyr_alg.saFalcon512
-  of asaFalcon1024: result = tyr_alg.saFalcon1024
-  of asaSphincsShake128f: result = tyr_alg.saSPHINCSPlusShake128fSimple
-  of asaEd25519Falcon512Hybrid:
-    result = tyr_alg.saEd25519Falcon512Hybrid
-  of asaEd25519Falcon1024Hybrid:
-    result = tyr_alg.saEd25519Falcon1024Hybrid
 
 proc activeAmeSignatures*(L: AmeSuiteLayout,
     t: AmeMaskTier): seq[AmeSignatureAlgorithm] {.role: parser.} =
@@ -408,11 +386,7 @@ proc transitionAmeSignatureTier*(L: AmeSuiteLayout, current,
 proc hashAmeLayer(a: AmeHashAlgorithm, A: openArray[byte],
     outLen: int): ByteSeq {.role: helper.} =
   ## a/A/outLen: exact hash primitive, input, and output length.
-  case a
-  of ahaBlake3: result = tyr_blake3.blake3Hash(A, outLen)
-  of ahaSha3: result = tyr_sha3.sha3Hash(A, outLen)
-  of ahaShake256: result = tyr_sha3.shake256Tyr(A, outLen)
-  of ahaGimliXof: result = tyr_gimli.gimliXof(@[], @[], A, outLen)
+  result = ameHashBytes(a, A, outLen)
 
 proc hashAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
     A: openArray[byte], outLen: int = 32): ByteSeq {.role: orchestrator.} =
@@ -442,11 +416,11 @@ proc generateAmeSigningKeys*(L: AmeSuiteLayout, t: AmeMaskTier): tuple[
   ## L/t: selected signature slots receiving independent keypairs.
   var
     A: seq[AmeSignatureAlgorithm] = @[]
-    keypair: signature_support.SignatureKeypair
+    keypair: AmeSigKeypair
     i: int = 0
   A = activeAmeSignatures(L, t)
   while i < A.len:
-    keypair = signatureKeypair(toTyrSignature(A[i]))
+    keypair = ameSigKeypair(A[i])
     result.publicKeys.add(keypair.publicKey)
     result.secretKeys.add(keypair.secretKey)
     i = i + 1
@@ -472,7 +446,7 @@ proc signAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
     raise newException(ValueError, "AME signature secret-key count mismatch")
   subject = signatureSubject(L, t, msg)
   while i < A.len:
-    result.add(signMessage(toTyrSignature(A[i]), subject, secretKeys[i]))
+    result.add(signAmeMessage(A[i], subject, secretKeys[i]))
     i = i + 1
 
 proc verifyAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
@@ -488,7 +462,6 @@ proc verifyAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
   subject = signatureSubject(L, t, msg)
   result = true
   while i < A.len:
-    if not verifyMessage(toTyrSignature(A[i]), subject, signatures[i],
-        publicKeys[i]):
+    if not verifyAmeMessage(A[i], subject, signatures[i], publicKeys[i]):
       return false
     i = i + 1

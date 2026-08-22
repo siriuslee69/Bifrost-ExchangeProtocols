@@ -11,7 +11,6 @@ import ../src/protocols/dac/level0/framing
 import ../src/protocols/dac/level0/defaults
 import ../src/protocols/dac/level1/path_probe
 import ../src/protocols/dac/level0/path_stats
-import ../src/protocols/dac/level0/receive_budget
 import ../src/protocols/dac/level1/package_manifest
 import ../src/protocols/dac/level0/ack_range
 import ../src/protocols/dac/level0/package_commit
@@ -54,7 +53,7 @@ suite "DAC defaults":
     check recovery.pathLane == dplRecoveryPath
     check recovery.transferClass == dtcRecovery
     check recovery.parityShards == 6'u16
-    check recovery.ackMode == damAudited
+    check recovery.ackMode == damVerified
     check recovery.useTcpRepair
     check validateDacDefaults(clean)
     check validateDacDefaults(recovery)
@@ -86,7 +85,7 @@ suite "DAC defaults":
     check decoded.flags.needsAck
     check decoded.flags.creditBound
     check decoded.payload.len == 16
-    check dacMessageKindFromId(0x04'u8) == dmkPackageManifest
+    check dacMessageKindFromId(0x03'u8) == dmkPackageManifest
     h = initDacSuperCleanFrameHeader(dmkPackageChunk, 42'u64, 5'u32, 2'u16,
       10'u32, 70000'u32, flags)
     check h.flags == 0x01C1'u16
@@ -118,7 +117,6 @@ suite "DAC defaults":
     var
       p: DacPathProbe
       stats: DacPathStats
-      budget: DacReceiveBudget
       manifest: DacPackageManifest
       ack: DacAckRange
       commit: DacPackageCommit
@@ -136,11 +134,9 @@ suite "DAC defaults":
       nonce)
     stats = initDacPathStats(60000'u32, 120'u16, 40'u16, 4'u16,
       1200'u16, 20'u16, 30'u16)
-    budget = initDacReceiveBudget(4096'u32, 2'u16, 1'u16, 768'u16,
-      8'u16, 1024'u32, 500'u16)
     manifest = initDacPackageManifest(7'u64, dtcUserData, defaults, 2048'u64,
       digest)
-    ack = initDacAckRange(1'u32, 96'u8, 0'u8)
+    ack = initDacAckRange(1'u32, 0'u8)
     commit = initDacPackageCommit(7'u64, digest, manifest.dataCount, 1'u16,
       dcsCommittedWithRepair)
     repair = initDacRepairHint(7'u64, 1'u32, 1'u16, 0'u16, 1'u16, gapMap,
@@ -151,7 +147,6 @@ suite "DAC defaults":
     check p.probeId == 9'u32
     check p.nonce == nonce
     check dacShouldEnterLossyPath(stats)
-    check dacBudgetAllowsBulk(budget)
     check manifest.dataCount == 3'u16
     check manifest.groupSize == 20'u16
     check commit.digest == digest
@@ -166,12 +161,12 @@ suite "DAC defaults":
     expect ValueError:
       discard initDacPackageManifest(9'u64, dtcUserData,
         initDacDefaults(dplLossyPath, dtcUserData, drmReedSolomon, damBatch,
-          768'u16, high(uint16), 1'u16, 16'u16, 500'u16, 8'u8, 96'u16,
+          768'u16, high(uint16), 1'u16, 16'u16, 500'u16,
           350'u16, 2'u8, 1'u8, false, false, false), 2048'u64, digest)
     expect ValueError:
       discard initDacPackageManifest(10'u64, dtcUserData,
         initDacDefaults(dplBlockedUdpPath, dtcUserData, drmNone, damExplicit,
-          4096'u16, 0'u16, 0'u16, 1'u16, 500'u16, 1'u8, 0'u16, 0'u16,
+          4096'u16, 0'u16, 0'u16, 1'u16, 500'u16, 0'u16,
           0'u8, 1'u8, true, false, true), 2048'u64, digest)
     expect ValueError:
       discard initDacRepairHint(7'u64, 1'u32, 1'u16, 0'u16, 1'u16,

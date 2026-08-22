@@ -5,7 +5,7 @@
 import ../types
 import ./[types, codec, records, key_schedule]
 import ../../analysis_pragmas
-import protocols/custom_crypto/symmetric/secure_memory
+import tyr/helpers/secure_memory
 
 const
   tls13DefaultRecordBufferLimit* = 4 * tls13CiphertextLimit

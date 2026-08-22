@@ -2,9 +2,9 @@
 ## CHUNKYAEAD Chunk Ops <- format-compatible per-buffer transform
 ## ----------------------------------------------------------------
 
-import protocols/custom_crypto/xchacha20 as tyr_xchacha
-import protocols/custom_crypto/aes_ctr as tyr_aes
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
+import tyr/ciphers/xchacha20 as tyr_xchacha
+import tyr/ciphers/aes_ctr as tyr_aes
+import tyr/ciphers/gimli_sponge as tyr_gimli
 import ../level0/types
 import ../../../analysis_pragmas
 

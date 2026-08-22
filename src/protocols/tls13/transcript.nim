@@ -2,11 +2,11 @@
 ## TLS 1.3 Transcript <- handshake hashing, Finished, and signature context
 ## ----------------------------------------------------------------------
 
-import protocols/custom_crypto/sha256
-import protocols/custom_crypto/ed25519
-import protocols/custom_crypto/rsa
-import protocols/custom_crypto/bigint
-import protocols/custom_crypto/ecdsa_p256
+import tyr/hashes/sha256
+import tyr/signatures/ed25519
+import tyr/certs/rsa
+import tyr/helpers/bigint
+import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./key_schedule

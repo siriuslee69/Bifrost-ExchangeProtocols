@@ -19,5 +19,5 @@ fomkePregenerationPayloadBytes = 256
 # Canonical immutable AME layout and initial mask tier.
 # Tier masks are KEM, cipher, MAC, hash, signature, KDF in MSB-first order.
 [ame]
-ameLayoutHex = "0202010f01100110011002160213"
+ameLayoutHex = "0202010f01100110011002150213"
 ameInitialTierHex = "0101000000c0808080c0c0"

@@ -2,9 +2,14 @@
 ## TLS 1.3 Server Session <- event-driven controlled-profile server flight
 ## -----------------------------------------------------------------------
 
-import protocols/certificates
-import protocols/custom_crypto/[ed25519, random, sha256, x25519]
-import protocols/custom_crypto/[rsa, bigint, ecdsa_p256]
+import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/signatures/ed25519
+import tyr/helpers/random
+import tyr/hashes/sha256
+import tyr/kems/x25519
+import tyr/certs/rsa
+import tyr/helpers/bigint
+import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./[types, codec, connection, hello, key_schedule, transcript,

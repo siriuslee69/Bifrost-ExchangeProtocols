@@ -1,14 +1,16 @@
 ## -------------------------------------------------------------------------
-## AME Session <- immutable-layout mask-tier epochs over TCP or DAC
+## AME Session <- immutable-layout mask-tier epochs, sealed into frames
 ## -------------------------------------------------------------------------
-
-import std/net
+##
+## This module owns the epoch state machine and turns payloads into sealed
+## frames for either carrier. It deliberately opens no socket: the two
+## carrier modules under `level2/carriers/` do that, so a build keeps only
+## the network stack it uses. See `protocols/ame` for the build flags.
 
 import protocols/containers/circ_seq as circ_seq
 
 import ../../types
 import ../../transport/types as transport_types
-import ../../transport/tcp_ops
 import ../types
 import ../level0/bytes
 import ../level1/exchange_paths
@@ -23,7 +25,6 @@ import ../../fomke/level2/wire
 import ../../config
 import ../../dac/types
 import ../../dac/level0/framing
-import ../../dac/level0/transport as dac_transport
 import ../../../analysis_pragmas
 
 const
@@ -40,7 +41,6 @@ type
     parentLaneId*: uint32
     laneId*: uint32
     nextAmeSequence*: uint32
-    nextDacSequence*: uint32
     messageClass*: AmeMessageClass
     pathLane*: DacPathLane
     peerTrustRequired*: bool
@@ -58,23 +58,12 @@ type
     fomkeSendCache*: FomkeSendCache
     tcpRecvSequence*: uint32
     dacAmeReplay*: AmeReplayWindow
-    dacCarrierReplay*: AmeReplayWindow
+    pendingParams*: AmeRuntimeParams
+
     lastErr*: string
-
-  AmeTcpClient* {.role: truthState.} = object
-    connection*: AmeSession
-    socket*: Socket
-    remote*: transport_types.TcpAddress
-    tls*: transport_types.TlsConfig
-
-  AmeDacClient* {.role: truthState.} = object
-    connection*: AmeSession
-    socket*: dac_transport.DacSocket
-    remote*: dac_transport.DacAddress
 
   AmeSendRollback {.role: memory.} = object
     nextAmeSequence: uint32
-    nextDacSequence: uint32
     path: AmeTierPath
     lastTrigger: AmeTierStep
 
@@ -170,9 +159,13 @@ proc requireAmeAuth*(a: AmeAuthPackage) {.role: parser.} =
 proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState, transcriptSalt: openArray[uint8] = [],
     epochId: uint32 = 1'u32, sessionId: uint64 = 1'u64,
-    endpointRole: AmeEndpointRole = aerInitiator): AmeAuthPackage {.
-    role: wrapper.} =
+    endpointRole: AmeEndpointRole = aerInitiator,
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
+    AmeAuthPackage {.role: wrapper.} =
   ## L/t/E/transcriptSalt/epoch/session/role: exact initial epoch inputs.
+  ## params: tunables both endpoints must hold identically. They are bound
+  ## into every tag, so a peer with different values fails authentication
+  ## rather than silently disagreeing.
   if sessionId == 0'u64:
     raise newException(ValueError, "AME auth session id must be positive")
   result.current.epochId = epochId
@@ -183,6 +176,7 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
   result.retiringFramesLeft = 0
   result.sessionId = sessionId
   result.endpointRole = endpointRole
+  result.current.params = params
   requireAmeAuth(result)
 
 proc outboundAmeDirection*(r: AmeEndpointRole): AmeTrafficDirection {.
@@ -225,6 +219,7 @@ proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
     r.exchangeMask, next.exchange.activeMask)
   applyAmeExchange(next.exchange, r, sharedSecrets)
   next.tier = r.targetTier
+  next.params = r.params
   next.epochId = S.auth.current.epochId + 1'u32
   secureClearAmeBytes(next.transcriptSalt)
   next.transcriptSalt = copyBytes(transcriptSalt)
@@ -410,7 +405,6 @@ proc cancelAmeSessionExchange*(S: var AmeSession) {.role: stateController.} =
   if S.fomkeEnabled:
     cancelFomkeUpgrade(S.fomke)
     restoreConfiguredAmeFomkeCache(S)
-
 proc beginAmeSessionExchange*(S: var AmeSession,
     r: AmeExchangeRequest): AmeExchangeOffer {.role: orchestrator.} =
   ## S/r: connection, target tier, and exact fresh/rekey KEM slots.
@@ -420,10 +414,16 @@ proc beginAmeSessionExchange*(S: var AmeSession,
   ## pending incoming exchange blocks here. See `answerAmeSessionExchange` for
   ## the tie-break that resolves a genuine simultaneous start.
   var
+    r: AmeExchangeRequest = r
+      ## Shadowed on purpose. The caller may hand a request built before the
+      ## observer changed its mind, so the STAGED parameters always win and a
+      ## value set through `setAmeAuthTagLen` reaches the peer on the very
+      ## next exchange without the caller having to rebuild anything.
     keys: AmeExchangeKeys
     step: AmeTierStep
     signatureTier: AmeMaskTier
     targetIndex: int = 0
+  r.params = S.pendingParams
   if S.pendingExchange.active:
     raise newException(ValueError, "AME already has a pending exchange")
   if S.pendingIncoming.active:
@@ -510,6 +510,8 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   applyAmeExchange(S.pendingIncoming.candidate.exchange, o.request,
     answer.sharedSecrets)
   S.pendingIncoming.candidate.tier = o.request.targetTier
+  S.pendingIncoming.candidate.params = o.request.params
+  S.pendingParams = o.request.params
   S.pendingIncoming.candidate.epochId = S.auth.current.epochId + 1'u32
   secureClearAmeBytes(S.pendingIncoming.candidate.transcriptSalt)
   S.pendingIncoming.candidate.transcriptSalt = transitionTranscriptSalt(
@@ -632,6 +634,7 @@ proc initAmeSession*(a: AmeAuthPackage,
   if not layoutsEquivalent(a.current.layout, path.layout):
     raise newException(ValueError, "AME tier path layout differs from auth layout")
   result.auth = a
+  result.pendingParams = a.current.params
   if sessionId != 0'u64:
     result.auth.sessionId = sessionId
   result.path = path
@@ -692,6 +695,37 @@ proc requestAmeTier*(S: var AmeSession, tierId: uint32,
   result = requestTier(S.path, tierId, rekeyMask)
   S.lastTrigger = result
 
+## ╭⟢ runtime parameters
+##
+## AME exposes its tunables here rather than holding a policy of its own.
+## Something above it - the DAC observer, or a caller with its own opinion -
+## writes them per connection. AME only enforces that both endpoints agree,
+## which it gets for free by binding the values into every tag.
+
+proc ameParams*(S: AmeSession): AmeRuntimeParams {.role: parser.} =
+  ## S: session whose current epoch tunables are read back.
+  result = S.auth.current.params
+
+proc nextAmeParams*(S: AmeSession): AmeRuntimeParams {.role: parser.} =
+  ## S: session whose STAGED tunables are read back. These are what the next
+  ## exchange this endpoint initiates will ask the peer to adopt.
+  result = S.pendingParams
+
+proc setAmeAuthTagLen*(S: var AmeSession, n: AmeAuthTagLen) {.
+    role: configurator.} =
+  ## S/n: session and the tag length its next epoch should carry.
+  ##
+  ## Staged, not applied. A live epoch's tags are bound to the length it was
+  ## created with, so switching underneath one would break every message
+  ## until the peer caught up. The value rides in the next exchange request
+  ## this endpoint sends; the responder adopts it, and both rotate together.
+  ## Until then nothing changes on the wire.
+  ##
+  ## Shorter tags trade authentication strength for bytes. 32 is 256-bit and
+  ## the default; 16 is the conventional 128-bit floor, worth it when a
+  ## payload is a handful of bytes and the tag dominates the frame.
+  S.pendingParams.authTagLen = n
+
 proc info*(S: AmeSession): AmeSessionInfo {.role: wrapper.} =
   ## S: connection summarized by stable tier identity and masks.
   result.layoutBytes = encodeAmeSuiteLayout(S.auth.current.layout).len
@@ -716,20 +750,21 @@ proc `$`*(i: AmeSessionInfo): string {.role: wrapper.} =
     " layoutBytes=" & $i.layoutBytes & " transferred=" &
     $i.transferredBytes
 
-proc envelopeLen(L: AmeSuiteLayout, t: AmeMaskTier,
-    payloadLen: int): int {.role: helper.} =
-  ## L/t/payloadLen: selected tier and plaintext length.
+proc envelopeLen(L: AmeSuiteLayout, t: AmeMaskTier, payloadLen: int,
+    tagLen: AmeAuthTagLen): int {.role: helper.} =
+  ## L/t/payloadLen/tagLen: selected tier, plaintext length, agreed tag size.
   result = ameProtectedBodyHeaderLen + ameProtectionNonceLen(L, t) +
-    ameProtectionAuthTagLen + payloadLen
+    int(ord(tagLen)) + payloadLen
 
 proc checkedEnvelopeLen(L: AmeSuiteLayout, t: AmeMaskTier,
-    payloadLen: int, what: string): uint32 {.role: parser.} =
+    payloadLen: int, what: string,
+    tagLen: AmeAuthTagLen = aatl32): uint32 {.role: parser.} =
   ## L/t/payloadLen/what: sealed envelope length checked before it is narrowed
   ## to the u32 wire field. Every seal path goes through here so that a large
   ## KEM stack (eight Classic-McEliece slots carry megabytes of public keys)
   ## cannot overflow the length field instead of failing closed.
   var
-    n: int = envelopeLen(L, t, payloadLen)
+    n: int = envelopeLen(L, t, payloadLen, tagLen)
   if payloadLen < 0 or n > defaultAmeMaxFrameBytes - ameFrameHeaderLen:
     raise newException(ValueError, "AME " & what & " exceeds maximum")
   result = uint32(n)
@@ -742,28 +777,30 @@ proc ameInnerPayloadLen(S: AmeSession, payloadLen: int): int {.
   result = payloadLen
 
 proc buildAmeFomkeAad(S: AmeSession, carrier: AmeCarrier,
-    ameSequence, dacSequence: uint32): ByteSeq {.role: truthBuilder,
+    ameSequence: uint32): ByteSeq {.role: truthBuilder,
     tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
-  ## S/carrier/sequence: stable AME identity bound into inner FOMKE protection.
-  appendAmeLabel(result, "AME-FOMKE-AAD-v1")
+  ## S/carrier/ameSequence: stable AME identity bound into inner FOMKE
+  ## protection. The label moved to v2 when the separate DAC sequence was
+  ## dropped: on a DAC session it advanced in lockstep with the AME sequence,
+  ## so it bound nothing the AME sequence did not already bind.
+  appendAmeLabel(result, "AME-FOMKE-AAD-v2")
   result.add(uint8(ord(carrier)))
   appendAmeU64(result, S.sessionId)
   appendAmeU32(result, S.rootLaneId)
   appendAmeU32(result, S.parentLaneId)
   appendAmeU32(result, S.laneId)
   appendAmeU32(result, ameSequence)
-  appendAmeU32(result, dacSequence)
 
 proc sealAmeInnerPayload(S: var AmeSession, carrier: AmeCarrier,
-    payload: openArray[uint8], ameSequence, dacSequence: uint32): ByteSeq {.
+    payload: openArray[uint8], ameSequence: uint32): ByteSeq {.
     role: orchestrator, tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
-  ## S/carrier/payload/sequences: optional forward-only inner message.
+  ## S/carrier/payload/ameSequence: optional forward-only inner message.
   var
     message: FomkeMessage
     aad: ByteSeq = @[]
   if not S.fomkeEnabled:
     return @payload
-  aad = buildAmeFomkeAad(S, carrier, ameSequence, dacSequence)
+  aad = buildAmeFomkeAad(S, carrier, ameSequence)
   if fomkePreparedMessages(S.fomkeSendCache) > 0:
     message = sealFomkeMessagePrepared(S.fomke, S.fomkeSendCache,
       payload, aad)
@@ -773,10 +810,11 @@ proc sealAmeInnerPayload(S: var AmeSession, carrier: AmeCarrier,
   secureClearAmeBytes(aad)
 
 proc openAmeInnerPayload(S: var AmeSession, carrier: AmeCarrier,
-    payload: openArray[uint8], ameSequence, dacSequence: uint32):
+    payload: openArray[uint8], ameSequence: uint32):
     FomkeOpenResult {.role: orchestrator,
     tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
-  ## S/carrier/payload/sequences: optional FOMKE envelope opened transactionally.
+  ## S/carrier/payload/ameSequence: optional FOMKE envelope opened
+  ## transactionally.
   var
     message: FomkeMessage
     aad: ByteSeq = @[]
@@ -786,7 +824,7 @@ proc openAmeInnerPayload(S: var AmeSession, carrier: AmeCarrier,
     return
   try:
     message = decodeFomkeMessage(payload)
-    aad = buildAmeFomkeAad(S, carrier, ameSequence, dacSequence)
+    aad = buildAmeFomkeAad(S, carrier, ameSequence)
     result = openFomkeMessage(S.fomke, message, aad)
     secureClearAmeBytes(aad)
   except ValueError as exc:
@@ -823,7 +861,7 @@ proc decodeAmeProtectedBody*(A: openArray[uint8]): AmeProtectedBody {.
   payloadLen = checkedAmeWireLen(readU32(A, 8),
     uint32(defaultAmeMaxFrameBytes), "AME protected body payload")
   if result.epochId == 0'u32 or nonceLen <= 0 or
-      tagLen != ameProtectionAuthTagLen or
+      tagLen notin {16, 24, 32} or
       A.len != offset + nonceLen + tagLen + payloadLen:
     raise newException(ValueError, "AME protected body length mismatch")
   result.nonce = @A[offset ..< offset + nonceLen]
@@ -832,56 +870,26 @@ proc decodeAmeProtectedBody*(A: openArray[uint8]): AmeProtectedBody {.
   offset = offset + tagLen
   result.payload = @A[offset ..< offset + payloadLen]
 
-proc appendDacAad(A: var ByteSeq, h: DacFrameHeader) {.
-    role: stateController.} =
-  ## A/h: AAD destination and DAC metadata.
-  appendAmeLabel(A, "DAC1")
-  A.add(uint8(ord(h.messageKind)))
-  appendAmeU16(A, h.flags)
-  appendAmeU64(A, h.sessionId)
-  appendAmeU32(A, h.laneId)
-  appendAmeU16(A, h.epochId)
-  appendAmeU32(A, h.sequence)
-
-proc buildAad(carrier: AmeCarrier, h: AmeFrameHeader,
-    d: DacFrameHeader = default(DacFrameHeader)): ByteSeq {.role: truthBuilder.} =
-  ## carrier/h/d: transport and AME/DAC metadata bound to protection.
+proc buildAad(carrier: AmeCarrier,
+    h: AmeFrameHeader): ByteSeq {.role: truthBuilder.} =
+  ## carrier/h: transport and AME metadata bound to protection.
+  ## A DAC-carried frame used to bind a second header here as well. Every field
+  ## in that header was already in the AME header beside it -- session, lane,
+  ## sequence -- or was the protected epoch restated, so binding it twice only
+  ## created a pair that could disagree. The AME header is the one identity.
   appendAmeLabel(result, "AME-AAD")
   result.add(uint8(ord(carrier)))
   appendAmeBytes(result, encodeAmeFrameHeader(h))
-  if carrier == acrDac:
-    appendDacAad(result, d)
-
-proc buildDacHeader(S: AmeSession, bodyLen: int): DacFrameHeader {.
-    role: wrapper.} =
-  ## S/bodyLen: connection metadata and AME frame byte length. DAC carries
-  ## the protected AME epoch, so both framing layers authenticate one epoch.
-  var
-    flags: DacFrameFlags
-    wireBodyLen: uint32 = 0'u32
-  if bodyLen < 0 or uint64(bodyLen) > uint64(high(uint32)):
-    raise newException(ValueError, "AME DAC body length is outside the wire range")
-  wireBodyLen = uint32(bodyLen)
-  flags.endOfPackage = true
-  if S.auth.current.epochId > uint32(high(uint16)):
-    raise newException(ValueError, "AME epoch does not fit the DAC epoch field")
-  if S.pathLane == dplSuperCleanPath or wireBodyLen > uint32(high(uint16)):
-    result = initDacSuperCleanFrameHeader(dmkPackageChunk, S.sessionId,
-      S.laneId, uint16(S.auth.current.epochId), S.nextDacSequence, wireBodyLen,
-      flags)
-    return
-  result = initDacFrameHeader(dmkPackageChunk, S.sessionId, S.laneId,
-    uint16(S.auth.current.epochId), S.nextDacSequence, wireBodyLen, flags)
 
 proc sealEnvelope(S: AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
-    payload: openArray[uint8], d: DacFrameHeader = default(DacFrameHeader)):
-    AmeProtectedBody {.role: orchestrator.} =
-  ## S/h/carrier/payload/d: complete exact protection inputs.
+    payload: openArray[uint8]): AmeProtectedBody {.role: orchestrator.} =
+  ## S/h/carrier/payload: complete exact protection inputs.
   var
     context: ByteSeq = ameEpochKeyContext(S.auth.current, S.sessionId,
       outboundAmeDirection(S.auth.endpointRole))
     sealed = protectAmeMessage(S.auth.current.layout, S.auth.current.tier,
-      S.auth.current.exchange, payload, buildAad(carrier, h, d), context)
+      S.auth.current.exchange, payload, buildAad(carrier, h), context,
+      S.auth.current.params.authTagLen)
   result.epochId = S.auth.current.epochId
   result.nonce = sealed.nonce
   result.authTag = sealed.message.authTag
@@ -900,9 +908,9 @@ proc sealAmeTcpFrame*(S: var AmeSession,
     h = initAmeFrameHeader(ampkLaneData, S.messageClass, S.sessionId,
       S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
       checkedEnvelopeLen(S.auth.current.layout, S.auth.current.tier, innerLen,
-        "TCP payload"))
+        "TCP payload", S.auth.current.params.authTagLen))
     e: AmeProtectedBody
-  inner = sealAmeInnerPayload(S, acrTcp, payload, S.nextAmeSequence, 0'u32)
+  inner = sealAmeInnerPayload(S, acrTcp, payload, S.nextAmeSequence)
   e = sealEnvelope(S, h, acrTcp, inner)
   result = encodeAmeFrame(h, encodeAmeProtectedBody(e))
   secureClearAmeBytes(inner)
@@ -911,33 +919,34 @@ proc sealAmeTcpFrame*(S: var AmeSession,
 proc sealAmeDacFrame*(S: var AmeSession,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator.} =
   ## S/payload: connection and plaintext; caller accounts successful queue/send.
+  ## The datagram is one AME frame. It used to carry a DAC header in front of
+  ## that, 27 bytes restating the session, lane, epoch and a sequence that
+  ## advanced in step with the AME one -- a second identity a receiver had to
+  ## parse and reconcile before it could authenticate anything.
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
-  if S.nextAmeSequence == high(uint32) or S.nextDacSequence == high(uint32):
+  if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME DAC send sequence is exhausted")
   var
     innerLen: int = ameInnerPayloadLen(S, payload.len)
     h = initAmeFrameHeader(ampkLaneData, S.messageClass, S.sessionId,
       S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
       checkedEnvelopeLen(S.auth.current.layout, S.auth.current.tier, innerLen,
-        "DAC payload"))
-    d = buildDacHeader(S, ameFrameHeaderLen + int(h.payloadLen))
+        "DAC payload", S.auth.current.params.authTagLen))
     inner: ByteSeq = @[]
     e: AmeProtectedBody
-    frame: ByteSeq = @[]
-  inner = sealAmeInnerPayload(S, acrDac, payload, S.nextAmeSequence,
-    S.nextDacSequence)
-  e = sealEnvelope(S, h, acrDac, inner, d)
-  frame = encodeAmeFrame(h, encodeAmeProtectedBody(e))
-  result = encodeDacFrame(d, frame)
+  inner = sealAmeInnerPayload(S, acrDac, payload, S.nextAmeSequence)
+  e = sealEnvelope(S, h, acrDac, inner)
+  result = encodeAmeFrame(h, encodeAmeProtectedBody(e))
   secureClearAmeBytes(inner)
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
-  S.nextDacSequence = S.nextDacSequence + 1'u32
 
 proc openWithEpoch(E: AmeEpochKeySet, e: AmeProtectedBody,
     aad, keyContext: openArray[uint8]): tuple[ok: bool, payload: ByteSeq] {.
     role: orchestrator.} =
-  ## E/e/aad: exact epoch, protected envelope, and metadata binding.
+  ## E/e/aad: exact epoch, protected envelope, and metadata binding. The tag
+  ## length comes from the epoch itself, so a retiring epoch keeps opening
+  ## frames sealed under its own value after the current one has moved on.
   var message: AmeProtectedMessage
   if E.epochId != e.epochId:
     return
@@ -946,7 +955,7 @@ proc openWithEpoch(E: AmeEpochKeySet, e: AmeProtectedBody,
   message.payload = e.payload
   message.authTag = e.authTag
   result = openAmeMessage(E.layout, E.tier, E.exchange, e.nonce, message, aad,
-    keyContext)
+    keyContext, E.params.authTagLen)
 
 proc consumeRetiringGrace(S: var AmeSession) {.role: stateController.} =
   ## S: connection whose old epoch expires after authenticated frame progress.
@@ -960,17 +969,16 @@ proc consumeRetiringGrace(S: var AmeSession) {.role: stateController.} =
   S.auth.retiringFramesLeft = 0
 
 proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
-    carrier: AmeCarrier, d: DacFrameHeader): string {.role: parser.} =
-  ## S/f/carrier/d: expected connection and received metadata.
-  if f.header.packetKind != ampkLaneData:
+    expected: AmePacketKind): string {.role: parser.} =
+  ## S/f/expected: expected connection identity and the packet kind this path
+  ## accepts. One header carries the identity now, so there is no second one to
+  ## agree with.
+  if f.header.packetKind != expected:
     return "AME expected lane data"
   if f.header.messageClass != S.messageClass or
       f.header.sessionId != S.sessionId or f.header.rootLaneId != S.rootLaneId or
       f.header.parentLaneId != S.parentLaneId or f.header.laneId != S.laneId:
     return "AME frame binding mismatch"
-  if carrier == acrDac and (d.messageKind != dmkPackageChunk or
-      d.sessionId != S.sessionId or d.laneId != S.laneId):
-    return "AME DAC binding mismatch"
 
 proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
     role: stateController.} =
@@ -1001,11 +1009,11 @@ proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
   result = true
 
 proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
-    carrier: AmeCarrier, d: DacFrameHeader = default(DacFrameHeader),
-    remoteDac: dac_transport.DacAddress = default(dac_transport.DacAddress),
+    carrier: AmeCarrier,
+    remoteDac: DacAddress = default(DacAddress),
     remoteTcp: transport_types.TcpAddress = default(transport_types.TcpAddress)):
     AmeOpenResult {.role: orchestrator.} =
-  ## S/f/carrier/d/remote: complete receive inputs.
+  ## S/f/carrier/remote: complete receive inputs.
   var
     err: string = amePeerTrustError(S)
     e: AmeProtectedBody
@@ -1015,18 +1023,13 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
     currentContext: ByteSeq = @[]
     retiringContext: ByteSeq = @[]
   if err.len == 0:
-    err = validateFrameBinding(S, f, carrier, d)
+    err = validateFrameBinding(S, f, ampkLaneData)
   if err.len > 0:
     result.err = err
     S.lastErr = err
     return
   e = decodeAmeProtectedBody(f.payload)
-  if carrier == acrDac and (e.epochId > uint32(high(uint16)) or
-      d.epochId != uint16(e.epochId)):
-    result.err = "AME DAC epoch mismatch"
-    S.lastErr = result.err
-    return
-  aad = buildAad(carrier, f.header, d)
+  aad = buildAad(carrier, f.header)
   currentContext = ameEpochKeyContext(S.auth.current, S.sessionId,
     inboundAmeDirection(S.auth.endpointRole))
   opened = openWithEpoch(S.auth.current, e, aad, currentContext)
@@ -1047,12 +1050,8 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
     result.err = "AME replay rejected"
     S.lastErr = result.err
     return
-  if carrier == acrDac and not replayAccept(S.dacCarrierReplay, d.sequence):
-    result.err = "AME DAC replay rejected"
-    S.lastErr = result.err
-    return
   fomkeOpened = openAmeInnerPayload(S, carrier, opened.payload,
-    f.header.sequence, if carrier == acrDac: d.sequence else: 0'u32)
+    f.header.sequence)
   if not fomkeOpened.ok:
     result.err = "AME FOMKE open failed: " & fomkeOpened.err
     S.lastErr = result.err
@@ -1068,7 +1067,7 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
   result.packet.laneId = f.header.laneId
   result.packet.ameSequence = f.header.sequence
   if carrier == acrDac:
-    result.packet.dacSequence = d.sequence
+    result.packet.dacSequence = f.header.sequence
   else:
     if S.tcpRecvSequence == high(uint32):
       result.ok = false
@@ -1088,12 +1087,11 @@ proc openAmeTcpFrame*(S: var AmeSession, frame: openArray[uint8],
     remoteTcp = remote)
 
 proc openAmeDacFrame*(S: var AmeSession, frame: openArray[uint8],
-    remote: dac_transport.DacAddress = default(dac_transport.DacAddress)):
+    remote: DacAddress = default(DacAddress)):
     AmeOpenResult {.role: orchestrator.} =
-  ## S/frame/remote: DAC-carried AME2 frame.
-  var d = decodeDacFrame(frame)
-  result = openDecoded(S, decodeAmeFrame(d.payload), acrDac, d.header,
-    remoteDac = remote)
+  ## S/frame/remote: DAC-carried AME2 frame. The datagram is the AME frame
+  ## itself; there is no outer header to strip or to disagree with it.
+  result = openDecoded(S, decodeAmeFrame(frame), acrDac, remoteDac = remote)
 
 proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
     carrier: AmeCarrier, payload: openArray[uint8]): ByteSeq {.
@@ -1101,9 +1099,7 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   ## S/kind/carrier/payload: authenticated AME control message.
   var
     h: AmeFrameHeader
-    d: DacFrameHeader
     e: AmeProtectedBody
-    frame: ByteSeq = @[]
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady}:
@@ -1113,33 +1109,20 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   h = initAmeFrameHeader(kind, amcControl, S.sessionId, S.rootLaneId,
     S.parentLaneId, S.laneId, S.nextAmeSequence,
     checkedEnvelopeLen(S.auth.current.layout, S.auth.current.tier,
-      payload.len, "control payload"))
-  if carrier == acrTcp:
-    e = sealEnvelope(S, h, carrier, payload)
-    result = encodeAmeFrame(h, encodeAmeProtectedBody(e))
-  else:
-    if S.nextDacSequence == high(uint32):
-      raise newException(ValueError, "AME DAC send sequence is exhausted")
-    d = buildDacHeader(S, ameFrameHeaderLen + int(h.payloadLen))
-    e = sealEnvelope(S, h, carrier, payload, d)
-    frame = encodeAmeFrame(h, encodeAmeProtectedBody(e))
-    result = encodeDacFrame(d, frame)
-    S.nextDacSequence = S.nextDacSequence + 1'u32
+      payload.len, "control payload", S.auth.current.params.authTagLen))
+  e = sealEnvelope(S, h, carrier, payload)
+  result = encodeAmeFrame(h, encodeAmeProtectedBody(e))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
-    expected: AmePacketKind, carrier: AmeCarrier,
-    d: DacFrameHeader): string {.role: parser.} =
-  ## S/f/expected/carrier/d: expected authenticated control metadata.
+    expected: AmePacketKind): string {.role: parser.} =
+  ## S/f/expected: expected authenticated control metadata.
   if f.header.packetKind != expected or f.header.messageClass != amcControl:
     return "AME control packet kind mismatch"
   if f.header.sessionId != S.sessionId or
       f.header.rootLaneId != S.rootLaneId or
       f.header.parentLaneId != S.parentLaneId or f.header.laneId != S.laneId:
     return "AME control frame binding mismatch"
-  if carrier == acrDac and (d.messageKind != dmkPackageChunk or
-      d.sessionId != S.sessionId or d.laneId != S.laneId):
-    return "AME control DAC binding mismatch"
 
 proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
     expected: AmePacketKind, carrier: AmeCarrier,
@@ -1147,26 +1130,16 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
     err: string] {.role: orchestrator.} =
   ## S/frame/expected/carrier/useCandidate: authenticated control open inputs.
   var
-    d: DacDecodedFrame
-    f: AmeDecodedFrame
+    f: AmeDecodedFrame = decodeAmeFrame(frame)
     e: AmeProtectedBody
     aad: ByteSeq = @[]
     opened: tuple[ok: bool, payload: ByteSeq]
     context: ByteSeq = @[]
-  if carrier == acrDac:
-    d = decodeDacFrame(frame)
-    f = decodeAmeFrame(d.payload)
-  else:
-    f = decodeAmeFrame(frame)
-  result.err = controlBindingError(S, f, expected, carrier, d.header)
+  result.err = controlBindingError(S, f, expected)
   if result.err.len > 0:
     return
   e = decodeAmeProtectedBody(f.payload)
-  if carrier == acrDac and (e.epochId > uint32(high(uint16)) or
-      d.header.epochId != uint16(e.epochId)):
-    result.err = "AME control DAC epoch mismatch"
-    return
-  aad = buildAad(carrier, f.header, d.header)
+  aad = buildAad(carrier, f.header)
   if useCandidate:
     if not S.pendingIncoming.active:
       result.err = "AME session has no candidate epoch"
@@ -1188,10 +1161,6 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
       f.header.sequence):
     result.err = "AME control AME replay rejected"
     return
-  if carrier == acrDac and not replayAccept(S.dacCarrierReplay,
-      d.header.sequence):
-    result.err = "AME control DAC replay rejected"
-    return
   if carrier == acrTcp:
     if S.tcpRecvSequence == high(uint32):
       result.err = "AME TCP receive sequence is exhausted"
@@ -1199,6 +1168,94 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
   result.ok = true
   result.payload = opened.payload
+
+proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
+    body: openArray[uint8]): ByteSeq {.role: orchestrator.} =
+  ## S: connection the DAC message belongs to.
+  ## kind: which DAC message this is.
+  ## body: the encoded DAC body.
+  ## The kind becomes the FIRST BYTE OF THE PROTECTED PLAINTEXT rather than a
+  ## field in a header. So it is encrypted as well as authenticated: an
+  ## observer cannot tell an ACK from a repair hint by looking, and a peer that
+  ## rewrites it fails verification instead of being believed. DAC control
+  ## traffic used to ride bare, where anyone could forge a receipt.
+  requireAmeAuth(S.auth)
+  requireAmePeerTrust(S)
+  if kind == dmkUnknown:
+    raise newException(ValueError, "DAC control message kind is unknown")
+  if S.nextAmeSequence == high(uint32):
+    raise newException(ValueError, "AME send sequence is exhausted")
+  var
+    tagged: ByteSeq = @[uint8(ord(kind))]
+    inner: ByteSeq = @[]
+    h: AmeFrameHeader
+    e: AmeProtectedBody
+  appendAmeBytes(tagged, body)
+  inner = sealAmeInnerPayload(S, acrDac, tagged, S.nextAmeSequence)
+  h = initAmeFrameHeader(ampkDacControl, amcControl, S.sessionId,
+    S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
+    checkedEnvelopeLen(S.auth.current.layout, S.auth.current.tier, inner.len,
+      "DAC control payload", S.auth.current.params.authTagLen))
+  e = sealEnvelope(S, h, acrDac, inner)
+  result = encodeAmeFrame(h, encodeAmeProtectedBody(e))
+  secureClearAmeBytes(inner)
+  secureClearAmeBytes(tagged)
+  S.nextAmeSequence = S.nextAmeSequence + 1'u32
+
+proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
+    ok: bool, kind: DacMessageKind, body: ByteSeq, err: string] {.
+    role: orchestrator.} =
+  ## S/frame: connection and one DAC-carried control datagram.
+  ## Returns the kind and body only after the frame authenticates, so the
+  ## caller never dispatches on a kind an attacker chose.
+  var
+    f: AmeDecodedFrame
+    e: AmeProtectedBody
+    aad: ByteSeq = @[]
+    context: ByteSeq = @[]
+    opened: tuple[ok: bool, payload: ByteSeq]
+    fomkeOpened: FomkeOpenResult
+  result.err = amePeerTrustError(S)
+  if result.err.len > 0:
+    return
+  try:
+    f = decodeAmeFrame(frame)
+    e = decodeAmeProtectedBody(f.payload)
+  except CatchableError as exc:
+    result.err = exc.msg
+    return
+  result.err = controlBindingError(S, f, ampkDacControl)
+  if result.err.len > 0:
+    return
+  aad = buildAad(acrDac, f.header)
+  context = ameEpochKeyContext(S.auth.current, S.sessionId,
+    inboundAmeDirection(S.auth.endpointRole))
+  opened = openWithEpoch(S.auth.current, e, aad, context)
+  if not opened.ok and S.auth.retiring.epochId != 0'u32:
+    context = ameEpochKeyContext(S.auth.retiring, S.sessionId,
+      inboundAmeDirection(S.auth.endpointRole))
+    opened = openWithEpoch(S.auth.retiring, e, aad, context)
+  if not opened.ok:
+    result.err = "AME DAC control authentication failed"
+    return
+  if not replayAccept(S.dacAmeReplay, f.header.sequence):
+    result.err = "AME DAC control replay rejected"
+    return
+  fomkeOpened = openAmeInnerPayload(S, acrDac, opened.payload,
+    f.header.sequence)
+  if not fomkeOpened.ok:
+    result.err = "AME DAC control FOMKE open failed: " & fomkeOpened.err
+    return
+  if fomkeOpened.payload.len < 1:
+    result.err = "AME DAC control message carries no kind"
+    return
+  result.kind = dacMessageKindFromId(fomkeOpened.payload[0])
+  if result.kind == dmkUnknown:
+    result.err = "AME DAC control message kind is unknown"
+    return
+  result.body = fomkeOpened.payload[1 .. ^1]
+  consumeRetiringGrace(S)
+  result.ok = true
 
 proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
     fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)): ByteSeq {.
@@ -1352,7 +1409,6 @@ proc captureAmeSendRollback(S: AmeSession): AmeSendRollback {.role: helper.} =
   ## Only these fields change while sealing and accounting for one frame, so a
   ## failed send is undone without copying epoch secrets or the inbox.
   result.nextAmeSequence = S.nextAmeSequence
-  result.nextDacSequence = S.nextDacSequence
   result.path = S.path
   result.lastTrigger = S.lastTrigger
 
@@ -1363,7 +1419,6 @@ proc restoreAmeSend(S: var AmeSession, r: AmeSendRollback,
   ## FOMKE is enabled, to its pre-send ratchet. The advanced ratchet is erased
   ## before the saved one replaces it.
   S.nextAmeSequence = r.nextAmeSequence
-  S.nextDacSequence = r.nextDacSequence
   S.path = r.path
   S.lastTrigger = r.lastTrigger
   if not S.fomkeEnabled:
@@ -1382,148 +1437,27 @@ proc discardAmeSendRollback(S: AmeSession, fomke: var FomkeState,
   clearFomkeSendCache(cache)
   clearFomkeState(fomke)
 
-proc sendAmeTcp*(sock: Socket, S: var AmeSession,
-    payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/S/payload: transactional TCP send and successful-byte accounting.
+template ameSendTransaction*(S: var AmeSession, payload: openArray[uint8],
+    body: untyped) =
+  ## S/payload/body: `body` seals and writes one frame. If it raises, every
+  ## send-mutable counter, the tier path, and the FOMKE ratchet are rewound to
+  ## their pre-send values, so a failed write leaves no half-advanced state.
+  ## On success the transferred bytes are accounted and the superseded ratchet
+  ## copy is erased rather than released unwiped.
+  ##
+  ## The carrier modules share this one transaction instead of each repeating
+  ## the capture/restore dance around their own socket write.
   var
     rollback: AmeSendRollback = captureAmeSendRollback(S)
     fomke: FomkeState
     cache: FomkeSendCache
-    frame: ByteSeq = @[]
   if S.fomkeEnabled:
     fomke = cloneFomkeState(S.fomke)
     cache = cloneFomkeSendCache(S.fomkeSendCache)
   try:
-    frame = sealAmeTcpFrame(S, payload)
-    sendTcpFrame(sock, frame)
+    body
     discard recordTransferredBytes(S, uint64(payload.len))
   except:
     restoreAmeSend(S, rollback, fomke, cache)
     raise
   discardAmeSendRollback(S, fomke, cache)
-
-proc sendAmeDac*(sock: dac_transport.DacSocket, S: var AmeSession,
-    payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/S/payload: transactional connected-DAC send and accounting.
-  var
-    rollback: AmeSendRollback = captureAmeSendRollback(S)
-    fomke: FomkeState
-    cache: FomkeSendCache
-    frame: ByteSeq = @[]
-  if S.fomkeEnabled:
-    fomke = cloneFomkeState(S.fomke)
-    cache = cloneFomkeSendCache(S.fomkeSendCache)
-  try:
-    frame = sealAmeDacFrame(S, payload)
-    sendDacFrameBytes(sock, frame)
-    discard recordTransferredBytes(S, uint64(payload.len))
-  except:
-    restoreAmeSend(S, rollback, fomke, cache)
-    raise
-  discardAmeSendRollback(S, fomke, cache)
-
-proc sendAmeDac*(sock: dac_transport.DacSocket, remote: dac_transport.DacAddress,
-    S: var AmeSession, payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/remote/S/payload: transactional unconnected-DAC send and accounting.
-  var
-    rollback: AmeSendRollback = captureAmeSendRollback(S)
-    fomke: FomkeState
-    cache: FomkeSendCache
-    frame: ByteSeq = @[]
-  if S.fomkeEnabled:
-    fomke = cloneFomkeState(S.fomke)
-    cache = cloneFomkeSendCache(S.fomkeSendCache)
-  try:
-    frame = sealAmeDacFrame(S, payload)
-    sendDacFrameBytes(sock, remote, frame)
-    discard recordTransferredBytes(S, uint64(payload.len))
-  except:
-    restoreAmeSend(S, rollback, fomke, cache)
-    raise
-  discardAmeSendRollback(S, fomke, cache)
-
-proc recvAmeTcp*(sock: Socket, S: var AmeSession, timeoutMs: int = 4000,
-    maxFrameBytes: uint32 = uint32(defaultAmeMaxFrameBytes)):
-    AmeOpenResult {.role: orchestrator.} =
-  ## sock/S/timeout/max: receive one framed TCP AME2 payload.
-  var frame = recvTcpFrame(sock, timeoutMs, maxFrameBytes)
-  if not frame.ok:
-    result.err = frame.err
-    return
-  result = openAmeTcpFrame(S, frame.payload)
-
-proc recvAmeDac*(sock: dac_transport.DacSocket, S: var AmeSession,
-    timeoutMs: int = 4000, maxFrameBytes: int = defaultAmeMaxFrameBytes):
-    AmeOpenResult {.role: orchestrator.} =
-  ## sock/S/timeout/max: receive one DAC AME2 payload.
-  var received = recvDacFrameBytes(sock, maxFrameBytes, timeoutMs)
-  if not received.ok:
-    result.err = received.err
-    S.lastErr = result.err
-    return
-  result = openAmeDacFrame(S, received.payload, received.remote)
-
-proc close*(client: var AmeTcpClient) {.role: orchestrator.} =
-  ## client: TCP client whose socket is closed.
-  if client.socket != nil:
-    client.socket.close()
-    client.socket = nil
-  clearAmeSession(client.connection)
-
-proc wrapAmeTcpClient*(sock: Socket, S: AmeSession,
-    remote: transport_types.TcpAddress = default(transport_types.TcpAddress),
-    tls: transport_types.TlsConfig = default(transport_types.TlsConfig)):
-    AmeTcpClient {.role: wrapper.} =
-  ## sock/S/remote/tls: caller-owned connected socket and validated AME state.
-  if sock == nil:
-    raise newException(ValueError, "AME TCP client socket is nil")
-  requireAmeAuth(S.auth)
-  result.socket = sock
-  result.connection = S
-  result.remote = remote
-  result.tls = tls
-
-proc connectAmeTcpClient*(remote: transport_types.TcpAddress,
-    S: AmeSession, timeoutMs: int = 4000,
-    tls: transport_types.TlsConfig = default(transport_types.TlsConfig)):
-    AmeTcpClient {.role: orchestrator.} =
-  ## remote/S/timeoutMs/tls: endpoint, pre-negotiated state, and transport setup.
-  result = wrapAmeTcpClient(connectTcp(remote, timeoutMs, tls), S, remote, tls)
-
-proc connectAmeDacClient*(remote: dac_transport.DacAddress,
-    S: AmeSession, timeoutMs: int = 4000): AmeDacClient {.
-    role: orchestrator.} =
-  ## remote/S/timeoutMs: DAC endpoint and pre-negotiated AME state.
-  requireAmeAuth(S.auth)
-  result.socket = openDacPeer(remote, timeoutMs)
-  result.connection = S
-  result.remote = remote
-
-proc close*(client: var AmeDacClient) {.role: orchestrator.} =
-  ## client: DAC client whose socket is closed.
-  if client.socket != nil:
-    dac_transport.closeDac(client.socket)
-    client.socket = nil
-  clearAmeSession(client.connection)
-
-proc send*(client: var AmeTcpClient, payload: openArray[uint8]) {.
-    role: orchestrator.} =
-  ## client/payload: direct TCP AME send.
-  sendAmeTcp(client.socket, client.connection, payload)
-
-proc send*(client: var AmeDacClient, payload: openArray[uint8]) {.
-    role: orchestrator.} =
-  ## client/payload: direct DAC AME send.
-  sendAmeDac(client.socket, client.connection, payload)
-
-proc receive*(client: var AmeTcpClient, timeoutMs: int = 4000,
-    maxFrameBytes: uint32 = uint32(defaultAmeMaxFrameBytes)):
-    AmeOpenResult {.role: orchestrator.} =
-  ## client/timeout/max: direct TCP AME receive.
-  result = recvAmeTcp(client.socket, client.connection, timeoutMs, maxFrameBytes)
-
-proc receive*(client: var AmeDacClient, timeoutMs: int = 4000,
-    maxFrameBytes: int = defaultAmeMaxFrameBytes):
-    AmeOpenResult {.role: orchestrator.} =
-  ## client/timeout/max: direct DAC AME receive.
-  result = recvAmeDac(client.socket, client.connection, timeoutMs, maxFrameBytes)

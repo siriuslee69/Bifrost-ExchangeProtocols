@@ -10,6 +10,8 @@ import ../level0/bytes
 import ../level2/protection
 import ../../dac/types
 import ../../dac/level2/package_transfer
+import ../../dac/level3/link_table
+import ./dac_relay
 import ../../../analysis_pragmas
 
 const
@@ -133,30 +135,25 @@ proc openSecurePackageWithEpoch(E: AmeEpochKeySet, packageId: uint64,
   result.payload = decodeAmeCompressed(opened.payload, compression)
   result.ok = true
 
-proc finishAmeSecurePackage*(a: AmeAuthPackage, S: DacPackageReceiver,
+proc restoreAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
+    wire: openArray[uint8],
     compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):
     AmeSecurePackageResult {.role: orchestrator.} =
-  ## a/S/compression: established epochs, repaired receiver, negotiated codec.
+  ## a/packageId/wire/compression: established epochs, package identity, the
+  ## reassembled sealed bytes, and the negotiated codec.
+  ## This is the byte-level entry point. It does not care how the bytes were
+  ## carried, which is the whole point of sealing the package rather than the
+  ## transport: the same call restores a package that came off the relay, out
+  ## of a file, or from a courier nobody trusts.
   var
-    assembled: DacPackageResult = finishDacPackage(S)
     opened: tuple[ok: bool, payload: ByteSeq]
-  if not assembled.ok:
-    result.err = assembled.err
-    return
-  result.packageId = S.manifest.packageId
-  result.digest = S.manifest.digest
-  result.dataCount = S.manifest.dataCount
-  result.repairCount = S.repairCount
-  result.status = if S.repairCount == 0'u16: dcsCommitted else:
-    dcsCommittedWithRepair
+  result.packageId = packageId
   try:
-    opened = openSecurePackageWithEpoch(a.current, S.manifest.packageId,
-      assembled.payload, compression, a.sessionId,
-      inboundAmeDirection(a.endpointRole))
+    opened = openSecurePackageWithEpoch(a.current, packageId, wire,
+      compression, a.sessionId, inboundAmeDirection(a.endpointRole))
     if not opened.ok and a.retiring.epochId != 0'u32:
-      opened = openSecurePackageWithEpoch(a.retiring, S.manifest.packageId,
-        assembled.payload, compression, a.sessionId,
-        inboundAmeDirection(a.endpointRole))
+      opened = openSecurePackageWithEpoch(a.retiring, packageId, wire,
+        compression, a.sessionId, inboundAmeDirection(a.endpointRole))
   except CatchableError as e:
     result.err = e.msg
     return
@@ -164,4 +161,63 @@ proc finishAmeSecurePackage*(a: AmeAuthPackage, S: DacPackageReceiver,
     result.err = "AME secure-package authentication failed"
     return
   result.payload = opened.payload
+  result.ok = true
+
+proc finishAmeSecurePackage*(a: AmeAuthPackage, S: DacPackageReceiver,
+    compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):
+    AmeSecurePackageResult {.role: orchestrator.} =
+  ## a/S/compression: established epochs, repaired receiver, negotiated codec.
+  ## The hand-driven path: the caller owned the receiver and did its own
+  ## repair. A live session should use the relay instead.
+  var
+    assembled: DacPackageResult = finishDacPackage(S)
+  if not assembled.ok:
+    result.err = assembled.err
+    return
+  result = restoreAmeSecurePackage(a, S.manifest.packageId,
+    assembled.payload, compression)
+  result.digest = S.manifest.digest
+  result.dataCount = S.manifest.dataCount
+  result.repairCount = S.repairCount
+  result.status = if S.repairCount == 0'u16: dcsCommitted else:
+    dcsCommittedWithRepair
+
+proc sendAmeSecurePackage*(R: var AmeDacRelay, key: DacLinkKey,
+    packageId: uint64, plaintext: openArray[uint8], nowMs: uint32,
+    compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):
+    AmeDacRelayStep {.role: orchestrator.} =
+  ## R/key: relay and the peer the package goes to.
+  ## packageId/plaintext/nowMs: package identity, application bytes, clock.
+  ## compression: codec both ends agreed on.
+  ##
+  ## This path COMPRESSES ONLY. It takes no key material, which is the point:
+  ## on a live relay the package-level AEAD would encrypt bytes that are about
+  ## to be encrypted again, and authenticate a package the transport already
+  ## authenticates end to end. Every datagram is sealed under the epoch, the
+  ## manifest carrying the package's BLAKE3 digest is itself a sealed message,
+  ## and `finishDacPackage` checks the assembled bytes against that digest
+  ## before committing. An attacker can forge none of the three.
+  ##
+  ## `planAmeSecurePackage` still seals, because bytes that leave through a
+  ## file or an untrusted courier have no transport to inherit that from.
+  result = sendAmeDacPackage(R, key, packageId,
+    encodeAmeCompressed(plaintext, compression), nowMs)
+
+proc openAmeSecurePackageStep*(packageId: uint64, step: AmeDacRelayStep,
+    compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):
+    AmeSecurePackageResult {.role: orchestrator.} =
+  ## packageId/compression: expected package identity and the agreed codec.
+  ## step: a relay step whose kind is adrPackageComplete.
+  ## Turns the relay's finished payload back into plaintext, so a caller never
+  ## has to own a DacPackageReceiver to receive a package. The bytes arrived
+  ## authenticated, so all that is left is bounded decompression.
+  result.packageId = packageId
+  if step.kind != adrPackageComplete:
+    result.err = "AME secure package needs a completed relay step"
+    return
+  try:
+    result.payload = decodeAmeCompressed(step.payload, compression)
+  except CatchableError as e:
+    result.err = e.msg
+    return
   result.ok = true

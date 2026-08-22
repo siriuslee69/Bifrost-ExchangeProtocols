@@ -3,9 +3,9 @@
 ## -------------------------------------------------------------------------
 
 when defined(bifrostTyrXChaChaBatch):
-  import protocols/custom_crypto/xchacha20_batch as tyr_xchacha_batch
+  import tyr/ciphers/xchacha20_batch as tyr_xchacha_batch
 else:
-  import protocols/custom_crypto/xchacha20 as tyr_xchacha
+  import tyr/ciphers/xchacha20 as tyr_xchacha
 
 import ../types
 import ../../analysis_pragmas

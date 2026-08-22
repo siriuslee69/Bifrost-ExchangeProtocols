@@ -2,7 +2,6 @@
 ## DAC Wire Tests <- body codec roundtrips and validation
 ## ---------------------------------------------------------
 
-import std/strutils
 import unittest
 
 import ../src/protocols/types
@@ -10,14 +9,12 @@ import ../src/protocols/dac/types
 import ../src/protocols/dac/level0/framing
 import ../src/protocols/dac/level0/defaults
 import ../src/protocols/dac/level0/path_stats
-import ../src/protocols/dac/level0/receive_budget
 import ../src/protocols/dac/level0/ack_range
 import ../src/protocols/dac/level0/package_commit
 import ../src/protocols/dac/level1/path_probe
 import ../src/protocols/dac/level1/package_manifest
 import ../src/protocols/dac/level1/package_chunk
 import ../src/protocols/dac/level1/parity_shard
-import ../src/protocols/dac/level1/eir_parity
 import ../src/protocols/dac/level1/repair_hint
 import ../src/protocols/dac/level1/repair_chunk
 import ../src/protocols/dac/level1/path_switch
@@ -28,13 +25,11 @@ suite "DAC wire":
       digest: array[32, uint8]
       nonce: array[9, uint8]
       stats: DacPathStats
-      budget: DacReceiveBudget
       commit: DacPackageCommit
       probe: DacPathProbe
       switchReq: DacPathSwitch
       body: ByteSeq
       decodedStats: DacPathStats
-      decodedBudget: DacReceiveBudget
       decodedCommit: DacPackageCommit
       decodedProbe: DacPathProbe
       decodedSwitch: DacPathSwitch
@@ -42,8 +37,6 @@ suite "DAC wire":
     nonce = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
     stats = initDacPathStats(120'u32, 15'u16, 3'u16, 1'u16, 1400'u16,
       4'u16, 600'u16)
-    budget = initDacReceiveBudget(8192'u32, 4'u16, 3'u16, 1024'u16,
-      32'u16, 4096'u32, 90'u16)
     commit = initDacPackageCommit(71'u64, digest, 4'u16, 1'u16,
       dcsCommittedWithRepair)
     probe = initDacPathProbe(9'u32, dplMobilePath, 48374'u16, 48371'u16,
@@ -58,14 +51,6 @@ suite "DAC wire":
     body[^1] = 1'u8
     expect ValueError:
       discard decodeDacPathStats(body)
-
-    body = encodeDacReceiveBudget(budget)
-    check body.len == dacReceiveBudgetLen
-    decodedBudget = decodeDacReceiveBudget(body)
-    check decodedBudget == budget
-    body[^1] = 1'u8
-    expect ValueError:
-      discard decodeDacReceiveBudget(body)
 
     body = encodeDacPackageCommit(commit)
     check body.len == dacPackageCommitLen
@@ -96,7 +81,7 @@ suite "DAC wire":
       ack: DacAckRange
       body: ByteSeq
       decoded: DacAckRange
-    ack = initDacAckRange(44'u32, 96'u8, 2'u8)
+    ack = initDacAckRange(44'u32, 2'u8)
     addDacAckRange(ack, initDacAckRangeEntry(44'u32, 4'u16))
     addDacAckRange(ack, initDacAckRangeEntry(60'u32, 2'u16))
     body = encodeDacAckRange(ack)
@@ -186,27 +171,21 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacRepairChunk(body)
 
-  test "Eir-backed DAC parity payload verifies without copying source bytes":
+  test "parity shards carry a Reed-Solomon payload across the wire":
     var
-      groupBytes: ByteSeq
-      payload: ByteSeq
       shard: DacParityShard
-      report: DacParityVerifyReport
-      tampered: ByteSeq
-    groupBytes = @[byte 9, 4, 1, 7, 3, 2, 8, 5, 6]
-    payload = encodeDacEirParityPayload(groupBytes, 4'u8)
-    check payload.len > dacEirParityHeaderLen
-    shard = initDacEirParityShard(7001'u64, 3'u32, 4'u16, groupBytes, 4'u8)
-    check shard.repairMode == drmXor
-    report = verifyDacEirParityPayload(groupBytes, payload)
-    check report.ok
-    report = verifyDacEirParityShard(groupBytes, shard)
-    check report.ok
-    tampered = shard.payload
-    tampered[tampered.high] = tampered[tampered.high] xor 0x01'u8
-    report = verifyDacEirParityPayload(groupBytes, tampered)
-    check not report.ok
-    check report.err.find("parity mismatch") >= 0
+      body: ByteSeq
+      decoded: DacParityShard
+    shard = initDacParityShard(7001'u64, 3'u32, 4'u16, drmReedSolomon,
+      @[byte 9, 4, 1, 7, 3, 2, 8, 5, 6])
+    body = encodeDacParityShard(shard)
+    check body.len == dacParityShardHeaderLen + shard.payload.len
+    decoded = decodeDacParityShard(body)
+    check decoded == shard
+    check decoded.repairMode == drmReedSolomon
+    body[14] = uint8(ord(drmNone))
+    expect ValueError:
+      discard decodeDacParityShard(body)
 
   test "manifest body roundtrips through DAC1 framing":
     var

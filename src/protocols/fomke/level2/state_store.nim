@@ -6,8 +6,8 @@ import std/os
 when defined(posix):
   import std/posix
 
-import protocols/wrapper/basic_api as tyr_basic
-import protocols/wrapper/helpers/algorithms as tyr_alg
+import tyr/helpers/random as tyr_random
+import tyr/helpers/tiers as tyr_alg
 
 import ../../types
 import ../../ame/level0/bytes
@@ -198,7 +198,7 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     keyInfo = buildCheckpointKeyInfo(context)
     aad = buildCheckpointAad(counter, context)
     keyMaterial = deriveTmeAeadKeyMaterial(storageKey, keyInfo)
-    nonce = tyr_basic.cryptoRand(tyr_alg.raSystem, tmeAeadNonceBytes)
+    nonce = tyr_random.cryptoRand(tyr_alg.raSystem, tmeAeadNonceBytes)
     sealed = sealTmeAead(keyMaterial, nonce, stateBytes, aad)
     envelope = encodeCheckpointEnvelope(counter, nonce, sealed)
     slot = int(counter and 1'u64)

@@ -2,9 +2,11 @@
 ## AME Protection <- immutable layout and tier-selected protection layers
 ## -------------------------------------------------------------------------
 
-import protocols/wrapper/basic_api as tyr_basic
-import protocols/wrapper/helpers/algorithms as tyr_alg
-import protocols/custom_crypto/blake3 as tyr_blake3
+import tyr/helpers/random as tyr_random
+import ../level1/symmetric
+
+import tyr/helpers/tiers as tyr_alg
+
 
 import ../../types
 import ../types
@@ -34,7 +36,7 @@ proc ameProtectionNonceLen*(L: AmeSuiteLayout,
 proc randomAmeNonce*(L: AmeSuiteLayout,
     t: AmeMaskTier): ByteSeq {.role: dataFetcher.} =
   ## L/t: immutable layout and tier determining nonce bytes.
-  result = tyr_basic.cryptoRand(tyr_alg.raSystem, ameProtectionNonceLen(L, t))
+  result = tyr_random.cryptoRand(tyr_alg.raSystem, ameProtectionNonceLen(L, t))
 
 proc nonceSlice(A: openArray[byte], offset: int,
     a: AmeCipherAlgorithm): ByteSeq {.role: parser.} =
@@ -77,8 +79,7 @@ proc cryptPayload(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
       label = "cipher:" & $uint8(ord(L.ciphers.algorithms[i])) & ":" & $i
       key = deriveAmeLayerKey(E, L, t, label, context = keyContext)
       n = nonceSlice(nonce, offset, L.ciphers.algorithms[i])
-      result = tyr_basic.symEnc(toTyrCipher(L.ciphers.algorithms[i]), key, n,
-        result)
+      result = ameCipherXor(L.ciphers.algorithms[i], key, n, result)
       offset = offset + n.len
     i = i + 1
 
@@ -99,7 +100,7 @@ proc normalizeMac(A: openArray[byte], wanted: int): ByteSeq {.role: helper.} =
   appendAmeLabel(seed, "AME-MAC-NORMALIZE-v1")
   appendAmeU32(seed, uint32(A.len))
   appendAmeBytes(seed, A)
-  result = tyr_blake3.blake3Hash(seed, wanted)
+  result = blake3AmeHash(seed, wanted)
 
 proc authenticateAme*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
     data: openArray[byte], authTagLen: int = ameProtectionAuthTagLen,
@@ -120,18 +121,21 @@ proc authenticateAme*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
     if algorithmSlotSelected(t.masks.mac, i):
       label = "mac:" & $uint8(ord(L.macs.algorithms[i])) & ":" & $i
       key = deriveAmeLayerKey(E, L, t, label, context = keyContext)
-      raw = tyr_basic.hmacCreate(toTyrMac(L.macs.algorithms[i]), key, @data,
+      raw = ameMacTag(L.macs.algorithms[i], key, data,
         nativeMacLen(L.macs.algorithms[i], authTagLen))
       tag = normalizeMac(raw, authTagLen)
       xorAmeInto(result, tag)
     i = i + 1
 
-proc authInput(L: AmeSuiteLayout, t: AmeMaskTier, nonce, aad,
-    cipher: openArray[byte]): ByteSeq {.role: truthBuilder.} =
-  ## L/t/nonce/aad/cipher: canonical authenticated fields.
-  appendAmeLabel(result, "AME-PROTECTED-TIER-v2")
+proc authInput(L: AmeSuiteLayout, t: AmeMaskTier, tagLen: AmeAuthTagLen,
+    nonce, aad, cipher: openArray[byte]): ByteSeq {.role: truthBuilder.} =
+  ## L/t/tagLen/nonce/aad/cipher: canonical authenticated fields.
+  ## The tag length is authenticated alongside everything else, so an
+  ## attacker cannot talk one side down to a shorter tag than it agreed.
+  appendAmeLabel(result, "AME-PROTECTED-TIER-v3")
   appendAmeBytes(result, encodeAmeSuiteLayout(L))
   appendAmeBytes(result, encodeAmeMaskTier(t))
+  result.add(uint8(ord(tagLen)))
   appendAmeU32(result, uint32(aad.len))
   appendAmeBytes(result, aad)
   appendAmeU32(result, uint32(nonce.len))
@@ -142,41 +146,48 @@ proc authInput(L: AmeSuiteLayout, t: AmeMaskTier, nonce, aad,
 proc protectAmeMessageWithNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState,
     nonce, msg: openArray[byte], aad: openArray[byte] = [],
-    keyContext: openArray[byte] = []):
+    keyContext: openArray[byte] = [],
+    tagLen: AmeAuthTagLen = aatl32):
     AmeProtectedMessage {.role: orchestrator.} =
   ## L/t/E/nonce/msg/aad: exact persisted-message inputs. Callers that store a
   ## nonce beside ciphertext use this entrypoint to replay the same nonce at
   ## open time.
+  ## tagLen: how many tag bytes this session agreed to carry.
   result.payload = cryptPayload(L, t, E, nonce, msg, keyContext)
   result.authTag = authenticateAme(L, t, E,
-    authInput(L, t, nonce, aad, result.payload), keyContext = keyContext)
+    authInput(L, t, tagLen, nonce, aad, result.payload), int(ord(tagLen)),
+    keyContext)
 
 proc protectAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState,
     msg: openArray[byte], aad: openArray[byte] = [],
-    keyContext: openArray[byte] = []): tuple[
+    keyContext: openArray[byte] = [],
+    tagLen: AmeAuthTagLen = aatl32): tuple[
     message: AmeProtectedMessage, nonce: ByteSeq] {.role: orchestrator.} =
-  ## L/t/E/msg/aad: tier-selected protection with a fresh random nonce.
+  ## L/t/E/msg/aad/tagLen: tier-selected protection with a fresh random nonce.
   result.nonce = randomAmeNonce(L, t)
   result.message = protectAmeMessageWithNonce(L, t, E, result.nonce, msg, aad,
-    keyContext)
+    keyContext, tagLen)
 
 proc openAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
     nonce: openArray[byte], message: AmeProtectedMessage,
-    aad: openArray[byte] = [], keyContext: openArray[byte] = []): tuple[
+    aad: openArray[byte] = [], keyContext: openArray[byte] = [],
+    tagLen: AmeAuthTagLen = aatl32): tuple[
     ok: bool, payload: ByteSeq] {.
     role: orchestrator.} =
   ## L/t/E/nonce/message/aad: exact authenticated open inputs.
-  ## The received tag length is never trusted. A caller that recomputed the
-  ## expected tag at `message.authTag.len` would let a sender truncate the tag
-  ## to one byte and forge a message with probability 1/256, so the full
-  ## `ameProtectionAuthTagLen` is required before any comparison happens.
+  ## tagLen: the length THIS session agreed. The arriving tag is measured
+  ## against it, never against the length the message claims for itself. A
+  ## caller that recomputed the expected tag at `message.authTag.len` would
+  ## let a sender truncate the tag to one byte and forge with probability
+  ## 1/256. The length is also inside the authenticated input, so a peer
+  ## that shortened its own tags cannot make them verify here.
   var
     expected: ByteSeq = @[]
-  if message.authTag.len != ameProtectionAuthTagLen:
+  if message.authTag.len != int(ord(tagLen)):
     return
   expected = authenticateAme(L, t, E,
-    authInput(L, t, nonce, aad, message.payload), ameProtectionAuthTagLen,
+    authInput(L, t, tagLen, nonce, aad, message.payload), int(ord(tagLen)),
     keyContext)
   if not constantTimeEqualAme(expected, message.authTag):
     return

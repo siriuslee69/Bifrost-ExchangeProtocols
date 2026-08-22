@@ -4,10 +4,10 @@
 
 import std/unittest
 
-import protocols/certificates
-import protocols/custom_crypto/sha256
-import protocols/custom_crypto/ed25519
-import protocols/custom_crypto/x25519
+import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/hashes/sha256
+import tyr/signatures/ed25519
+import tyr/kems/x25519
 
 import ../src/protocols/types
 import ../src/protocols/tls13

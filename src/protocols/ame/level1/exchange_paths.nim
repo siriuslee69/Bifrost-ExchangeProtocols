@@ -2,8 +2,6 @@
 ## AME Exchange Paths <- immutable KEM slots and target-tier transactions
 ## -------------------------------------------------------------------------
 
-import protocols/wrapper/basic_api as tyr_basic
-
 import ../../types
 import ../types
 import ../level0/bytes
@@ -12,7 +10,7 @@ import ../../../analysis_pragmas
 
 const
   ameMaxExchangeComponentLen* = 16_777_216'u32
-  ameExchangeRequestLen* = 11
+  ameExchangeRequestLen* = 12
 
 proc slotMask*(i: int): uint8 {.role: helper.} =
   ## i: zero-based path slot. Slot 0 is the most-significant bit.
@@ -34,11 +32,14 @@ proc validAmeKemMask*(A: AmeKemAlgorithms): uint8 {.role: helper.} =
 proc initAmeKemAlgorithms*(A: openArray[AmeKemAlgorithm]): AmeKemAlgorithms {.
     role: wrapper.} =
   ## A: immutable ordered KEM slots. Repeated entries remain independent.
+  ## A slot whose family this build left out is refused here, so a session is
+  ## never configured with a KEM the binary cannot execute.
   var i: int = 0
   if A.len == 0 or A.len > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME KEM layout must contain 1..8 slots")
   result.length = uint8(A.len)
   while i < A.len:
+    requireAmeKemBuilt(A[i])
     result.algorithms[i] = A[i]
     i = i + 1
 
@@ -72,10 +73,23 @@ proc requireExchangeTierShape(t: AmeMaskTier) {.role: parser.} =
       t.masks.kdf == 0'u8:
     raise newException(ValueError, "AME exchange target tier is incomplete")
 
+proc ameAuthTagLenFromId*(id: uint8): AmeAuthTagLen {.role: parser.} =
+  ## id: the one byte a peer used to name a tag length. Only the three
+  ## defined sizes decode; anything else is refused rather than rounded.
+  case id
+  of 16'u8: result = aatl16
+  of 24'u8: result = aatl24
+  of 32'u8: result = aatl32
+  else:
+    raise newException(ValueError, "AME auth tag length is not 16, 24 or 32")
+
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
-    exchangeMask: uint8): AmeExchangeRequest {.role: wrapper.} =
+    exchangeMask: uint8,
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
+    AmeExchangeRequest {.role: wrapper.} =
   ## A/targetTier: immutable KEM layout and complete next-epoch selection.
   ## exchangeMask: target KEM slots receiving fresh secrets; zero is permitted.
+  ## params: tunables the next epoch should adopt on both sides.
   var occupied: uint8 = validAmeKemMask(A)
   requireExchangeTierShape(targetTier)
   if (targetTier.masks.kem and not occupied) != 0'u8:
@@ -85,6 +99,7 @@ proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
       "AME exchange mask must be contained in the target KEM mask")
   result.targetTier = targetTier
   result.exchangeMask = exchangeMask
+  result.params = params
 
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
     I: openArray[int]): AmeExchangeRequest {.role: wrapper.} =
@@ -132,6 +147,8 @@ proc encodeAmeKemAlgorithms*(A: AmeKemAlgorithms): ByteSeq {.
 proc decodeAmeKemAlgorithms*(A: openArray[uint8]): AmeKemAlgorithms {.
     role: parser.} =
   ## A: immutable KEM layout bytes containing length and stable ids.
+  ## A peer naming a family this build left out is refused here, before any
+  ## key material is generated or read.
   var
     n: int = 0
     i: int = 0
@@ -143,6 +160,7 @@ proc decodeAmeKemAlgorithms*(A: openArray[uint8]): AmeKemAlgorithms {.
   result.length = uint8(n)
   while i < n:
     result.algorithms[i] = algorithmFromId(A[i + 1])
+    requireAmeKemBuilt(result.algorithms[i])
     i = i + 1
 
 proc appendExchangeTier(A: var ByteSeq, t: AmeMaskTier) {.
@@ -164,6 +182,7 @@ proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
     raise newException(ValueError, "AME exchange request mask is invalid")
   appendExchangeTier(result, r.targetTier)
   result.add(r.exchangeMask)
+  result.add(uint8(ord(r.params.authTagLen)))
 
 proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
     B: openArray[uint8]): AmeExchangeRequest {.role: parser.} =
@@ -179,14 +198,15 @@ proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
   t.masks.hash = B[7]
   t.masks.signature = B[8]
   t.masks.kdf = B[9]
-  result = initAmeExchangeRequest(A, t, B[10])
+  result = initAmeExchangeRequest(A, t, B[10],
+    AmeRuntimeParams(authTagLen: ameAuthTagLenFromId(B[11])))
 
 proc generateAmeExchangeKeys*(A: AmeKemAlgorithms,
     r: AmeExchangeRequest): AmeExchangeKeys {.role: orchestrator.} =
   ## A/r: immutable slots and exact fresh exchanges receiving keypairs.
   var
     i: int = 0
-    keypair: tyr_basic.AsymKeypair
+    keypair: AmeKemKeypair
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   result.request = r
   while i < int(A.length):
@@ -202,7 +222,7 @@ proc sealAmeExchange*(A: AmeKemAlgorithms, r: AmeExchangeRequest,
   var
     i: int = 0
     j: int = 0
-    env: tyr_basic.AsymCipher
+    env: AmeKemCipher
     wire: AmeKemEnvelope
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   if publicKeys.len != selectedAlgorithmCount(r):
@@ -225,7 +245,7 @@ proc openAmeExchange*(A: AmeKemAlgorithms, r: AmeExchangeRequest,
   var
     i: int = 0
     j: int = 0
-    env: tyr_basic.AsymCipher
+    env: AmeKemCipher
     n: int = selectedAlgorithmCount(r)
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   if E.len != n or secretKeys.len != n:

@@ -2,8 +2,8 @@
 ## GB3HKDF <- XOR-combined Gimli and BLAKE3 forward key derivation
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/blake3 as tyr_blake3
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
+import tyr/hashes/blake3 as tyr_blake3
+import tyr/ciphers/gimli_sponge as tyr_gimli
 
 import ../../types
 import ../../ame/level0/bytes

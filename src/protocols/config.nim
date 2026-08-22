@@ -5,6 +5,7 @@
 import std/[os, strutils]
 
 import ./ame/types
+import ./ame/level1/algorithms
 import ./ame/level1/exchange_paths
 import ./ame/level1/suites
 import ./fomke/types
@@ -28,7 +29,9 @@ var
   bifrostRuntimeConfig*: BifrostConfig
 
 proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
-  ## Build safe runtime defaults with an explicit two-KEM hybrid path.
+  ## Build safe runtime defaults with an explicit hybrid KEM path. The slots
+  ## come from the families this build carries, so the defaults are always
+  ## runnable; see `defaultAmeKemSlots`.
   result.maxTcpFrameBytes = uint32(defaultAmeMaxFrameBytes)
   result.maxDacFrameBytes = defaultAmeMaxFrameBytes
   result.defaultAmeInboxCapacity = defaultAmeInboxCapacity
@@ -38,8 +41,8 @@ proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
   result.ggAeadPregeneration = true
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
   result.fomkePregenerationPayloadBytes = fomkeDefaultPreparedPayloadBytes
-  result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms([
-    akaFireSaber, akaX25519]))
+  result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
+    defaultAmeKemSlots()))
   result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
 
 proc fomkePregenerationEnabledFor*(c: BifrostConfig,

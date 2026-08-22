@@ -2,8 +2,8 @@
 ## GGAEAD <- compact Gimli stream encryption plus GimliHMAC authentication
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
-import protocols/custom_crypto/symmetric/hmac as tyr_hmac
+import tyr/ciphers/gimli_sponge as tyr_gimli
+import tyr/macs/hmac as tyr_hmac
 
 import ../types as core_types
 import ../ame/level0/bytes

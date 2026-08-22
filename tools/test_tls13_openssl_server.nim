@@ -4,8 +4,8 @@
 
 import std/[net, os, parseopt, strutils]
 
-import protocols/certificates
-import protocols/custom_crypto/ed25519
+import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/signatures/ed25519
 
 import ../src/protocols/types
 import ../src/protocols/tls13

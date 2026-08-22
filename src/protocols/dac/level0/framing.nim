@@ -99,26 +99,24 @@ proc dacMessageKindFromId*(id: uint8): DacMessageKind {.role: parser.} =
   of 0x02'u8:
     result = dmkPathStats
   of 0x03'u8:
-    result = dmkReceiveBudget
-  of 0x04'u8:
     result = dmkPackageManifest
-  of 0x05'u8:
+  of 0x04'u8:
     result = dmkPackageChunk
-  of 0x06'u8:
+  of 0x05'u8:
     result = dmkParityShard
-  of 0x07'u8:
+  of 0x06'u8:
     result = dmkAckRange
-  of 0x08'u8:
+  of 0x07'u8:
     result = dmkRepairHint
-  of 0x09'u8:
+  of 0x08'u8:
     result = dmkRepairChunk
-  of 0x0A'u8:
+  of 0x09'u8:
     result = dmkPackageCommit
-  of 0x0B'u8:
+  of 0x0A'u8:
     result = dmkPathSwitchRequest
-  of 0x0C'u8:
+  of 0x0B'u8:
     result = dmkPathSwitchAck
-  of 0x0D'u8:
+  of 0x0C'u8:
     result = dmkDriftPayload
   else:
     result = dmkUnknown
@@ -294,6 +292,71 @@ proc encodeDacFrame*(h: DacFrameHeader,
     appendDacU32(result, h.bodyLen)
   for b in payload:
     result.add(b)
+
+proc dacPrefixMagicOk(A: openArray[uint8]): bool {.role: parser.} =
+  ## A: arriving bytes whose first four header bytes are checked.
+  var
+    i: int = 0
+  if A.len < dacBaseHeaderLen:
+    return false
+  while i < dacMagic.len:
+    if A[i] != dacMagic[i]:
+      return false
+    i = i + 1
+  result = A[3] == dacFormatVersion
+
+proc dacPrefixFlags(A: openArray[uint8], f: var DacFrameFlags): bool {.role: parser.} =
+  ## A: arriving bytes.
+  ## f: receives the unpacked flags when they are all defined.
+  try:
+    f = unpackDacFrameFlags(readDacU16(A, 5))
+  except CatchableError:
+    return false
+  result = true
+
+proc dacPrefixBodyLen(A: openArray[uint8], f: DacFrameFlags): uint32 {.role: parser.} =
+  ## A: arriving bytes, already known to hold the matching header width.
+  ## f: flags selecting the body length width.
+  if f.extendedBodyLen:
+    return readDacU32(A, 25)
+  result = uint32(readDacU16(A, 25))
+
+proc peekDacFrameIdentity*(A: openArray[uint8]): DacFrameIdentity {.role: parser.} =
+  ## A: bytes as they arrived, of any length and any content.
+  ## Reads only the fixed prefix, so a datagram that is not for us costs no
+  ## allocation and no body parse. It returns `ok = false` instead of raising,
+  ## because a dispatcher holding many peers reaches this on every arriving
+  ## packet and refusing one must be the cheapest path through it. Every field
+  ## stays zero unless `ok` is true, so a caller cannot read half an identity.
+  var
+    flags: DacFrameFlags
+    headerLen: int = dacBaseHeaderLen
+    bodyLen: uint32 = 0'u32
+    kind: DacMessageKind = dmkUnknown
+  if not dacPrefixMagicOk(A):
+    return
+  kind = dacMessageKindFromId(A[4])
+  if kind == dmkUnknown:
+    return
+  if not dacPrefixFlags(A, flags):
+    return
+  if flags.extendedBodyLen:
+    headerLen = dacExtendedHeaderLen
+  if A.len < headerLen:
+    return
+  bodyLen = dacPrefixBodyLen(A, flags)
+  if flags.extendedBodyLen and bodyLen > dacSuperCleanMaxBodyLen:
+    return
+  if A.len != headerLen + int(bodyLen):
+    return
+  result.messageKind = kind
+  result.sessionId = readDacU64(A, 7)
+  result.laneId = readDacU32(A, 15)
+  result.epochId = readDacU16(A, 19)
+  result.sequence = readDacU32(A, 21)
+  result.bodyLen = bodyLen
+  result.headerLen = headerLen
+  result.ok = true
 
 proc decodeDacFrame*(A: openArray[uint8]): DacDecodedFrame {.role: parser.} =
   ## A: complete DAC1 frame bytes.

@@ -10,8 +10,8 @@ import ../level0/types
 import ../level0/memory_ops
 import ../level1/nonce_ops
 import ../level1/chunk_crypto_ops
-import protocols/custom_crypto/blake3
-import protocols/custom_crypto/gimli_sponge
+import tyr/hashes/blake3
+import tyr/ciphers/gimli_sponge
 import ../../../analysis_pragmas
 
 const

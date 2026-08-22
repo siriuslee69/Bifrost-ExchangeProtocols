@@ -115,6 +115,72 @@ nimble exampleSecurePackage
 nimble test
 ```
 
+## Small Builds
+
+A device that speaks one KEM over one transport should not carry the code for
+five other KEMs and a second network stack. Two build flags decide what enters
+the binary. Nothing in your source changes between a full build and a slim one.
+
+```text
+nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
+```
+
+```text
++---------------------------+-------------------------+---------------------+
+| flag                      | accepted values         | default (no flag)   |
++---------------------------+-------------------------+---------------------+
+| -d:bifrostKems=<list>     | x25519 kyber saber      | all six families    |
+|                           | ntru frodo mceliece     |                     |
++---------------------------+-------------------------+---------------------+
+| -d:bifrostSigs=<list>     | ed25519 dilithium       | all four families   |
+|                           | falcon sphincs          |                     |
++---------------------------+-------------------------+---------------------+
+| -d:bifrostSymmetric=      | blake3 sha3 gimli       | all seven           |
+|   <list>                  | chacha20 aes poly1305   | primitives          |
+|                           | argon2                  |                     |
++---------------------------+-------------------------+---------------------+
+| -d:bifrostCarriers=<list> | tcp dac                 | both carriers       |
++---------------------------+-------------------------+---------------------+
+```
+
+Two notes on the lists. BLAKE3 is always compiled whatever you write, because
+AME normalizes MAC tags and derives Argon2's salt with it. And the symmetric
+flag names *primitives*, not slots, because one primitive serves several
+families at once — dropping `sha3` removes a MAC slot, two hash slots and a
+KDF slot in one move, since they are all the same code.
+
+Hybrid signature slots need two families. `asaEd25519Falcon512Hybrid` exists
+only when both `ed25519` and `falcon` are compiled; ask for it otherwise and
+the error names exactly what is missing.
+
+What comes out. A program that performs one two-slot AME KEM exchange and
+generates its signing keys, built with `-d:release` on x86-64:
+
+```text
+  everything ...................................... 747 336 bytes
+  + kems=kyber,x25519  carriers=dac ............... 506 432 bytes   (-32%)
+  + sigs=ed25519  symmetric=blake3,chacha20 ....... 249 272 bytes   (-67%)
+```
+
+The flags do not change the wire. Every slot number keeps its meaning, so a
+slim node and a full node still understand each other whenever they share an
+algorithm. What changes is what the slim node can run: a slot it lacks is
+refused the moment a layout naming it is built or decoded, before any key
+material is touched. Naming a missing family as a constant does not even
+compile, and the error says which flag to change.
+
+One wire change did happen, once, and not because of a flag: **Ed448 is gone**.
+It existed only as a liboqs algorithm, so keeping it would have forced every
+AME build to link liboqs. The signature slot ids are renumbered contiguously
+(Ed25519 is still 0x01, everything after it moved down by one). AME no longer
+depends on liboqs at all.
+
+Verify all three profiles at once:
+
+```text
+nimble testMinimalAme
+```
+
 ## Native TLS 1.3
 
 Bifrost now exports a transport-neutral TLS 1.3 client and server engine. The

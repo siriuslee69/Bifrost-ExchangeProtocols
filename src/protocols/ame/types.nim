@@ -4,7 +4,7 @@
 
 import ../types
 import ../transport/types as transport_types
-import ../dac/level0/transport as dac_transport
+import ../dac/types as dac_types
 import ../../analysis_pragmas
 
 const
@@ -14,6 +14,9 @@ const
   ameMaxAlgorithmSlots* = 8
   ameProtectionKeyLen* = 32
   ameProtectionAuthTagLen* = 32
+    ## The tag length AME uses when nothing selects another. Kept as a
+    ## constant because several sizing helpers still name it directly; the
+    ## per-session value lives in `AmeRuntimeParams.authTagLen`.
 
 type
   AmePacketKind* = enum
@@ -27,7 +30,8 @@ type
     ampkLaneData = 0x07'u8,
     ampkProblem = 0x08'u8,
     ampkPing = 0x09'u8,
-    ampkPong = 0x0A'u8
+    ampkPong = 0x0A'u8,
+    ampkDacControl = 0x0B'u8
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,
@@ -38,6 +42,31 @@ type
     amcSecret = 0x05'u8,
     amcArchive = 0x06'u8,
     amcRecovery = 0x07'u8
+
+  ## How many bytes of authentication tag every protected message carries.
+  ## The three values are the only ones expressible, so an out-of-range
+  ## length cannot be built, stored or decoded into existence.
+  ##
+  ##   aatl32   256-bit authentication. The default, and what to keep on a
+  ##            link that can afford it.
+  ##   aatl24   192-bit. Eight bytes back per message.
+  ##   aatl16   128-bit. The conventional floor, and worth it when the
+  ##            payload is a handful of bytes and the tag dominates.
+  ##
+  ## This is a SESSION parameter, never a wire-supplied one. The receiver
+  ## checks the arriving tag against the length its own session agreed; if it
+  ## trusted the length field in the message instead, a sender could truncate
+  ## the tag to one byte and forge with probability 1/256.
+  AmeAuthTagLen* = enum
+    aatl16 = 16'u8,
+    aatl24 = 24'u8,
+    aatl32 = 32'u8
+
+  ## Knobs AME exposes for something above it to tune per connection. They
+  ## are part of the epoch, so both endpoints hold the same values and a
+  ## change takes effect at the next tier rotation rather than mid-flight.
+  AmeRuntimeParams* {.role: configurator.} = object
+    authTagLen*: AmeAuthTagLen
 
   AmeKemAlgorithm* = enum
     akaFireSaber = 0x01'u8,
@@ -74,17 +103,21 @@ type
     ahaShake256 = 0x03'u8,
     ahaGimliXof = 0x04'u8
 
+  ## Ed448 used to sit at 0x02. It existed only as a liboqs algorithm, so
+  ## keeping it would have forced every AME build to link liboqs. The slots
+  ## below are renumbered contiguously rather than leaving a hole, because
+  ## the layout decoder range-checks ids and a hole would let an undefined
+  ## value through.
   AmeSignatureAlgorithm* = enum
     asaEd25519 = 0x01'u8,
-    asaEd448 = 0x02'u8,
-    asaDilithium44 = 0x03'u8,
-    asaDilithium65 = 0x04'u8,
-    asaDilithium87 = 0x05'u8,
-    asaFalcon512 = 0x06'u8,
-    asaFalcon1024 = 0x07'u8,
-    asaSphincsShake128f = 0x08'u8,
-    asaEd25519Falcon512Hybrid = 0x09'u8,
-    asaEd25519Falcon1024Hybrid = 0x0a'u8
+    asaDilithium44 = 0x02'u8,
+    asaDilithium65 = 0x03'u8,
+    asaDilithium87 = 0x04'u8,
+    asaFalcon512 = 0x05'u8,
+    asaFalcon1024 = 0x06'u8,
+    asaSphincsShake128f = 0x07'u8,
+    asaEd25519Falcon512Hybrid = 0x08'u8,
+    asaEd25519Falcon1024Hybrid = 0x09'u8
 
   AmeKdfAlgorithm* = enum
     akfaBlake3 = 0x01'u8,
@@ -150,6 +183,10 @@ type
   AmeExchangeRequest* {.role: truthState.} = object
     targetTier*: AmeMaskTier
     exchangeMask*: uint8
+    params*: AmeRuntimeParams
+      ## Tunables the initiator wants the next epoch to use. The responder
+      ## adopts them, so both sides rotate onto the same values instead of
+      ## each following its own observer.
 
   AmeKemEnvelope* {.role: truthState.} = object
     ciphertext*: ByteSeq
@@ -300,6 +337,11 @@ type
     tier*: AmeMaskTier
     exchange*: AmeExchangeState
     transcriptSalt*: ByteSeq
+    params*: AmeRuntimeParams
+      ## The tunables THIS epoch was created with. They live per epoch, not
+      ## per session, because a retiring epoch must keep opening frames that
+      ## were sealed under its own values while the new epoch uses the new
+      ## ones. Bound into every tag, so both endpoints must agree.
 
   AmeAuthPackage* {.role: truthState.} = object
     current*: AmeEpochKeySet
@@ -335,7 +377,7 @@ type
   AmePacket* {.role: truthState.} = object
     payload*: ByteSeq
     carrier*: AmeCarrier
-    remoteDac*: dac_transport.DacAddress
+    remoteDac*: dac_types.DacAddress
     remoteTcp*: transport_types.TcpAddress
     sessionId*: uint64
     rootLaneId*: uint32

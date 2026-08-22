@@ -4,7 +4,7 @@
 
 import std/[os, unittest]
 
-import protocols/custom_crypto/xchacha20 as tyr_xchacha
+import tyr/ciphers/xchacha20 as tyr_xchacha
 
 import ../src/protocols/types
 import ../src/protocols/config

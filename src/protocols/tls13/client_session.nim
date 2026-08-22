@@ -2,9 +2,12 @@
 ## TLS 1.3 Client Session <- event-driven controlled-profile client engine
 ## -----------------------------------------------------------------------
 
-import protocols/certificates
-import protocols/custom_crypto/[random, sha256, x25519]
-import protocols/custom_crypto/[rsa, ecdsa_p256]
+import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/helpers/random
+import tyr/hashes/sha256
+import tyr/kems/x25519
+import tyr/certs/rsa
+import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./[types, codec, connection, hello, key_schedule, transcript,

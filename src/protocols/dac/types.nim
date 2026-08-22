@@ -40,31 +40,46 @@ Body layering:
 +----------------------+                          +----------------------+
 | DAC Sender           |                          | DAC Receiver         |
 +----------------------+                          +----------------------+
-| path lane selector   | -- PathProbe/Stats ----> | path truth state     |
-| receive budget cache | <- ReceiveBudget ------- | memory/budget actor  |
 | package scheduler    | -- Manifest/Chunks ----> | package receive map  |
-| repair actor         | <- Ack/RepairHint ------ | gap/repair builder   |
+| parity builder       | -- ParityShard -------->| group repair actor   |
+| repair actor         | <- Ack/RepairHint ------ | gap/receipt builder  |
 | commit writer        | -- PackageCommit ------> | digest/commit actor  |
 +----------------------+                          +----------------------+
+
+Neither side asks the other to behave differently. Each one decides its own
+encoding from what it can see locally:
+
+  the sender picks    chunk size, repair mode, parity width, repair timer
+  the receiver picks  ACK batch size, ACK deadline, receipt encoding
+
+An ACK states which sequences arrived. A repair hint states which chunks are
+still missing. Both are facts about the speaker, never instructions for the
+listener -- so the two loops control disjoint things and cannot fight.
 """
 
 type
+  ## DacAddress: public DAC endpoint. It lives here rather than beside the
+  ## socket helpers so a module can name a DAC peer without compiling the
+  ## datagram transport, which carries sockets and a peer registry.
+  DacAddress* {.role: truthState.} = object
+    host*: string
+    port*: uint16
+
   ## DacMessageKind: data adaptive transport message kind.
   DacMessageKind* = enum
     dmkUnknown = 0x00'u8,
     dmkPathProbe = 0x01'u8,
     dmkPathStats = 0x02'u8,
-    dmkReceiveBudget = 0x03'u8,
-    dmkPackageManifest = 0x04'u8,
-    dmkPackageChunk = 0x05'u8,
-    dmkParityShard = 0x06'u8,
-    dmkAckRange = 0x07'u8,
-    dmkRepairHint = 0x08'u8,
-    dmkRepairChunk = 0x09'u8,
-    dmkPackageCommit = 0x0A'u8,
-    dmkPathSwitchRequest = 0x0B'u8,
-    dmkPathSwitchAck = 0x0C'u8,
-    dmkDriftPayload = 0x0D'u8
+    dmkPackageManifest = 0x03'u8,
+    dmkPackageChunk = 0x04'u8,
+    dmkParityShard = 0x05'u8,
+    dmkAckRange = 0x06'u8,
+    dmkRepairHint = 0x07'u8,
+    dmkRepairChunk = 0x08'u8,
+    dmkPackageCommit = 0x09'u8,
+    dmkPathSwitchRequest = 0x0A'u8,
+    dmkPathSwitchAck = 0x0B'u8,
+    dmkDriftPayload = 0x0C'u8
 
   ## DacPathLane: horizontal path condition profile.
   DacPathLane* = enum
@@ -121,8 +136,7 @@ type
     drmNone = 0x00'u8,
     drmXor = 0x01'u8,
     drmReedSolomon = 0x02'u8,
-    drmFountain = 0x03'u8,
-    drmTcpExact = 0x04'u8
+    drmTcpExact = 0x03'u8
 
   ## DacAckMode: receiver answer strategy.
   DacAckMode* = enum
@@ -130,7 +144,7 @@ type
     damNackOnly = 0x01'u8,
     damBatch = 0x02'u8,
     damExplicit = 0x03'u8,
-    damAudited = 0x04'u8
+    damVerified = 0x04'u8
 
   ## DacFrameFlags: common DAC frame flags.
   DacFrameFlags* {.role: configurator.} = object
@@ -163,6 +177,33 @@ type
     flags*: DacFrameFlags
     payload*: ByteSeq
 
+  ## DacTaggedMessage: one thing the link wants to say, before any framing has
+  ## decided how to carry it. The kind and the body are DAC's business; whether
+  ## that ends up as a bare DAC1 frame or as authenticated bytes inside an AME
+  ## frame is the carrier's. The sequence is stamped here rather than at render
+  ## time so the order the link chose survives whichever framing is used.
+  DacTaggedMessage* {.role: truthState.} = object
+    kind*: DacMessageKind
+    sequence*: uint32
+    flags*: DacFrameFlags
+    body*: ByteSeq
+
+  ## DacFrameIdentity: the routing fields of a frame, read without copying the
+  ## body. A dispatcher holding many peers has to know which link a datagram
+  ## belongs to before it is willing to spend an allocation on it, so this
+  ## reads the fixed prefix and stops. `ok` false means the bytes are not a
+  ## usable DAC frame; it never raises, because deciding to drop a datagram
+  ## must be the cheapest thing the dispatcher can do.
+  DacFrameIdentity* {.role: truthState.} = object
+    ok*: bool
+    messageKind*: DacMessageKind
+    sessionId*: uint64
+    laneId*: uint32
+    epochId*: uint16
+    sequence*: uint32
+    bodyLen*: uint32
+    headerLen*: int
+
   ## DacScenarioDefaults: default transport policy values for one condition.
   DacScenarioDefaults* {.role: configurator.} = object
     pathLane*: DacPathLane
@@ -176,8 +217,6 @@ type
     parityShards*: uint16
     ackBatchChunks*: uint16
     ackMaxDelayMs*: uint16
-    ackRangeCount*: uint8
-    gapBits*: uint16
     repairWaitMs*: uint16
     repairRounds*: uint8
     activeGroups*: uint8
@@ -185,95 +224,20 @@ type
     compressManifest*: bool
     orderedStream*: bool
 
-  ## DacSenderState: sender-side truth state for pacing and repair.
-  DacSenderState* {.role: truthState.} = object
-    sessionId*: uint64
-    laneId*: uint32
-    pathLane*: DacPathLane
-    nextSequence*: uint32
-    outstandingPackages*: uint16
-    creditBytes*: uint32
-    activeGroups*: uint8
-
-  ## DacReceiverState: receiver-side truth state for package assembly.
-  DacReceiverState* {.role: truthState.} = object
-    sessionId*: uint64
-    laneId*: uint32
-    pathLane*: DacPathLane
-    receiveWindowStart*: uint32
-    receiveWindowSpan*: uint16
-    bufferedBytes*: uint32
-    openPackages*: uint16
-    repairHintsSent*: uint16
-
-  ## DacAntiOraclePolicy: receiver-side masking/delay policy for repeated bad
-  ## request probes.
-  DacAntiOraclePolicy* {.role: configurator.} = object
-    badWindowSec*: uint32
-    maskAfterBadCount*: uint16
-    maskAfterUniqueKeys*: uint8
-    delayAfterBadCount*: uint16
-    delayAfterUniqueKeys*: uint8
-    minDelayMs*: uint16
-    maxDelayMs*: uint16
-    protectForSec*: uint32
-    protectSessions*: uint16
-    maxTrackedClients*: uint16
-    maxTrackedRequestsPerClient*: uint8
-    maxTrackedKeysPerRequest*: uint8
-    maxTrackedErrorsPerRequest*: uint8
-    genericErrorReply*: string
-
-  ## DacAntiOracleRequestState: one suspicious request fingerprint observed
-  ## from one client.
-  DacAntiOracleRequestState* {.role: truthState.} = object
-    requestFingerprint*: string
-    badCount*: uint16
-    lastBadUnix*: int64
-    keyFingerprints*: seq[string]
-    errorFingerprints*: seq[string]
-
-  ## DacAntiOracleClientState: one client's bad-message/oracle-defense memory.
-  DacAntiOracleClientState* {.role: truthState.} = object
-    clientFingerprint*: string
-    lastSeenUnix*: int64
-    lastSessionFingerprint*: string
-    protectedUntilUnix*: int64
-    protectedSessionsLeft*: uint16
-    badMessageCount*: uint32
-    maskedReplyCount*: uint32
-    delayCounter*: uint32
-    requests*: seq[DacAntiOracleRequestState]
-
-  ## DacAntiOracleTracker: top-level receiver cache keyed by client
-  ## fingerprint.
-  DacAntiOracleTracker* {.role: truthState.} = object
-    policy*: DacAntiOraclePolicy
-    clients*: seq[DacAntiOracleClientState]
-
-  ## DacAntiOracleDecision: one caller-facing decision after observing a
-  ## message from a tracked client.
-  DacAntiOracleDecision* {.role: truthState.} = object
-    protectionActive*: bool
-    protectionTriggered*: bool
-    maskReply*: bool
-    replyText*: string
-    delayMs*: uint16
-    badCount*: uint16
-    uniqueKeyCount*: uint8
-    uniqueErrorCount*: uint8
-
   ## DacAckRangeEntry: one contiguous sequence receipt.
   DacAckRangeEntry* {.role: truthState.} = object
     startSeq*: uint32
     count*: uint16
 
-  ## DacAckRange: receiver ACK body.
+  ## DacAckRange: receiver ACK body in one of two shapes.
+  ## ranges: contiguous runs of arrivals; empty in bitmap mode.
+  ## gapMap: one bit per sequence, set where a sequence is missing; empty in
+  ## run mode. Exactly one of the two is populated.
   DacAckRange* {.role: truthState.} = object
     ackBase*: uint32
-    gapBits*: uint8
     commitCount*: uint8
     ranges*: seq[DacAckRangeEntry]
+    gapMap*: ByteSeq
 
   ## DacPathStats: receiver path report.
   DacPathStats* {.role: truthState.} = object

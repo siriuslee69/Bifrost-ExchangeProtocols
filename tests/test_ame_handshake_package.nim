@@ -401,7 +401,7 @@ suite "AME authority handshake and secure package":
     for chunk in plan.package.chunks:
       if chunk.chunkId notin {1'u16, 3'u16}:
         packageReceiver.acceptDacPackageChunk(chunk)
-    check packageReceiver.repairGroup(plan.package.repairs[0]) == false
+    check not packageReceiver.repairGroup(plan.package.repairs[0]).ok
     hint = packageReceiver.buildDacRepairHint()
     exactRepairs = answerDacRepairHint(plan.package, hint)
     for repair in exactRepairs:
@@ -430,7 +430,7 @@ suite "AME authority handshake and secure package":
     decoded = decodeAmeCompressed(encoded, policy)
     check decoded == plaintext
 
-  test "one missing chunk is recovered by XOR and checked by Eir parity":
+  test "one missing chunk is recovered from the group XOR shard":
     var
       data: ByteSeq = newSeq[byte](5000)
       plan: DacPackagePlan
@@ -445,7 +445,7 @@ suite "AME authority handshake and secure package":
     for chunk in plan.chunks:
       if chunk.chunkId != 2'u16:
         receiver.acceptDacPackageChunk(chunk)
-    check receiver.repairGroup(plan.repairs[0])
+    check receiver.repairGroup(plan.repairs[0]).ok
     result = finishDacPackage(receiver)
     check result.ok
     check result.payload == data

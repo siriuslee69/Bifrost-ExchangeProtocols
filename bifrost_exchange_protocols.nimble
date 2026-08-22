@@ -346,6 +346,9 @@ proc depPaths(repoRoot: string): seq[string] =
     if dep == "Tyr-Crypto":
       let root = normalizePath(parentDir(src))
       paths.add("--path:" & root)
+      let tyrMeta = normalizePath(joinPath(root, "tools", "meta"))
+      if dirExists(tyrMeta):
+        paths.add("--path:" & tyrMeta)
       let nestedSimd = normalizePath(joinPath(root, "submodules", "simd_nexus", "src"))
       if dirExists(joinPath(root, "submodules", "simd_nexus", "src")):
         paths.add("--path:" & nestedSimd)
@@ -499,13 +502,23 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "tests/test_http_protocol.nim", @["-r"])
     runNim("c", "tests/test_config_exact.nim", @["-r"])
     runNim("c", "tests/test_ame_exchange_paths.nim", @["-r"])
+    runNim("c", "tests/test_ame_build_flags.nim", @["-r"])
     runNim("c", "tests/test_chunkyaead.nim", @["--threads:on", "-r"])
     runNim("c", "tests/test_fomke.nim", @["-r"])
     runNim("c", "tests/test_ame_session.nim", @["-r"])
     runNim("c", "tests/test_ame_handshake_package.nim", @["-r"])
+    runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
+
+    runNim("c", "tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
     runNim("c", "tests/test_dac_defaults.nim", @["-r"])
     runNim("c", "tests/test_dac_wire.nim", @["-r"])
-    runNim("c", "tests/test_dac_anti_oracle.nim", @["-r"])
+    runNim("c", "tests/test_dac_ack_policy.nim", @["-r"])
+    runNim("c", "tests/test_dac_package_repair.nim", @["-r"])
+    runNim("c", "tests/test_dac_scramble.nim", @["-r"])
+    runNim("c", "tests/test_dac_link.nim", @["-r"])
+    runNim("c", "tests/test_dac_link_table.nim", @["-r"])
+    runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
+    runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
     runNim("c", "tests/test_dac_drift_payload.nim", @["-r"])
     runNim("c", "tests/test_transport_ops.nim", @["--threads:on", "-r"])
     runNim("c", "tests/test_async_stream_ops.nim", @["-r"])
@@ -541,11 +554,70 @@ task exampleSecurePackage, "Run authority handshake and repaired package example
 task exampleFomke, "Run AME-backed forward-only message ratchet example":
   runNim("c", "examples/fomke_ame_chain.nim", @["-r"])
 
+task testMinimalAme, "Run the AME flag tests under each slim build profile":
+  ## Same tests, four builds: full, DAC-only, TCP-only, and the smallest
+  ## profile that still completes a session. A flag combination that breaks
+  ## a slim build fails here rather than on a device.
+  runNim("c", "tests/test_ame_build_flags.nim", @["-r"])
+  runNim("c", "tests/test_ame_build_flags.nim", @[
+    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac", "-r"
+  ])
+  runNim("c", "tests/test_ame_build_flags.nim", @[
+    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=tcp", "-r"
+  ])
+  runNim("c", "tests/test_ame_build_flags.nim", @[
+    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac",
+    "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
+  ])
+
+
+task testDacFlag, "Check that -d:bifrostDac=off removes the adaptive layer":
+  ## The wire and the fixed profiles must still build with the flag off, the
+  ## adaptive layer must refuse to build, and the umbrella must build both ways.
+  runNim("c", "tests/dacflag/uses_frames.nim", @["-r"])
+  runNim("c", "tests/dacflag/uses_frames.nim", @["-d:bifrostDac=off", "-r"])
+  runNim("c", "tests/dacflag/uses_link.nim", @["-r"])
+  runNim("c", "tests/dacflag/uses_link_table.nim", @["-r"])
+  runNim("c", "tests/dacflag/uses_relay.nim", @["-r"])
+  runNim("c", "src/bifrost_exchange_protocols.nim", @["-d:bifrostDac=off", "-o:build/dacflag_umbrella"])
+  if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
+      "-o:build/dacflag_probe", "tests/dacflag/uses_link.nim"])).exitCode == 0:
+    quit("-d:bifrostDac=off still compiled the adaptive layer", 1)
+  if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
+      "-o:build/dacflag_probe_table", "tests/dacflag/uses_link_table.nim"])).exitCode == 0:
+    quit("-d:bifrostDac=off still compiled the DAC link table", 1)
+  if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
+      "-o:build/dacflag_probe_relay", "tests/dacflag/uses_relay.nim"])).exitCode == 0:
+    quit("-d:bifrostDac=off still compiled the AME DAC relay", 1)
+  echo "OK | -d:bifrostDac=off keeps the wire and refuses the adaptive layer"
+
 task testDac, "Run DAC transport schema/default tests":
   runNim("c", "tests/test_dac_defaults.nim", @["-r"])
   runNim("c", "tests/test_dac_wire.nim", @["-r"])
-  runNim("c", "tests/test_dac_anti_oracle.nim", @["-r"])
+  runNim("c", "tests/test_dac_ack_policy.nim", @["-r"])
+  runNim("c", "tests/test_dac_package_repair.nim", @["-r"])
+  runNim("c", "tests/test_dac_scramble.nim", @["-r"])
+  runNim("c", "tests/test_dac_link.nim", @["-r"])
+
+  runNim("c", "tests/test_dac_link_table.nim", @["-r"])
+
+
+  runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
+
+
+
+  runNim("c", "tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
+  runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
+
+  runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
   runNim("c", "tests/test_dac_drift_payload.nim", @["-r"])
+
+task testFuzz, "Run every wire decoder against mutated frames":
+  ## The parser surface an attacker reaches first: DAC datagrams and the link
+  ## table that routes them, AME frames and protected bodies, BFX2 envelopes,
+  ## and the TLS 1.3 record and handshake decoders.
+  runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
+  runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
 
 task testFomke, "Run GB3HKDF, TMEAEAD, GGAEAD, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):

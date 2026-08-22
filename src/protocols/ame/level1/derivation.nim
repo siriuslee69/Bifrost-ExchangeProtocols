@@ -2,10 +2,10 @@
 ## AME Derivation <- selected KEM secrets and tier-selected KDF overlays
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/blake3 as tyr_blake3
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
-import protocols/custom_crypto/sha3 as tyr_sha3
-import protocols/custom_crypto/argon2 as tyr_argon2
+import ./symmetric
+
+
+
 
 import ../../types
 import ../types
@@ -23,17 +23,7 @@ proc deriveKdfLayer(a: AmeKdfAlgorithm, seed: openArray[byte],
   layerSeed.add(uint8(ord(a)))
   appendAmeU32(layerSeed, uint32(seed.len))
   appendAmeBytes(layerSeed, seed)
-  case a
-  of akfaBlake3:
-    result = tyr_blake3.blake3Hash(layerSeed, outLen)
-  of akfaSha3Shake256:
-    result = tyr_sha3.shake256Tyr(layerSeed, outLen)
-  of akfaGimliXof:
-    result = tyr_gimli.gimliXof(@[], @[], layerSeed, outLen)
-  of akfaArgon2id:
-    var salt: ByteSeq = tyr_blake3.blake3Hash(layerSeed, 16)
-    result = tyr_argon2.argon2idTyrHash(layerSeed, salt, 3, 65_536, 1,
-      outLen)
+  result = ameKdfBytes(a, layerSeed, outLen)
 
 proc deriveAmeKey*(S: AmeExchangeState, L: AmeSuiteLayout, t: AmeMaskTier,
     outLen: int, context: openArray[byte] = []): ByteSeq {.role: truthBuilder.} =

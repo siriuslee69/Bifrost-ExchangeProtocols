@@ -4,7 +4,7 @@
 
 import std/[net, os, parseopt, strutils, times]
 
-import protocols/certificates
+import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
 
 import ../src/protocols/types
 import ../src/protocols/tls13

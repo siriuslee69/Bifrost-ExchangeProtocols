@@ -2,7 +2,15 @@
 ## DAC Package Transfer <- chunk, recover, request repair, verify, commit
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/blake3 as tyr_blake3
+from eir_compression_and_ecc import RsCodec, RsRecoverReport, initRsCodec,
+  encodeRsShards, recoverRsShards
+
+import ../build
+
+when not dacAdaptiveBuilt:
+  {.error: "This module is part of the DAC adaptive layer, which -d:bifrostDac=off removed from this build.".}
+
+import tyr/hashes/blake3 as tyr_blake3
 
 import ../../types
 import ../types
@@ -11,11 +19,26 @@ import ../level1/package_manifest
 import ../level1/package_chunk
 import ../level1/repair_hint
 import ../level1/repair_chunk
-import ../level1/eir_parity
+import ../level1/parity_shard
 import ../../../analysis_pragmas
 
 const
   defaultDacPackageMaxBytes* = 16_777_216'u32
+  dacRepairGroupAscii* = """
+One repair group is `groupSize` shards wide: data chunks first, then the
+parity shards the sender computed over them.
+
+  groupSize = 6, parityCount = 2, so 4 data chunks carry 2 parity shards
+
+  +------+------+------+------+  +------+------+
+  | C0   | C1   | C2   | C3   |  | S0   | S1   |
+  +------+------+------+------+  +------+------+
+   \____________ data ________/   \__ parity __/
+
+  drmXor          one parity shard, repairs exactly one loss
+  drmReedSolomon  parityCount shards, repairs any parityCount losses
+  drmTcpExact     no parity; missing chunks are re-sent verbatim
+"""
 
 type
   DacPackageLimits* {.role: configurator.} = object
@@ -23,12 +46,21 @@ type
     maxChunks*: uint16
     maxRepairRounds*: uint8
 
+  ## DacPackageGroupRepair: parity shards covering one repair group.
+  ## shards: parity in shard order; an empty entry is one that did not arrive.
   DacPackageGroupRepair* {.role: truthState.} = object
     groupId*: uint32
     firstChunk*: uint16
     chunkCount*: uint16
-    xorPayload*: ByteSeq
-    eirPayload*: ByteSeq
+    repairMode*: DacRepairMode
+    shards*: seq[ByteSeq]
+
+  ## DacGroupRepairReport: outcome of one repair-group rebuild.
+  ## rebuilt: chunk ids restored, in ascending order.
+  DacGroupRepairReport* {.role: truthState.} = object
+    ok*: bool
+    rebuilt*: seq[uint16]
+    err*: string
 
   DacPackagePlan* {.role: truthState.} = object
     manifest*: DacPackageManifest
@@ -74,34 +106,96 @@ proc xorChunkInto(A: var ByteSeq, B: openArray[uint8]) {.
     A[i] = A[i] xor B[i]
     i = i + 1
 
+proc paddedChunk(A: openArray[uint8], n: int): ByteSeq {.role: helper.} =
+  ## A: chunk payload, at most n bytes long.
+  ## n: coding width every shard in a group is padded out to.
+  var
+    i: int = 0
+  result = newSeq[uint8](n)
+  while i < A.len:
+    result[i] = A[i]
+    i = i + 1
+
+proc dacGroupDataWidth*(m: DacPackageManifest): uint16 {.role: parser.} =
+  ## m: manifest whose data-chunk count per repair group is derived.
+  if m.groupSize <= m.parityCount:
+    raise newException(ValueError, "DAC manifest group carries no data shards")
+  result = m.groupSize - m.parityCount
+
+proc dacGroupFirstChunk*(m: DacPackageManifest,
+    groupId: uint32): uint16 {.role: math.} =
+  ## m: manifest holding the package geometry.
+  ## groupId: repair group whose first data-chunk index is returned.
+  var
+    first: uint32 = groupId * uint32(dacGroupDataWidth(m))
+  if first >= uint32(m.dataCount):
+    raise newException(ValueError, "DAC repair group is past the package end")
+  result = uint16(first)
+
+proc dacGroupChunkCount*(m: DacPackageManifest,
+    groupId: uint32): uint16 {.role: math.} =
+  ## m: manifest holding the package geometry.
+  ## groupId: repair group whose data-chunk count is returned. The final group
+  ## of a package is short whenever the chunk count is not a whole multiple.
+  var
+    first: uint32 = uint32(dacGroupFirstChunk(m, groupId))
+    width: uint32 = uint32(dacGroupDataWidth(m))
+  result = uint16(min(width, uint32(m.dataCount) - first))
+
 proc groupDataCount(d: DacScenarioDefaults): uint16 {.role: helper.} =
   ## d: scenario defaults whose data-shard count forms one repair group.
   if d.dataShards == 0'u16:
     raise newException(ValueError, "DAC package data-shard count must be positive")
   result = d.dataShards
 
+proc buildXorShard(D: seq[ByteSeq], n: int): ByteSeq {.role: truthBuilder.} =
+  ## D: padded data chunks of one repair group.
+  ## n: coding width shared by every shard.
+  var
+    i: int = 0
+  result = newSeq[uint8](n)
+  while i < D.len:
+    xorChunkInto(result, D[i])
+    i = i + 1
+
+proc buildRepairShards(D: seq[ByteSeq], mode: DacRepairMode,
+    parityCount, n: int): seq[ByteSeq] {.role: truthBuilder.} =
+  ## D: padded data chunks of one repair group.
+  ## mode: parity codec this package declared.
+  ## parityCount: parity shards the manifest promised.
+  ## n: coding width shared by every shard.
+  case mode
+  of drmNone, drmTcpExact:
+    result = @[]
+  of drmXor:
+    if parityCount != 1:
+      raise newException(ValueError,
+        "DAC xor repair carries exactly one parity shard")
+    result = @[buildXorShard(D, n)]
+  of drmReedSolomon:
+    if parityCount <= 0:
+      raise newException(ValueError,
+        "DAC Reed-Solomon repair needs at least one parity shard")
+    result = encodeRsShards(initRsCodec(D.len, parityCount, n), D)
+
 proc buildGroupRepair(P: DacPackagePlan, first, count: int,
     groupId: uint32): DacPackageGroupRepair {.role: truthBuilder.} =
-  ## P/first/count/groupId: package plan range and repair-group identity.
+  ## P: package plan whose chunks back this group.
+  ## first/count: half-open data-chunk range covered by the group.
+  ## groupId: repair-group identity.
   var
-    padded: ByteSeq = newSeq[byte](int(P.manifest.chunkBytes))
-    concatenated: ByteSeq = @[]
+    n: int = int(P.manifest.chunkBytes)
+    D: seq[ByteSeq] = @[]
     i: int = 0
-    j: int = 0
   result.groupId = groupId
   result.firstChunk = uint16(first)
   result.chunkCount = uint16(count)
-  result.xorPayload = newSeq[byte](int(P.manifest.chunkBytes))
+  result.repairMode = P.manifest.repairMode
   while i < count:
-    padded = newSeq[byte](int(P.manifest.chunkBytes))
-    j = 0
-    while j < P.chunks[first + i].payload.len:
-      padded[j] = P.chunks[first + i].payload[j]
-      j = j + 1
-    xorChunkInto(result.xorPayload, padded)
-    concatenated.add(padded)
+    D.add(paddedChunk(P.chunks[first + i].payload, n))
     i = i + 1
-  result.eirPayload = encodeDacEirParityPayload(concatenated)
+  result.shards = buildRepairShards(D, result.repairMode,
+    int(P.manifest.parityCount), n)
 
 proc planDacPackage*(packageId: uint64, A: openArray[uint8],
     d: DacScenarioDefaults, c: DacTransferClass = dtcUserData,
@@ -136,6 +230,41 @@ proc planDacPackage*(packageId: uint64, A: openArray[uint8],
     result.repairs.add(buildGroupRepair(result, offset, n, groupId))
     offset = offset + n
     groupId = groupId + 1'u32
+
+proc groupParityShards*(P: DacPackagePlan,
+    groupId: uint32): seq[DacParityShard] {.role: actor.} =
+  ## P: sender plan holding the computed parity.
+  ## groupId: repair group whose parity shards become wire records.
+  var
+    i: int = 0
+  if groupId >= uint32(P.repairs.len):
+    raise newException(ValueError, "DAC repair group is not in this plan")
+  while i < P.repairs[groupId].shards.len:
+    result.add(initDacParityShard(P.manifest.packageId, groupId,
+      uint16(i), P.repairs[groupId].repairMode,
+      P.repairs[groupId].shards[i]))
+    i = i + 1
+
+proc collectGroupRepair*(m: DacPackageManifest, groupId: uint32,
+    A: openArray[DacParityShard]): DacPackageGroupRepair {.role: truthBuilder.} =
+  ## m: manifest holding the package geometry.
+  ## groupId: repair group being reassembled on the receiving side.
+  ## A: parity shards that arrived for this group, in any order.
+  var
+    i: int = 0
+    id: int = 0
+  result.groupId = groupId
+  result.firstChunk = dacGroupFirstChunk(m, groupId)
+  result.chunkCount = dacGroupChunkCount(m, groupId)
+  result.repairMode = m.repairMode
+  result.shards = newSeq[ByteSeq](int(m.parityCount))
+  while i < A.len:
+    id = int(A[i].shardId)
+    if A[i].packageId != m.packageId or A[i].groupId != groupId or
+        A[i].repairMode != m.repairMode or id >= result.shards.len:
+      raise newException(ValueError, "DAC parity shard does not match the group")
+    result.shards[id] = A[i].payload
+    i = i + 1
 
 proc initDacPackageReceiver*(m: DacPackageManifest,
     limits: DacPackageLimits = defaultDacPackageLimits()): DacPackageReceiver {.
@@ -176,54 +305,125 @@ proc missingChunkIds*(S: DacPackageReceiver): seq[uint16] {.role: parser.} =
       result.add(uint16(i))
     i = i + 1
 
-proc repairGroup*(S: var DacPackageReceiver,
-    r: DacPackageGroupRepair): bool {.role: orchestrator.} =
-  ## S/r: receiver and one XOR/Eir group recovery record.
+proc expectedChunkLen(S: DacPackageReceiver, id: int): int {.role: math.} =
+  ## S: receiver holding the package geometry.
+  ## id: chunk index whose exact unpadded byte length is returned.
+  result = int(min(uint64(S.manifest.chunkBytes),
+    S.manifest.totalLen - uint64(id) * uint64(S.manifest.chunkBytes)))
+
+proc groupChunkRange(S: DacPackageReceiver,
+    r: DacPackageGroupRepair): bool {.role: parser.} =
+  ## S/r: receiver and the repair record whose chunk range is bounds-checked.
+  result = int(r.firstChunk) + int(r.chunkCount) <= S.chunks.len and
+    r.chunkCount > 0'u16
+
+proc storeRepairedChunk(S: var DacPackageReceiver, id: int, A: ByteSeq,
+    R: var DacGroupRepairReport) {.role: stateController.} =
+  ## S: receiver whose chunk slot is filled.
+  ## id: chunk index being restored.
+  ## A: padded coding shard the codec produced.
+  ## R: report collecting the restored chunk ids.
+  S.chunks[id] = A[0 ..< expectedChunkLen(S, id)]
+  S.received[id] = true
+  S.repairCount = S.repairCount + 1'u16
+  R.rebuilt.add(uint16(id))
+
+proc repairXorGroup(S: var DacPackageReceiver, r: DacPackageGroupRepair,
+    R: var DacGroupRepairReport) {.role: orchestrator.} =
+  ## S/r/R: receiver, one single-parity repair record, and the outcome report.
+  ## XOR carries one parity shard, so it repairs exactly one loss and no more.
   var
+    n: int = int(S.manifest.chunkBytes)
     missing: int = -1
     missingCount: int = 0
-    recovered: ByteSeq = r.xorPayload & @[]
-    concatenated: ByteSeq = @[]
-    padded: ByteSeq = @[]
+    recovered: ByteSeq = @[]
     i: int = 0
     id: int = 0
-    expectedLen: int = 0
-    verify: DacParityVerifyReport
+  if r.shards.len != 1 or r.shards[0].len != n:
+    R.err = "DAC xor repair needs its one parity shard"
+    return
+  recovered = r.shards[0] & @[]
   while i < int(r.chunkCount):
     id = int(r.firstChunk) + i
-    if id >= S.chunks.len:
-      return false
     if not S.received[id]:
       missing = id
       missingCount = missingCount + 1
     else:
-      padded = newSeq[byte](int(S.manifest.chunkBytes))
-      for j in 0 ..< S.chunks[id].len:
-        padded[j] = S.chunks[id][j]
-      xorChunkInto(recovered, padded)
+      xorChunkInto(recovered, paddedChunk(S.chunks[id], n))
     i = i + 1
-  if missingCount != 1:
-    return false
-  expectedLen = int(min(uint64(S.manifest.chunkBytes),
-    S.manifest.totalLen - uint64(missing) * uint64(S.manifest.chunkBytes)))
-  recovered.setLen(expectedLen)
-  S.chunks[missing] = recovered
-  S.received[missing] = true
-  i = 0
-  while i < int(r.chunkCount):
+  if missingCount == 0:
+    R.ok = true
+    return
+  if missingCount > 1:
+    R.err = "DAC xor repair cannot rebuild " & $missingCount & " losses"
+    return
+  storeRepairedChunk(S, missing, recovered, R)
+  R.ok = true
+
+proc rsShardTable(S: DacPackageReceiver, r: DacPackageGroupRepair,
+    T: var seq[ByteSeq], present: var seq[bool]) {.role: truthBuilder.} =
+  ## S/r: receiver and the repair record describing the group.
+  ## T/present: shard slots and arrival flags built for the codec, data first.
+  var
+    n: int = int(S.manifest.chunkBytes)
+    k: int = int(r.chunkCount)
+    i: int = 0
+    id: int = 0
+  T = newSeq[ByteSeq](k + r.shards.len)
+  present = newSeq[bool](k + r.shards.len)
+  while i < k:
     id = int(r.firstChunk) + i
-    padded = newSeq[byte](int(S.manifest.chunkBytes))
-    for j in 0 ..< S.chunks[id].len:
-      padded[j] = S.chunks[id][j]
-    concatenated.add(padded)
+    present[i] = S.received[id]
+    if present[i]:
+      T[i] = paddedChunk(S.chunks[id], n)
     i = i + 1
-  verify = verifyDacEirParityPayload(concatenated, r.eirPayload)
-  if not verify.ok:
-    S.chunks[missing] = @[]
-    S.received[missing] = false
-    return false
-  S.repairCount = S.repairCount + 1'u16
-  result = true
+  i = 0
+  while i < r.shards.len:
+    present[k + i] = r.shards[i].len == n
+    if present[k + i]:
+      T[k + i] = r.shards[i]
+    i = i + 1
+
+proc repairRsGroup(S: var DacPackageReceiver, r: DacPackageGroupRepair,
+    R: var DacGroupRepairReport) {.role: orchestrator.} =
+  ## S/r/R: receiver, one Reed-Solomon repair record, and the outcome report.
+  ## Any `parityCount` losses across the whole group rebuild; one more does not.
+  var
+    n: int = int(S.manifest.chunkBytes)
+    k: int = int(r.chunkCount)
+    T: seq[ByteSeq] = @[]
+    present: seq[bool] = @[]
+    outcome: RsRecoverReport
+    i: int = 0
+  if r.shards.len == 0:
+    R.err = "DAC Reed-Solomon repair carries no parity shards"
+    return
+  rsShardTable(S, r, T, present)
+  outcome = recoverRsShards(initRsCodec(k, r.shards.len, n), T, present)
+  if not outcome.ok:
+    R.err = outcome.err
+    return
+  while i < k:
+    if not present[i]:
+      storeRepairedChunk(S, int(r.firstChunk) + i, T[i], R)
+    i = i + 1
+  R.ok = true
+
+proc repairGroup*(S: var DacPackageReceiver,
+    r: DacPackageGroupRepair): DacGroupRepairReport {.role: orchestrator.} =
+  ## S: receiver whose missing chunks are rebuilt in place.
+  ## r: one repair group's parity, as the sender computed it.
+  ## A refusal is never a guess: the report says why and leaves S untouched.
+  if not groupChunkRange(S, r):
+    result.err = "DAC repair group is outside the package"
+    return
+  case r.repairMode
+  of drmNone, drmTcpExact:
+    result.err = "DAC repair mode carries no parity to rebuild from"
+  of drmXor:
+    repairXorGroup(S, r, result)
+  of drmReedSolomon:
+    repairRsGroup(S, r, result)
 
 proc buildDacRepairHint*(S: var DacPackageReceiver): DacRepairHint {.
     role: truthBuilder.} =
@@ -295,3 +495,13 @@ proc finishDacPackage*(S: DacPackageReceiver): DacPackageResult {.
     S.manifest.dataCount, S.repairCount,
     if S.repairCount == 0'u16: dcsCommitted else: dcsCommittedWithRepair)
   result.ok = true
+
+proc missingChunkCount*(S: DacPackageReceiver): int {.role: parser.} =
+  ## S: receiver whose outstanding data-chunk count is returned without
+  ## building a list, so a hot loop can ask on every frame.
+  var
+    i: int = 0
+  while i < S.received.len:
+    if not S.received[i]:
+      result = result + 1
+    i = i + 1

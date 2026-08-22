@@ -14,17 +14,26 @@ src/protocols
 │   ├── udp_ops.nim
 │   └── tls_ops.nim
 ├── bfx2/
+├── ame.nim      <- the one public AME surface, and the two build flags
 ├── ame/
 │   ├── types.nim
 │   ├── level0/  <- bits, bytes, protocol descriptor
 │   ├── level1/  <- algorithms, paths, suites, derivation, triggers, compression
+│   │   ├── kems/       <- one file per KEM family
+│   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
+│   │   └── symmetric/  <- one file per symmetric primitive
+│   │       (each folder has a flag-gated dispatcher beside it)
 │   ├── level2/  <- agreement, protection, trust, AME2 wire, live session
-│   └── level3/  <- ops export, handshake, handshake wire, secure package
+│   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
+│   └── level3/  <- handshake, handshake wire, secure package, and the
+│                    DAC relay that assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim
 │   ├── level0/  <- framing, transport, body codecs, sender/receiver helpers
-│   ├── level1/  <- concrete DAC1 message bodies built on the shared codecs
-│   └── level2/  <- package planning, XOR/Eir recovery, exact repair, commit
+│   ├── level1/  <- DAC1 message bodies, plus the self-inferred ACK/repair pacing
+│   ├── level2/  <- package planning, XOR/Reed-Solomon repair, exact repair, commit
+│   └── level3/  <- the link loop that drives all of it, plus the bounded
+│                    per-peer link table; both transport-agnostic
 ├── fomke/
 │   ├── types.nim
 │   ├── level0/  <- GB3HKDF and protocol descriptor
@@ -76,8 +85,7 @@ config.toml / userconfig.toml
 ```text
 raw bytes
   -> transport stream frame or UDP datagram
-  -> DAC1 frame decode (if DAC carrier)
-  -> AME2 frame decode
+  -> AME2 frame decode            <- one framing, both carriers
   -> AME protected body (epoch + nonce + tag + ciphertext)
   -> AME auth/decrypt
   -> FOMKE auth/decrypt when enabled
@@ -120,8 +128,7 @@ caller payload
   -> FOMKE directional message ratchet when enabled
   -> AME protect (epoch AEAD)
   -> AME protected body (epoch + nonce + tag + ct)
-  -> AME2 frame encode
-  -> DAC1 frame encode (optional)
+  -> AME2 frame encode            <- one framing, both carriers
   -> transport stream frame or UDP datagram send
 ```
 

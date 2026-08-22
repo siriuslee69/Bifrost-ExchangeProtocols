@@ -143,8 +143,6 @@ proc dacRepairModeFromId*(id: uint8): DacRepairMode {.role: parser.} =
   of 0x02'u8:
     result = drmReedSolomon
   of 0x03'u8:
-    result = drmFountain
-  of 0x04'u8:
     result = drmTcpExact
   else:
     raise newException(ValueError, "DAC repair mode id mismatch")

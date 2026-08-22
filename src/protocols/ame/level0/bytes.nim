@@ -2,7 +2,7 @@
 ## AME Bytes <- shared byte framing, xor, and compare helpers
 ## ----------------------------------------------------------
 
-import protocols/custom_crypto/symmetric/secure_memory as tyr_secure_memory
+import tyr/helpers/secure_memory as tyr_secure_memory
 
 import ../../types
 import ../../../analysis_pragmas

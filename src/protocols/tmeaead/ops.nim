@@ -2,11 +2,11 @@
 ## TMEAEAD <- XChaCha20, AES-CTR, Gimli, and XOR-combined authentication
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/aes_ctr as tyr_aes
-import protocols/custom_crypto/blake3 as tyr_blake3
-import protocols/custom_crypto/gimli_sponge as tyr_gimli
-import protocols/custom_crypto/poly1305 as tyr_poly
-import protocols/custom_crypto/xchacha20 as tyr_xchacha
+import tyr/ciphers/aes_ctr as tyr_aes
+import tyr/hashes/blake3 as tyr_blake3
+import tyr/ciphers/gimli_sponge as tyr_gimli
+import tyr/macs/poly1305 as tyr_poly
+import tyr/ciphers/xchacha20 as tyr_xchacha
 
 import ../types as core_types
 import ../ame/level0/bytes

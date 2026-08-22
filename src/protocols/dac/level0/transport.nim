@@ -5,16 +5,14 @@
 import std/[locks, net, strutils]
 
 import ../../types
+import ../types as dac_types
 import ../../transport/types as transport_types
 import ../../transport/udp_ops as udp_ops
 import ../../../analysis_pragmas
 
-type
-  ## DacAddress: public DAC endpoint. Carrier details stay inside this module.
-  DacAddress* {.role: truthState.} = object
-    host*: string
-    port*: uint16
+export DacAddress
 
+type
   ## DacSocket: DAC endpoint handle. The concrete socket type remains hidden
   ## behind DAC-named send/receive helpers at higher layers.
   DacSocket* = Socket
@@ -43,9 +41,11 @@ proc dacPeerSockKey(sock: DacSocket): int {.role: helper.} =
   ## sock: DAC socket whose fd identifies any remembered peer mapping.
   result = int(sock.getFd())
 
-proc dacLocalPort(sock: DacSocket): tuple[ok: bool, port: uint16] {.
+proc dacLocalPort*(sock: DacSocket): tuple[ok: bool, port: uint16] {.
     role: helper.} =
   ## sock: DAC socket whose current bound local port should be loaded.
+  ## Public because binding to port 0 is the normal way to take an ephemeral
+  ## port, and the caller then has no other way to learn which one it got.
   var
     bound: tuple[host: string, port: Port]
   try:

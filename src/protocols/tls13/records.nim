@@ -2,9 +2,9 @@
 ## TLS 1.3 Records <- ChaCha20-Poly1305 record seal/open and nonce state
 ## ----------------------------------------------------------------------
 
-import protocols/custom_crypto/chacha20
-import protocols/custom_crypto/poly1305
-import protocols/custom_crypto/symmetric/secure_memory
+import tyr/ciphers/chacha20
+import tyr/macs/poly1305
+import tyr/helpers/secure_memory
 
 import ../types
 import ./types

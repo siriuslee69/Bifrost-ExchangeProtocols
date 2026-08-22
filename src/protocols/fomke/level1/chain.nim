@@ -2,7 +2,7 @@
 ## FOMKE Chain <- directional forward-only ratchets and atomic KEM upgrades
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/blake3 as tyr_blake3
+import tyr/hashes/blake3 as tyr_blake3
 
 import ../../types
 import ../../ame/types

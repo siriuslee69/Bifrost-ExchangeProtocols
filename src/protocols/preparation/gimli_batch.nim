@@ -2,9 +2,9 @@
 ## Gimli Batch <- independent streams through scalar, SSE, NEON, or AVX2
 ## -------------------------------------------------------------------------
 
-import protocols/custom_crypto/gimli as tyr_gimli
-import protocols/custom_crypto/gimli_sponge as tyr_gimli_sponge
-import protocols/custom_crypto/symmetric/secure_memory as tyr_memory
+import tyr/ciphers/gimli as tyr_gimli
+import tyr/ciphers/gimli_sponge as tyr_gimli_sponge
+import tyr/helpers/secure_memory as tyr_memory
 
 import ../types
 import ../../analysis_pragmas

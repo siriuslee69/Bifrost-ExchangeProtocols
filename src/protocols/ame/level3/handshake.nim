@@ -2,9 +2,9 @@
 ## AME Handshake <- authority identity + AME KEM -> first authenticated epoch
 ## -------------------------------------------------------------------------
 
-import protocols/wrapper/basic_api as tyr_basic
-import protocols/wrapper/helpers/algorithms as tyr_alg
-import protocols/wrapper/helpers/signature_support
+import tyr/helpers/random as tyr_random
+import tyr/helpers/tiers as tyr_alg
+import ../level1/signatures
 
 import ../../types
 import ../types
@@ -243,10 +243,10 @@ proc initAmeAuthorityKey*(name: string,
     role: orchestrator.} =
   ## name/algorithm: authority identity and signature algorithm.
   var
-    k: SignatureKeypair
+    k: AmeSigKeypair
   if name.len == 0:
     raise newException(ValueError, "AME authority name must not be empty")
-  k = signatureKeypair(toTyrSignature(algorithm))
+  k = ameSigKeypair(algorithm)
   result.name = name
   result.algorithm = algorithm
   result.publicKey = k.publicKey
@@ -256,11 +256,11 @@ proc initAmeAuthorityKey*(name: string, algorithm: AmeSignatureAlgorithm,
     seed: openArray[uint8]): AmeAuthorityKey {.role: orchestrator.} =
   ## name/algorithm/seed: deterministic authority identity for provisioned setups.
   var
-    k: SignatureKeypair
+    k: AmeSigKeypair
   if name.len == 0 or seed.len == 0:
     raise newException(ValueError,
       "AME seeded authority name and seed must not be empty")
-  k = signatureKeypair(toTyrSignature(algorithm), @seed)
+  k = ameSigKeypair(algorithm, seed)
   result.name = name
   result.algorithm = algorithm
   result.publicKey = k.publicKey
@@ -271,13 +271,13 @@ proc initAmeIdentityKey*(subject: string,
     role: orchestrator.} =
   ## subject/A: peer identity with one independent keypair per ordered slot.
   var
-    k: SignatureKeypair
+    k: AmeSigKeypair
     i: int = 0
   if subject.len == 0:
     raise newException(ValueError, "AME identity subject must not be empty")
   result.subject = subject
   while i < int(A.length):
-    k = signatureKeypair(toTyrSignature(A.algorithms[i]))
+    k = ameSigKeypair(A.algorithms[i])
     result.signingKeys.add(AmeIdentitySigningKey(
       algorithm: A.algorithms[i], publicKey: k.publicKey))
     result.secretKeys.add(k.secretKey)
@@ -298,11 +298,11 @@ proc initAmeIdentityKey*(subject: string, algorithm: AmeSignatureAlgorithm,
     seed: openArray[uint8]): AmeIdentityKey {.role: orchestrator.} =
   ## subject/algorithm/seed: deterministic identity for provisioned setups.
   var
-    k: SignatureKeypair
+    k: AmeSigKeypair
   if subject.len == 0 or seed.len == 0:
     raise newException(ValueError,
       "AME seeded identity subject and seed must not be empty")
-  k = signatureKeypair(toTyrSignature(algorithm), @seed)
+  k = ameSigKeypair(algorithm, seed)
   result.subject = subject
   result.signingKeys.add(AmeIdentitySigningKey(algorithm: algorithm,
     publicKey: k.publicKey))
@@ -312,7 +312,7 @@ proc initAmeIdentityKey*(subject: string, A: AmeSignatureAlgorithms,
     seeds: openArray[ByteSeq]): AmeIdentityKey {.role: orchestrator.} =
   ## subject/A/seeds: deterministic key material indexed by every layout slot.
   var
-    k: SignatureKeypair
+    k: AmeSigKeypair
     i: int = 0
   if subject.len == 0 or seeds.len != int(A.length):
     raise newException(ValueError,
@@ -321,7 +321,7 @@ proc initAmeIdentityKey*(subject: string, A: AmeSignatureAlgorithms,
   while i < int(A.length):
     if seeds[i].len == 0:
       raise newException(ValueError, "AME identity seed must not be empty")
-    k = signatureKeypair(toTyrSignature(A.algorithms[i]), seeds[i])
+    k = ameSigKeypair(A.algorithms[i], seeds[i])
     result.signingKeys.add(AmeIdentitySigningKey(
       algorithm: A.algorithms[i], publicKey: k.publicKey))
     result.secretKeys.add(k.secretKey)
@@ -385,7 +385,7 @@ proc issueAmeIdentityCertificate*(a: AmeAuthorityKey, i: AmeIdentityKey,
   result.signingKeys = copyIdentitySigningKeys(i.signingKeys)
   result.validFromUnix = validFromUnix
   result.validUntilUnix = validUntilUnix
-  result.authoritySignature = signMessage(toTyrSignature(a.algorithm),
+  result.authoritySignature = signAmeMessage(a.algorithm,
     certificateSubject(result), a.secretKey)
 
 proc initAmeAuthorityRoot*(name: string, algorithm: AmeSignatureAlgorithm,
@@ -434,7 +434,7 @@ proc verifyAmeIdentityCertificate*(c: AmeIdentityCertificate,
       return
     i = i + 1
   try:
-    if not verifyMessage(toTyrSignature(root.algorithm), certificateSubject(c),
+    if not verifyAmeMessage(root.algorithm, certificateSubject(c),
         c.authoritySignature, root.publicKey):
       result.err = "certificate authority signature is invalid"
       return
@@ -497,7 +497,7 @@ proc beginAmeHandshake*(sessionId: uint64, L: AmeSuiteLayout,
   request = initAmeExchangeRequest(L.kems, initialTier, initialTier.masks.kem)
   keys = generateAmeExchangeKeys(L.kems, request)
   result.hello.sessionId = sessionId
-  result.hello.nonce = tyr_basic.cryptoRand(tyr_alg.raSystem,
+  result.hello.nonce = tyr_random.cryptoRand(tyr_alg.raSystem,
     ameHandshakeNonceLen)
   result.hello.layout = L
   result.hello.initialTier = initialTier
@@ -582,7 +582,7 @@ proc answerVerifiedAmeHandshake(c: AmeClientHello,
   answer = answerAmeExchangeOffer(c.layout.kems, c.offer)
   result.state.clientHello = c
   result.state.peerTrust = result.peerTrust
-  result.state.serverHello.nonce = tyr_basic.cryptoRand(tyr_alg.raSystem,
+  result.state.serverHello.nonce = tyr_random.cryptoRand(tyr_alg.raSystem,
     ameHandshakeNonceLen)
   result.state.serverHello.certificate = descriptor
   result.state.serverHello.reply = answer.reply

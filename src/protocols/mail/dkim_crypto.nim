@@ -13,8 +13,8 @@
 
 import std/[base64, strutils]
 
-import protocols/custom_crypto/rsa
-import protocols/custom_crypto/sha256
+import tyr/certs/rsa
+import tyr/hashes/sha256
 
 import ../../analysis_pragmas
 

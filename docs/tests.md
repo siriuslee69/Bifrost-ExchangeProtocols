@@ -9,7 +9,9 @@
 | nimble test               | full Nim suite                               |
 | nimble testFomke          | GB3HKDF, TMEAEAD, FOMKE, and AME session composition |
 | nimble testChunkyAead    | CHUNKYAEAD chunk encryption, authentication, and hash tree |
-| nimble testDac            | DAC defaults, wire body codecs, drift payload, anti-oracle |
+| nimble testDac            | DAC defaults, wire codecs, ACK pacing, repair, scramble, link loop, link table, fuzz |
+| nimble testDacFlag        | -d:bifrostDac=off keeps the wire and refuses the adaptive layer |
+| nimble testFuzz           | every wire decoder under mutated frames: DAC, AME, BFX2, TLS 1.3 |
 | nimble testTls            | TLS-enabled transport + AME TCP endpoint coverage; uses host OpenSSL or Nix fallback |
 | nimble benchmarks         | release-mode protocol microbenchmark harness |
 | nimble vectors            | explicit BFX2 deterministic vector regeneration |
@@ -62,8 +64,70 @@ DAC
   -> defaults validation
   -> frame header encode/decode
   -> typed body encode/decode and manifest/ACK validation
-  -> anti-oracle state
+  -> ACK receipts in run and bitmap form, and the encoder picking the shorter
+  -> batch pacing: count bound, deadline bound, and a gap closing at once
+  -> levers halve on loss and walk back only after a clean streak
+  -> repair wait tracks measured ACK latency and never drops below the profile
+  -> repair-group geometry, including the short final group
+  -> XOR rebuilds one loss; Reed-Solomon rebuilds its whole parity budget
+  -> one loss past the budget is refused with a reason, not guessed
+  -> parity shards survive the wire and a partial parity set still repairs
+  -> send delay and chunk-order scrambling stay a permutation of the package
+  -> the link loop carries a package end to end and commits it
+  -> loss inside the parity budget repairs with no round trip
+  -> loss past it recovers through exact repair; reordering and duplication too
+  -> a link that cannot finish reports failure instead of hanging forever
+  -> the repair-round budget is spent, not looped
   -> drift payload encode/decode
+
+AME DAC relay
+  -> a peer with a session gets a slot; one without is dropped unparsed
+  -> releasing or sweeping a peer erases its session with its slot
+  -> a full relay refuses a new peer rather than evicting a live one
+  -> a whole package crosses the relay, sealed the entire way
+  -> every datagram is authenticated: a one-bit change to any of them is
+     refused, and the count of refusals equals the count sent
+  -> rubbish from an admitted peer is dropped, never raised
+  -> a package survives one-in-four loss, repairing over the sealed lane
+  -> a secure package crosses the relay and restores its plaintext
+  -> the relay path carries no package seal, because it needs none
+  -> a package that leaves through a file still carries its own seal
+  -> every kind that opens a link is a kind the loop acts on
+  -> a path probe no longer takes a slot the loop cannot use
+  -> a completed package reports what this side measured
+  -> a peer's report moves this side's lane, one step at a time
+  -> a report cannot move a lane out from under a package in flight
+
+AME DAC endpoint
+  -> a package crosses two real loopback UDP sockets and commits
+  -> a receive timeout is quiet, not an error
+  -> a datagram from an unknown address is dropped, not admitted
+
+DAC link table
+  -> two peers get two links; one address on two carriers is two links
+  -> a returning peer routes back to the link it already had
+  -> rubbish, and valid frames that open nothing, consume no slot
+  -> capacity is a hard number and the surplus is refused
+  -> a flood cannot displace a peer that is mid-transfer
+  -> an idle link's slot is reused only after its quiet window passes
+  -> two tables carry a whole package between two peers
+  -> each peer draws its own scramble stream from one table seed
+
+Wire fuzz
+  -> every DAC decoder survives thousands of mutated frames without a Defect
+  -> the link loop never raises on arbitrary bytes, and still completes a real
+     package interleaved with rubbish
+  -> the header peek refuses exactly what the full decoder refuses, and never
+     leaves a field set on a refusal
+  -> a hostile peer cannot make the link table raise or exceed its capacity
+  -> AME frame headers, frames, and protected bodies, including a mutation at
+     either depth of the nested pair
+  -> BFX2 envelopes with and without checksums, and value packets
+  -> TLS 1.3 records and handshake messages, including a mutation at either
+     depth of a record wrapping a handshake
+  -> TLS 1.3 ClientHello, ServerHello, EncryptedExtensions, Certificate, and
+     CertificateVerify
+  -> a certificate chain past the caller's bound is refused, not truncated
 
 Transport
   -> IPv4/IPv6 address parse/format
@@ -95,7 +159,16 @@ AME
   -> signed client/server hello and final transcript proof
   -> first-epoch equality after the initial KEM handshake
   -> bounded Eir compression and decompression-bomb rejection
-  -> package loss, XOR recovery, Eir verification, exact repair, and commit
+  -> package loss, XOR recovery, exact repair, and commit
+  -> a DAC datagram is exactly one AME frame, with no outer header
+  -> the epoch lives only in the protected body, and tampering is caught
+  -> an epoch past 65535 rides DAC, which the old u16 field refused
+  -> a payload past 65535 needs no widened framing on any path lane
+  -> a DAC control message round-trips with its kind authenticated
+  -> the DAC kind sits inside the ciphertext, so an ACK and a repair hint are
+     indistinguishable on the wire
+  -> every single-bit change to a DAC control frame is refused
+  -> a replayed DAC control message is refused
 
 FOMKE
   -> sequential, indexed-block, multi-input, and memory-mixed GB3HKDF

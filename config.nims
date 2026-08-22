@@ -28,25 +28,30 @@ if tyrRoot.len > 0:
   addPathIfExists(tyrRoot)
   addPathIfExists(joinPath(tyrRoot, "src"))
   addPathIfExists(joinPath(tyrRoot, ".iron", "meta"))
-  if fileExists(joinPath(tyrRoot, "src", "protocols", "custom_crypto",
+  addPathIfExists(joinPath(tyrRoot, "tools", "meta"))
+  if fileExists(joinPath(tyrRoot, "src", "tyr", "ciphers",
       "xchacha20_batch.nim")):
     switch("define", "bifrostTyrXChaChaBatch")
 
-if dirExists(joinPath(repoRoot, "submodules", "SIMD-Nexus", "src")):
+## Sibling checkouts win over the pinned submodules for the same reason Tyr
+## does above: Bifrost, Eir, and SIMD-Nexus move together, and the DAC repair
+## path calls Eir's Reed-Solomon, which calls SIMD-Nexus' GF(256) tables. A
+## stale pin would compile against a codec that no longer matches.
+if dirExists(joinPath(repoRoot, "..", "SIMD-Nexus", "src")):
+  addPathIfExists(joinPath(repoRoot, "..", "SIMD-Nexus", "src"))
+elif dirExists(joinPath(repoRoot, "submodules", "SIMD-Nexus", "src")):
   addPathIfExists(joinPath(repoRoot, "submodules", "SIMD-Nexus", "src"))
 elif dirExists(joinPath(repoRoot, "submodules", "Tyr-Crypto", "submodules", "simd_nexus", "src")):
   addPathIfExists(joinPath(repoRoot, "submodules", "Tyr-Crypto", "submodules", "simd_nexus", "src"))
 elif dirExists(joinPath(repoRoot, "submodules", "Tyr-Crypto", "simd_nexus", "src")):
   addPathIfExists(joinPath(repoRoot, "submodules", "Tyr-Crypto", "simd_nexus", "src"))
-elif dirExists(joinPath(repoRoot, "..", "SIMD-Nexus", "src")):
-  addPathIfExists(joinPath(repoRoot, "..", "SIMD-Nexus", "src"))
 
-if dirExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC", "src")):
-  addPathIfExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC"))
-  addPathIfExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC", "src"))
-elif dirExists(joinPath(repoRoot, "..", "Eir-CompressionAndECC", "src")):
+if dirExists(joinPath(repoRoot, "..", "Eir-CompressionAndECC", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Eir-CompressionAndECC"))
   addPathIfExists(joinPath(repoRoot, "..", "Eir-CompressionAndECC", "src"))
+elif dirExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC", "src")):
+  addPathIfExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC"))
+  addPathIfExists(joinPath(repoRoot, "submodules", "Eir-CompressionAndECC", "src"))
 
 if dirExists(joinPath(repoRoot, "submodules", "Fylgia-Utils", "src")):
   addPathIfExists(joinPath(repoRoot, "submodules", "Fylgia-Utils"))

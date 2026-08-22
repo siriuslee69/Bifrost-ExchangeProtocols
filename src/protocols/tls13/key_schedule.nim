@@ -2,8 +2,8 @@
 ## TLS 1.3 Key Schedule <- RFC 8446 SHA-256 secrets and traffic material
 ## ----------------------------------------------------------------------
 
-import protocols/custom_crypto/sha256
-import protocols/custom_crypto/symmetric/secure_memory
+import tyr/hashes/sha256
+import tyr/helpers/secure_memory
 
 import ./types
 import ../../analysis_pragmas

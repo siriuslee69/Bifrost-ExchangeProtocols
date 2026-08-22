@@ -12,6 +12,7 @@ import ../src/protocols/ame/level1/derivation
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/protection
 import ../src/protocols/ame/level2/session
+import ../src/protocols/ame/level2/wire
 import ../src/protocols/ame/level1/path_triggers
 import ../src/protocols/fomke/types
 import ../src/protocols/dac/types
@@ -183,71 +184,152 @@ suite "AME mask-tier sessions":
     opened = openAmeDacFrame(receiver, frame)
     check not opened.ok
 
-  test "DAC epoch is derived from and bound to the protected AME epoch":
+  test "a DAC datagram is exactly one AME frame, with no outer header":
     var
       sender: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
       receiver: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      decoded: DacDecodedFrame
+      decoded: AmeDecodedFrame
       opened: AmeOpenResult
     installTrafficPeers(sender, receiver)
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
-    decoded = decodeDacFrame(frame)
-    check decoded.header.epochId == uint16(sender.auth.current.epochId)
-    frame[19] = frame[19] xor 0x01'u8
+    decoded = decodeAmeFrame(frame)
+    check decoded.header.sessionId == sender.sessionId
+    check decoded.header.laneId == sender.laneId
+    check frame.len == ameFrameHeaderLen + int(decoded.header.payloadLen)
+    check not peekDacFrameIdentity(frame).ok
     opened = openAmeDacFrame(receiver, frame)
-    check not opened.ok
-    check opened.err == "AME DAC epoch mismatch"
+    check opened.ok
+    check opened.packet.payload == @[byte 5, 6, 7]
 
-  test "DAC rejects epochs that cannot fit its wire field":
+  test "the epoch lives only in the protected body and tampering is caught":
     var
       sender: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
-    sender.auth.current.epochId = uint32(high(uint16)) + 1'u32
-    expect ValueError:
-      discard sealAmeDacFrame(sender, @[byte 5])
-
-  test "DAC SuperClean path carries extended AME frames":
-    var
-      sender: AmeSession = initAmeSession(exactAuth(),
-        pathLane = dplSuperCleanPath, peerTrustRequired = false)
       receiver: AmeSession = initAmeSession(exactAuth(),
-        pathLane = dplSuperCleanPath, peerTrustRequired = false)
-      payload: ByteSeq = newSeq[byte](70_000)
+        peerTrustRequired = false)
       frame: ByteSeq = @[]
-      decoded: DacDecodedFrame
+      body: AmeProtectedBody
       opened: AmeOpenResult
     installTrafficPeers(sender, receiver)
+    frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
+    body = decodeAmeProtectedBody(decodeAmeFrame(frame).payload)
+    check body.epochId == sender.auth.current.epochId
+    frame[24] = frame[24] xor 0x01'u8
+    opened = openAmeDacFrame(receiver, frame)
+    check not opened.ok
+
+  test "an epoch past 65535 now rides DAC, which the old u16 field refused":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      receiver: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult
+    installTrafficPeers(sender, receiver)
+    sender.auth.current.epochId = uint32(high(uint16)) + 7'u32
+    receiver.auth.current.epochId = sender.auth.current.epochId
+    frame = sealAmeDacFrame(sender, @[byte 5])
+    opened = openAmeDacFrame(receiver, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 5]
+
+  test "a payload past 65535 needs no widened framing on any path lane":
+    var
+      lanes: seq[DacPathLane] = @[dplSuperCleanPath, dplCleanPath, dplThinPath]
+      payload: ByteSeq = newSeq[byte](70_000)
+      sender: AmeSession
+      receiver: AmeSession
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult
+      i: int = 0
     payload[0] = 1'u8
     payload[^1] = 2'u8
-    frame = sealAmeDacFrame(sender, payload)
-    decoded = decodeDacFrame(frame)
-    opened = openAmeDacFrame(receiver, frame)
-    check decoded.header.bodyLenMode == dblU32
-    check decoded.flags.extendedBodyLen
-    check opened.ok
-    check opened.packet.payload == payload
+    while i < lanes.len:
+      sender = initAmeSession(exactAuth(), pathLane = lanes[i],
+        peerTrustRequired = false)
+      receiver = initAmeSession(exactAuth(), pathLane = lanes[i],
+        peerTrustRequired = false)
+      installTrafficPeers(sender, receiver)
+      frame = sealAmeDacFrame(sender, payload)
+      check frame.len == ameFrameHeaderLen +
+        int(decodeAmeFrame(frame).header.payloadLen)
+      opened = openAmeDacFrame(receiver, frame)
+      check opened.ok
+      check opened.packet.payload == payload
+      i = i + 1
 
-  test "DAC normal paths widen framing for extended AME frames":
+  test "a DAC control message round-trips with its kind authenticated":
     var
       sender: AmeSession = initAmeSession(exactAuth(),
-        pathLane = dplCleanPath, peerTrustRequired = false)
+        peerTrustRequired = false)
       receiver: AmeSession = initAmeSession(exactAuth(),
-        pathLane = dplCleanPath, peerTrustRequired = false)
-      payload: ByteSeq = newSeq[byte](70_000)
+        peerTrustRequired = false)
+      body: ByteSeq = @[byte 9, 8, 7, 6]
       frame: ByteSeq = @[]
-      decoded: DacDecodedFrame
-      opened: AmeOpenResult
+      got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
     installTrafficPeers(sender, receiver)
-    frame = sealAmeDacFrame(sender, payload)
-    decoded = decodeDacFrame(frame)
-    opened = openAmeDacFrame(receiver, frame)
-    check decoded.header.bodyLenMode == dblU32
-    check decoded.flags.extendedBodyLen
-    check opened.ok
-    check opened.packet.payload == payload
+    frame = sealAmeDacControl(sender, dmkAckRange, body)
+    got = openAmeDacControl(receiver, frame)
+    check got.ok
+    check got.kind == dmkAckRange
+    check got.body == body
+
+  test "the DAC kind is inside the ciphertext, not readable on the wire":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      ack: ByteSeq = @[]
+      hint: ByteSeq = @[]
+      body: ByteSeq = @[byte 1, 2, 3, 4]
+    installTrafficPeers(sender, sender)
+    ack = sealAmeDacControl(sender, dmkAckRange, body)
+    hint = sealAmeDacControl(sender, dmkRepairHint, body)
+    check ack.len == hint.len
+    check decodeAmeFrame(ack).header.packetKind == ampkDacControl
+    check decodeAmeFrame(hint).header.packetKind == ampkDacControl
+
+  test "a forged or altered DAC control message is refused":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      receiver: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      frame: ByteSeq = @[]
+      tampered: ByteSeq = @[]
+      got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
+      i: int = 0
+    installTrafficPeers(sender, receiver)
+    frame = sealAmeDacControl(sender, dmkAckRange, @[byte 1, 2, 3, 4])
+    while i < frame.len:
+      tampered = frame
+      tampered[i] = tampered[i] xor 0x01'u8
+      got = openAmeDacControl(receiver, tampered)
+      check not got.ok
+      i = i + 1
+
+  test "an unknown DAC kind is refused after authentication, not dispatched":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+    installTrafficPeers(sender, sender)
+    expect ValueError:
+      discard sealAmeDacControl(sender, dmkUnknown, @[byte 1])
+
+  test "a replayed DAC control message is refused":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      receiver: AmeSession = initAmeSession(exactAuth(),
+        peerTrustRequired = false)
+      frame: ByteSeq = @[]
+    installTrafficPeers(sender, receiver)
+    frame = sealAmeDacControl(sender, dmkPackageCommit, @[byte 4, 5])
+    check openAmeDacControl(receiver, frame).ok
+    check not openAmeDacControl(receiver, frame).ok
 
   test "authenticated progress expires the retiring epoch":
     var

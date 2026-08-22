@@ -2,6 +2,11 @@
 ## DAC Path Policy <- small path-lane recommendation helpers for DAC/AME
 ## -----------------------------------------------------------------------
 
+import ../build
+
+when not dacAdaptiveBuilt:
+  {.error: "This module is part of the DAC adaptive layer, which -d:bifrostDac=off removed from this build.".}
+
 import ../types
 import ../level0/path_stats
 import ../../../analysis_pragmas
