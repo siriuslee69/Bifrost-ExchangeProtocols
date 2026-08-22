@@ -850,6 +850,17 @@ Offer and reply sizes grow with the selected KEM public keys and ciphertexts
   wider loss; Eir parity verifies recovered groups.
 - Native TLS accepts only TLS 1.3, X25519, Ed25519, SHA-256, and
   `TLS_CHACHA20_POLY1305_SHA256`; unsupported suites fail closed.
+- Native TLS client trust is pinned-root only. Public operating-system trust
+  stores and RSA/ECDSA certificate paths remain unsupported.
+- TLS record compression is intentionally absent. Compress HTTP content before
+  encryption when the application negotiates a standard content encoding.
+
+The benchmark task keeps its executable under `--out:build/tools/...`.
+The default `nimble build` command is not a supported artifact path here; use
+`nimble buildLib`.
+
+`nix flake check path:$PWD` validates the package build, reproducible TLS
+transport checks, and NixOS module rules.
 
 ### Standing risks
 
