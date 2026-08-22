@@ -14,11 +14,28 @@ const
   ameCompressionHeaderLen* = 13
 
 proc defaultAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
-  ## Return conservative package-compression limits.
-  result.algorithm = aczEirRle
+  ## Conservative package-compression limits, with compression OFF.
+  ##
+  ## Compressing before encrypting leaks. The ciphertext is as long as the
+  ## compressed input, so its LENGTH tells an observer how well the plaintext
+  ## compressed -- and if an attacker can get some of their own text placed
+  ## next to a secret, a shorter result means the two matched. That is how
+  ## secrets have been read out of compressed-then-encrypted channels before.
+  ##
+  ## So a caller who wants compression has to ask for it by name, and should
+  ## only do so when no part of the payload is attacker-influenced. Sending
+  ## the same fixed content repeatedly is fine; compressing a message that
+  ## mixes a secret with anything a stranger supplied is not.
+  result.algorithm = aczNone
   result.maxPlaintextBytes = 16_777_216'u32
   result.maxEncodedBytes = 16_777_216'u32
   result.maxExpansionRatio = 4096'u16
+
+proc compressedAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
+  ## The same limits with Eir run-length compression switched on. Read the
+  ## warning on `defaultAmeCompressionPolicy` before reaching for this.
+  result = defaultAmeCompressionPolicy()
+  result.algorithm = aczEirRle
 
 proc readCompressionU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
   ## A/o: source and little-endian offset.

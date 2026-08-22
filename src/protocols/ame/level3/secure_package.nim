@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## AME Secure Package <- compress -> authenticate -> DAC repair -> restore
+## AME Secure Package <- seal once, then cut up and add repair data
 ## -------------------------------------------------------------------------
 
 import ../../types
@@ -7,6 +7,7 @@ import ../types
 import ../level2/session
 import ../level1/compression
 import ../level0/bytes
+import ../level1/exchange_paths
 import ../level2/protection
 import ../../dac/types
 import ../../dac/level2/package_transfer
@@ -15,8 +16,9 @@ import ./dac_relay
 import ../../../analysis_pragmas
 
 const
-  ameSecurePackageMagic* = [uint8('A'), uint8('S'), uint8('P'), uint8('1')]
-  ameSecurePackageHeaderLen* = 16
+  ameSecurePackageMagic* = [uint8('A'), uint8('S'), uint8('P')]
+  ameSecurePackageVersion* = 1'u8
+  ameSecurePackageHeaderLen* = 15
 
 type
   AmeSecurePackagePlan* {.role: truthState.} = object
@@ -42,15 +44,25 @@ proc securePackageAad(packageId: uint64, epochId: uint32,
   result.add(uint8(ord(compression)))
 
 proc encodeSecurePackage(epochId: uint32, nonce: openArray[uint8],
-    m: AmeProtectedMessage): ByteSeq {.role: stateController.} =
-  ## epochId/nonce/m: detached AME protection fields made packageable.
+    tagLen: AmeAuthTagLen, m: AmeProtectedMessage): ByteSeq {.
+    role: stateController.} =
+  ## epochId/nonce/tagLen/m: detached AME protection fields made packageable.
+  ##
+  ##   "ASP" | ver | epoch u32 | nonceLen u16 | tagLen u8 | ctLen u32
+  ##         | nonce | tag | ciphertext
+  ##
+  ## The nonce IS stored here, unlike a live frame. A frame derives its nonce
+  ## from the ratchet position both sides share; a package sitting in a file
+  ## has no such position, so the nonce has to travel with it.
   requireAmeU16Len(nonce.len, "secure-package nonce")
-  requireAmeU16Len(m.authTag.len, "secure-package tag")
   requireAmeU32Len(m.payload.len, "secure-package ciphertext")
+  if m.authTag.len != int(ord(tagLen)):
+    raise newException(ValueError, "secure-package tag length mismatch")
   appendAmeBytes(result, ameSecurePackageMagic)
+  result.add(ameSecurePackageVersion)
   appendAmeU32(result, epochId)
   appendAmeU16(result, uint16(nonce.len))
-  appendAmeU16(result, uint16(m.authTag.len))
+  result.add(uint8(ord(tagLen)))
   appendAmeU32(result, uint32(m.payload.len))
   appendAmeBytes(result, nonce)
   appendAmeBytes(result, m.authTag)
@@ -68,22 +80,25 @@ proc readSecurePackageU32(A: openArray[uint8], o: int): uint32 {.
     (uint32(A[o + 2]) shl 16) or (uint32(A[o + 3]) shl 24)
 
 proc decodeSecurePackage(A: openArray[uint8]): tuple[epochId: uint32,
-    nonce: ByteSeq, message: AmeProtectedMessage] {.role: parser.} =
+    nonce: ByteSeq, tagLen: AmeAuthTagLen,
+    message: AmeProtectedMessage] {.role: parser.} =
   ## A: complete authenticated-package envelope.
   var
     nonceLen: int = 0
     tagLen: int = 0
     payloadLen: int = 0
     offset: int = ameSecurePackageHeaderLen
-  if A.len < ameSecurePackageHeaderLen or A[0 .. 3] != ameSecurePackageMagic:
+  if A.len < ameSecurePackageHeaderLen or A[0 .. 2] != ameSecurePackageMagic:
     raise newException(ValueError, "AME secure-package identity mismatch")
+  if A[3] != ameSecurePackageVersion:
+    raise newException(ValueError, "AME secure-package version mismatch")
   result.epochId = readSecurePackageU32(A, 4)
   nonceLen = int(readSecurePackageU16(A, 8))
-  tagLen = int(readSecurePackageU16(A, 10))
-  payloadLen = checkedAmeWireLen(readSecurePackageU32(A, 12),
+  result.tagLen = ameAuthTagLenFromId(A[10])
+  tagLen = int(ord(result.tagLen))
+  payloadLen = checkedAmeWireLen(readSecurePackageU32(A, 11),
     uint32(defaultAmeMaxFrameBytes), "secure-package ciphertext")
-  if nonceLen <= 0 or tagLen != ameProtectionAuthTagLen or
-      A.len != offset + nonceLen + tagLen + payloadLen:
+  if nonceLen <= 0 or A.len != offset + nonceLen + tagLen + payloadLen:
     raise newException(ValueError, "AME secure-package length mismatch")
   result.nonce = @A[offset ..< offset + nonceLen]
   offset = offset + nonceLen
@@ -109,8 +124,14 @@ proc planAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
   sealed = protectAmeMessage(a.current.layout, a.current.tier,
     a.current.exchange, compressed,
     securePackageAad(packageId, a.current.epochId, compression.algorithm),
-    keyContext)
-  wire = encodeSecurePackage(a.current.epochId, sealed.nonce, sealed.message)
+    keyContext, a.current.params.authTagLen)
+  wire = encodeSecurePackage(a.current.epochId, sealed.nonce,
+    a.current.params.authTagLen, sealed.message)
+  ## Chunking and parity happen on the SEALED bytes, never on the plaintext.
+  ## That is the ordering to keep: encrypt, then authenticate, then add the
+  ## repair data on top. A repair layer can then rebuild lost pieces with no
+  ## key at all, and the one tag over the whole package is checked once, at
+  ## the end, on bytes that have already been put back together.
   result.package = planDacPackage(packageId, wire, d, dtcUserData, limits)
   result.compression = compression
 
@@ -126,10 +147,12 @@ proc openSecurePackageWithEpoch(E: AmeEpochKeySet, packageId: uint64,
   if decoded.epochId != E.epochId or
       decoded.nonce.len != ameProtectionNonceLen(E.layout, E.tier):
     return
+  if decoded.tagLen != E.params.authTagLen:
+    return
   keyContext = ameEpochKeyContext(E, sessionId, direction)
   opened = openAmeMessage(E.layout, E.tier, E.exchange, decoded.nonce,
     decoded.message, securePackageAad(packageId, E.epochId,
-    compression.algorithm), keyContext)
+    compression.algorithm), keyContext, E.params.authTagLen)
   if not opened.ok:
     return
   result.payload = decodeAmeCompressed(opened.payload, compression)
@@ -190,16 +213,43 @@ proc sendAmeSecurePackage*(R: var AmeDacRelay, key: DacLinkKey,
   ## packageId/plaintext/nowMs: package identity, application bytes, clock.
   ## compression: codec both ends agreed on.
   ##
-  ## This path COMPRESSES ONLY. It takes no key material, which is the point:
-  ## on a live relay the package-level AEAD would encrypt bytes that are about
-  ## to be encrypted again, and authenticate a package the transport already
-  ## authenticates end to end. Every datagram is sealed under the epoch, the
-  ## manifest carrying the package's BLAKE3 digest is itself a sealed message,
-  ## and `finishDacPackage` checks the assembled bytes against that digest
-  ## before committing. An attacker can forge none of the three.
+  ## This path COMPRESSES ONLY, and takes no key material. Sealing here would
+  ## encrypt bytes that are about to be encrypted again one datagram at a
+  ## time -- exactly the double wrapping the rest of AME was rid of.
   ##
-  ## `planAmeSecurePackage` still seals, because bytes that leave through a
-  ## file or an untrusted courier have no transport to inherit that from.
+  ## Where the repair data sits, and why it differs from the file path
+  ## -----------------------------------------------------------------
+  ## There are two honest orderings, and which one applies is forced by where
+  ## the sealing happens.
+  ##
+  ##   file path (planAmeSecurePackage)
+  ##     seal the whole package once, THEN cut it up and add parity
+  ##     -> parity is computed over ciphertext, sits outside the tag
+  ##     -> a relay repairs it without holding any key
+  ##
+  ##   live path (here)
+  ##     cut the package up, compute parity, THEN seal each piece separately
+  ##     -> parity is computed over plaintext, sits inside the tags
+  ##     -> only an endpoint can repair, because only it can decrypt
+  ##
+  ## The live path cannot use the first ordering. Each datagram is sealed
+  ## with its own ratchet key, so two sealed datagrams XORed together are not
+  ## a sealed datagram -- parity across them would be meaningless. Sealing
+  ## per datagram and erasure-coding across datagrams cannot both be the
+  ## outer layer.
+  ##
+  ## That is safe here because the loss being repaired is a WHOLE MISSING
+  ## datagram, not a flipped bit. A datagram that arrives damaged fails its
+  ## own tag and is dropped, which looks exactly like one that never came. A
+  ## piece rebuilt from parity is then checked twice over: the manifest
+  ## carrying the package's BLAKE3 digest is itself a sealed message, and
+  ## `finishDacPackage` compares the reassembled bytes against that digest
+  ## before committing. So nothing an attacker supplies is ever handed up.
+  ##
+  ## If bit-level correction is ever wanted instead of whole-piece recovery,
+  ## it MUST go on the file path's side of the tag. Correcting bits underneath
+  ## an authenticator is dead code: the tag rejects the message before the
+  ## correction ever runs.
   result = sendAmeDacPackage(R, key, packageId,
     encodeAmeCompressed(plaintext, compression), nowMs)
 

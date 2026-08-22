@@ -35,7 +35,7 @@ proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
   result.defaultAmeInboxCapacity = defaultAmeInboxCapacity
   result.defaultTimeoutMs = 4000
   result.peerTrustRequired = true
-  result.fomkePregeneration = true
+  result.fomkePregeneration = false
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
   result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
     defaultAmeKemSlots()))
@@ -43,6 +43,8 @@ proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
 
 proc fomkePregenerationEnabled*(c: BifrostConfig): bool {.role: parser.} =
   ## c: runtime policy for preparing future message keys ahead of time.
+  ## Off by default: a filled cache holds the keys for messages not yet sent,
+  ## so a machine seized while it is full gives those up.
   ## Turning it off costs latency and buys forward secrecy for messages that
   ## have not been sent yet -- see `prepareFomkeSendCache`.
   result = c.fomkePregeneration

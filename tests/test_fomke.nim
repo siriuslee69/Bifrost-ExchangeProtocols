@@ -11,6 +11,7 @@ import ../src/protocols/config
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level1/exchange_paths
 import ../src/protocols/ame/level1/suites
+import ../src/protocols/ame/level1/tier_aead
 import ../src/protocols/ame/level1/path_triggers
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/session
@@ -40,6 +41,9 @@ proc fomkeTier(id: uint32, kemMask: uint8): AmeMaskTier =
     occupiedAmeMask(L.hashes.length), occupiedAmeMask(L.signatures.length),
     occupiedAmeMask(L.kdfs.length)))
 
+proc fomkeInitialTier(): AmeMaskTier =
+  result = fomkeTier(1'u32, 0b10000000'u8)
+
 proc initialExchangeState(): AmeExchangeState =
   var
     request: AmeExchangeRequest
@@ -62,16 +66,19 @@ proc upgradedExchangeState(swapped: bool = false): AmeExchangeState =
   else:
     applyAmeExchange(result, request, [first, second])
 
-proc fomkeAmeAuth(): AmeAuthPackage =
+proc fomkeAmeAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   var
     state: AmeExchangeState = initialExchangeState()
     layout: AmeSuiteLayout = fomkeLayout()
     tier: AmeMaskTier = fomkeTier(1'u32, 0b10000000'u8)
-  result = initAmeAuthPackage(layout, tier, state)
+  ## The role has to be settled BEFORE the session is built, because the
+  ## session starts its ratchet immediately and the role decides which lane
+  ## it sends on.
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc fomkeUpgradeSession(): AmeSession =
+proc fomkeUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
   var
-    auth: AmeAuthPackage = fomkeAmeAuth()
+    auth: AmeAuthPackage = fomkeAmeAuth(role)
     target: AmeMaskTier = fomkeTier(2'u32, 0b11000000'u8)
     path: AmeTierPath = initAmeTierPath(auth.current.layout,
       [auth.current.tier, target])
@@ -87,12 +94,6 @@ proc installSignaturePeers(A, B: var AmeSession) =
   A.auth.peerSignaturePublicKeys = bKeys.publicKeys
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
-  A.auth.endpointRole = aerInitiator
-  B.auth.endpointRole = aerResponder
-
-proc installTrafficPeers(A, B: var AmeSession) =
-  A.auth.endpointRole = aerInitiator
-  B.auth.endpointRole = aerResponder
 
 suite "Gimli prepared backend":
   test "compiled lane width matches the selected target profile":
@@ -366,10 +367,11 @@ suite "GGAEAD":
 suite "FOMKE":
   test "initial AME secret becomes independent directional chains":
     var
-      secret: ByteSeq = @[byte 1, 2, 3, 4]
+      secrets: seq[ByteSeq] = @[@[byte 1, 2, 3, 4]]
       alice: FomkeState
-    alice = initFomke(secret, fomkeKems, 0, frInitiator, @[byte 9])
-    check secret.len == 0
+    alice = initFomke(secrets, fomkeKems, fomkeLayout(), fomkeInitialTier(),
+      frInitiator, @[byte 9])
+    check secrets.len == 0
     check alice.epoch == 1'u32
     check alice.lane1.chainKey.len == fomkeChainKeyBytes
     check alice.lane2.chainKey.len == fomkeChainKeyBytes
@@ -380,9 +382,9 @@ suite "FOMKE":
   test "asynchronous directions progress without a shared counter race":
     var
       state: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(state, 0, frInitiator,
+      alice: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frInitiator,
         @[byte 7, 7])
-      bob: FomkeState = initFomkeFromAme(state, 0, frResponder,
+      bob: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frResponder,
         @[byte 7, 7])
       a0: FomkeMessage
       a1: FomkeMessage
@@ -415,8 +417,8 @@ suite "FOMKE":
   test "failed authentication does not consume receive state":
     var
       state: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(state, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(state, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frResponder)
       message: FomkeMessage = sealFomkeMessage(alice, @[byte 5, 6])
       tampered: FomkeMessage = message
       opened: FomkeOpenResult
@@ -428,25 +430,27 @@ suite "FOMKE":
     check opened.ok
     check bob.lane1.nextIndex == 1'u64
 
-  test "prepared TMEAEAD slots preserve exact wire output and ratchet state":
+  test "prepared slots preserve exact wire output and ratchet state":
     var
       exchange: AmeExchangeState = initialExchangeState()
-      preparedState: FomkeState = initFomkeFromAme(exchange, 0, frInitiator)
-      normalState: FomkeState = initFomkeFromAme(exchange, 0, frInitiator)
-      cache: FomkeSendCache = prepareFomkeSendCache(preparedState, 9, 32)
+      preparedState: FomkeState = initFomkeFromAme(exchange, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      normalState: FomkeState = initFomkeFromAme(exchange, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      cache: FomkeSendCache = prepareFomkeSendCache(preparedState, 9)
       clonedCache: FomkeSendCache = cloneFomkeSendCache(cache)
       payload: ByteSeq = @[]
       prepared: FomkeMessage
       normal: FomkeMessage
+      materialLen: int = ameTierKeyMaterialLen(fomkeLayout(),
+        fomkeInitialTier())
       i: int = 0
     check preparedState.lane1.nextIndex == 0'u64
     check fomkePreparedMessages(cache) == 9
     clearFomkeSendCache(clonedCache)
     check fomkePreparedMessages(cache) == 9
     check fomkePreparedSecretBytes(cache) ==
-      fomkeChainKeyBytes + 9 * (tmeAeadKeyMaterialBytes +
-      fomkeAeadNonceBytes + gb3BlockBytes + fomkeAeadNonceBytes + 32 +
-      gb3BlockBytes + fomkeAeadNonceBytes + 32 + fomkeChainKeyBytes)
+      fomkeChainKeyBytes + 9 * (materialLen + fomkeChainKeyBytes)
     while i < 9:
       payload = @[byte i + 1, byte i + 2, byte i + 3]
       prepared = sealFomkeMessagePrepared(preparedState, cache, payload,
@@ -455,7 +459,7 @@ suite "FOMKE":
       check prepared.epoch == normal.epoch
       check prepared.index == normal.index
       check prepared.senderLane == normal.senderLane
-      check prepared.nonce == normal.nonce
+      check prepared.tagLen == normal.tagLen
       check prepared.authTag == normal.authTag
       check prepared.ciphertext == normal.ciphertext
       i = i + 1
@@ -463,17 +467,19 @@ suite "FOMKE":
     check preparedState.lane1.nextIndex == normalState.lane1.nextIndex
     check preparedState.lane1.chainKey == normalState.lane1.chainKey
 
-  test "prepared GGAEAD slots fall back safely after live state changes":
+  test "prepared slots fall back safely after live state changes":
     var
       exchange: AmeExchangeState = initialExchangeState()
-      preparedState: FomkeState = initFomkeFromAme(exchange, 0, frInitiator,
-        messageCipher = fmcGgAead)
-      normalState: FomkeState = initFomkeFromAme(exchange, 0, frInitiator,
-        messageCipher = fmcGgAead)
-      stale: FomkeSendCache = prepareFomkeSendCache(preparedState, 8, 8)
-      oversized: FomkeSendCache
+      preparedState: FomkeState = initFomkeFromAme(exchange, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      normalState: FomkeState = initFomkeFromAme(exchange, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      stale: FomkeSendCache = prepareFomkeSendCache(preparedState, 8)
       prepared: FomkeMessage
       normal: FomkeMessage
+    ## Sealing outside the cache moves the live chain past what the cache
+    ## holds. The next prepared send must notice and fall back rather than
+    ## reuse a key the chain has already spent.
     prepared = sealFomkeMessage(preparedState, @[byte 1])
     normal = sealFomkeMessage(normalState, @[byte 1])
     check prepared.ciphertext == normal.ciphertext
@@ -482,21 +488,14 @@ suite "FOMKE":
     check prepared.ciphertext == normal.ciphertext
     check prepared.authTag == normal.authTag
     check fomkePreparedMessages(stale) == 0
-    oversized = prepareFomkeSendCache(preparedState, 8, 2)
-    prepared = sealFomkeMessagePrepared(preparedState, oversized,
-      @[byte 3, 4, 5])
-    normal = sealFomkeMessage(normalState, @[byte 3, 4, 5])
-    check prepared.ciphertext == normal.ciphertext
-    check prepared.authTag == normal.authTag
-    check fomkePreparedMessages(oversized) == 0
 
-  test "GGAEAD ratchets compact one-time keys and persists its selector":
+  test "the ratchet keeps one-time keys compact and survives a checkpoint":
     var
       state: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(state, 0, frInitiator,
-        messageCipher = fmcGgAead)
-      bob: FomkeState = initFomkeFromAme(state, 0, frResponder,
-        messageCipher = fmcGgAead)
+      alice: FomkeState = initFomkeFromAme(state, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(state, fomkeLayout(),
+        fomkeInitialTier(), frResponder)
       first: FomkeMessage = sealFomkeMessage(alice, @[byte 1])
       second: FomkeMessage = sealFomkeMessage(alice, @[byte 2])
       opened: FomkeOpenResult
@@ -505,12 +504,12 @@ suite "FOMKE":
     opened = openFomkeMessage(bob, second)
     check opened.ok
     check opened.payload == @[byte 2]
-    check bob.messageCipher == fmcGgAead
     check bob.skipped.len == 1
-    check bob.skipped[0].keyMaterial.len == ggAeadKeyMaterialBytes
+    check bob.skipped[0].keyMaterial.len == fomkeMessageKeyBytes
     restored = decodeFomkeState(encodeFomkeState(bob))
-    check restored.messageCipher == fmcGgAead
-    check restored.skipped[0].keyMaterial.len == ggAeadKeyMaterialBytes
+    check restored.skipped[0].keyMaterial.len == fomkeMessageKeyBytes
+    check restored.tagLen == bob.tagLen
+    check restored.tier == bob.tier
 
   test "AME bitmask upgrade is exact ordered and atomic":
     var
@@ -518,8 +517,8 @@ suite "FOMKE":
       candidate: AmeExchangeState = upgradedExchangeState()
       request: AmeExchangeRequest = initAmeExchangeRequest(fomkeKems,
         fomkeTier(3'u32, 0b11100000'u8), 0b01100000'u8)
-      alice: FomkeState = initFomkeFromAme(initial, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(initial, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frResponder)
       message: FomkeMessage
       opened: FomkeOpenResult
       aliceCommit: FomkeUpgradeCommit
@@ -557,8 +556,8 @@ suite "FOMKE":
       swapped: AmeExchangeState = upgradedExchangeState(true)
       request: AmeExchangeRequest = initAmeExchangeRequest(fomkeKems,
         fomkeTier(3'u32, 0b11100000'u8), 0b01100000'u8)
-      alice: FomkeState = initFomkeFromAme(initial, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(initial, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frResponder)
       aliceCommit: FomkeUpgradeCommit
       bobCommit: FomkeUpgradeCommit
     discard sealFomkeMessage(alice, @[byte 1])
@@ -574,8 +573,8 @@ suite "FOMKE":
       candidate: AmeExchangeState = upgradedExchangeState()
       request: AmeExchangeRequest = initAmeExchangeRequest(fomkeKems,
         fomkeTier(3'u32, 0b11100000'u8), 0b01100000'u8)
-      alice: FomkeState = initFomkeFromAme(initial, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(initial, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(), fomkeInitialTier(), frResponder)
       first: FomkeMessage = sealFomkeMessage(alice, @[byte 1])
       second: FomkeMessage = sealFomkeMessage(alice, @[byte 2])
       opened: FomkeOpenResult
@@ -589,7 +588,7 @@ suite "FOMKE":
   test "message wire and descriptor are strict":
     var
       state: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(state, 0, frInitiator)
+      alice: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frInitiator)
       message: FomkeMessage = sealFomkeMessage(alice, @[byte 7, 8, 9])
       encoded: ByteSeq = encodeFomkeMessage(message)
       decoded: FomkeMessage = decodeFomkeMessage(encoded)
@@ -598,7 +597,7 @@ suite "FOMKE":
     check decoded.index == message.index
     check decoded.senderLane == message.senderLane
     check decoded.ciphertext == message.ciphertext
-    check encoded.len == fomkeWireLen(3)
+    check encoded.len == fomkeWireLen(3, message.tagLen)
     check descriptor.protocolId == "bifrost.fomke"
     encoded[0] = 0'u8
     expect ValueError:
@@ -607,8 +606,8 @@ suite "FOMKE":
   test "state codec preserves directional and skipped ratchet state":
     var
       exchange: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(exchange, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(exchange, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(exchange, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(exchange, fomkeLayout(), fomkeInitialTier(), frResponder)
       first: FomkeMessage = sealFomkeMessage(alice, @[byte 1])
       second: FomkeMessage = sealFomkeMessage(alice, @[byte 2])
       encoded: ByteSeq = @[]
@@ -631,25 +630,25 @@ suite "FOMKE":
     expect ValueError:
       discard decodeFomkeState(encoded)
 
-  test "version-1 checkpoints decode with the TMEAEAD default":
+  test "a checkpoint from another format version is refused":
     var
       exchange: AmeExchangeState = initialExchangeState()
-      state: FomkeState = initFomkeFromAme(exchange, 0, frInitiator)
-      legacy: ByteSeq = encodeFomkeState(state)
-      decoded: FomkeState
-    legacy[4] = 1'u8
-    legacy[5] = 0'u8
-    legacy.delete(7)
-    decoded = decodeFomkeState(legacy)
-    check decoded.messageCipher == fmcTmeAead
-    check decoded.lane1.chainKey == state.lane1.chainKey
-    check decoded.lane2.chainKey == state.lane2.chainKey
+      state: FomkeState = initFomkeFromAme(exchange, fomkeLayout(),
+        fomkeInitialTier(), frInitiator)
+      wrongVersion: ByteSeq = encodeFomkeState(state)
+    ## There is no compatibility shim. A checkpoint written by a different
+    ## format is refused outright rather than guessed at, because guessing
+    ## which fields are missing is how a decoder ends up reading key material
+    ## out of the wrong offsets.
+    wrongVersion[3] = 9'u8
+    expect ValueError:
+      discard decodeFomkeState(wrongVersion)
 
   test "durable checkpoints advance before publish and reject rollback":
     var
       exchange: AmeExchangeState = initialExchangeState()
-      alice: FomkeState = initFomkeFromAme(exchange, 0, frInitiator)
-      bob: FomkeState = initFomkeFromAme(exchange, 0, frResponder)
+      alice: FomkeState = initFomkeFromAme(exchange, fomkeLayout(), fomkeInitialTier(), frInitiator)
+      bob: FomkeState = initFomkeFromAme(exchange, fomkeLayout(), fomkeInitialTier(), frResponder)
       storageKey: ByteSeq = newSeq[byte](32)
       context: ByteSeq = @[byte 7, 7, 9, 9]
       aliceBase: string = getTempDir() / "bifrost-fomke-alice-state"
@@ -701,20 +700,16 @@ suite "FOMKE":
 suite "AME with FOMKE":
   test "TCP and DAC data use the forward-only inner message layer":
     var
-      tcpSender: AmeSession = initAmeSession(fomkeAmeAuth(),
+      tcpSender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-      tcpReceiver: AmeSession = initAmeSession(fomkeAmeAuth(),
+      tcpReceiver: AmeSession = initAmeSession(fomkeAmeAuth(aerResponder),
         peerTrustRequired = false)
-      dacSender: AmeSession = initAmeSession(fomkeAmeAuth(),
+      dacSender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-      dacReceiver: AmeSession = initAmeSession(fomkeAmeAuth(),
+      dacReceiver: AmeSession = initAmeSession(fomkeAmeAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(tcpSender, tcpReceiver)
-    installTrafficPeers(dacSender, dacReceiver)
-    enableAmeFomke(tcpSender, frInitiator, 0, @[byte 1, 2])
-    enableAmeFomke(tcpReceiver, frResponder, 0, @[byte 1, 2])
     check not tcpSender.fomkePregenerationEnabled
     check fomkePreparedMessages(tcpSender.fomkeSendCache) == 0
     frame = sealAmeTcpFrame(tcpSender, @[byte 7, 8, 9])
@@ -723,8 +718,6 @@ suite "AME with FOMKE":
     check opened.packet.payload == @[byte 7, 8, 9]
     check tcpSender.fomke.lane1.nextIndex == 1'u64
     check tcpReceiver.fomke.lane1.nextIndex == 1'u64
-    enableAmeFomke(dacSender, frInitiator, 0, @[byte 3, 4])
-    enableAmeFomke(dacReceiver, frResponder, 0, @[byte 3, 4])
     frame = sealAmeDacFrame(dacSender, @[byte 10, 11])
     opened = openAmeDacFrame(dacReceiver, frame)
     check opened.ok
@@ -732,17 +725,14 @@ suite "AME with FOMKE":
 
   test "DAC preserves bounded FOMKE out-of-order delivery":
     var
-      sender: AmeSession = initAmeSession(fomkeAmeAuth(),
+      sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(fomkeAmeAuth(),
+      receiver: AmeSession = initAmeSession(fomkeAmeAuth(aerResponder),
         peerTrustRequired = false)
       first: ByteSeq = @[]
       second: ByteSeq = @[]
       third: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
-    enableAmeFomke(sender, frInitiator, 0)
-    enableAmeFomke(receiver, frResponder, 0)
     first = sealAmeDacFrame(sender, @[byte 1])
     second = sealAmeDacFrame(sender, @[byte 2])
     third = sealAmeDacFrame(sender, @[byte 3])
@@ -756,23 +746,22 @@ suite "AME with FOMKE":
     opened = openAmeDacFrame(receiver, first)
     check not opened.ok
 
-  test "AME selects compact GGAEAD for forward-only message encryption":
+  test "AME prepares future send slots and can turn them off":
     var
-      sender: AmeSession = initAmeSession(fomkeAmeAuth(),
+      sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(fomkeAmeAuth(),
+      receiver: AmeSession = initAmeSession(fomkeAmeAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
-    enableAmeFomke(sender, frInitiator, 0, messageCipher = fmcGgAead)
-    enableAmeFomke(receiver, frResponder, 0, messageCipher = fmcGgAead)
-    check sender.fomkePregenerationEnabled
+    ## Preparing ahead is OFF by default, because a filled cache holds the
+    ## keys for messages that have not been sent yet.
+    check not sender.fomkePregenerationEnabled
+    check fomkePreparedMessages(sender.fomkeSendCache) == 0
+    setAmeFomkePregeneration(sender, true, 8)
     check fomkePreparedMessages(sender.fomkeSendCache) == 8
     frame = sealAmeTcpFrame(sender, @[byte 21, 34, 55])
     opened = openAmeTcpFrame(receiver, frame)
-    check sender.fomke.messageCipher == fmcGgAead
-    check receiver.fomke.messageCipher == fmcGgAead
     check fomkePreparedMessages(sender.fomkeSendCache) == 7
     check opened.ok
     check opened.packet.payload == @[byte 21, 34, 55]
@@ -782,21 +771,18 @@ suite "AME with FOMKE":
 
   test "AME installs prepared slots and rejects an asynchronously stale cache":
     var
-      sender: AmeSession = initAmeSession(fomkeAmeAuth(),
+      sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(fomkeAmeAuth(),
+      receiver: AmeSession = initAmeSession(fomkeAmeAuth(aerResponder),
         peerTrustRequired = false)
       snapshot: FomkeState
       stale: FomkeSendCache
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
-    enableAmeFomke(sender, frInitiator, 0, messageCipher = fmcGgAead)
-    enableAmeFomke(receiver, frResponder, 0, messageCipher = fmcGgAead)
     snapshot = snapshotAmeFomkeSendState(sender)
-    stale = prepareFomkeSendCache(snapshot, 8, 32)
+    stale = prepareFomkeSendCache(snapshot, 8)
     clearFomkeState(snapshot)
-    prepareAmeFomkeSendCache(sender, 8, 32)
+    prepareAmeFomkeSendCache(sender, 8)
     check fomkePreparedMessages(sender.fomkeSendCache) == 8
     frame = sealAmeDacFrame(sender, @[byte 8, 13, 21])
     check fomkePreparedMessages(sender.fomkeSendCache) == 7
@@ -808,8 +794,8 @@ suite "AME with FOMKE":
 
   test "authenticated AME exchange automatically commits the FOMKE epoch":
     var
-      client: AmeSession = fomkeUpgradeSession()
-      server: AmeSession = fomkeUpgradeSession()
+      client: AmeSession = fomkeUpgradeSession(aerInitiator)
+      server: AmeSession = fomkeUpgradeSession(aerResponder)
       request: AmeExchangeRequest = initAmeExchangeRequest(fomkeKems,
         fomkeTier(2'u32, 0b11000000'u8), 0b01000000'u8)
       dataFrame: ByteSeq = @[]
@@ -818,13 +804,11 @@ suite "AME with FOMKE":
       readyFrame: ByteSeq = @[]
       opened: AmeOpenResult
     installSignaturePeers(client, server)
-    enableAmeFomke(client, frInitiator, 0, @[byte 5])
-    enableAmeFomke(server, frResponder, 0, @[byte 5])
     dataFrame = sealAmeTcpFrame(client, @[byte 1])
     opened = openAmeTcpFrame(server, dataFrame)
     check opened.ok
-    prepareAmeFomkeSendCache(client, 8, 32)
-    prepareAmeFomkeSendCache(server, 8, 32)
+    prepareAmeFomkeSendCache(client, 8)
+    prepareAmeFomkeSendCache(server, 8)
     offerFrame = beginAmeTcpExchangeFrame(client, request)
     replyFrame = answerAmeTcpExchangeFrame(server, offerFrame)
     check server.fomke.pending.active
@@ -847,16 +831,14 @@ suite "AME with FOMKE":
 
   test "unsynchronized lane counters reject automatic AME upgrade":
     var
-      client: AmeSession = fomkeUpgradeSession()
-      server: AmeSession = fomkeUpgradeSession()
+      client: AmeSession = fomkeUpgradeSession(aerInitiator)
+      server: AmeSession = fomkeUpgradeSession(aerResponder)
       request: AmeExchangeRequest = initAmeExchangeRequest(fomkeKems,
         fomkeTier(2'u32, 0b11000000'u8), 0b01000000'u8)
       offer: AmeExchangeOffer
       reply: AmeExchangeReply
       clientCommit: FomkeUpgradeCommit
     installSignaturePeers(client, server)
-    enableAmeFomke(client, frInitiator, 0)
-    enableAmeFomke(server, frResponder, 0)
     discard sealFomkeMessage(client.fomke, @[byte 1])
     offer = beginAmeSessionExchange(client, request)
     reply = answerAmeSessionExchange(server, offer)
@@ -869,37 +851,37 @@ suite "AME with FOMKE":
         server.pendingIncoming.candidate.epochId, request.targetTier,
         clientCommit)
 
-  test "runtime config can invert both cipher pregeneration defaults":
+  test "runtime config decides whether new sessions prepare ahead":
     var
       previous: BifrostConfig = currentBifrostConfig()
       configured: BifrostConfig = previous
-      tme: AmeSession = initAmeSession(fomkeAmeAuth(),
-        peerTrustRequired = false)
-      gg: AmeSession = initAmeSession(fomkeAmeAuth(),
-        peerTrustRequired = false)
-    configured.tmeAeadPregeneration = true
-    configured.ggAeadPregeneration = false
+      eager: AmeSession
+      lazy: AmeSession
+    configured.fomkePregeneration = true
     applyBifrostConfig(configured)
-    enableAmeFomke(tme, frInitiator, 0)
-    enableAmeFomke(gg, frInitiator, 0, messageCipher = fmcGgAead)
-    check tme.fomkePregenerationEnabled
-    check fomkePreparedMessages(tme.fomkeSendCache) ==
+    eager = initAmeSession(fomkeAmeAuth(aerInitiator),
+      peerTrustRequired = false)
+    check eager.fomkePregenerationEnabled
+    check fomkePreparedMessages(eager.fomkeSendCache) ==
       configured.fomkePregenerationMessages
-    check not gg.fomkePregenerationEnabled
-    check fomkePreparedMessages(gg.fomkeSendCache) == 0
-    clearAmeSession(tme)
-    clearAmeSession(gg)
+    configured.fomkePregeneration = false
+    applyBifrostConfig(configured)
+    lazy = initAmeSession(fomkeAmeAuth(aerResponder),
+      peerTrustRequired = false)
+    check not lazy.fomkePregenerationEnabled
+    check fomkePreparedMessages(lazy.fomkeSendCache) == 0
+    clearAmeSession(eager)
+    clearAmeSession(lazy)
     applyBifrostConfig(previous)
 
   test "connection teardown erases FOMKE and AME secret state":
     var
-      connection: AmeSession = initAmeSession(fomkeAmeAuth(),
+      connection: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
         peerTrustRequired = false)
-    enableAmeFomke(connection, frInitiator, 0)
-    prepareAmeFomkeSendCache(connection, 8, 32)
+    prepareAmeFomkeSendCache(connection, 8)
     discard sealAmeDacFrame(connection, @[byte 1])
     clearAmeSession(connection)
-    check not connection.fomkeEnabled
     check connection.fomke.lane1.chainKey.len == 0
+    check connection.fomkeRetiring.lane1.chainKey.len == 0
     check fomkePreparedMessages(connection.fomkeSendCache) == 0
     check connection.auth.current.exchange.activeMask == 0'u8

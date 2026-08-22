@@ -499,10 +499,28 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   S.pendingIncoming.candidate.transcriptSalt = transitionTranscriptSalt(
     S.auth.current, o, answer.reply)
   clearFomkeSendCache(S.fomkeSendCache)
-  discard prepareFomkeUpgrade(S.fomke, o.requestId,
-    S.pendingIncoming.candidate.epochId, o.request,
-    S.pendingIncoming.candidate.exchange)
   result = answer.reply
+  ## The ratchet upgrade is NOT staged here. Staging it freezes the lane
+  ## counters, and this side still has to seal the reply -- which advances
+  ## one of them. `stageAmeSessionFomkeUpgrade` runs after that send, so both
+  ## endpoints stage at the same lane positions and derive the same root.
+
+proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: stateController,
+    tag: {tagCryptoBoundary, tagExchange, tagFomke}.} =
+  ## S: responder that has already SENT its reply. Stages the ratchet upgrade
+  ## at the lane positions both endpoints now share.
+  ##
+  ## Forgetting this call cannot produce a bad session: `confirmAmeSessionExchange`
+  ## checks that an upgrade is staged and refuses the epoch-ready frame
+  ## otherwise.
+  if not S.pendingIncoming.active:
+    raise newException(ValueError, "AME has no incoming exchange to stage")
+  if S.fomke.pending.active:
+    raise newException(ValueError, "AME FOMKE upgrade is already staged")
+  clearFomkeSendCache(S.fomkeSendCache)
+  discard prepareFomkeUpgrade(S.fomke, S.pendingIncoming.requestId,
+    S.pendingIncoming.candidate.epochId, S.pendingIncoming.request,
+    S.pendingIncoming.candidate.exchange)
 
 proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     role: orchestrator.} =
@@ -1206,6 +1224,7 @@ proc answerAmeTcpExchangeFrame*(S: var AmeSession,
     decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload))
   result = sealControlFrame(S, ampkExchangeEnvelopes, acrTcp,
     encodeAmeExchangeReply(reply))
+  stageAmeSessionFomkeUpgrade(S)
 
 proc finishAmeTcpExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
@@ -1265,6 +1284,7 @@ proc answerAmeDacExchangeFrame*(S: var AmeSession,
     decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload))
   result = sealControlFrame(S, ampkExchangeEnvelopes, acrDac,
     encodeAmeExchangeReply(reply))
+  stageAmeSessionFomkeUpgrade(S)
 
 proc finishAmeDacExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
