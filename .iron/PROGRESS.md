@@ -447,3 +447,67 @@ AME and FOMKE become one layer: compact framing, private handshake, real hybrids
 
 - 425 tests pass, plus the build-flag, DAC-flag, fuzz, chunky-AEAD, TLS,
   examples, benchmark and hygiene tasks.
+
+## 2026-08-22 (second pass) — on-path attacker tests, and what the sweep found
+
+- **New suite `tests/test_mitm_and_loss.nim`, 19 tests, task `nimble testMitm`.**
+  It takes the attacker's seat rather than the endpoints'. The central test is
+  the blunt one: seal a recognisable secret, then SCAN the whole frame for
+  every four-byte window of that secret and require none of them to be there.
+  That checks the property directly instead of trusting that a call named
+  "seal" sealed anything. Around it: only the header may be readable, the same
+  secret twice must give unrelated blobs, a captured frame must open for
+  nobody, EVERY single-byte edit anywhere in the frame must be refused,
+  replay and reflection must fail, and no KEM secret, transcript salt or
+  signing key may appear in any of the four handshake records.
+
+- **Real ECC is now exercised end to end.** Reed-Solomon rebuilds a full
+  six-shard parity budget from shards that made a genuine encode/decode round
+  trip through `DacParityShard` records; one loss past the budget is refused
+  and leaves the receiver untouched; a damaged (not missing) chunk is caught
+  by the manifest digest and independently by the tag. The XOR path is
+  repaired by a relay that is handed no key at all, which is the ordering
+  claim from the previous pass turned into a test.
+
+- **Loss behaviour differs by carrier, and now says so.** A dropped datagram
+  is ordinary weather: later datagrams open, the dropped one opens late from
+  the skipped-key cache, and a replay of it is refused. A gap in the TCP
+  stream is NOT loss -- TCP already ordered it -- so the session refuses
+  rather than carrying on with a hole. Both are tested.
+
+- **Found: the pinned Eir submodule cannot build this repo.**
+  `dac/level2/package_transfer.nim` imports `RsCodec`, `initRsCodec`,
+  `encodeRsShards` and `recoverRsShards` from `eir_compression_and_ecc`.
+  The submodule at `submodules/Eir-CompressionAndECC` has no Reed-Solomon at
+  all -- different module layout, no `ecc_reed_solomon.nim`. Verified by
+  compiling a probe against the submodule path alone: `undeclared identifier:
+  'RsCodec'`. Everything builds here only because `config.nims` prefers a
+  sibling checkout at `../Eir-CompressionAndECC`, which is present on this
+  machine and is not pinned by anything. A fresh clone would fail to compile
+  the package path, and with it `nimble test`. The pin needs updating.
+
+- **Found: four `DacScenarioDefaults` fields are declared and never read** --
+  `activeGroups`, `useTcpRepair`, `compressManifest`, `orderedStream`. Every
+  scenario constructor sets them, nothing consults them, none reaches the
+  wire, and one test asserts a constructor set a field it also chose. Marked
+  in `dac/types.nim` as intent rather than behaviour. Not removed: three of
+  the four name work that was agreed, and deleting public fields is a
+  separate decision.
+
+- **Byte clog, measured rather than guessed** (nothing changed yet):
+  - AME header `payloadLen` (4 B) is fully redundant. The decoder requires it
+    to equal `A.len - 34`, which the caller already knows: TCP has a 4-byte
+    stream length prefix, DAC has the datagram length.
+  - AME header `parentLaneId` (4 B) never varies. `initAmeSession` sets it to
+    `rootLaneId` and nothing ever changes it.
+  - FOM1's `"FOM"` + version (4 B) is pure restatement. `encodeFomkeMessage`
+    is called from exactly one place and its output only ever sits inside an
+    AME frame whose packet kind already fixes the body format.
+  - FOM1's `cipherLen` (4 B) is the remainder of the frame. FOM1's `tagLen`
+    (1 B) is checked against the session and never obeyed, so a receiver that
+    must hold session state anyway does not need it.
+  - Together: 34 -> 26 and 22 -> 13, i.e. 88 -> 71 bytes per frame at a
+    32-byte tag, about a fifth of the remaining overhead.
+
+- 444 tests pass, plus every build-flag, DAC-flag, fuzz, chunky-AEAD, TLS,
+  examples, benchmark and hygiene task.

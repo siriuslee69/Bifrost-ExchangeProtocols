@@ -85,6 +85,30 @@ FOMKE forward secrecy
   -> preparing ahead is bounded, and its cost in held key bytes is countable
   -> the nonce never repeats and never travels
 
+MITM, loss, and repair
+  -> no run of the plaintext survives anywhere into the frame, checked by
+     scanning the wire for every four-byte window of the secret
+  -> an observer may read the header fields, and nothing past them
+  -> the same secret sent twice gives two unrelated blobs
+  -> a captured frame opens for nobody who lacks the exchange secret
+  -> changing ANY single byte of a frame, header included, breaks it
+  -> a captured frame cannot be replayed or reflected at its sender
+  -> a forged body under an honest header is refused
+  -> padded traffic: the blob is longer than the secret, and a range of
+     message sizes is one width on the wire
+  -> no KEM secret, transcript salt, or signing key appears in the four
+     handshake records
+  -> a MITM offering his own certificate for the same subject is refused
+  -> a sealed package leaks nothing through its chunks or its parity
+  -> a relay holding no key rebuilds a lost chunk from XOR parity
+  -> Reed-Solomon rebuilds a full parity budget of losses, from shards that
+     made a real encode/decode round trip
+  -> one loss past the budget is refused and the receiver is left untouched
+  -> a damaged chunk is caught by the package digest and by the tag
+  -> a dropped datagram does not stop the ones behind it
+  -> the stream carrier refuses a gap instead of papering over it
+  -> a dropped rotation commit stalls the rotation instead of splitting it
+
 DAC
   -> defaults validation
   -> frame header encode/decode
