@@ -226,7 +226,7 @@ suite "AME immutable layouts and mask tiers":
     decision.reason = "not canonical"
     expect ValueError:
       discard encodeAmeAgreementDecision(decision)
-    trust = initVerifiedAmePeerTrust("root-a", "peer-a", asaEd25519)
+    trust = initVerifiedAmePeerTrust("root-a", "peer-a", [asaEd25519])
     check trust.ok
     expect ValueError:
-      discard initVerifiedAmePeerTrust("", "peer-a", asaEd25519)
+      discard initVerifiedAmePeerTrust("", "peer-a", [asaEd25519])

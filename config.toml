@@ -8,13 +8,13 @@ defaultAmeInboxCapacity = 64
 defaultTimeoutMs = 4000
 peerTrustRequired = true
 
-# FOMKE future-message cache policy. GGAEAD favors low latency by default.
-# TMEAEAD keeps future key/stream material out of memory unless explicitly enabled.
+# FOMKE future-message cache policy.
+# Preparing message keys ahead of time cuts send latency. It also keeps the
+# keys for that many not-yet-sent messages in memory, so a machine seized
+# while the cache is full gives those messages up. Off unless you need it.
 [fomke]
-tmeAeadPregeneration = false
-ggAeadPregeneration = true
+fomkePregeneration = false
 fomkePregenerationMessages = 8
-fomkePregenerationPayloadBytes = 256
 
 # Canonical immutable AME layout and initial mask tier.
 # Tier masks are KEM, cipher, MAC, hash, signature, KDF in MSB-first order.

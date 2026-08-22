@@ -126,7 +126,13 @@ proc openAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
   ## itself, so a shortened tag is refused instead of being checked at its own
   ## easier length.
   var
-    material: ByteSeq = buildAtRestMaterial(L, t, E, nonce, keyContext)
+    material: ByteSeq = @[]
+  ## Opening with the wrong tier is a failure, not an error: a caller trying
+  ## each of its epochs in turn must get a plain "no" it can move past.
+  if nonce.len != ameTierNonceLen(L, t) or
+      message.authTag.len != int(ord(tagLen)):
+    return
+  material = buildAtRestMaterial(L, t, E, nonce, keyContext)
   try:
     result = openAmeTier(L, t, material, message.payload, message.authTag,
       aad, tagLen)

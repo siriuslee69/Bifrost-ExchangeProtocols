@@ -19,12 +19,9 @@ suite "exact Bifrost config":
       encodeConfigHex(encodeAmeSuiteLayout(loaded.ameLayout))
     check encodeConfigHex(encodeAmeMaskTier(expected.ameInitialTier)) ==
       encodeConfigHex(encodeAmeMaskTier(loaded.ameInitialTier))
-    check not loaded.tmeAeadPregeneration
-    check loaded.ggAeadPregeneration
+    check not loaded.fomkePregeneration
     check loaded.fomkePregenerationMessages == 8
-    check loaded.fomkePregenerationPayloadBytes == 256
-    check not fomkePregenerationEnabledFor(loaded, fmcTmeAead)
-    check fomkePregenerationEnabledFor(loaded, fmcGgAead)
+    check not fomkePregenerationEnabled(loaded)
 
   test "invalid layout and tier hex are rejected":
     expect ValueError:
@@ -41,17 +38,14 @@ suite "exact Bifrost config":
     active = currentBifrostConfig()
     check active.defaultTimeoutMs == 1234
 
-  test "cipher policies and cache dimensions parse independently":
+  test "send-cache policy and size parse independently":
     var
       parsed: BifrostConfig = parseBifrostConfigText("""
-        tmeAeadPregeneration = true
-        ggAeadPregeneration = false
+        fomkePregeneration = true
         fomkePregenerationMessages = 16
-        fomkePregenerationPayloadBytes = 96
       """)
-    check parsed.tmeAeadPregeneration
-    check not parsed.ggAeadPregeneration
+    check parsed.fomkePregeneration
+    check fomkePregenerationEnabled(parsed)
     check parsed.fomkePregenerationMessages == 16
-    check parsed.fomkePregenerationPayloadBytes == 96
     expect ValueError:
       discard parseBifrostConfigText("fomkePregenerationMessages = 0")

@@ -2,7 +2,7 @@
 ## AME Mask Tier Tests <- AME2 frames and atomic epoch transitions
 ## -------------------------------------------------------------------------
 
-import std/unittest
+import std/[strutils, unittest]
 
 import ../src/protocols/types
 import ../src/protocols/ame/types
@@ -11,10 +11,12 @@ import ../src/protocols/ame/level1/suites
 import ../src/protocols/ame/level1/derivation
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/protection
+import ../src/protocols/fomke/types
+import ../src/protocols/fomke/level2/wire
+import ../src/protocols/fomke/level1/chain
 import ../src/protocols/ame/level2/session
 import ../src/protocols/ame/level2/wire
 import ../src/protocols/ame/level1/path_triggers
-import ../src/protocols/fomke/types
 import ../src/protocols/dac/types
 import ../src/protocols/dac/level0/framing
 
@@ -30,7 +32,7 @@ proc exactTier(L: AmeSuiteLayout, id: uint32, kem: uint8): AmeMaskTier =
     occupiedAmeMask(L.hashes.length), occupiedAmeMask(L.signatures.length),
     occupiedAmeMask(L.kdfs.length)))
 
-proc exactAuth(): AmeAuthPackage =
+proc exactAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   var
     layout: AmeSuiteLayout = exactLayout()
     tier: AmeMaskTier = exactTier(layout, 1'u32, 0b10000000'u8)
@@ -38,9 +40,11 @@ proc exactAuth(): AmeAuthPackage =
   applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8),
     [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
-  result = initAmeAuthPackage(layout, tier, state)
+  ## The role has to be settled before the session is built: the session
+  ## starts its ratchet at once, and the role decides which lane it sends on.
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc layeredAuth(): AmeAuthPackage =
+proc layeredAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   var
     layout: AmeSuiteLayout = initAmeSuiteLayout(exactKems,
       initAmeCipherAlgorithms([acaXChaCha20, acaGimli]),
@@ -54,20 +58,20 @@ proc layeredAuth(): AmeAuthPackage =
     state: AmeExchangeState = initAmeExchangeState(layout.kems)
   applyAmeExchange(state, initAmeExchangeRequest(layout.kems, tier,
     tier.masks.kem), [@[byte 9, 8, 7, 6]])
-  result = initAmeAuthPackage(layout, tier, state)
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc exactUpgradeSession(): AmeSession =
+proc exactUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
   var
-    auth: AmeAuthPackage = exactAuth()
+    auth: AmeAuthPackage = exactAuth(role)
     target: AmeMaskTier = exactTier(auth.current.layout, 2'u32,
       0b11000000'u8)
     path: AmeTierPath = initAmeTierPath(auth.current.layout,
       [auth.current.tier, target])
   result = initAmeSession(auth, path, peerTrustRequired = false)
 
-proc layeredUpgradeSession(): AmeSession =
+proc layeredUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
   var
-    auth: AmeAuthPackage = layeredAuth()
+    auth: AmeAuthPackage = layeredAuth(role)
     layout: AmeSuiteLayout = auth.current.layout
     target: AmeMaskTier = initAmeMaskTier(layout, 2'u32,
       initAmeTierMasks(0b10000000'u8, 0b11000000'u8, 0b11000000'u8,
@@ -85,12 +89,6 @@ proc installSignaturePeers(A, B: var AmeSession) =
   A.auth.peerSignaturePublicKeys = bKeys.publicKeys
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
-  A.auth.endpointRole = aerInitiator
-  B.auth.endpointRole = aerResponder
-
-proc installTrafficPeers(A, B: var AmeSession) =
-  A.auth.endpointRole = aerInitiator
-  B.auth.endpointRole = aerResponder
 
 proc installLoopbackSignatures(S: var AmeSession) =
   var
@@ -102,14 +100,13 @@ proc installLoopbackSignatures(S: var AmeSession) =
 suite "AME mask-tier sessions":
   test "TCP frame roundtrips under exact agreement":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 1, 2, 3, 4]
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     frame = sealAmeTcpFrame(sender, payload)
     opened = openAmeTcpFrame(receiver, frame)
     check opened.ok
@@ -118,24 +115,23 @@ suite "AME mask-tier sessions":
 
   test "directional keys reject reflected TCP and DAC frames":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       tcpFrame: ByteSeq = @[]
       dacFrame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     tcpFrame = sealAmeTcpFrame(sender, @[byte 1, 2])
     opened = openAmeTcpFrame(sender, tcpFrame)
     check not opened.ok
-    check opened.err == "AME authentication failed"
+    check opened.err.startsWith("AME authentication failed")
     opened = openAmeTcpFrame(receiver, tcpFrame)
     check opened.ok
     dacFrame = sealAmeDacFrame(sender, @[byte 3, 4])
     opened = openAmeDacFrame(sender, dacFrame)
     check not opened.ok
-    check opened.err == "AME authentication failed"
+    check opened.err.startsWith("AME authentication failed")
     opened = openAmeDacFrame(receiver, dacFrame)
     check opened.ok
 
@@ -166,34 +162,31 @@ suite "AME mask-tier sessions":
 
   test "DAC frame roundtrips and binds carrier metadata":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 5, 6, 7]
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacFrame(sender, payload)
     opened = openAmeDacFrame(receiver, frame)
     check opened.ok
     check opened.packet.payload == payload
     frame[^1] = frame[^1] xor 1'u8
-    receiver = initAmeSession(exactAuth(), peerTrustRequired = false)
-    installTrafficPeers(sender, receiver)
+    receiver = initAmeSession(exactAuth(aerResponder), peerTrustRequired = false)
     opened = openAmeDacFrame(receiver, frame)
     check not opened.ok
 
   test "a DAC datagram is exactly one AME frame, with no outer header":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       decoded: AmeDecodedFrame
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
     decoded = decodeAmeFrame(frame)
     check decoded.header.sessionId == sender.sessionId
@@ -204,32 +197,36 @@ suite "AME mask-tier sessions":
     check opened.ok
     check opened.packet.payload == @[byte 5, 6, 7]
 
-  test "the epoch lives only in the protected body and tampering is caught":
+  test "the epoch lives in the FOMKE envelope and tampering is caught":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      body: AmeProtectedBody
+      body: FomkeMessage
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
-    body = decodeAmeProtectedBody(decodeAmeFrame(frame).payload)
-    check body.epochId == sender.auth.current.epochId
+    body = decodeFomkeMessage(decodeAmeFrame(frame).payload)
+    check body.epoch == sender.fomke.epoch
+    check body.senderLane == flLane1
+    ## No nonce on the wire and no nonce-length field: both sides derive the
+    ## nonce from the same ratchet step, so the envelope is header, tag,
+    ## ciphertext and nothing else.
+    check frame.len == ameFrameHeaderLen + fomkeHeaderLen +
+      int(ord(body.tagLen)) + 3
     frame[24] = frame[24] xor 0x01'u8
     opened = openAmeDacFrame(receiver, frame)
     check not opened.ok
 
   test "an epoch past 65535 now rides DAC, which the old u16 field refused":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     sender.auth.current.epochId = uint32(high(uint16)) + 7'u32
     receiver.auth.current.epochId = sender.auth.current.epochId
     frame = sealAmeDacFrame(sender, @[byte 5])
@@ -249,11 +246,10 @@ suite "AME mask-tier sessions":
     payload[0] = 1'u8
     payload[^1] = 2'u8
     while i < lanes.len:
-      sender = initAmeSession(exactAuth(), pathLane = lanes[i],
+      sender = initAmeSession(exactAuth(aerInitiator), pathLane = lanes[i],
         peerTrustRequired = false)
-      receiver = initAmeSession(exactAuth(), pathLane = lanes[i],
+      receiver = initAmeSession(exactAuth(aerResponder), pathLane = lanes[i],
         peerTrustRequired = false)
-      installTrafficPeers(sender, receiver)
       frame = sealAmeDacFrame(sender, payload)
       check frame.len == ameFrameHeaderLen +
         int(decodeAmeFrame(frame).header.payloadLen)
@@ -264,14 +260,13 @@ suite "AME mask-tier sessions":
 
   test "a DAC control message round-trips with its kind authenticated":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       body: ByteSeq = @[byte 9, 8, 7, 6]
       frame: ByteSeq = @[]
       got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacControl(sender, dmkAckRange, body)
     got = openAmeDacControl(receiver, frame)
     check got.ok
@@ -280,12 +275,11 @@ suite "AME mask-tier sessions":
 
   test "the DAC kind is inside the ciphertext, not readable on the wire":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
       ack: ByteSeq = @[]
       hint: ByteSeq = @[]
       body: ByteSeq = @[byte 1, 2, 3, 4]
-    installTrafficPeers(sender, sender)
     ack = sealAmeDacControl(sender, dmkAckRange, body)
     hint = sealAmeDacControl(sender, dmkRepairHint, body)
     check ack.len == hint.len
@@ -294,15 +288,14 @@ suite "AME mask-tier sessions":
 
   test "a forged or altered DAC control message is refused":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       tampered: ByteSeq = @[]
       got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
       i: int = 0
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacControl(sender, dmkAckRange, @[byte 1, 2, 3, 4])
     while i < frame.len:
       tampered = frame
@@ -313,33 +306,30 @@ suite "AME mask-tier sessions":
 
   test "an unknown DAC kind is refused after authentication, not dispatched":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-    installTrafficPeers(sender, sender)
     expect ValueError:
       discard sealAmeDacControl(sender, dmkUnknown, @[byte 1])
 
   test "a replayed DAC control message is refused":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-    installTrafficPeers(sender, receiver)
     frame = sealAmeDacControl(sender, dmkPackageCommit, @[byte 4, 5])
     check openAmeDacControl(receiver, frame).ok
     check not openAmeDacControl(receiver, frame).ok
 
   test "authenticated progress expires the retiring epoch":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     receiver.auth.retiring = receiver.auth.current
     receiver.auth.retiringFramesLeft = 1
     receiver.auth.current.epochId = receiver.auth.current.epochId + 1'u32
@@ -368,8 +358,8 @@ suite "AME mask-tier sessions":
 
   test "authenticated TCP exchange commits only after epoch-ready":
     var
-      client: AmeSession = exactUpgradeSession()
-      server: AmeSession = exactUpgradeSession()
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -395,19 +385,25 @@ suite "AME mask-tier sessions":
       server.auth.current.exchange.sharedSecrets[1]
     check client.auth.current.transcriptSalt == server.auth.current.transcriptSalt
 
-  test "FOMKE role must match the AME endpoint role":
+  test "the ratchet direction follows the endpoint role, with no way to differ":
     var
-      connection: AmeSession = initAmeSession(exactAuth(),
+      initiator: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-    connection.auth.endpointRole = aerResponder
-    expect ValueError:
-      enableAmeFomke(connection, frInitiator, 0)
+      responder: AmeSession = initAmeSession(exactAuth(aerResponder),
+        peerTrustRequired = false)
+    ## There is no separate switch to get wrong. The session reads the role
+    ## off its own auth package when it starts the ratchet, so the two can
+    ## never disagree.
+    check initiator.fomke.role == frInitiator
+    check responder.fomke.role == frResponder
+    check outboundFomkeLane(initiator.fomke.role) == flLane1
+    check outboundFomkeLane(responder.fomke.role) == flLane2
 
   test "candidate rekey does not mutate the current epoch":
     var
-      client: AmeSession = initAmeSession(exactAuth(),
+      client: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      server: AmeSession = initAmeSession(exactAuth(),
+      server: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       target: AmeMaskTier = client.auth.current.tier
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -424,8 +420,8 @@ suite "AME mask-tier sessions":
 
   test "receiver rejects either KEM offer signature before candidate mutation":
     var
-      client: AmeSession = exactUpgradeSession()
-      server: AmeSession = exactUpgradeSession()
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -444,8 +440,8 @@ suite "AME mask-tier sessions":
 
   test "initiator rejects KEM reply signature before epoch rotation":
     var
-      client: AmeSession = exactUpgradeSession()
-      server: AmeSession = exactUpgradeSession()
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -501,8 +497,8 @@ suite "AME mask-tier sessions":
 
   test "non-KEM masks rotate atomically without replacing KEM secrets":
     var
-      client: AmeSession = layeredUpgradeSession()
-      server: AmeSession = layeredUpgradeSession()
+      client: AmeSession = layeredUpgradeSession(aerInitiator)
+      server: AmeSession = layeredUpgradeSession(aerResponder)
       layout: AmeSuiteLayout = client.auth.current.layout
       target: AmeMaskTier = initAmeMaskTier(layout, 2'u32,
         initAmeTierMasks(0b10000000'u8, 0b11000000'u8, 0b11000000'u8,
@@ -514,8 +510,6 @@ suite "AME mask-tier sessions":
       replyFrame: ByteSeq = @[]
       readyFrame: ByteSeq
     installSignaturePeers(client, server)
-    enableAmeFomke(client, frInitiator, 0)
-    enableAmeFomke(server, frResponder, 0)
     offerFrame = beginAmeTcpExchangeFrame(client, request)
     replyFrame = answerAmeTcpExchangeFrame(server, offerFrame)
     check server.auth.current.tier.tierId == 1'u32
@@ -532,8 +526,8 @@ suite "AME mask-tier sessions":
 
   test "authenticated DAC exchange rejects tampering and replay":
     var
-      client: AmeSession = exactUpgradeSession()
-      server: AmeSession = exactUpgradeSession()
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -557,8 +551,8 @@ suite "AME mask-tier sessions":
 
   test "DAC exchange control frames bind the embedded epoch":
     var
-      client: AmeSession = exactUpgradeSession()
-      server: AmeSession = exactUpgradeSession()
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
@@ -593,14 +587,13 @@ suite "AME mask-tier sessions":
 
   test "DAC accepts bounded out-of-order frames and rejects duplicates":
     var
-      sender: AmeSession = initAmeSession(exactAuth(),
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
-      receiver: AmeSession = initAmeSession(exactAuth(),
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       first: ByteSeq = @[]
       second: ByteSeq = @[]
       opened: AmeOpenResult
-    installTrafficPeers(sender, receiver)
     first = sealAmeDacFrame(sender, @[byte 1])
     second = sealAmeDacFrame(sender, @[byte 2])
     opened = openAmeDacFrame(receiver, second)
@@ -609,16 +602,22 @@ suite "AME mask-tier sessions":
     check opened.ok
     opened = openAmeDacFrame(receiver, first)
     check not opened.ok
-    check opened.err == "AME replay rejected"
+    ## The ratchet catches this before the header's replay window is even
+    ## consulted: the one-time key for that position was destroyed when the
+    ## frame was first opened, so there is nothing left to open it with.
+    check opened.err.startsWith("AME authentication failed")
 
   test "envelope and sequence limits fail closed":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
-      envelope: ByteSeq = @[byte 'A', byte 'E', byte 'C', byte '3',
-        3, 0, 1, 0, 0, 0, 24, 0, 32, 0, 0, 0, 0x00, 0x80]
+      envelope: ByteSeq = @[byte 'F', byte 'O', byte 'M', 1,
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 32, 0x00, 0x80, 0x00, 0x00]
+    ## The header says the ciphertext is 0x800000 bytes long while the frame
+    ## carries none. A decoder that trusted the field would try to allocate
+    ## eight megabytes on one short datagram.
     expect ValueError:
-      discard decodeAmeProtectedBody(envelope)
+      discard decodeFomkeMessage(envelope)
     connection.nextAmeSequence = high(uint32)
     expect ValueError:
       discard sealAmeTcpFrame(connection, @[byte 1])
@@ -631,14 +630,15 @@ suite "AME mask-tier sessions":
 
   test "simultaneous rekey converges instead of splitting the epoch":
     var
-      A: AmeSession = exactUpgradeSession()
-      B: AmeSession = exactUpgradeSession()
+      A: AmeSession = exactUpgradeSession(aerInitiator)
+      B: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest
       offerA: AmeExchangeOffer
       offerB: AmeExchangeOffer
       replyB: AmeExchangeReply
+      commit: FomkeUpgradeCommit
     installSignaturePeers(A, B)
     request = initAmeExchangeRequest(A.auth.current.layout.kems, target,
       0b01000000'u8)
@@ -647,13 +647,21 @@ suite "AME mask-tier sessions":
     offerB = beginAmeSessionExchange(B, request)
     # the responder yields its own exchange and answers the initiator
     replyB = answerAmeSessionExchange(B, offerA)
+    # the responder stages its ratchet upgrade after it has sent the reply,
+    # so both endpoints stage at the same lane positions
+    stageAmeSessionFomkeUpgrade(B)
     check not B.pendingExchange.active
     # the initiator keeps its own exchange and refuses the responder's offer
     expect ValueError:
       discard answerAmeSessionExchange(A, offerB)
     finishAmeSessionExchange(A, replyB)
+    commit = A.fomke.pending.commit
+    confirmFomkeUpgrade(A.fomke, commit)
     confirmAmeSessionExchange(B, offerA.requestId,
-      B.pendingIncoming.candidate.epochId, target)
+      B.pendingIncoming.candidate.epochId, target, commit)
+    # both derived the same ratchet root, independently
+    check A.fomke.epoch == B.fomke.epoch
+    check A.fomke.lane1.chainKey == B.fomke.lane1.chainKey
     # both land on one epoch built from one set of KEM secrets
     check A.auth.current.epochId == B.auth.current.epochId
     check A.auth.current.exchange.sharedSecrets[1] ==
@@ -661,8 +669,8 @@ suite "AME mask-tier sessions":
 
   test "outgoing exchange is refused while a candidate epoch is pending":
     var
-      A: AmeSession = exactUpgradeSession()
-      B: AmeSession = exactUpgradeSession()
+      A: AmeSession = exactUpgradeSession(aerInitiator)
+      B: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest
