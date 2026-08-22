@@ -9,6 +9,7 @@ import ../src/protocols/ame/types
 import ../src/protocols/ame/level1/exchange_paths
 import ../src/protocols/ame/level1/suites
 import ../src/protocols/ame/level1/derivation
+import ../src/protocols/ame/level1/padding
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/protection
 import ../src/protocols/fomke/types
@@ -703,3 +704,198 @@ suite "AME mask-tier sessions":
     # the full-length tag still opens
     check openAmeMessage(auth.current.layout, auth.current.tier,
       auth.current.exchange, sealed.nonce, sealed.message).ok
+
+proc paddedAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
+  ## The same epoch as `exactAuth`, with payload padding switched on. Both
+  ## endpoints have to be built this way: the policy is part of the epoch,
+  ## and a session that disagrees about it refuses the frame rather than
+  ## guessing what the bytes at the end were.
+  var
+    layout: AmeSuiteLayout = exactLayout()
+    tier: AmeMaskTier = exactTier(layout, 1'u32, 0b10000000'u8)
+    state: AmeExchangeState = initAmeExchangeState(exactKems)
+  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+    0b10000000'u8),
+    [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role,
+    params = AmeRuntimeParams(authTagLen: aatl32, padding: apadBlock64))
+
+suite "AME payload padding":
+  test "padding rounds up to whole blocks and always adds filler":
+    check amePaddedLen(0, apadBlock64) == 64
+    check amePaddedLen(1, apadBlock64) == 64
+    check amePaddedLen(63, apadBlock64) == 64
+    ## A plaintext that already fills a block still gets a whole block of
+    ## filler. Without that there would be no last byte to state the count.
+    check amePaddedLen(64, apadBlock64) == 128
+    check amePaddedLen(65, apadBlock64) == 128
+    check amePaddedLen(4096, apadBlock64) == 4160
+    check amePaddedLen(17, apadNone) == 17
+
+  test "every plaintext length survives the round trip":
+    var
+      lengths: array[8, int] = [0, 1, 2, 63, 64, 65, 127, 300]
+      plaintext: ByteSeq = @[]
+      padded: ByteSeq = @[]
+      i: int = 0
+      j: int = 0
+    while i < lengths.len:
+      plaintext = newSeq[byte](lengths[i])
+      j = 0
+      while j < plaintext.len:
+        plaintext[j] = uint8((j * 7 + 3) and 0xff)
+        j = j + 1
+      padded = padAmeMessage(plaintext, apadBlock64)
+      check padded.len mod 64 == 0
+      check padded.len > plaintext.len
+      check padded.len - plaintext.len <= 64
+      check unpadAmeMessage(padded, apadBlock64) == plaintext
+      i = i + 1
+
+  test "different lengths in one block become the same length":
+    ## This is the whole point. Five bytes and fifty bytes are the same size
+    ## on the wire, so the size stops saying which one went past.
+    check padAmeMessage(newSeq[byte](5), apadBlock64).len ==
+      padAmeMessage(newSeq[byte](50), apadBlock64).len
+
+  test "malformed padding is refused rather than trimmed":
+    var
+      body: ByteSeq = padAmeMessage(@[byte 1, 2, 3], apadBlock64)
+      broken: ByteSeq = @[]
+    ## Not a whole number of blocks.
+    expect ValueError:
+      discard unpadAmeMessage(@[byte 1, 2, 3], apadBlock64)
+    ## An empty buffer has no length byte to read.
+    expect ValueError:
+      discard unpadAmeMessage(@[], apadBlock64)
+    ## A filler count of zero, and one past the block size.
+    broken = body
+    broken[broken.len - 1] = 0'u8
+    expect ValueError:
+      discard unpadAmeMessage(broken, apadBlock64)
+    broken = body
+    broken[broken.len - 1] = 65'u8
+    expect ValueError:
+      discard unpadAmeMessage(broken, apadBlock64)
+    ## Filler that is not zero. Nothing can be smuggled in the space that
+    ## gets discarded.
+    broken = body
+    broken[10] = 1'u8
+    expect ValueError:
+      discard unpadAmeMessage(broken, apadBlock64)
+
+  test "only the two defined policy bytes decode":
+    check amePaddingPolicyFromId(0'u8) == apadNone
+    check amePaddingPolicyFromId(64'u8) == apadBlock64
+    expect ValueError:
+      discard amePaddingPolicyFromId(32'u8)
+    expect ValueError:
+      discard amePaddingPolicyFromId(255'u8)
+
+  test "a padded session hides the payload length in the frame":
+    var
+      sender: AmeSession = initAmeSession(paddedAuth(aerInitiator),
+        peerTrustRequired = false)
+      receiver: AmeSession = initAmeSession(paddedAuth(aerResponder),
+        peerTrustRequired = false)
+      short: ByteSeq = sealAmeTcpFrame(sender, @[byte 1])
+      longer: ByteSeq = sealAmeTcpFrame(sender, newSeq[byte](40))
+      opened: AmeOpenResult
+    ## One byte and forty bytes leave the same size frame.
+    check short.len == longer.len
+    check ameFrameOverheadBytes(sender) == 34 + fomkeWireLen(0, aatl32) + 64
+    opened = openAmeTcpFrame(receiver, short)
+    check opened.ok
+    check opened.packet.payload == @[byte 1]
+    opened = openAmeTcpFrame(receiver, longer)
+    check opened.ok
+    check opened.packet.payload == newSeq[byte](40)
+
+  test "the header says a frame is padded and the tag covers that":
+    var
+      sender: AmeSession = initAmeSession(paddedAuth(aerInitiator),
+        peerTrustRequired = false)
+      plain: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      padded: ByteSeq = sealAmeTcpFrame(sender, @[byte 1, 2, 3])
+      bare: ByteSeq = sealAmeTcpFrame(plain, @[byte 1, 2, 3])
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
+        peerTrustRequired = false)
+      opened: AmeOpenResult
+    check (decodeAmeFrameHeader(padded).flags and ameFrameFlagPadded) != 0'u8
+    check decodeAmeFrameHeader(bare).flags == 0'u8
+    ## An endpoint that did not agree to padding refuses the frame instead of
+    ## handing 61 bytes of filler up as data.
+    opened = openAmeTcpFrame(receiver, padded)
+    check not opened.ok
+
+  test "an unknown frame flag is refused, not ignored":
+    var
+      plain: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      frame: ByteSeq = sealAmeTcpFrame(plain, @[byte 1, 2, 3])
+    ## Bit 4 means nothing today. A build that meets it must stop, because a
+    ## flag it cannot honour may change what the payload means.
+    frame[5] = frame[5] or 0x10'u8
+    expect ValueError:
+      discard decodeAmeFrameHeader(frame)
+
+  test "the padding policy travels with the exchange request":
+    var
+      layout: AmeSuiteLayout = exactLayout()
+      tier: AmeMaskTier = exactTier(layout, 2'u32, 0b11000000'u8)
+      request: AmeExchangeRequest = initAmeExchangeRequest(exactKems, tier,
+        0b01000000'u8, AmeRuntimeParams(authTagLen: aatl16,
+        padding: apadBlock64))
+      encoded: ByteSeq = encodeAmeExchangeRequest(request)
+      decoded: AmeExchangeRequest
+    check encoded.len == ameExchangeRequestLen
+    decoded = decodeAmeExchangeRequest(exactKems, encoded)
+    check decoded.params.padding == apadBlock64
+    check decoded.params.authTagLen == aatl16
+    ## A byte that names no policy is refused rather than read as "off".
+    encoded[12] = 7'u8
+    expect ValueError:
+      discard decodeAmeExchangeRequest(exactKems, encoded)
+
+  test "padding can be switched on at a rotation and both sides follow":
+    var
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
+      target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
+        0b11000000'u8)
+      request: AmeExchangeRequest
+      offerFrame: ByteSeq = @[]
+      replyFrame: ByteSeq = @[]
+      readyFrame: ByteSeq = @[]
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult
+    installSignaturePeers(client, server)
+    ## Nothing changes on the wire yet: the live epoch's tags are bound to
+    ## the values it was created with.
+    setAmePadding(client, apadBlock64)
+    check nextAmeParams(client).padding == apadBlock64
+    check ameParams(client).padding == apadNone
+    frame = sealAmeTcpFrame(client, @[byte 1])
+    check decodeAmeFrameHeader(frame).flags == 0'u8
+    check openAmeTcpFrame(server, frame).ok
+    ## The staged value rides in the exchange request, so the responder
+    ## adopts it and the two rotate onto it together.
+    request = initAmeExchangeRequest(exactKems, target, 0b01000000'u8,
+      nextAmeParams(client))
+    offerFrame = beginAmeTcpExchangeFrame(client, request)
+    replyFrame = answerAmeTcpExchangeFrame(server, offerFrame)
+    ## Epoch-ready is the first frame of the NEW epoch, so it is already
+    ## padded, and the responder has to strip it with the policy it has only
+    ## staged -- not the one still in force on its side.
+    readyFrame = finishAmeTcpExchangeFrame(client, replyFrame)
+    check (decodeAmeFrameHeader(readyFrame).flags and
+      ameFrameFlagPadded) != 0'u8
+    confirmAmeTcpExchangeFrame(server, readyFrame)
+    check ameParams(client).padding == apadBlock64
+    check ameParams(server).padding == apadBlock64
+    frame = sealAmeTcpFrame(client, @[byte 2, 3])
+    check (decodeAmeFrameHeader(frame).flags and ameFrameFlagPadded) != 0'u8
+    opened = openAmeTcpFrame(server, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 2, 3]

@@ -14,8 +14,6 @@ Every protocol name in this repo is an abbreviation. Spelled out once, here:
 | AME      | Adaptive Message Encryption            | suite/KEM/protect + live session |
 | FOMKE    | Forward-Only Message Key Extension     | one fresh key per message        |
 | GB3HKDF  | Gimli BLAKE3 Hash Key Derivation Func. | turns one secret into many keys  |
-| TMEAEAD  | Too Much Encryption AEAD               | standalone layered AEAD          |
-| GGAEAD   | Gimli Gimli AEAD                       | standalone compact AEAD          |
 | BFX2     | Bifrost Exchange format 2              | tagged binary envelopes          |
 +----------+----------------------------------------+----------------------------------+
 ```
@@ -373,7 +371,27 @@ Compression is **off** by default. Compressing before encrypting leaks: the
 ciphertext is as long as the compressed input, so its length says how well the
 plaintext compressed — and if an attacker can get their own text placed beside
 a secret, a shorter result means the two matched. Ask for it by name, and only
-when no part of the payload is attacker-influenced:
+when no part of the payload is attacker-influenced.
+
+Switching compression on switches **padding** on with it, and there is no way
+to ask for one without the other. Before encryption the envelope is rounded up
+to a whole number of 64 bytes, and the last filler byte says how many filler
+bytes there are:
+
+```text
+  compressed (5 bytes)             padded to one 64-byte block
+  +---+---+---+---+---+            +---+---+---+---+---+-----------+----+
+  | h | e | l | l | o |    -->     | h | e | l | l | o | 0 0 ... 0 | 59 |
+  +---+---+---+---+---+            +---+---+---+---+---+-----------+----+
+                                     \_____ 5 _____/ \____ 59 filler ___/
+```
+
+There is always filler — a 64-byte payload becomes 128 — so the last byte can
+never be mistaken for real data. Padding blunts the length leak into 64-byte
+steps; it does not delete it, and a payload that compresses from 4 KiB to 100
+bytes still lands in a different block count than one that does not compress
+at all. `paddedAmeCompressionPolicy()` gives padding without compression, for
+a stored package whose size alone would say what it is.
 
 ```nim
 var plan = planAmeSecurePackage(senderAuth, packageId, plaintext,
@@ -592,19 +610,28 @@ layout**, not from anything FOMKE chooses. Switching a second cipher on is a
 layout decision, and it costs what the benchmark says it costs
 (`fomke_seal_1slot` against `fomke_seal_2slot`).
 
-`TMEAEAD` and `GGAEAD` remain in the library as standalone AEAD primitives
-with their own tests and entry points. FOMKE no longer uses them: the slot
-construction generalises what they did — TMEAEAD is essentially a two-cipher,
-two-authenticator layout — so expressing it as a layout removes the choice
-from the protocol and leaves it where all the other algorithm choices live.
+`TMEAEAD` and `GGAEAD` are gone as separate code. They were two fixed AEAD
+constructions, and the slot construction generalises both: run every
+switched-on cipher over the payload in turn, XOR every switched-on
+authenticator into one tag. What they used to be is now two named slot
+selections in `ame/level1/presets.nim`:
+
+| Preset | Ciphers | Authenticators |
+|---|---|---|
+| `tmeAeadAmeLayout` | XChaCha20, AES-CTR, Gimli | Gimli, Poly1305 |
+| `ggAeadAmeLayout` | Gimli | Gimli |
+
+`presetAmeTier(L)` switches on everything the preset layout holds. The bytes
+are **not** the old formats — keys now come from one derivation over the whole
+slot block, each cipher gets its own nonce slice, and the tag is whatever
+length the session agreed. Nothing sealed by the old code opens under these,
+and nothing should: the old formats are not in the library any more.
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `src/protocols/ame/` | Suite/KEM/protect, AME wire, session, handshake, secure package |
 | `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOM1 wire |
-| `src/protocols/tmeaead/` | Bifrost five-key TMEAEAD construction |
-| `src/protocols/ggaead/` | Bifrost compact GGAEAD construction |
 | `src/protocols/preparation/` | Shared future-message stream preparation backends |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
 | `src/protocols/dac/` | Framing, ACK, repair, path control, drift payloads |
@@ -704,19 +731,47 @@ Magic is three bytes, `"AME"`; the version byte after it is **3**.
 ```text
 offset  0     3    4     5      6        14      18       22     26     30      34
         +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
-        | AME |Ver | Kind|Class | Session|RootLn |ParentLn| Lane | Seq  |PayLen | Payload |
+        | AME |Ver | Kind|Cls+Fl| Session|RootLn |ParentLn| Lane | Seq  |PayLen | Payload |
         | 3B  |u8  | u8  | u8   | u64    |u32    |u32     | u32  | u32  |u32    | n bytes |
         +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
 Total = 34 + PayLen
 ```
 
+Byte 5 carries two fields, because neither needs a whole byte:
+
+```text
+bit  7   6   5   4   3   2   1   0
+     |   |   |   |   |   +---+---+-- message class (eight values)
+     |   |   |   |   +-------------- payload is padded
+     +---+---+---+------------------ unused, refused unless zero
+```
+
 The header is in the clear — a receiver must read it before it knows which
 keys to reach for. It is still **authenticated**: every byte above goes into
 the tag over the payload, so a header edited in flight makes the body fail to
-open.
+open. That covers the flags: clearing the padded bit does not get a receiver
+to hand filler up as data, it gets a frame that will not open at all. An
+unknown flag bit is refused rather than ignored, so a flag added later can
+never be silently dropped by a peer that would not honour it.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records.
+
+### Padding
+
+Off by default, and a property of the epoch rather than of one message, so
+both endpoints hold the same value or the frame is refused. `setAmePadding(S,
+apadBlock64)` stages it; it takes effect at the next tier rotation, riding in
+the exchange request the way the tag length does. The responder names it for
+the first epoch in its server hello.
+
+When it is on, the payload is rounded up to whole 64 bytes before sealing —
+same construction as the package path above, filler count in the last byte —
+and the padded flag goes in the header. It costs **1 to 64 bytes on every
+frame**, which is real money on a link carrying small messages, so it is
+switched on when message sizes would say something (which command, who is
+typing) rather than by default. `ameFrameOverheadBytes(S)` returns the
+worst-case total per frame, for a caller sizing datagrams against an MTU.
 
 ### FOM1 Message — header **22 B**
 
@@ -777,14 +832,23 @@ AMC1 hello  = "AMC" | ver | session u64 | nonce (32, fixed, no length field)
                     | u16+layout | u16+tier | u16+cookie | u32+offer
 AMR1 retry  = "AMR" | ver | session u64 | u16+cookie
 AMS1 hello  = "AMS" | ver | nonce (32) | u32+KEM reply
-                    | tagLen u8 | tag (tagLen bytes) | u32+sealed block
-AMF1 finish = "AMF" | ver | tagLen u8 | tag (tagLen bytes) | u32+sealed block
+                    | tagLen u8 | padding u8 | tag | u32+sealed block
+AMF1 finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed block
 ```
 
 Fixed-size fields carry no length: the nonce is always 32 bytes, so writing
 "32" in front of it every time would say nothing. Variable fields use `u16`
 where the field is small by construction and `u32` only where a post-quantum
 key can genuinely run to megabytes.
+
+Those two bytes after the KEM reply are the first epoch's tunables — tag
+length and padding policy. The **responder** picks them; the client adopts
+them or gives up. They ride in the clear because the client needs them to open
+the block that follows, and they are bound into that block's tag, so editing
+one in flight breaks the handshake instead of downgrading it. When padding is
+on, the sealed identity blocks are padded too: hiding *who* is connecting
+while leaving the size of their certificate on the wire only does half the
+job.
 
 The **sealed block** in the last two is ciphertext. Opened, it holds:
 
@@ -864,8 +928,8 @@ transport checks, and NixOS module rules.
 
 ### Standing risks
 
-- **The primitives are homemade.** GB3HKDF, the XOR-combined multi-MAC tag,
-  and the standalone TMEAEAD/GGAEAD constructions have no external analysis.
+- **The primitives are homemade.** GB3HKDF and the XOR-combined multi-MAC tag
+  have no external analysis.
   The constructions *around* them are careful — domain separation everywhere,
   encrypt-then-MAC, transcript binding, constant-time comparison on secrets,
   transactional state, secrets wiped — but layering discipline cannot rescue a
@@ -873,7 +937,9 @@ transport checks, and NixOS module rules.
   mind, above any specific item above.
 - **Metadata is visible by design.** The AME header is authenticated but not
   encrypted: session id, lane ids, sequence and length are readable by anyone
-  on the path. Identities are not, but traffic patterns are.
+  on the path. Identities are not, but traffic patterns are. Padding
+  (`setAmePadding`) blurs the length into 64-byte steps; it does not hide the
+  rest of the header, and it does not hide *when* a message was sent.
 - **Preparing send slots ahead weakens forward secrecy for messages not yet
   sent.** It is off by default for that reason. See the FOMKE section.
 # Direct LAN Messenger

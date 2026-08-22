@@ -20,6 +20,23 @@ const
     ## constant because several sizing helpers still name it directly; the
     ## per-session value lives in `AmeRuntimeParams.authTagLen`.
 
+  ## Byte 5 of every frame header holds two things at once. The low three
+  ## bits name the message class, which has eight values and needs no more
+  ## room than that. The five bits above it are flags about the frame itself.
+  ##
+  ##   bit  7   6   5   4   3   2   1   0
+  ##        |   |   |   |   |   +---+---+-- message class (0..7)
+  ##        |   |   |   |   +-------------- payload is padded
+  ##        +---+---+---+------------------ unused, must be zero
+  ##
+  ## Unused bits are refused rather than ignored, so a flag added later can
+  ## never be silently dropped by an older peer that would not honour it.
+  ameFrameClassMask* = 0x07'u8
+  ameFrameFlagPadded* = 0x08'u8
+    ## The frame body was padded to whole blocks before it was sealed. The
+    ## receiver strips the padding after the tag checked out, never before.
+  ameFrameKnownFlags* = ameFrameFlagPadded
+
 type
   AmePacketKind* = enum
     ampkUnknown = 0x00'u8,
@@ -68,11 +85,25 @@ type
     aatl24 = 24'u8,
     aatl32 = 32'u8
 
+  ## Whether a payload is rounded up to whole blocks before it is encrypted,
+  ## so its exact length stops being visible on the wire. The wire value IS
+  ## the block size, which is why `apadNone` is zero.
+  ##
+  ##   apadNone     no padding. The ciphertext is exactly as long as the
+  ##                plaintext, and every observer learns that length.
+  ##   apadBlock64  round up to a multiple of 64 bytes. Costs 1 to 64 bytes
+  ##                per message and is REQUIRED whenever the payload was
+  ##                compressed first -- see level1/padding.nim for why.
+  AmePaddingPolicy* = enum
+    apadNone = 0'u8,
+    apadBlock64 = 64'u8
+
   ## Knobs AME exposes for something above it to tune per connection. They
   ## are part of the epoch, so both endpoints hold the same values and a
   ## change takes effect at the next tier rotation rather than mid-flight.
   AmeRuntimeParams* {.role: configurator.} = object
     authTagLen*: AmeAuthTagLen
+    padding*: AmePaddingPolicy
 
   AmeKemAlgorithm* = enum
     akaFireSaber = 0x01'u8,
@@ -237,6 +268,8 @@ type
     formatVersion*: uint8
     packetKind*: AmePacketKind
     messageClass*: AmeMessageClass
+    flags*: uint8
+      ## Shares one wire byte with `messageClass`; see `ameFrameFlagPadded`.
     sessionId*: uint64
     rootLaneId*: uint32
     parentLaneId*: uint32
@@ -288,6 +321,11 @@ type
 
   AmeCompressionPolicy* {.role: configurator.} = object
     algorithm*: AmeCompressionAlgorithm
+    padding*: AmePaddingPolicy
+      ## Padding applied after compressing and before encrypting. Switching
+      ## compression on forces this on too, whatever it was set to: a
+      ## compressed payload whose length still shows is the exact thing that
+      ## has been used to read secrets out of other protocols.
     maxPlaintextBytes*: uint32
     maxEncodedBytes*: uint32
     maxExpansionRatio*: uint16

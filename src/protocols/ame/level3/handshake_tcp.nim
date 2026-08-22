@@ -54,7 +54,7 @@ type
     root*: AmeAuthorityRoot
     expectedPeer*: AmePinnedPeerIdentity
     revokedSerials*: seq[uint64]
-    tagLen*: AmeAuthTagLen
+    params*: AmeRuntimeParams
 
   ## What a client needs.
   AmeTcpClientConfig* {.role: configurator.} = object
@@ -77,8 +77,9 @@ proc initAmeTcpServerConfig*(supported: openArray[AmeTierPath],
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     trustMode: AmeTrustMode = atmAuthorityCertificate,
     requireCookie: bool = true,
-    tagLen: AmeAuthTagLen = aatl32): AmeTcpServerConfig {.role: wrapper.} =
-  ## supported/descriptor/identity/trustMode/requireCookie/tagLen: responder
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
+    AmeTcpServerConfig {.role: wrapper.} =
+  ## supported/descriptor/identity/trustMode/requireCookie/params: responder
   ## policy with a freshly minted anti-flood secret.
   if supported.len == 0:
     raise newException(ValueError, "AME server must support at least one path")
@@ -87,7 +88,7 @@ proc initAmeTcpServerConfig*(supported: openArray[AmeTierPath],
   result.identity = identity
   result.trustMode = trustMode
   result.requireCookie = requireCookie
-  result.tagLen = tagLen
+  result.params = params
   result.cookieSecret = initAmeCookieSecret()
 
 proc initAmeTcpClientConfig*(L: AmeSuiteLayout, initialTier: AmeMaskTier,
@@ -183,7 +184,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeTcpServerConfig,
       result.err = "AME hello retry cookie is invalid"
       return
   answered = answerAmeHandshake(hello, c.supported, c.descriptor, c.identity,
-    c.tagLen)
+    c.params)
   if not answered.ok:
     result.err = answered.err
     return

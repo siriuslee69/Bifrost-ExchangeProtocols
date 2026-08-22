@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## FOMKE Tests <- GB3HKDF, TMEAEAD, GGAEAD, ratchets, and AME upgrades
+## FOMKE Tests <- GB3HKDF, AEAD presets, ratchets, and AME upgrades
 ## -------------------------------------------------------------------------
 
 import std/[os, unittest]
@@ -12,16 +12,15 @@ import ../src/protocols/ame/types
 import ../src/protocols/ame/level1/exchange_paths
 import ../src/protocols/ame/level1/suites
 import ../src/protocols/ame/level1/tier_aead
+import ../src/protocols/ame/level1/presets
+import ../src/protocols/ame/level2/protection
 import ../src/protocols/ame/level1/path_triggers
-import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/session
 import ../src/protocols/fomke/types
 import ../src/protocols/fomke/level0/gb3hkdf
 import ../src/protocols/preparation/types
 import ../src/protocols/preparation/gimli_batch
 import ../src/protocols/preparation/xchacha_streams
-import ../src/protocols/tmeaead
-import ../src/protocols/ggaead
 import ../src/protocols/fomke/level0/protocols
 import ../src/protocols/fomke/level1/chain
 import ../src/protocols/fomke/level2/wire
@@ -107,16 +106,9 @@ suite "Gimli prepared backend":
       check preparedXChaChaWidth() == gimliPreparedBatchWidth()
     else:
       check preparedXChaChaWidth() == 1
-    when defined(avx2):
-      check tmeAesSimdWidth(32) == 32
-      check tmeAesSimdWidth(16) == 16
-      check tmeAesSimdWidth(48) == 16
-    elif defined(sse2) or defined(neon) or defined(arm64) or defined(aarch64):
-      check tmeAesSimdWidth(32) == 16
-      check tmeAesSimdWidth(16) == 16
-    else:
-      check tmeAesSimdWidth(32) == 1
-    check tmeAesSimdWidth(8) == 1
+    ## The AES-CTR slot used to pick its own vector width here. It now hands
+    ## Tyr `acbAuto` and lets the cipher choose, so there is no Bifrost-side
+    ## width left to assert.
 
   test "XChaCha batches match scalar streams across block boundaries":
     var
@@ -131,7 +123,7 @@ suite "Gimli prepared backend":
       keys.add(deriveGb3Hkdf(@[byte 101 + uint8(i)], @[], @[byte 102],
         gb3BlockBytes))
       nonces.add(deriveGb3Hkdf(@[byte 111 + uint8(i)], @[], @[byte 112],
-        tmeAeadNonceBytes))
+        ameCipherNonceLen(acaXChaCha20)))
       i = i + 1
     while j < lengths.len:
       streams = prepareXChaChaStreamRows(keys, nonces, lengths[j])
@@ -196,173 +188,127 @@ suite "GB3HKDF":
     expect ValueError:
       discard deriveGb3Hkdf(@[byte 1], @[], @[], gb3MaxOutputBytes + 1)
 
-suite "TMEAEAD":
-  test "five-key composite roundtrips and binds AAD":
+suite "AEAD presets":
+  ## TMEAEAD and GGAEAD used to be two hand-built constructions with their own
+  ## code. They are now two slot selections over the one construction in
+  ## tier_aead, and these tests are what "the same suite" means: the same
+  ## primitives, in the same order, all of them mattering.
+  test "the TMEAEAD preset selects three ciphers and two authenticators":
     var
-      key: ByteSeq = @[]
-      nonce: ByteSeq = @[]
+      L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
+      t: AmeMaskTier = presetAmeTier(L)
+    check L.ciphers.length == 3'u8
+    check L.ciphers.algorithms[0] == acaXChaCha20
+    check L.ciphers.algorithms[1] == acaAesCtr
+    check L.ciphers.algorithms[2] == acaGimli
+    check L.macs.length == 2'u8
+    check L.macs.algorithms[0] == amaGimli
+    check L.macs.algorithms[1] == amaPoly1305
+    check ameTierCipherSlots(L, t) == 3
+    check ameTierMacSlots(L, t) == 2
+    ## 24 bytes of XChaCha nonce, 16 of AES counter, 24 of Gimli, then one
+    ## 32-byte key for each of the five slots. The old code carried exactly
+    ## those five keys in a 160-byte block.
+    check ameTierNonceLen(L, t) == 64
+    check ameTierKeyMaterialLen(L, t) == 64 + 5 * 32
+
+  test "the GGAEAD preset selects one cipher and one authenticator":
+    var
+      L: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
+      t: AmeMaskTier = presetAmeTier(L)
+    check L.ciphers.length == 1'u8
+    check L.ciphers.algorithms[0] == acaGimli
+    check L.macs.length == 1'u8
+    check L.macs.algorithms[0] == amaGimli
+    check ameTierNonceLen(L, t) == 24
+    check ameTierKeyMaterialLen(L, t) == 24 + 2 * 32
+
+  test "a preset roundtrips and refuses a changed AAD":
+    var
+      L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
+      t: AmeMaskTier = presetAmeTier(L)
+      material: ByteSeq = deriveGb3Hkdf(@[byte 1, 2, 3, 4], @[], @[byte 5],
+        ameTierKeyMaterialLen(L, t))
       plaintext: ByteSeq = @[byte 4, 8, 15, 16, 23, 42]
-      sealed: TmeAeadCiphertext
+      sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
       opened: tuple[ok: bool, payload: ByteSeq]
-    key = deriveTmeAeadKeyMaterial(@[byte 1, 2, 3, 4],
-      @[byte 5, 6, 7])
-    nonce = deriveGb3Hkdf(@[byte 8, 9], @[], @[byte 10],
-      tmeAeadNonceBytes)
-    sealed = sealTmeAead(key, nonce, plaintext, @[byte 11])
-    opened = openTmeAead(key, nonce, sealed, @[byte 11])
-    check key.len == tmeAeadKeyMaterialBytes
-    check sealed.authTag.len == tmeAeadTagBytes
+    sealed = sealAmeTier(L, t, material, plaintext, @[byte 11], aatl32)
+    check sealed.ciphertext.len == plaintext.len
+    check sealed.ciphertext != plaintext
+    check sealed.authTag.len == 32
+    opened = openAmeTier(L, t, material, sealed.ciphertext, sealed.authTag,
+      @[byte 11], aatl32)
     check opened.ok
     check opened.payload == plaintext
-    opened = openTmeAead(key, nonce, sealed, @[byte 12])
+    opened = openAmeTier(L, t, material, sealed.ciphertext, sealed.authTag,
+      @[byte 12], aatl32)
     check not opened.ok
 
-  test "ciphertext tag nonce and key tampering fail closed":
+  test "every cipher slot in the preset changes the ciphertext":
     var
-      key: ByteSeq = deriveTmeAeadKeyMaterial(@[byte 1, 2, 3], @[byte 4])
-      wrongKey: ByteSeq = deriveTmeAeadKeyMaterial(@[byte 1, 2, 4], @[byte 4])
-      nonce: ByteSeq = newSeq[byte](tmeAeadNonceBytes)
-      sealed: TmeAeadCiphertext
-      changed: TmeAeadCiphertext
-      opened: tuple[ok: bool, payload: ByteSeq]
-    sealed = sealTmeAead(key, nonce, @[byte 9, 8, 7])
-    changed = sealed
-    changed.ciphertext[^1] = changed.ciphertext[^1] xor 1'u8
-    opened = openTmeAead(key, nonce, changed)
-    check not opened.ok
-    changed = sealed
-    changed.authTag[0] = changed.authTag[0] xor 1'u8
-    opened = openTmeAead(key, nonce, changed)
-    check not opened.ok
-    nonce[0] = 1'u8
-    opened = openTmeAead(key, nonce, sealed)
-    check not opened.ok
-    nonce[0] = 0'u8
-    opened = openTmeAead(wrongKey, nonce, sealed)
-    check not opened.ok
-
-  test "prepared short-message streams match normal sealing exactly":
-    var
-      keys: seq[ByteSeq] = @[]
-      nonces: seq[ByteSeq] = @[]
-      gimliStreams: seq[PreparedStream] = @[]
-      xChaChaStreams: seq[PreparedStream] = @[]
-      key: ByteSeq = @[]
-      nonce: ByteSeq = @[]
-      plaintext: ByteSeq = @[byte 3, 1, 4, 1, 5, 9, 2, 6]
-      normal: TmeAeadCiphertext
-      prepared: TmeAeadCiphertext
-      opened: tuple[ok: bool, payload: ByteSeq]
+      L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
+      full: AmeMaskTier = presetAmeTier(L)
+      plaintext: ByteSeq = @[byte 1, 2, 3, 4, 5, 6, 7, 8]
+      whole: ByteSeq = @[]
+      partial: ByteSeq = @[]
+      narrow: AmeMaskTier
+      material: ByteSeq = @[]
       i: int = 0
-    while i < 13:
-      key = deriveTmeAeadKeyMaterial(@[byte 40 + uint8(i), 2, 3],
-        @[byte 7, uint8(i)])
-      nonce = deriveGb3Hkdf(@[byte 80 + uint8(i)], @[], @[byte 9],
-        tmeAeadNonceBytes)
-      keys.add(key)
-      nonces.add(nonce)
+    material = deriveGb3Hkdf(@[byte 9, 9, 9, 9], @[], @[byte 1],
+      ameTierKeyMaterialLen(L, full))
+    whole = ameTierCrypt(L, full, material, plaintext)
+    ## Drop one cipher slot at a time. If the dropped one had contributed
+    ## nothing, the bytes would be unchanged -- which is exactly the failure
+    ## a chain of XORs has to be checked against.
+    while i < 3:
+      narrow = initAmeMaskTier(L, 1'u32, initAmeTierMasks(
+        full.masks.kem, full.masks.cipher and not slotMask(i),
+        full.masks.mac, full.masks.hash, full.masks.signature,
+        full.masks.kdf))
+      partial = ameTierCrypt(L, narrow, deriveGb3Hkdf(@[byte 9, 9, 9, 9],
+        @[], @[byte 1], ameTierKeyMaterialLen(L, narrow)), plaintext)
+      check partial != whole
       i = i + 1
-    gimliStreams = prepareTmeGimliStreams(keys, nonces, 32)
-    xChaChaStreams = prepareTmeXChaChaStreams(keys, nonces, 32)
-    check gimliStreams.len == 13
-    check xChaChaStreams.len == 13
-    i = 0
-    while i < gimliStreams.len:
-      normal = sealTmeAead(keys[i], nonces[i], plaintext, @[byte 11, 12])
-      prepared = sealTmeAeadPrepared(keys[i], nonces[i], plaintext,
-        gimliStreams[i], xChaChaStreams[i], @[byte 11, 12])
-      check prepared.ciphertext == normal.ciphertext
-      check prepared.authTag == normal.authTag
-      opened = openTmeAeadPrepared(keys[i], nonces[i], prepared,
-        gimliStreams[i], xChaChaStreams[i], @[byte 11, 12])
-      check opened.ok
-      check opened.payload == plaintext
-      i = i + 1
-    expect ValueError:
-      discard sealTmeAeadPrepared(keys[0], nonces[0], plaintext,
-        gimliStreams[1], xChaChaStreams[0], @[byte 11, 12])
-    expect ValueError:
-      discard sealTmeAeadPrepared(keys[0], nonces[0], plaintext,
-        gimliStreams[0], xChaChaStreams[1], @[byte 11, 12])
 
-suite "GGAEAD":
-  test "Gimli stream and GimliHMAC match the fixed construction vector":
+  test "one preset cannot open what the other sealed":
     var
-      key: ByteSeq = @[]
-      nonce: ByteSeq = newSeq[byte](ggAeadNonceBytes)
-      plaintext: ByteSeq = @[byte 4, 8, 15, 16, 23, 42]
-      sealed: GgAeadCiphertext
+      wide: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
+      compact: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
+      wideTier: AmeMaskTier = presetAmeTier(wide)
+      compactTier: AmeMaskTier = presetAmeTier(compact)
+      sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
       opened: tuple[ok: bool, payload: ByteSeq]
-    key = deriveGgAeadKeyMaterial(@[byte 1, 2, 3, 4], @[byte 5, 6, 7])
-    sealed = sealGgAead(key, nonce, plaintext, @[byte 11])
-    check key.len == ggAeadKeyMaterialBytes
-    check sealed.ciphertext == @[byte 76, 142, 173, 3, 135, 251]
-    check sealed.authTag == @[byte 129, 254, 238, 242, 124, 248, 81, 146,
-      181, 116, 66, 13, 184, 138, 254, 131, 45, 92, 141, 26, 141, 132, 79,
-      83, 92, 136, 51, 220, 59, 176, 251, 168]
-    opened = openGgAead(key, nonce, sealed, @[byte 11])
+    sealed = sealAmeTier(wide, wideTier,
+      deriveGb3Hkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
+      ameTierKeyMaterialLen(wide, wideTier)), @[byte 5, 5, 5], @[], aatl32)
+    opened = openAmeTier(compact, compactTier,
+      deriveGb3Hkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
+      ameTierKeyMaterialLen(compact, compactTier)), sealed.ciphertext,
+      sealed.authTag, @[], aatl32)
+    check not opened.ok
+
+  test "a preset keys an at-rest blob straight from a storage key":
+    var
+      L: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
+      t: AmeMaskTier = presetAmeTier(L)
+      storageKey: ByteSeq = deriveGb3Hkdf(@[byte 3, 1, 4, 1], @[], @[], 32)
+      nonce: ByteSeq = randomAmeNonce(L, t)
+      sealed: AmeProtectedMessage
+      opened: tuple[ok: bool, payload: ByteSeq]
+    sealed = sealAmeStored(L, t, storageKey, @[byte 1], nonce,
+      @[byte 6, 6, 6], @[byte 2], aatl32)
+    opened = openAmeStored(L, t, storageKey, @[byte 1], nonce, sealed,
+      @[byte 2], aatl32)
     check opened.ok
-    check opened.payload == plaintext
-
-  test "ciphertext tag nonce AAD and key tampering fail closed":
-    var
-      key: ByteSeq = deriveGgAeadKeyMaterial(@[byte 1, 2, 3], @[byte 4])
-      wrongKey: ByteSeq = deriveGgAeadKeyMaterial(@[byte 1, 2, 4], @[byte 4])
-      nonce: ByteSeq = newSeq[byte](ggAeadNonceBytes)
-      sealed: GgAeadCiphertext = sealGgAead(key, nonce, @[byte 9, 8, 7],
-        @[byte 6])
-      changed: GgAeadCiphertext
-      opened: tuple[ok: bool, payload: ByteSeq]
-    changed = sealed
-    changed.ciphertext[^1] = changed.ciphertext[^1] xor 1'u8
-    check not openGgAead(key, nonce, changed, @[byte 6]).ok
-    changed = sealed
-    changed.authTag[0] = changed.authTag[0] xor 1'u8
-    check not openGgAead(key, nonce, changed, @[byte 6]).ok
-    nonce[0] = 1'u8
-    check not openGgAead(key, nonce, sealed, @[byte 6]).ok
-    nonce[0] = 0'u8
-    check not openGgAead(key, nonce, sealed, @[byte 7]).ok
-    opened = openGgAead(wrongKey, nonce, sealed, @[byte 6])
+    check opened.payload == @[byte 6, 6, 6]
+    ## A different purpose string is a different key, so the same blob does
+    ## not open under it.
+    opened = openAmeStored(L, t, storageKey, @[byte 9], nonce, sealed,
+      @[byte 2], aatl32)
     check not opened.ok
-
-  test "prepared short-message streams match normal sealing exactly":
-    var
-      keys: seq[ByteSeq] = @[]
-      nonces: seq[ByteSeq] = @[]
-      streams: seq[PreparedStream] = @[]
-      key: ByteSeq = @[]
-      nonce: ByteSeq = @[]
-      plaintext: ByteSeq = @[byte 2, 7, 1, 8, 2, 8, 1, 8]
-      normal: GgAeadCiphertext
-      prepared: GgAeadCiphertext
-      opened: tuple[ok: bool, payload: ByteSeq]
-      i: int = 0
-    while i < 13:
-      key = deriveGgAeadKeyMaterial(@[byte 30 + uint8(i), 4, 5],
-        @[byte 6, uint8(i)])
-      nonce = deriveGb3Hkdf(@[byte 70 + uint8(i)], @[], @[byte 8],
-        ggAeadNonceBytes)
-      keys.add(key)
-      nonces.add(nonce)
-      i = i + 1
-    streams = prepareGgGimliStreams(keys, nonces, 32)
-    check streams.len == 13
-    i = 0
-    while i < streams.len:
-      normal = sealGgAead(keys[i], nonces[i], plaintext, @[byte 13, 14])
-      prepared = sealGgAeadPrepared(keys[i], nonces[i], plaintext,
-        streams[i], @[byte 13, 14])
-      check prepared.ciphertext == normal.ciphertext
-      check prepared.authTag == normal.authTag
-      opened = openGgAeadPrepared(keys[i], nonces[i], prepared,
-        streams[i], @[byte 13, 14])
-      check opened.ok
-      check opened.payload == plaintext
-      i = i + 1
     expect ValueError:
-      discard sealGgAeadPrepared(keys[0], nonces[0], plaintext,
-        streams[1], @[byte 13, 14])
+      discard sealAmeStored(L, t, @[byte 1, 2, 3], @[byte 1], nonce,
+        @[byte 6], @[], aatl32)
 
 suite "FOMKE":
   test "initial AME secret becomes independent directional chains":
@@ -676,7 +622,8 @@ suite "FOMKE":
     check durable.ok
     check aliceCounter == 1'u64
     check alice.lane1.nextIndex == 1'u64
-    loaded = loadFomkeCheckpoint(aliceBase, storageKey, 1'u64, context)
+    loaded = loadFomkeCheckpoint(aliceBase, storageKey, 1'u64, context,
+      fomkeLayout(), fomkeInitialTier())
     check loaded.ok
     check loaded.counter == 1'u64
     check loaded.state.lane1.nextIndex == 1'u64
@@ -690,10 +637,12 @@ suite "FOMKE":
     check durable.ok
     check aliceCounter == 2'u64
     writeFile(aliceBase & ".0", "damaged-newest-slot")
-    fallback = loadFomkeCheckpoint(aliceBase, storageKey, 1'u64, context)
+    fallback = loadFomkeCheckpoint(aliceBase, storageKey, 1'u64, context,
+      fomkeLayout(), fomkeInitialTier())
     check fallback.ok
     check fallback.counter == 1'u64
-    rejected = loadFomkeCheckpoint(aliceBase, storageKey, 2'u64, context)
+    rejected = loadFomkeCheckpoint(aliceBase, storageKey, 2'u64, context,
+      fomkeLayout(), fomkeInitialTier())
     check not rejected.ok
     check rejected.err == "FOMKE checkpoint rollback detected"
 

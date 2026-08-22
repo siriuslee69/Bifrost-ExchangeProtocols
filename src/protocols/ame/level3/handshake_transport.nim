@@ -72,8 +72,12 @@ proc encodeAmeHandshakeFrame*(kind: AmePacketKind, sessionId: uint64,
     raise newException(ValueError, "AME handshake session id must be positive")
   if record.len == 0 or record.len > ameHandshakeMaxRecordBytes:
     raise newException(ValueError, "AME handshake record length is invalid")
-  result = encodeAmeFrame(kind, amcControl, sessionId, 0'u32, 0'u32, 0'u32,
-    step, record)
+  ## No frame flags: a handshake record is not padded by the frame layer.
+  ## Nothing is keyed yet at this point, so there is no epoch policy to obey
+  ## -- the padding that hides identity sizes happens INSIDE the sealed block
+  ## instead, under the tunables the responder names in its own record.
+  result = encodeAmeFrame(kind, amcControl, 0'u8, sessionId, 0'u32, 0'u32,
+    0'u32, step, record)
 
 proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
     role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
@@ -82,7 +86,8 @@ proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
     f: AmeDecodedFrame = decodeAmeFrame(A)
   if not ameHandshakeKindValid(f.header.packetKind):
     raise newException(ValueError, "AME frame is not a handshake record")
-  if f.header.messageClass != amcControl or f.header.sessionId == 0'u64 or
+  if f.header.messageClass != amcControl or f.header.flags != 0'u8 or
+      f.header.sessionId == 0'u64 or
       f.header.rootLaneId != 0'u32 or f.header.parentLaneId != 0'u32 or
       f.header.laneId != 0'u32:
     raise newException(ValueError, "AME handshake frame binding is invalid")

@@ -6,13 +6,12 @@ import std/os
 when defined(posix):
   import std/posix
 
-import tyr/helpers/random as tyr_random
-import tyr/helpers/tiers as tyr_alg
-
 import ../../types
 import ../../ame/level0/bytes
 import ../types
-import ../../tmeaead
+import ../../ame/types as ame_types
+import ../../ame/level1/tier_aead
+import ../../ame/level2/protection
 import ../level1/chain
 import ./state_codec
 import ../../../analysis_pragmas
@@ -21,8 +20,12 @@ const
   fomkeCheckpointMagic = [uint8('F'), uint8('S'), uint8('T'), uint8('1')]
   fomkeCheckpointVersion = 1'u16
   fomkeCheckpointHeaderLen = 18
+  fomkeCheckpointMaxOverheadBytes = 512
+    ## Room for the header, the longest nonce a slot selection can want, and
+    ## the longest tag. Only an upper bound: the exact sizes come from the
+    ## suite the caller names, and are checked against the file.
   fomkeCheckpointEnvelopeMaxBytes = int(fomkeMaxStateBytes) +
-    fomkeCheckpointHeaderLen + tmeAeadNonceBytes + tmeAeadTagBytes
+    fomkeCheckpointHeaderLen + fomkeCheckpointMaxOverheadBytes
 
 proc checkpointSlotPath(basePath: string, slot: int): string {.role: helper,
     tag: {tagFomke, tagWrite}.} =
@@ -135,29 +138,38 @@ proc readCheckpointU64(A: openArray[uint8], offset: int): uint64 {.
     i = i + 1
 
 proc encodeCheckpointEnvelope(counter: uint64, nonce: openArray[uint8],
-    sealed: TmeAeadCiphertext): ByteSeq {.role: stateController,
+    sealed: AmeProtectedMessage): ByteSeq {.role: stateController,
     tag: {tagCodecBoundary, tagCryptoBoundary, tagFomke, tagWrite}.} =
   ## counter/nonce/sealed: complete encrypted checkpoint envelope.
-  if counter == 0'u64 or nonce.len != tmeAeadNonceBytes or
-      sealed.authTag.len != tmeAeadTagBytes or
-      uint64(sealed.ciphertext.len) > uint64(fomkeMaxStateBytes):
+  ##
+  ##   "FST1" | ver u16 | counter u64 | ctLen u32 | nonce | tag | ciphertext
+  ##
+  ## Neither the nonce nor the tag carries its own length. Both are fixed by
+  ## the slot selection the caller names when opening the file, so a length
+  ## in the file would be a second opinion about something already settled --
+  ## and one an attacker could edit.
+  if counter == 0'u64 or nonce.len == 0 or sealed.authTag.len == 0 or
+      uint64(sealed.payload.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE checkpoint envelope is invalid")
   appendAmeBytes(result, fomkeCheckpointMagic)
   appendAmeU16(result, fomkeCheckpointVersion)
   appendAmeU64(result, counter)
-  appendAmeU32(result, uint32(sealed.ciphertext.len))
+  appendAmeU32(result, uint32(sealed.payload.len))
   appendAmeBytes(result, nonce)
   appendAmeBytes(result, sealed.authTag)
-  appendAmeBytes(result, sealed.ciphertext)
+  appendAmeBytes(result, sealed.payload)
 
-proc decodeCheckpointEnvelope(A: openArray[uint8]): tuple[counter: uint64,
-    nonce: ByteSeq, sealed: TmeAeadCiphertext] {.role: parser,
+proc decodeCheckpointEnvelope(A: openArray[uint8], nonceLen,
+    tagLen: int): tuple[counter: uint64, nonce: ByteSeq,
+    sealed: AmeProtectedMessage] {.role: parser,
     tag: {tagCodecBoundary, tagCryptoBoundary, tagFomke, tagParsing}.} =
-  ## A: strict encrypted checkpoint envelope.
+  ## A/nonceLen/tagLen: the file, and the sizes the caller's suite demands.
   var
     cipherLen: int = 0
     offset: int = fomkeCheckpointHeaderLen
-  if A.len < fomkeCheckpointHeaderLen + tmeAeadNonceBytes + tmeAeadTagBytes or
+  if nonceLen <= 0 or tagLen <= 0:
+    raise newException(ValueError, "FOMKE checkpoint suite is invalid")
+  if A.len < fomkeCheckpointHeaderLen + nonceLen + tagLen or
       A.len > fomkeCheckpointEnvelopeMaxBytes or A[0 .. 3] !=
       fomkeCheckpointMagic:
     raise newException(ValueError, "FOMKE checkpoint identity is invalid")
@@ -166,14 +178,14 @@ proc decodeCheckpointEnvelope(A: openArray[uint8]): tuple[counter: uint64,
   result.counter = readCheckpointU64(A, 6)
   cipherLen = checkedAmeWireLen(readCheckpointU32(A, 14),
     fomkeMaxStateBytes, "FOMKE checkpoint ciphertext")
-  if result.counter == 0'u64 or A.len != offset + tmeAeadNonceBytes +
-      tmeAeadTagBytes + cipherLen:
+  if result.counter == 0'u64 or A.len != offset + nonceLen +
+      tagLen + cipherLen:
     raise newException(ValueError, "FOMKE checkpoint length mismatch")
-  result.nonce = @A[offset ..< offset + tmeAeadNonceBytes]
-  offset = offset + tmeAeadNonceBytes
-  result.sealed.authTag = @A[offset ..< offset + tmeAeadTagBytes]
-  offset = offset + tmeAeadTagBytes
-  result.sealed.ciphertext = @A[offset ..< offset + cipherLen]
+  result.nonce = @A[offset ..< offset + nonceLen]
+  offset = offset + nonceLen
+  result.sealed.authTag = @A[offset ..< offset + tagLen]
+  offset = offset + tagLen
+  result.sealed.payload = @A[offset ..< offset + cipherLen]
 
 proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     storageKey: openArray[uint8], counter: uint64,
@@ -181,14 +193,18 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     role: orchestrator, tag: {tagAppApi, tagCryptoBoundary, tagFomke,
     tagWrite}.} =
   ## basePath/S/storageKey/counter/context: atomically seal one newer slot.
+  ##
+  ## The file is sealed with the SAME slot selection the ratchet inside it
+  ## runs on -- `S` carries its own layout, tier and tag length, so there is
+  ## no second suite to configure and no way for the two to drift apart.
+  ## Whoever loads this file has to name that selection back.
   var
     stateBytes: ByteSeq = @[]
     keyInfo: ByteSeq = @[]
     aad: ByteSeq = @[]
-    keyMaterial: ByteSeq = @[]
     nonce: ByteSeq = @[]
     envelope: ByteSeq = @[]
-    sealed: TmeAeadCiphertext
+    sealed: AmeProtectedMessage
     slot: int = 0
   try:
     requireCheckpointInputs(basePath, storageKey, context)
@@ -197,9 +213,9 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     stateBytes = encodeFomkeState(S)
     keyInfo = buildCheckpointKeyInfo(context)
     aad = buildCheckpointAad(counter, context)
-    keyMaterial = deriveTmeAeadKeyMaterial(storageKey, keyInfo)
-    nonce = tyr_random.cryptoRand(tyr_alg.raSystem, tmeAeadNonceBytes)
-    sealed = sealTmeAead(keyMaterial, nonce, stateBytes, aad)
+    nonce = randomAmeNonce(S.layout, S.tier)
+    sealed = sealAmeStored(S.layout, S.tier, storageKey, keyInfo, nonce,
+      stateBytes, aad, S.tagLen)
     envelope = encodeCheckpointEnvelope(counter, nonce, sealed)
     slot = int(counter and 1'u64)
     replaceCheckpointSlot(checkpointSlotPath(basePath, slot), envelope)
@@ -209,34 +225,35 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
   secureClearAmeBytes(stateBytes)
   secureClearAmeBytes(keyInfo)
   secureClearAmeBytes(aad)
-  secureClearAmeBytes(keyMaterial)
   secureClearAmeBytes(nonce)
   secureClearAmeBytes(envelope)
   secureClearAmeBytes(sealed.authTag)
-  secureClearAmeBytes(sealed.ciphertext)
+  secureClearAmeBytes(sealed.payload)
 
-proc openCheckpointSlot(path: string, storageKey,
-    context: openArray[uint8]): FomkeCheckpoint {.role: orchestrator,
+proc openCheckpointSlot(path: string, storageKey, context: openArray[uint8],
+    L: AmeSuiteLayout, t: AmeMaskTier,
+    tagLen: AmeAuthTagLen): FomkeCheckpoint {.role: orchestrator,
     tag: {tagCryptoBoundary, tagFomke, tagParsing}.} =
   ## path/storageKey/context: authenticate and decode one candidate slot.
+  ## L/t/tagLen: the slot selection the file was sealed with.
   var
     fileBytes: ByteSeq = @[]
     decoded: tuple[counter: uint64, nonce: ByteSeq,
-      sealed: TmeAeadCiphertext]
+      sealed: AmeProtectedMessage]
     keyInfo: ByteSeq = @[]
     aad: ByteSeq = @[]
-    keyMaterial: ByteSeq = @[]
     opened: tuple[ok: bool, payload: ByteSeq]
   if not fileExists(path):
     result.err = "checkpoint slot is missing"
     return
   try:
     fileBytes = checkpointStringToBytes(readFile(path))
-    decoded = decodeCheckpointEnvelope(fileBytes)
+    decoded = decodeCheckpointEnvelope(fileBytes, ameTierNonceLen(L, t),
+      int(ord(tagLen)))
     keyInfo = buildCheckpointKeyInfo(context)
     aad = buildCheckpointAad(decoded.counter, context)
-    keyMaterial = deriveTmeAeadKeyMaterial(storageKey, keyInfo)
-    opened = openTmeAead(keyMaterial, decoded.nonce, decoded.sealed, aad)
+    opened = openAmeStored(L, t, storageKey, keyInfo, decoded.nonce,
+      decoded.sealed, aad, tagLen)
     if not opened.ok:
       raise newException(ValueError, "FOMKE checkpoint authentication failed")
     result.state = decodeFomkeState(opened.payload)
@@ -248,26 +265,30 @@ proc openCheckpointSlot(path: string, storageKey,
   secureClearAmeBytes(fileBytes)
   secureClearAmeBytes(decoded.nonce)
   secureClearAmeBytes(decoded.sealed.authTag)
-  secureClearAmeBytes(decoded.sealed.ciphertext)
+  secureClearAmeBytes(decoded.sealed.payload)
   secureClearAmeBytes(keyInfo)
   secureClearAmeBytes(aad)
-  secureClearAmeBytes(keyMaterial)
   secureClearAmeBytes(opened.payload)
 
 proc loadFomkeCheckpoint*(basePath: string, storageKey: openArray[uint8],
-    minimumCounter: uint64, context: openArray[uint8]): FomkeCheckpoint {.
+    minimumCounter: uint64, context: openArray[uint8], L: AmeSuiteLayout,
+    t: AmeMaskTier, tagLen: AmeAuthTagLen = aatl32): FomkeCheckpoint {.
     role: orchestrator, tag: {tagAppApi, tagCryptoBoundary, tagFomke,
     tagParsing}.} =
   ## minimumCounter: trusted external floor; lower valid files are rollbacks.
+  ## L/t/tagLen: the slot selection the checkpoint was sealed with, which is
+  ## the one the saved ratchet itself runs on. The caller knows it because it
+  ## configured the session; naming it wrong reads as a failed
+  ## authentication, not as a different-but-valid file.
   var
     first: FomkeCheckpoint
     second: FomkeCheckpoint
   try:
     requireCheckpointInputs(basePath, storageKey, context)
     first = openCheckpointSlot(checkpointSlotPath(basePath, 0), storageKey,
-      context)
+      context, L, t, tagLen)
     second = openCheckpointSlot(checkpointSlotPath(basePath, 1), storageKey,
-      context)
+      context, L, t, tagLen)
     if first.ok and (not second.ok or first.counter > second.counter):
       result = first
       clearFomkeState(second.state)

@@ -9,7 +9,7 @@
 ##        0    3 "AME"
 ##        3    1 format version (3)
 ##        4    1 packet kind      (what this frame is, e.g. lane data)
-##        5    1 message class    (what the payload is for)
+##        5    1 message class + frame flags   (see below)
 ##        6    8 session id
 ##       14    4 root lane id     \
 ##       18    4 parent lane id    > which stream inside the session
@@ -19,10 +19,19 @@
 ##   ------ ---- ------------------------------------------------------
 ##       34      payload starts here
 ##
+## Byte 5 carries two fields, because neither needs a whole byte:
+##
+##   bit  7   6   5   4   3   2   1   0
+##        |   |   |   |   |   +---+---+-- message class (eight values)
+##        |   |   |   |   +-------------- payload is padded
+##        +---+---+---+------------------ unused, refused unless zero
+##
 ## The header is NOT encrypted -- a receiver has to read it before it knows
 ## which keys to reach for. It IS authenticated: every byte above is fed into
 ## the tag over the payload, so a header edited in flight makes the payload
-## fail to open. Numbers are little-endian throughout.
+## fail to open. That covers the flags too: an attacker who clears the padded
+## bit does not get a receiver to hand up padding as data, they get a frame
+## that fails to open at all. Numbers are little-endian throughout.
 
 import ../../types
 import ../types
@@ -49,20 +58,27 @@ proc packetKindValid(id: uint8): bool {.role: parser.} =
   ## id: AME2 packet kind wire value.
   result = id <= uint8(ord(high(AmePacketKind)))
 
-proc messageClassValid(id: uint8): bool {.role: parser.} =
-  ## id: AME2 message class wire value.
-  result = id <= uint8(ord(high(AmeMessageClass)))
+proc frameFlagsValid(flags: uint8): bool {.role: parser.} =
+  ## flags: candidate frame flags. Only bits this build knows are allowed,
+  ## and none of them may reach into the message-class bits.
+  result = (flags and not ameFrameKnownFlags) == 0'u8 and
+    (flags and ameFrameClassMask) == 0'u8
 
 proc initAmeFrameHeader*(kind: AmePacketKind, messageClass: AmeMessageClass,
-    sessionId: uint64, rootLaneId, parentLaneId, laneId, sequence,
-    payloadLen: uint32): AmeFrameHeader {.role: wrapper.} =
-  ## kind/messageClass/session/lane/sequence/payloadLen: exact frame metadata.
+    flags: uint8, sessionId: uint64, rootLaneId, parentLaneId, laneId,
+    sequence, payloadLen: uint32): AmeFrameHeader {.role: wrapper.} =
+  ## kind/messageClass/flags: what the frame is, what its payload is for, and
+  ## what was done to that payload before it was sealed.
+  ## session/lane/sequence/payloadLen: exact frame metadata.
   if kind == ampkUnknown:
     raise newException(ValueError, "AME packet kind is unknown")
+  if not frameFlagsValid(flags):
+    raise newException(ValueError, "AME frame flags are unknown")
   result.magic = ameMagic
   result.formatVersion = ameFormatVersion
   result.packetKind = kind
   result.messageClass = messageClass
+  result.flags = flags
   result.sessionId = sessionId
   result.rootLaneId = rootLaneId
   result.parentLaneId = parentLaneId
@@ -78,12 +94,14 @@ proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
     raise newException(ValueError, "AME frame header identity mismatch")
   if h.packetKind == ampkUnknown:
     raise newException(ValueError, "AME packet kind is unknown")
+  if not frameFlagsValid(h.flags):
+    raise newException(ValueError, "AME frame flags are unknown")
   while i < ameMagic.len:
     result.add(h.magic[i])
     i = i + 1
   result.add(h.formatVersion)
   result.add(uint8(ord(h.packetKind)))
-  result.add(uint8(ord(h.messageClass)))
+  result.add(uint8(ord(h.messageClass)) or h.flags)
   appendAmeU64(result, h.sessionId)
   appendAmeU32(result, h.rootLaneId)
   appendAmeU32(result, h.parentLaneId)
@@ -105,12 +123,16 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
     raise newException(ValueError, "AME frame version mismatch")
   if not packetKindValid(A[4]) or A[4] == 0'u8:
     raise newException(ValueError, "AME frame packet kind mismatch")
-  if not messageClassValid(A[5]):
-    raise newException(ValueError, "AME frame message class mismatch")
+  if not frameFlagsValid(A[5] and not ameFrameClassMask):
+    raise newException(ValueError, "AME frame flags are unknown")
   result.magic = ameMagic
   result.formatVersion = ameFormatVersion
   result.packetKind = AmePacketKind(A[4])
-  result.messageClass = AmeMessageClass(A[5])
+  ## Every one of the eight class values is defined, so masking the low three
+  ## bits cannot produce an undefined one. The check above is what refuses a
+  ## byte that set a flag bit this build does not know.
+  result.messageClass = AmeMessageClass(A[5] and ameFrameClassMask)
+  result.flags = A[5] and not ameFrameClassMask
   result.sessionId = readU64(A, 6)
   result.rootLaneId = readU32(A, 14)
   result.parentLaneId = readU32(A, 18)
@@ -127,12 +149,13 @@ proc encodeAmeFrame*(h: AmeFrameHeader,
   appendAmeBytes(result, payload)
 
 proc encodeAmeFrame*(kind: AmePacketKind, messageClass: AmeMessageClass,
-    sessionId: uint64, rootLaneId, parentLaneId, laneId, sequence: uint32,
-    payload: openArray[uint8]): ByteSeq {.role: stateController.} =
-  ## kind/messageClass/session/lane/sequence/payload: complete AME2 frame.
+    flags: uint8, sessionId: uint64, rootLaneId, parentLaneId, laneId,
+    sequence: uint32, payload: openArray[uint8]): ByteSeq {.
+    role: stateController.} =
+  ## kind/messageClass/flags/session/lane/sequence/payload: complete frame.
   var h: AmeFrameHeader
   requireAmeU32Len(payload.len, "frame payload")
-  h = initAmeFrameHeader(kind, messageClass, sessionId, rootLaneId,
+  h = initAmeFrameHeader(kind, messageClass, flags, sessionId, rootLaneId,
     parentLaneId, laneId, sequence, uint32(payload.len))
   result = encodeAmeFrame(h, payload)
 

@@ -28,10 +28,17 @@
 ##
 ## Server hello (AMS1)
 ##   "AMS" | ver | nonce (32) | u32 len | KEM reply
-##         | tagLen u8 | tag (tagLen bytes) | u32 len | sealed block
+##         | tagLen u8 | padding u8 | tag (tagLen bytes) | u32 len | sealed
 ##
 ## Client finish (AMF1)
-##   "AMF" | ver | tagLen u8 | tag (tagLen bytes) | u32 len | sealed block
+##   "AMF" | ver | tagLen u8 | padding u8 | tag | u32 len | sealed block
+##
+## The two bytes after the KEM reply are the epoch's tunables: how long every
+## tag will be, and whether payloads get padded to whole blocks. The responder
+## chooses them and the client either adopts them or gives up. They travel in
+## the clear because the client needs them to open the block that follows, and
+## they are bound into that block's tag, so editing one in flight only breaks
+## the handshake.
 ##
 ## The sealed block in the last two is ciphertext. It holds the certificate
 ## and the proofs; nothing outside it says who either side is.
@@ -42,6 +49,7 @@ import ./handshake
 import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
+import ../level1/padding
 import ../../../analysis_pragmas
 
 const
@@ -212,12 +220,13 @@ proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: stateController,
     tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## h: server nonce and KEM answer in the clear, identity sealed after them.
   if h.nonce.len != ameHandshakeNonceLen or
-      h.authTag.len != int(ord(h.tagLen)) or h.sealed.len == 0:
+      h.authTag.len != int(ord(h.params.authTagLen)) or h.sealed.len == 0:
     raise newException(ValueError, "AME server hello is incomplete")
   appendRecordHeader(result, ameServerHelloMagic)
   appendAmeBytes(result, h.nonce)
   appendLargeField(result, encodeAmeExchangeReply(h.reply))
-  result.add(uint8(ord(h.tagLen)))
+  result.add(uint8(ord(h.params.authTagLen)))
+  result.add(uint8(ord(h.params.padding)))
   appendAmeBytes(result, h.authTag)
   appendLargeField(result, h.sealed)
 
@@ -232,8 +241,9 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readLargeField(A, cursor)
   result.reply = decodeAmeExchangeReply(L.kems, B)
-  result.tagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
-  result.authTag = readFixed(A, cursor, int(ord(result.tagLen)))
+  result.params.authTagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
+  result.params.padding = amePaddingPolicyFromId(readHandshakeU8(A, cursor))
+  result.authTag = readFixed(A, cursor, int(ord(result.params.authTagLen)))
   result.sealed = readLargeField(A, cursor)
   if cursor != A.len or result.sealed.len == 0:
     raise newException(ValueError, "AME server hello wire value is invalid")
@@ -241,10 +251,11 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
 proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.
     role: stateController, tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## f: the client's sealed identity and transcript confirmation.
-  if f.authTag.len != int(ord(f.tagLen)) or f.sealed.len == 0:
+  if f.authTag.len != int(ord(f.params.authTagLen)) or f.sealed.len == 0:
     raise newException(ValueError, "AME client finish is incomplete")
   appendRecordHeader(result, ameClientFinishMagic)
-  result.add(uint8(ord(f.tagLen)))
+  result.add(uint8(ord(f.params.authTagLen)))
+  result.add(uint8(ord(f.params.padding)))
   appendAmeBytes(result, f.authTag)
   appendLargeField(result, f.sealed)
 
@@ -254,8 +265,9 @@ proc decodeAmeClientFinish*(A: openArray[uint8]): AmeClientFinish {.
   var
     cursor: int = 0
   requireHandshakeHeader(A, ameClientFinishMagic, cursor)
-  result.tagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
-  result.authTag = readFixed(A, cursor, int(ord(result.tagLen)))
+  result.params.authTagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
+  result.params.padding = amePaddingPolicyFromId(readHandshakeU8(A, cursor))
+  result.authTag = readFixed(A, cursor, int(ord(result.params.authTagLen)))
   result.sealed = readLargeField(A, cursor)
   if cursor != A.len or result.sealed.len == 0:
     raise newException(ValueError, "AME client finish wire value is invalid")

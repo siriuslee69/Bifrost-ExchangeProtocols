@@ -14,6 +14,7 @@ import ../src/protocols/ame/types
 import ../src/protocols/ame/level1/exchange_paths
 import ../src/protocols/ame/level1/suites
 import ../src/protocols/ame/level1/path_triggers
+import ../src/protocols/ame/level1/padding
 import ../src/protocols/ame/level1/signatures
 import ../src/protocols/ame/level2/wire
 import ../src/protocols/ame/level3/handshake
@@ -214,6 +215,58 @@ suite "AME private handshake":
     opened = openAmeTcpFrame(clientSession, frame)
     check opened.ok
     check opened.packet.payload == @[byte 4, 5]
+
+  test "the responder's tunables reach both endpoints and both blocks":
+    var
+      p: Pair = newPair("tunables")
+      client: AmeClientHandshake = beginAmeHandshake(8'u64, p.layout, p.tier)
+      wanted: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl16,
+        padding: apadBlock64)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey, wanted)
+      bare = newPair("tunables-bare")
+      bareClient: AmeClientHandshake = beginAmeHandshake(9'u64, bare.layout,
+        bare.tier)
+      bareServer = answerAmeHandshake(bareClient.hello,
+        [handshakePath(bare.layout, bare.tier)], bare.serverCert,
+        bare.serverKey)
+      clientDone: AmeHandshakeResult
+      serverDone: AmeHandshakeResult
+      clientSession: AmeSession
+      serverSession: AmeSession
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult
+    check server.ok and bareServer.ok
+    ## The responder names the tunables; they travel in the clear so the
+    ## client can open the sealed block, and the tag over that block covers
+    ## them, so an edited byte breaks the handshake instead of downgrading it.
+    check server.state.serverHello.params == wanted
+    check server.state.serverHello.authTag.len == 16
+    ## The identity block itself is padded, so a longer certificate does not
+    ## announce itself by the size of the ciphertext holding it.
+    check server.state.serverHello.sealed.len mod 64 == 0
+    check bareServer.state.serverHello.sealed.len mod 64 != 0
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
+    check clientDone.ok
+    check clientDone.finish.params == wanted
+    check clientDone.finish.sealed.len mod 64 == 0
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.root,
+      nowUnix)
+    check serverDone.ok
+    ## Both first epochs carry the same tunables, which is what makes the
+    ## frames below open at all.
+    check clientDone.auth.current.params == wanted
+    check serverDone.auth.current.params == wanted
+    clientSession = initAmeSession(clientDone.auth,
+      peerTrust = clientDone.peerTrust)
+    serverSession = initAmeSession(serverDone.auth,
+      peerTrust = serverDone.peerTrust)
+    frame = sealAmeTcpFrame(clientSession, @[byte 1, 2, 3])
+    check (decodeAmeFrameHeader(frame).flags and ameFrameFlagPadded) != 0'u8
+    opened = openAmeTcpFrame(serverSession, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 1, 2, 3]
 
   test "one broken authority algorithm is not enough to forge a certificate":
     var
@@ -474,7 +527,8 @@ suite "AME handshake transport":
     ## A lane-data frame is not a handshake record and must not be read as one.
     expect ValueError:
       discard decodeAmeHandshakeFrame(encodeAmeFrame(ampkLaneData,
-        amcUserdata, 1'u64, 0'u32, 0'u32, 0'u32, 0'u32, @[byte 1, 2, 3]))
+        amcUserdata, 0'u8, 1'u64, 0'u32, 0'u32, 0'u32, 0'u32,
+        @[byte 1, 2, 3]))
 
 suite "AME secure package":
   test "an authenticated package repairs loss and restores plaintext":
@@ -533,14 +587,53 @@ suite "AME secure package":
     ## Compressing before encrypting leaks: the ciphertext length reveals how
     ## well the plaintext compressed. So the default policy does not.
     check plain.algorithm == aczNone
+    check plain.padding == apadNone
     encoded = encodeAmeCompressed(plaintext, plain)
     check encoded[4] == uint8(ord(aczNone))
+    check encoded[5] == uint8(ord(apadNone))
     check decodeAmeCompressed(encoded, plain) == plaintext
     encoded = encodeAmeCompressed(plaintext, squeezed)
     check encoded[4] == uint8(ord(aczEirRle))
     check encoded.len < plaintext.len
     decoded = decodeAmeCompressed(encoded, squeezed)
     check decoded == plaintext
+
+  test "compressing forces padding, whatever the policy asked for":
+    var
+      plaintext: ByteSeq = newSeq[byte](3000)
+      squeezed: AmeCompressionPolicy = compressedAmeCompressionPolicy()
+      unpaddedRequest: AmeCompressionPolicy = compressedAmeCompressionPolicy()
+      padded: AmeCompressionPolicy = paddedAmeCompressionPolicy()
+      plain: AmeCompressionPolicy = defaultAmeCompressionPolicy()
+      encoded: ByteSeq = @[]
+      other: ByteSeq = @[]
+      i: int = 0
+    while i < plaintext.len:
+      plaintext[i] = if i < 1500: 4'u8 else: 8'u8
+      i = i + 1
+    ## Asking for compression without padding is not a choice a caller gets
+    ## to make: the length leak is what padding is there to blunt, so it goes
+    ## on regardless.
+    unpaddedRequest.padding = apadNone
+    encoded = encodeAmeCompressed(plaintext, unpaddedRequest)
+    check encoded[5] == uint8(ord(apadBlock64))
+    check encoded.len mod 64 == 0
+    check decodeAmeCompressed(encoded, unpaddedRequest) == plaintext
+    check decodeAmeCompressed(encoded, squeezed) == plaintext
+    ## Padding without compression is a choice, and it hides the size of a
+    ## stored package that would otherwise identify itself by length.
+    encoded = encodeAmeCompressed(newSeq[byte](10), padded)
+    other = encodeAmeCompressed(newSeq[byte](40), padded)
+    check encoded.len == other.len
+    check encoded.len mod 64 == 0
+    check decodeAmeCompressed(encoded, padded) == newSeq[byte](10)
+    ## An envelope padded by one policy does not open under a policy that
+    ## expects none, and the other way round.
+    expect ValueError:
+      discard decodeAmeCompressed(encoded, plain)
+    expect ValueError:
+      discard decodeAmeCompressed(encodeAmeCompressed(@[byte 1, 2], plain),
+        padded)
 
   test "one missing chunk is recovered from the group XOR shard":
     var
@@ -563,9 +656,15 @@ suite "AME secure package":
     check outcome.payload == data
 
   test "decompression bomb metadata is rejected before Eir decode":
+    ## One encoded byte claiming to expand to 65536. The claim is checked
+    ## against the policy's expansion limit before Eir is handed anything.
     var
       envelope: ByteSeq = @[byte 'E', byte 'I', byte 'R', byte '1',
-        byte ord(aczEirRle), 0, 0, 1, 0, 1, 0, 0, 0, 0]
+        byte ord(aczEirRle), byte ord(apadBlock64),
+        0, 0, 1, 0,
+        1, 0, 0, 0,
+        0]
+    envelope = padAmeMessage(envelope, apadBlock64)
     expect ValueError:
       discard decodeAmeCompressed(envelope,
         compressedAmeCompressionPolicy())

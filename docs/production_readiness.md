@@ -76,6 +76,18 @@ the caller say where the time came from.
 
 Secure packages compress before encryption, authenticate before decompression,
 and enforce absolute encoded/plaintext limits plus an expansion-ratio limit.
+
+Compressing before encrypting leaks the plaintext's compressibility through
+the ciphertext length, so compression is off unless a caller names it, and
+naming it switches padding on with it — the envelope is rounded up to whole
+64-byte blocks before sealing, filler count in the last byte. The padding
+decision is taken from the policy, never from whether compression actually
+helped: deciding it from the outcome would make the presence of padding a
+signal about the plaintext. Padding blunts the leak into 64-byte steps rather
+than deleting it, and that limit is worth stating plainly — a payload that
+compresses from 4 KiB to 100 bytes still lands in a different block count than
+one that does not compress at all. Compression remains unsafe on any payload
+that mixes a secret with attacker-supplied text, padded or not.
 DAC repairs a group from its parity shards: `drmXor` carries one shard and
 rebuilds exactly one loss, `drmReedSolomon` carries `parityCount` shards and
 rebuilds any `parityCount` losses across the group, data or parity alike. Loss

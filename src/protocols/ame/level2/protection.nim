@@ -86,6 +86,61 @@ proc buildAtRestMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
       secureClearAmeBytes(key)
     slot = slot + 1
 
+proc buildStoredMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
+    rootKey, context, nonce: openArray[byte]): ByteSeq {.role: truthBuilder,
+    tag: {tagCryptoBoundary}.} =
+  ## L/t/rootKey/context/nonce: the same key block as `buildAtRestMaterial`,
+  ## derived from a caller-owned key instead of from a KEM exchange.
+  var
+    keys: ByteSeq = @[]
+  validateAmeTier(L, t)
+  if nonce.len != ameTierNonceLen(L, t):
+    raise newException(ValueError, "AME nonce length mismatch")
+  keys = deriveAmeStorageKey(L, t, rootKey, context,
+    ameTierKeyMaterialLen(L, t) - nonce.len)
+  appendAmeBytes(result, nonce)
+  appendAmeBytes(result, keys)
+  secureClearAmeBytes(keys)
+
+proc sealAmeStored*(L: AmeSuiteLayout, t: AmeMaskTier,
+    rootKey, context, nonce, msg: openArray[byte],
+    aad: openArray[byte] = [],
+    tagLen: AmeAuthTagLen = aatl32): AmeProtectedMessage {.
+    role: orchestrator, tag: {tagAppApi, tagCryptoBoundary}.} =
+  ## L/t/rootKey/context/nonce/msg/aad/tagLen: seal bytes that have to sit
+  ## still under a key the caller already holds -- a checkpoint on disk, a
+  ## blob in a store. No exchange state is involved, so this works before a
+  ## session exists and after one is gone.
+  var
+    material: ByteSeq = buildStoredMaterial(L, t, rootKey, context, nonce)
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
+  try:
+    sealed = sealAmeTier(L, t, material, msg, aad, tagLen)
+    result.payload = sealed.ciphertext
+    result.authTag = sealed.authTag
+  finally:
+    secureClearAmeBytes(material)
+
+proc openAmeStored*(L: AmeSuiteLayout, t: AmeMaskTier,
+    rootKey, context, nonce: openArray[byte], message: AmeProtectedMessage,
+    aad: openArray[byte] = [],
+    tagLen: AmeAuthTagLen = aatl32): tuple[ok: bool, payload: ByteSeq] {.
+    role: orchestrator, tag: {tagAppApi, tagCryptoBoundary}.} =
+  ## L/t/rootKey/context/nonce/message/aad/tagLen: the exact open. A wrong
+  ## nonce length or tag length is a plain "no", not an error, so a caller
+  ## trying several stored blobs can move past one that does not fit.
+  var
+    material: ByteSeq = @[]
+  if nonce.len != ameTierNonceLen(L, t) or
+      message.authTag.len != int(ord(tagLen)):
+    return
+  material = buildStoredMaterial(L, t, rootKey, context, nonce)
+  try:
+    result = openAmeTier(L, t, material, message.payload, message.authTag,
+      aad, tagLen)
+  finally:
+    secureClearAmeBytes(material)
+
 proc protectAmeMessageWithNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState,
     nonce, msg: openArray[byte], aad: openArray[byte] = [],

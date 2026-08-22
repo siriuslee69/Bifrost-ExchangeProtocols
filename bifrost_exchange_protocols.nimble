@@ -620,7 +620,7 @@ task testFuzz, "Run every wire decoder against mutated frames":
   runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
   runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
 
-task testFomke, "Run GB3HKDF, TMEAEAD, GGAEAD, and FOMKE ratchet tests":
+task testFomke, "Run GB3HKDF, AEAD preset, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):
     runNim("c", "tests/test_fomke.nim", @["-r"])
     runNim("c", "tests/test_fomke_forward_secrecy.nim", @["-r"])

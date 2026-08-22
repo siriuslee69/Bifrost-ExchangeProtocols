@@ -32,8 +32,8 @@ import ./fuzz_support
 
 proc sampleAmeFrame(): ByteSeq =
   ## A well-formed AME frame carrying lane data.
-  result = encodeAmeFrame(ampkLaneData, amcUserdata, 0x1122334455667788'u64,
-    1'u32, 2'u32, 3'u32, 4'u32, rampBytes(96))
+  result = encodeAmeFrame(ampkLaneData, amcUserdata, 0'u8,
+    0x1122334455667788'u64, 1'u32, 2'u32, 3'u32, 4'u32, rampBytes(96))
 
 proc sampleFomkeMessage(): ByteSeq =
   ## A well-formed FOMKE envelope with a 32-byte tag. There is no nonce on
@@ -53,8 +53,8 @@ proc sampleAmeSealedFrame(): ByteSeq =
   ## actually arrives on the wire: two nested length fields, not one.
   var
     body: ByteSeq = sampleFomkeMessage()
-  result = encodeAmeFrame(ampkLaneData, amcUserdata, 7'u64, 1'u32, 1'u32,
-    1'u32, 9'u32, body)
+  result = encodeAmeFrame(ampkLaneData, amcUserdata, 0'u8, 7'u64, 1'u32,
+    1'u32, 1'u32, 9'u32, body)
 
 suite "AME frame fuzz":
   test "the frame header decoder never raises a Defect":

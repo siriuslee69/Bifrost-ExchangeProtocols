@@ -5,12 +5,13 @@
 import ../../types
 import ../types
 import ../level0/bytes
+import ./padding
 import ./algorithms
 import ../../../analysis_pragmas
 
 const
   ameMaxExchangeComponentLen* = 16_777_216'u32
-  ameExchangeRequestLen* = 12
+  ameExchangeRequestLen* = 13
 
 proc slotMask*(i: int): uint8 {.role: helper.} =
   ## i: zero-based path slot. Slot 0 is the most-significant bit.
@@ -183,6 +184,7 @@ proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
   appendExchangeTier(result, r.targetTier)
   result.add(r.exchangeMask)
   result.add(uint8(ord(r.params.authTagLen)))
+  result.add(uint8(ord(r.params.padding)))
 
 proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
     B: openArray[uint8]): AmeExchangeRequest {.role: parser.} =
@@ -199,7 +201,8 @@ proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
   t.masks.signature = B[8]
   t.masks.kdf = B[9]
   result = initAmeExchangeRequest(A, t, B[10],
-    AmeRuntimeParams(authTagLen: ameAuthTagLenFromId(B[11])))
+    AmeRuntimeParams(authTagLen: ameAuthTagLenFromId(B[11]),
+    padding: amePaddingPolicyFromId(B[12])))
 
 proc generateAmeExchangeKeys*(A: AmeKemAlgorithms,
     r: AmeExchangeRequest): AmeExchangeKeys {.role: orchestrator.} =

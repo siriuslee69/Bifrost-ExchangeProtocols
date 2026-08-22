@@ -26,8 +26,6 @@ import ./protocols/fomke/level3/ops as fomke_ops
 import ./protocols/preparation/types as preparation_types
 import ./protocols/preparation/gimli_batch as preparation_gimli_batch
 import ./protocols/preparation/xchacha_streams as preparation_xchacha_streams
-import ./protocols/tmeaead as tmeaead
-import ./protocols/ggaead as ggaead
 import ./protocols/chunkyaead as chunkyaead
 import ./protocols/dac/build as dac_build
 import ./protocols/dac/types as dac_types
@@ -85,8 +83,6 @@ export fomke_ops
 export preparation_types
 export preparation_gimli_batch
 export preparation_xchacha_streams
-export tmeaead
-export ggaead
 export chunkyaead
 export dac_build
 export dac_types

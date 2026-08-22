@@ -16,6 +16,7 @@ import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/path_triggers
+import ../level1/padding
 import ./wire
 import ../../fomke/types
 import ../../fomke/level0/gb3hkdf
@@ -748,6 +749,29 @@ proc setAmeAuthTagLen*(S: var AmeSession, n: AmeAuthTagLen) {.
   ## payload is a handful of bytes and the tag dominates the frame.
   S.pendingParams.authTagLen = n
 
+proc setAmePadding*(S: var AmeSession, p: AmePaddingPolicy) {.
+    role: configurator.} =
+  ## S/p: session and the padding its next epoch should apply.
+  ##
+  ## Staged like the tag length, and for the same reason: the padded flag is
+  ## bound into every tag, so a value that changed underneath a live epoch
+  ## would fail to open rather than take effect.
+  ##
+  ## Off by default. Padding costs 1 to 64 bytes on EVERY frame, which is
+  ## real money on a link that carries small messages, and the length of a
+  ## frame that was never compressed is a weak signal on its own. Switch it
+  ## on when traffic analysis is part of the threat -- when message sizes
+  ## would say what a command was, or who is typing.
+  S.pendingParams.padding = p
+
+proc ameFrameOverheadBytes*(S: AmeSession): int {.role: parser.} =
+  ## S: session whose worst-case per-frame overhead is returned: the fixed
+  ## header, the ratchet envelope and tag, and the largest padding this
+  ## epoch can add. A caller sizing datagrams against a link MTU subtracts
+  ## this from the MTU to get the plaintext it may hand over at once.
+  result = ameFrameHeaderLen + fomkeWireLen(0, S.fomke.tagLen) +
+    amePaddingBlock(S.auth.current.params.padding)
+
 proc info*(S: AmeSession): AmeSessionInfo {.role: wrapper.} =
   ## S: connection summarized by stable tier identity and masks.
   result.layoutBytes = encodeAmeSuiteLayout(S.auth.current.layout).len
@@ -798,6 +822,19 @@ proc frameBodyLen(S: AmeSession, payloadLen: int, what: string): uint32 {.
     raise newException(ValueError, "AME " & what & " exceeds maximum")
   result = uint32(n)
 
+proc frameFlags(S: AmeSession): uint8 {.role: parser.} =
+  ## S: session whose epoch decides what the header must announce about the
+  ## payload. One flag today: whether the body was padded before sealing.
+  if S.auth.current.params.padding != apadNone:
+    result = ameFrameFlagPadded
+
+proc padFramePayload(S: AmeSession,
+    payload: openArray[uint8]): ByteSeq {.role: encryptor.} =
+  ## S/payload: plaintext rounded up to whole blocks when this epoch says so.
+  ## Done before the header is built, because the header states the sealed
+  ## length and that length must already include the padding.
+  result = padAmeMessage(payload, S.auth.current.params.padding)
+
 proc buildAad(carrier: AmeCarrier,
     h: AmeFrameHeader): ByteSeq {.role: truthBuilder.} =
   ## carrier/h: transport and the whole frame header, bound into the tag.
@@ -837,6 +874,7 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     aad: ByteSeq = @[]
     message: FomkeMessage
     opened: FomkeOpenResult
+    padding: AmePaddingPolicy = S.auth.current.params.padding
   try:
     message = decodeFomkeMessage(f.payload)
   except ValueError as exc:
@@ -847,12 +885,26 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
   if not opened.ok and S.fomkeRetiringFramesLeft > 0 and
       S.fomkeRetiring.epoch == message.epoch:
     opened = openFomkeMessage(S.fomkeRetiring, message, aad)
+    ## A frame that was already in flight when the epoch turned was padded
+    ## under the OLD epoch's policy, so that is the policy to strip with.
+    padding = S.auth.retiring.params.padding
   secureClearAmeBytes(aad)
   if not opened.ok:
     result.err = "AME authentication failed: " & opened.err
     return
+  ## The flag and the policy have to say the same thing. Both were bound into
+  ## the tag, so a disagreement here is a peer configured differently, never
+  ## an attacker: an edited flag bit would already have failed to open.
+  if ((f.header.flags and ameFrameFlagPadded) != 0'u8) !=
+      (padding != apadNone):
+    result.err = "AME frame padding disagrees with the epoch policy"
+    return
+  try:
+    result.payload = unpadAmeMessage(opened.payload, padding)
+  except ValueError as exc:
+    result.err = exc.msg
+    return
   result.ok = true
-  result.payload = opened.payload
 
 proc consumeRetiringGrace(S: var AmeSession) {.role: stateController.} =
   ## S: connection whose old epoch expires after authenticated frame progress.
@@ -877,10 +929,11 @@ proc sealAmeTcpFrame*(S: var AmeSession,
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
   var
-    h = initAmeFrameHeader(ampkLaneData, S.messageClass, S.sessionId,
-      S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-      frameBodyLen(S, payload.len, "TCP payload"))
-  result = encodeAmeFrame(h, sealFrameBody(S, h, acrTcp, payload))
+    body: ByteSeq = padFramePayload(S, payload)
+    h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
+      S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
+      frameBodyLen(S, body.len, "TCP payload"))
+  result = encodeAmeFrame(h, sealFrameBody(S, h, acrTcp, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 proc sealAmeDacFrame*(S: var AmeSession,
@@ -895,10 +948,11 @@ proc sealAmeDacFrame*(S: var AmeSession,
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME DAC send sequence is exhausted")
   var
-    h = initAmeFrameHeader(ampkLaneData, S.messageClass, S.sessionId,
-      S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-      frameBodyLen(S, payload.len, "DAC payload"))
-  result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, payload))
+    body: ByteSeq = padFramePayload(S, payload)
+    h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
+      S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
+      frameBodyLen(S, body.len, "DAC payload"))
+  result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 
@@ -1019,16 +1073,18 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   ## the same ratchet as data -- there is no second construction to review.
   var
     h: AmeFrameHeader
+    body: ByteSeq = @[]
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
-  h = initAmeFrameHeader(kind, amcControl, S.sessionId, S.rootLaneId,
-    S.parentLaneId, S.laneId, S.nextAmeSequence,
-    frameBodyLen(S, payload.len, "control payload"))
-  result = encodeAmeFrame(h, sealFrameBody(S, h, carrier, payload))
+  body = padFramePayload(S, payload)
+  h = initAmeFrameHeader(kind, amcControl, frameFlags(S), S.sessionId,
+    S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
+    frameBodyLen(S, body.len, "control payload"))
+  result = encodeAmeFrame(h, sealFrameBody(S, h, carrier, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
@@ -1058,6 +1114,7 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
     message: FomkeMessage
     fomkeOpened: FomkeOpenResult
     opened: tuple[ok: bool, payload: ByteSeq, err: string]
+    candidatePadding: AmePaddingPolicy = apadNone
   result.err = controlBindingError(S, f, expected)
   if result.err.len > 0:
     return
@@ -1081,9 +1138,23 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
       clearFomkeState(S.fomkeCandidate)
       result.err = "AME control authentication failed: " & fomkeOpened.err
       return
+    ## Epoch-ready is the first frame of the epoch being moved to, so it was
+    ## padded under THAT epoch's policy -- the one the peer asked for and
+    ## this side has staged, not the one still in force here.
+    candidatePadding = S.pendingIncoming.candidate.params.padding
+    if ((f.header.flags and ameFrameFlagPadded) != 0'u8) !=
+        (candidatePadding != apadNone):
+      clearFomkeState(S.fomkeCandidate)
+      result.err = "AME frame padding disagrees with the epoch policy"
+      return
+    try:
+      opened.payload = unpadAmeMessage(fomkeOpened.payload, candidatePadding)
+    except ValueError as exc:
+      clearFomkeState(S.fomkeCandidate)
+      result.err = exc.msg
+      return
     S.fomkeCandidateActive = true
     opened.ok = true
-    opened.payload = fomkeOpened.payload
   else:
     opened = openFrameBody(S, f, carrier)
   if not opened.ok:
@@ -1124,8 +1195,9 @@ proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
     tagged: ByteSeq = @[uint8(ord(kind))]
     h: AmeFrameHeader
   appendAmeBytes(tagged, body)
-  h = initAmeFrameHeader(ampkDacControl, amcControl, S.sessionId,
-    S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
+  tagged = padFramePayload(S, tagged)
+  h = initAmeFrameHeader(ampkDacControl, amcControl, frameFlags(S),
+    S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
     frameBodyLen(S, tagged.len, "DAC control payload"))
   result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, tagged))
   secureClearAmeBytes(tagged)

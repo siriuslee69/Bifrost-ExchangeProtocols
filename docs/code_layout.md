@@ -47,12 +47,6 @@ src/protocols
 │   ├── types.nim
 │   ├── gimli_batch.nim
 │   └── xchacha_streams.nim  <- thin Tyr batch/scalar selector
-├── tmeaead/
-│   ├── types.nim
-│   └── ops.nim
-├── ggaead/
-│   ├── types.nim
-│   └── ops.nim
 └── chunkyaead/
     ├── level0/  <- format types and memory policy
     ├── level1/  <- nonce and streaming crypto operations

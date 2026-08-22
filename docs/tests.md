@@ -197,7 +197,8 @@ AME
 
 FOMKE
   -> sequential, indexed-block, multi-input, and memory-mixed GB3HKDF
-  -> TMEAEAD roundtrip plus key, nonce, AAD, ciphertext, and tag tamper rejection
+  -> the TMEAEAD and GGAEAD presets, and that every slot they name matters
+  -> payload padding: block rounding, malformed filler, and epoch agreement
   -> independent asynchronous lane chains and bounded out-of-order receive
   -> transactional authentication failure and replay rejection
   -> exact mask-order KEM upgrades and lane-counter race rejection

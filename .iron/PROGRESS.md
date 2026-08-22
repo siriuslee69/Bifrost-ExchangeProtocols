@@ -30,7 +30,8 @@ AME and FOMKE become one layer: compact framing, private handshake, real hybrids
 - DAC data and control receivers reject outer/inner epoch mismatches
 - BFX2 v2 checksums include payload bytes when enabled
 - BFX2 rejects oversized envelopes, packets, collections, and nesting
-- TMEAEAD exposes stream-only, tag-only, verify-only, and keyed HMAC APIs
+- The AEAD presets reproduce the retired TMEAEAD and GGAEAD suites as slot
+  selections; every slot each one names is checked to matter
 - BFX2 vectors were regenerated for the v2 envelope format
 - Only one AME epoch transition may be in flight in either direction; a
   simultaneous start is resolved by endpoint role instead of splitting the epoch
@@ -373,10 +374,76 @@ AME and FOMKE become one layer: compact framing, private handshake, real hybrids
   go on the file path's side of the tag — correcting bits underneath an
   authenticator is dead code.
 
-- **Standing risk, unchanged:** the primitives are homemade. GB3HKDF, the
-  XOR-combined multi-MAC tag, and the standalone TMEAEAD/GGAEAD constructions
-  have no external analysis. The constructions around them are careful, but
-  layering discipline cannot rescue a weak primitive.
+- **Standing risk, unchanged:** the primitives are homemade. GB3HKDF and the
+  XOR-combined multi-MAC tag have no external analysis. The constructions
+  around them are careful, but layering discipline cannot rescue a weak
+  primitive.
 
 - 413 tests pass, plus the build-flag, DAC-flag, fuzz, TLS, examples,
   benchmark and hygiene tasks.
+
+## 2026-08-22 — padding, frame flags, and the AEAD presets
+
+- **Payload padding.** New `ame/level1/padding.nim`. Before encryption a
+  payload is rounded up to a whole number of 64 bytes and the last filler byte
+  states how many filler bytes there are. There is ALWAYS filler, even when
+  the plaintext already fills whole blocks, so the last byte can never be
+  mistaken for real data; filler is zero and is verified on the way back, so
+  nothing can be smuggled in the space that gets discarded.
+
+- **Frame flags.** Byte 5 of the AME header now holds the message class in its
+  low three bits and frame flags in the five above. One flag exists,
+  `ameFrameFlagPadded`. The header is already inside the tag, so the flag is
+  authenticated: clearing it does not hand filler up as data, it makes the
+  frame fail to open. Unknown flag bits are refused rather than ignored. The
+  header is still 34 bytes.
+
+- **Compression can no longer run without padding.** `encodeAmeCompressed`
+  forces `apadBlock64` whenever the policy names a codec, whatever the policy
+  said about padding, and the decision is taken from the POLICY and never from
+  whether compression actually shrank anything — deciding it from the outcome
+  would make the presence of padding a signal about the plaintext, which is
+  the leak being closed. The envelope header grew a padding byte (13 -> 14).
+  `paddedAmeCompressionPolicy()` gives padding with no compression.
+
+- **Padding is an epoch parameter, not a per-message one.**
+  `AmeRuntimeParams.padding` rides in the exchange request (12 -> 13 bytes) and
+  in the server hello, which now carries the whole `AmeRuntimeParams` instead
+  of a bare tag length. `setAmePadding` stages it like `setAmeAuthTagLen`; it
+  takes effect at the next rotation. A frame whose flag disagrees with the
+  epoch's policy is refused. Off by default: it costs 1 to 64 bytes on every
+  frame, and a length that was never compressed is a weak signal on its own.
+  `ameFrameOverheadBytes` gives a caller the worst case for MTU sizing.
+
+- **Handshake identity blocks are padded too** when the policy is on. Hiding
+  who is connecting while leaving the size of their certificate on the wire
+  only does half the job.
+
+- **TMEAEAD and GGAEAD are gone as separate code**, and come back as slot
+  selections in `ame/level1/presets.nim`. TMEAEAD was XChaCha20 + AES-CTR +
+  Gimli with a Gimli tag XORed against a Poly1305 one; GGAEAD was Gimli with a
+  keyed Gimli tag. Both are what the tier construction already does in
+  general. The presets pick the same primitives in the same order; they do NOT
+  reproduce the old bytes, and that is deliberate — keys now come from one
+  derivation over the whole slot block, each cipher slot gets its own nonce
+  slice instead of AES borrowing a derived one, and the tag length is whatever
+  the session agreed.
+
+- **The FOMKE checkpoint store moved with them.** It used TMEAEAD directly.
+  New `deriveAmeStorageKey` (every switched-on KDF slot, XOR-combined, same as
+  session keys) plus `sealAmeStored`/`openAmeStored` key an at-rest blob from
+  a caller-owned key with no exchange state. `saveFomkeCheckpoint` seals with
+  the suite the saved ratchet itself runs on, taken from the state; the
+  matching `loadFomkeCheckpoint` gained layout/tier/tagLen parameters, because
+  a file cannot name the suite needed to open it.
+
+- **One capability was dropped rather than ported:** `tmeAesSimdWidth`. The
+  AES-CTR slot hands Tyr `acbAuto` and lets the cipher pick its own vector
+  width, so there is no Bifrost-side width left to select or to assert.
+
+- `preparation/` stays. Nothing in the protocol stack uses prepared keystreams
+  any more — FOMKE has its own send cache — but it is an exported, tested
+  utility and cutting it was not asked for.
+
+- 425 tests pass, plus the build-flag, DAC-flag, fuzz, chunky-AEAD, TLS,
+  examples, benchmark and hygiene tasks.

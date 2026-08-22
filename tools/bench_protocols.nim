@@ -40,10 +40,10 @@ proc printHelp() =
   echo "Benchmarks:"
   echo "  ame_protect, ame_open, dac_encode, dac_decode,"
   echo "  bfx2_encode, bfx2_decode, ame_dac_seal, ame_dac_open,"
-  echo "  fomke_tme_seal, fomke_tme_cached_seal,"
-  echo "  fomke_gg_seal, fomke_gg_cached_seal,"
-  echo "  fomke_tme_prepare8, fomke_gg_prepare8, gimli_stream_prepare8,"
-  echo "  xchacha_stream_prepare8"
+  echo "  fomke_seal_1slot, fomke_cached_seal_1slot,"
+  echo "  fomke_seal_2slot, fomke_cached_seal_2slot,"
+  echo "  fomke_prepare8_1slot, fomke_prepare8_2slot,"
+  echo "  gimli_stream_prepare8, xchacha_stream_prepare8"
 
 proc parsePositiveInt(flag, raw: string): int =
   try:
@@ -178,7 +178,7 @@ proc mibPerSec(r: BenchResult): float =
 
 proc buildAmeBenchAad(payloadLen: int): ByteSeq =
   var h: AmeFrameHeader
-  h = initAmeFrameHeader(ampkLaneData, amcUserdata,
+  h = initAmeFrameHeader(ampkLaneData, amcUserdata, 0'u8,
     7'u64, 1'u32, 1'u32, 5'u32, 3'u32, uint32(payloadLen))
   result = encodeAmeFrameHeader(h)
 
@@ -518,82 +518,62 @@ proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
   clearFomkeSendCache(cache)
   clearFomkeState(state)
 
+proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] =
+  ## seed/outLen: eight independent key or nonce rows of `outLen` bytes.
+  var
+    i: int = 0
+  while i < 8:
+    result.add(deriveGb3Hkdf(@[byte seed + uint8(i)], @[], @[seed],
+      int(outLen)))
+    i = i + 1
+
 proc benchGimliStreamPrepare8(cfg: BenchConfig): BenchResult =
   ## cfg: isolated eight-message Gimli stream generation benchmark.
   var
-    keys: seq[ByteSeq] = @[]
-    nonces: seq[ByteSeq] = @[]
-    streams: seq[PreparedStream] = @[]
-    key: ByteSeq = @[]
-    nonce: ByteSeq = @[]
+    keys: seq[ByteSeq] = benchStreamKeys(61'u8,
+      uint8(ameProtectionKeyLen))
+    nonces: seq[ByteSeq] = benchStreamKeys(71'u8,
+      uint8(ameCipherNonceLen(acaGimli)))
+    streams: seq[ByteSeq] = @[]
     startedAt: MonoTime
     endedAt: MonoTime
-    i: int = 0
-  while i < 8:
-    key = deriveGgAeadKeyMaterial(@[byte 61 + uint8(i), 62, 63],
-      @[byte 64, uint8(i)])
-    nonce = deriveGb3Hkdf(@[byte 71 + uint8(i)], @[], @[byte 72],
-      ggAeadNonceBytes)
-    keys.add(key)
-    nonces.add(nonce)
-    i = i + 1
   for _ in 0 ..< cfg.warmup:
-    streams = prepareGgGimliStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0].bytes)
+    streams = prepareGimliStreams(keys, nonces, cfg.payloadBytes)
+    mixSinkBytes(streams[0])
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
-    streams = prepareGgGimliStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0].bytes)
+    streams = prepareGimliStreams(keys, nonces, cfg.payloadBytes)
+    mixSinkBytes(streams[0])
   endedAt = getMonoTime()
   result = initResult("gimli_stream_prepare8", cfg,
-    8 * cfg.payloadBytes, streams[0].bytes, startedAt, endedAt)
+    8 * cfg.payloadBytes, streams[0], startedAt, endedAt)
   clearBenchRows(keys)
   clearBenchRows(nonces)
-  i = 0
-  while i < streams.len:
-    clearBenchBytes(streams[i].key)
-    clearBenchBytes(streams[i].nonce)
-    clearBenchBytes(streams[i].bytes)
-    i = i + 1
+  clearBenchRows(streams)
 
 proc benchXChaChaStreamPrepare8(cfg: BenchConfig): BenchResult =
   ## cfg: isolated eight-message XChaCha stream generation benchmark.
   var
-    keys: seq[ByteSeq] = @[]
-    nonces: seq[ByteSeq] = @[]
-    streams: seq[PreparedStream] = @[]
-    key: ByteSeq = @[]
-    nonce: ByteSeq = @[]
+    keys: seq[ByteSeq] = benchStreamKeys(81'u8,
+      uint8(ameProtectionKeyLen))
+    nonces: seq[ByteSeq] = benchStreamKeys(91'u8,
+      uint8(ameCipherNonceLen(acaXChaCha20)))
+    streams: seq[ByteSeq] = @[]
     startedAt: MonoTime
     endedAt: MonoTime
-    i: int = 0
-  while i < 8:
-    ## TMEAEAD wants its whole key block, not a single 32-byte key: it slices
-    ## five keys out of what it is handed.
-    key = deriveTmeAeadKeyMaterial(@[byte 81 + uint8(i)], @[byte 82])
-    nonce = deriveGb3Hkdf(@[byte 91 + uint8(i)], @[], @[byte 92],
-      tmeAeadNonceBytes)
-    keys.add(key)
-    nonces.add(nonce)
-    i = i + 1
   for _ in 0 ..< cfg.warmup:
-    streams = prepareTmeXChaChaStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0].bytes)
+    streams = prepareXChaChaStreamRows(keys, nonces, cfg.payloadBytes)
+    mixSinkBytes(streams[0])
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
-    streams = prepareTmeXChaChaStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0].bytes)
+    streams = prepareXChaChaStreamRows(keys, nonces, cfg.payloadBytes)
+    mixSinkBytes(streams[0])
   endedAt = getMonoTime()
   result = initResult("xchacha_stream_prepare8", cfg,
-    8 * cfg.payloadBytes, streams[0].bytes, startedAt, endedAt)
+    8 * cfg.payloadBytes, streams[0], startedAt, endedAt)
   clearBenchRows(keys)
   clearBenchRows(nonces)
-  i = 0
-  while i < streams.len:
-    clearBenchBytes(streams[i].key)
-    clearBenchBytes(streams[i].nonce)
-    clearBenchBytes(streams[i].bytes)
-    i = i + 1
+  clearBenchRows(streams)
 
 proc printResults(results: openArray[BenchResult]) =
   const

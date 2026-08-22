@@ -48,6 +48,7 @@ import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/symmetric
 import ../level1/tier_aead
+import ../level1/padding
 import ../level1/path_triggers
 import ../level2/session
 import ../../fomke/level0/gb3hkdf
@@ -120,7 +121,10 @@ type
   AmeServerHello* {.role: truthState.} = object
     nonce*: ByteSeq
     reply*: AmeExchangeReply
-    tagLen*: AmeAuthTagLen
+    params*: AmeRuntimeParams
+      ## The tunables the responder picked for the first epoch. In the clear,
+      ## because the client needs them to open the sealed block below, and
+      ## bound into that block's tag so they cannot be edited in flight.
     authTag*: ByteSeq
     sealed*: ByteSeq
 
@@ -130,7 +134,7 @@ type
     proofs*: seq[ByteSeq]
 
   AmeClientFinish* {.role: truthState.} = object
-    tagLen*: AmeAuthTagLen
+    params*: AmeRuntimeParams
     authTag*: ByteSeq
     sealed*: ByteSeq
 
@@ -791,7 +795,8 @@ proc serverHelloClearSubject*(c: AmeClientHello,
   appendHandshakeBytes(result, clientHelloSubject(c))
   appendHandshakeBytes(result, s.nonce)
   appendHandshakeBytes(result, encodeAmeExchangeReply(s.reply))
-  result.add(uint8(ord(s.tagLen)))
+  result.add(uint8(ord(s.params.authTagLen)))
+  result.add(uint8(ord(s.params.padding)))
 
 proc serverHelloFullSubject*(c: AmeClientHello,
     s: AmeServerHello): ByteSeq {.role: truthBuilder.} =
@@ -980,9 +985,9 @@ proc clientHelloPolicyError*(c: AmeClientHello,
 
 proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
     descriptor: AmeIdentityCertificate,
-    tagLen: AmeAuthTagLen): string {.role: orchestrator,
+    params: AmeRuntimeParams): string {.role: orchestrator,
     tag: {tagCryptoBoundary, tagExchange}.} =
-  ## S/identity/descriptor/tagLen: encapsulate, derive the temporary key, and
+  ## S/identity/descriptor/params: encapsulate, derive the temporary key, and
   ## seal the server's identity under it. Returns an error string, or "".
   var
     answer: tuple[reply: AmeExchangeReply, sharedSecrets: seq[ByteSeq]]
@@ -998,7 +1003,7 @@ proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
   S.serverHello.nonce = tyr_random.cryptoRand(tyr_alg.raSystem,
     ameHandshakeNonceLen)
   S.serverHello.reply = answer.reply
-  S.serverHello.tagLen = tagLen
+  S.serverHello.params = params
   clear = serverHelloClearSubject(c, S.serverHello)
   ## The server signs the transcript BEFORE its identity is sealed, so the
   ## proof covers what the client will independently rebuild, not the
@@ -1019,12 +1024,17 @@ proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
   appendAmeBytes(block1, certificateSubject(descriptor))
   appendHandshakeProofs(block1, descriptor.authorityProofs)
   appendHandshakeProofs(block1, proofs)
+  ## Padded under the same policy the epoch will use, when there is one. A
+  ## certificate's length is a fingerprint of its own -- how many algorithms
+  ## it names, how long the subject is -- and hiding the identity while
+  ## leaving its size on the wire only does half the job.
+  block1 = padAmeMessage(block1, params.padding)
   try:
     rows = secretRows(c.layout.kems, c.initialTier.masks.kem, S.sharedSecrets)
     material = handshakeKeyMaterial(c.layout, c.initialTier, rows, clear,
       "AME-HANDSHAKE-S2C-v1")
     sealed = sealAmeTier(c.layout, c.initialTier, material, block1, clear,
-      tagLen)
+      params.authTagLen)
     S.serverHello.sealed = sealed.ciphertext
     S.serverHello.authTag = sealed.authTag
   except CatchableError as e:
@@ -1037,10 +1047,12 @@ proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
 proc answerAmeHandshake*(c: AmeClientHello,
     supported: openArray[AmeTierPath],
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
-    tagLen: AmeAuthTagLen = aatl32): tuple[
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)): tuple[
     ok: bool, state: AmeServerHandshake, err: string] {.role: orchestrator,
     tag: {tagAppApi, tagExchange}.} =
-  ## c/supported/descriptor/identity/tagLen: responder inputs.
+  ## c/supported/descriptor/identity/params: responder inputs. `params` are
+  ## the tunables the responder imposes on the first epoch -- tag length and
+  ## whether payloads are padded. The client adopts them or gives up.
   ##
   ## The client is NOT authenticated yet at this point and cannot be -- it has
   ## not said who it is. Anti-flood protection is the cookie, checked by the
@@ -1062,7 +1074,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
     result.err = e.msg
     return
   result.state.clientHello = c
-  sealError = buildServerHello(result.state, identity, descriptor, tagLen)
+  sealError = buildServerHello(result.state, identity, descriptor, params)
   if sealError.len > 0:
     result.err = sealError
     return
@@ -1088,7 +1100,7 @@ proc openServerIdentity(S: AmeClientHandshake, h: AmeServerHello,
     material = handshakeKeyMaterial(S.hello.layout, S.hello.initialTier, rows,
       clear, "AME-HANDSHAKE-S2C-v1")
     opened = openAmeTier(S.hello.layout, S.hello.initialTier, material,
-      h.sealed, h.authTag, clear, h.tagLen)
+      h.sealed, h.authTag, clear, h.params.authTagLen)
   except CatchableError as e:
     clearSecretRows(rows)
     secureClearAmeBytes(material)
@@ -1103,6 +1115,7 @@ proc openServerIdentity(S: AmeClientHandshake, h: AmeServerHello,
     return
   result.err = "server identity block is malformed"
   try:
+    opened.payload = unpadAmeMessage(opened.payload, h.params.padding)
     result.identityBlock.certificate = decodeCertificateSubject(opened.payload,
       cursor)
     result.identityBlock.certificate.authorityProofs = readBlockProofs(
@@ -1119,8 +1132,8 @@ proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
     request: AmeExchangeRequest,
     sharedSecrets: openArray[ByteSeq], transcript: openArray[uint8],
     sessionId: uint64, endpointRole: AmeEndpointRole,
-    tagLen: AmeAuthTagLen): AmeAuthPackage {.role: truthBuilder.} =
-  ## L/tier/request/secrets/transcript/session/role/tagLen: the first epoch.
+    params: AmeRuntimeParams): AmeAuthPackage {.role: truthBuilder.} =
+  ## L/tier/request/secrets/transcript/session/role/params: the first epoch.
   ## The transcript hash becomes the salt every later key hangs off, so two
   ## handshakes that agreed different things can never share a key.
   var
@@ -1128,7 +1141,7 @@ proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
   applyAmeExchange(exchange, request, sharedSecrets)
   result = initAmeAuthPackage(L, initialTier, exchange,
     hashAmeTier(L, initialTier, transcript, 32), 1'u32, sessionId,
-    endpointRole, AmeRuntimeParams(authTagLen: tagLen))
+    endpointRole, params)
 
 proc serverHelloPolicyError(S: AmeClientHandshake,
     h: AmeServerHello): string {.role: parser.} =
@@ -1136,7 +1149,7 @@ proc serverHelloPolicyError(S: AmeClientHandshake,
   try:
     if h.nonce.len != ameHandshakeNonceLen or h.reply.signatures.len != 0 or
         h.reply.requestId == 0'u32 or
-        h.authTag.len != int(ord(h.tagLen)) or h.sealed.len == 0:
+        h.authTag.len != int(ord(h.params.authTagLen)) or h.sealed.len == 0:
       return "server hello shape is invalid"
     discard encodeAmeExchangeReplySubject(S.hello.offer, h.reply)
   except ValueError as e:
@@ -1165,14 +1178,15 @@ proc sealClientIdentity(S: AmeClientHandshake, h: AmeServerHello,
   appendHandshakeProofs(body, descriptor.authorityProofs)
   appendHandshakeBytes(body, transcriptHash)
   appendHandshakeProofs(body, proofs)
+  body = padAmeMessage(body, h.params.padding)
   try:
     rows = secretRows(S.hello.layout.kems, S.hello.initialTier.masks.kem,
       secrets)
     material = handshakeKeyMaterial(S.hello.layout, S.hello.initialTier, rows,
       full, "AME-HANDSHAKE-C2S-v1")
     sealed = sealAmeTier(S.hello.layout, S.hello.initialTier, material, body,
-      full, h.tagLen)
-    result.finish.tagLen = h.tagLen
+      full, h.params.authTagLen)
+    result.finish.params = h.params
     result.finish.sealed = sealed.ciphertext
     result.finish.authTag = sealed.authTag
     result.ok = true
@@ -1247,7 +1261,7 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
   result.finish = finish.finish
   result.auth = buildInitialAuth(S.hello.layout, S.hello.initialTier,
     h.reply.request, secrets, transcript, S.hello.sessionId, aerInitiator,
-    h.tagLen)
+    h.params)
   result.auth.localSignatureSecretKeys = copyByteStack(identity.secretKeys)
   for key in identityBlock.identityBlock.certificate.signingKeys:
     result.auth.peerSignaturePublicKeys.add(key.publicKey & @[])
@@ -1276,8 +1290,8 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     transcript: ByteSeq = @[]
     expected: ByteSeq = @[]
     key: AmeIdentitySigningKey
-  if f.authTag.len != int(ord(S.serverHello.tagLen)) or
-      f.tagLen != S.serverHello.tagLen or f.sealed.len == 0:
+  if f.authTag.len != int(ord(S.serverHello.params.authTagLen)) or
+      f.params != S.serverHello.params or f.sealed.len == 0:
     result.err = "client finish shape is invalid"
     return
   full = serverHelloFullSubject(S.clientHello, S.serverHello)
@@ -1287,7 +1301,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     material = handshakeKeyMaterial(S.clientHello.layout,
       S.clientHello.initialTier, rows, full, "AME-HANDSHAKE-C2S-v1")
     opened = openAmeTier(S.clientHello.layout, S.clientHello.initialTier,
-      material, f.sealed, f.authTag, full, f.tagLen)
+      material, f.sealed, f.authTag, full, f.params.authTagLen)
   except CatchableError as e:
     clearSecretRows(rows)
     secureClearAmeBytes(material)
@@ -1301,6 +1315,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     result.err = "client finish failed authentication"
     return
   try:
+    opened.payload = unpadAmeMessage(opened.payload, f.params.padding)
     body.certificate = decodeCertificateSubject(opened.payload, cursor)
     body.certificate.authorityProofs = readBlockProofs(opened.payload, cursor)
     body.transcriptHash = readCertField(opened.payload, cursor, 1024'u32)
@@ -1339,7 +1354,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
   result.auth = buildInitialAuth(S.clientHello.layout,
     S.clientHello.initialTier, S.serverHello.reply.request,
     S.sharedSecrets, transcript, S.clientHello.sessionId, aerResponder,
-    S.serverHello.tagLen)
+    S.serverHello.params)
   result.auth.localSignatureSecretKeys = copyByteStack(
     S.localSignatureSecretKeys)
   for key in body.certificate.signingKeys:

@@ -36,12 +36,13 @@ type
     err*: string
 
 proc securePackageAad(packageId: uint64, epochId: uint32,
-    compression: AmeCompressionAlgorithm): ByteSeq {.role: truthBuilder.} =
+    compression: AmeCompressionPolicy): ByteSeq {.role: truthBuilder.} =
   ## packageId/epochId/compression: package identity bound to AME authentication.
-  appendAmeLabel(result, "AME-SECURE-PACKAGE-v1")
+  appendAmeLabel(result, "AME-SECURE-PACKAGE-v2")
   appendAmeU64(result, packageId)
   appendAmeU32(result, epochId)
-  result.add(uint8(ord(compression)))
+  result.add(uint8(ord(compression.algorithm)))
+  result.add(uint8(ord(effectiveAmePadding(compression))))
 
 proc encodeSecurePackage(epochId: uint32, nonce: openArray[uint8],
     tagLen: AmeAuthTagLen, m: AmeProtectedMessage): ByteSeq {.
@@ -123,7 +124,7 @@ proc planAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
     outboundAmeDirection(a.endpointRole))
   sealed = protectAmeMessage(a.current.layout, a.current.tier,
     a.current.exchange, compressed,
-    securePackageAad(packageId, a.current.epochId, compression.algorithm),
+    securePackageAad(packageId, a.current.epochId, compression),
     keyContext, a.current.params.authTagLen)
   wire = encodeSecurePackage(a.current.epochId, sealed.nonce,
     a.current.params.authTagLen, sealed.message)
@@ -152,7 +153,7 @@ proc openSecurePackageWithEpoch(E: AmeEpochKeySet, packageId: uint64,
   keyContext = ameEpochKeyContext(E, sessionId, direction)
   opened = openAmeMessage(E.layout, E.tier, E.exchange, decoded.nonce,
     decoded.message, securePackageAad(packageId, E.epochId,
-    compression.algorithm), keyContext, E.params.authTagLen)
+    compression), keyContext, E.params.authTagLen)
   if not opened.ok:
     return
   result.payload = decodeAmeCompressed(opened.payload, compression)
