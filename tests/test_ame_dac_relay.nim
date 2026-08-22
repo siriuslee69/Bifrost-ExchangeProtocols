@@ -22,7 +22,7 @@ import ../src/protocols/dac/level3/link_table
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]
 
-proc exactAuth(): AmeAuthPackage =
+proc exactAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   ## One established epoch both endpoints share.
   var
     layout: AmeSuiteLayout = defaultAmeLayout(exactKems)
@@ -36,14 +36,14 @@ proc exactAuth(): AmeAuthPackage =
     state: AmeExchangeState = initAmeExchangeState(exactKems)
   applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
-  result = initAmeAuthPackage(layout, tier, state)
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
 proc peerSessions(): tuple[a: AmeSession, b: AmeSession] =
   ## Two sessions on one epoch, facing each other.
-  result.a = initAmeSession(exactAuth(), peerTrustRequired = false)
-  result.b = initAmeSession(exactAuth(), peerTrustRequired = false)
-  result.a.auth.endpointRole = aerInitiator
-  result.b.auth.endpointRole = aerResponder
+  ## Roles are fixed before construction: a session starts its ratchet at
+  ## once, and the role decides which lane it sends on.
+  result.a = initAmeSession(exactAuth(aerInitiator), peerTrustRequired = false)
+  result.b = initAmeSession(exactAuth(aerResponder), peerTrustRequired = false)
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.

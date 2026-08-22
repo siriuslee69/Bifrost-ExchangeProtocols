@@ -23,7 +23,7 @@ import ../src/protocols/dac/level3/link_table
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]
 
-proc exactAuth(): AmeAuthPackage =
+proc exactAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   ## One established epoch both endpoints share.
   var
     layout: AmeSuiteLayout = defaultAmeLayout(exactKems)
@@ -37,7 +37,7 @@ proc exactAuth(): AmeAuthPackage =
     state: AmeExchangeState = initAmeExchangeState(exactKems)
   applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
-  result = initAmeAuthPackage(layout, tier, state)
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.
@@ -59,8 +59,10 @@ suite "AME DAC endpoint over loopback":
         dacLocalPort(senderSock).port)
       receiverAddr: DacAddress = initDacAddress("127.0.0.1",
         dacLocalPort(receiverSock).port)
-      a: AmeSession = initAmeSession(exactAuth(), peerTrustRequired = false)
-      b: AmeSession = initAmeSession(exactAuth(), peerTrustRequired = false)
+      a: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      b: AmeSession = initAmeSession(exactAuth(aerResponder),
+        peerTrustRequired = false)
       sender: AmeDacEndpoint
       receiver: AmeDacEndpoint
       payload: ByteSeq = rampBytes(6_000)
@@ -68,8 +70,6 @@ suite "AME DAC endpoint over loopback":
       nowMs: uint32 = 0'u32
       done: bool = false
       round: int = 0
-    a.auth.endpointRole = aerInitiator
-    b.auth.endpointRole = aerResponder
     sender = initAmeDacEndpoint(senderSock,
       initAmeDacRelay(cleanLanDacDefaults(), 1'u64))
     receiver = initAmeDacEndpoint(receiverSock,
