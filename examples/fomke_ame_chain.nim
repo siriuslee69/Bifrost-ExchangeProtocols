@@ -41,8 +41,10 @@ when isMainModule:
   bobAme = initAmeExchangeState(kems)
   applyAmeExchange(aliceAme, initialRequest, initialSender.sharedSecrets)
   applyAmeExchange(bobAme, initialRequest, initialReceiver)
-  alice = initFomkeFromAme(aliceAme, 0, frInitiator)
-  bob = initFomkeFromAme(bobAme, 0, frResponder)
+  ## The ratchet root absorbs EVERY KEM slot the tier switches on, not just
+  ## one, so a hybrid exchange is a hybrid in fact.
+  alice = initFomkeFromAme(aliceAme, layout, initialTier, frInitiator)
+  bob = initFomkeFromAme(bobAme, layout, initialTier, frResponder)
 
   message = sealFomkeMessage(alice, @[byte 70, 79, 77, 75, 69])
   opened = openFomkeMessage(bob, message)

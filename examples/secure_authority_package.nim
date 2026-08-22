@@ -18,8 +18,7 @@ var
   tier: AmeMaskTier = fullAmeMaskTier(layout)
   path: AmeTierPath = initAmeTierPath(layout, [tier])
   client: AmeClientHandshake
-  server: tuple[ok: bool, state: AmeServerHandshake,
-    peerTrust: AmePeerTrustResult, err: string]
+  server: tuple[ok: bool, state: AmeServerHandshake, err: string]
   sender: AmeHandshakeResult
   receiver: AmeHandshakeResult
   plaintext: ByteSeq = newSeq[byte](8000)
@@ -34,15 +33,21 @@ var
   dropped: int = 0
 
 root = initAmeAuthorityRoot(authority)
-senderCert = issueAmeIdentityCertificate(authority, senderKey, 1'i64, 1000'i64)
-receiverCert = issueAmeIdentityCertificate(authority, receiverKey, 1'i64,
-  1000'i64)
-client = beginAmeHandshake(1'u64, layout, tier, senderCert, senderKey)
-server = answerAmeHandshake(client.hello, [path], root, receiverCert,
-  receiverKey, 10'i64)
-sender = finishAmeHandshake(client, server.state.serverHello, root, senderKey,
-  10'i64)
-receiver = acceptAmeHandshake(server.state, sender.finish)
+## Certificates carry a serial, so one can be revoked without burning the
+## name it was issued to.
+senderCert = issueAmeIdentityCertificate(authority, senderKey, 1'u64,
+  1'i64, 1000'i64)
+receiverCert = issueAmeIdentityCertificate(authority, receiverKey, 2'u64,
+  1'i64, 1000'i64)
+
+## The hello names nobody. Both certificates travel inside sealed blocks, so
+## an observer sees two nonces and some key material and never learns who is
+## talking to whom.
+client = beginAmeHandshake(1'u64, layout, tier)
+server = answerAmeHandshake(client.hello, [path], receiverCert, receiverKey)
+sender = finishAmeHandshake(client, server.state.serverHello, root,
+  senderCert, senderKey, 10'i64)
+receiver = acceptAmeHandshake(server.state, sender.finish, root, 10'i64)
 
 for i in 0 ..< plaintext.len:
   plaintext[i] = uint8(i mod 251)

@@ -182,7 +182,8 @@ proc buildAmeBenchAad(payloadLen: int): ByteSeq =
     7'u64, 1'u32, 1'u32, 5'u32, 3'u32, uint32(payloadLen))
   result = encodeAmeFrameHeader(h)
 
-proc exactBenchAuth(seed: openArray[uint8]): AmeAuthPackage =
+proc exactBenchAuth(seed: openArray[uint8],
+    role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   const K: AmeKemAlgorithms = [akaFireSaber, akaX25519]
   var
     layout: AmeSuiteLayout = defaultAmeLayout(K)
@@ -192,7 +193,7 @@ proc exactBenchAuth(seed: openArray[uint8]): AmeAuthPackage =
   tier.masks.kem = 0b10000000'u8
   applyAmeExchange(state, initAmeExchangeRequest(K, tier,
     0b10000000'u8), [secret])
-  result = initAmeAuthPackage(layout, tier, state)
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
 proc buildDacBenchHeader(payloadLen: int): DacFrameHeader =
   var flags: DacFrameFlags
@@ -374,7 +375,9 @@ proc benchAmeDacSeal(cfg: BenchConfig): BenchResult =
 proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
   var
     auth: AmeAuthPackage = exactBenchAuth(
-      @[byte 31, 32, 33, 34, 35, 36, 37, 38])
+      @[byte 31, 32, 33, 34, 35, 36, 37, 38], aerInitiator)
+    peerAuth: AmeAuthPackage = exactBenchAuth(
+      @[byte 31, 32, 33, 34, 35, 36, 37, 38], aerResponder)
     payload: ByteSeq = buildPayload(cfg.payloadBytes)
     warmupSender: AmeSession
     warmupReceiver: AmeSession
@@ -385,7 +388,7 @@ proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
     startedAt: MonoTime
     endedAt: MonoTime
   warmupSender = initBenchAmeSession(auth, max(cfg.warmup, 8))
-  warmupReceiver = initBenchAmeSession(auth, max(cfg.warmup, 8))
+  warmupReceiver = initBenchAmeSession(peerAuth, max(cfg.warmup, 8))
   for _ in 0 ..< cfg.warmup:
     opened = openAmeDacFrame(warmupReceiver, sealAmeDacFrame(warmupSender, payload))
     if not opened.ok:
@@ -396,7 +399,7 @@ proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
   sender = initBenchAmeSession(auth, 8)
   for i in 0 ..< cfg.iterations:
     frames[i] = sealAmeDacFrame(sender, payload)
-  receiver = initBenchAmeSession(auth, max(cfg.iterations, 8))
+  receiver = initBenchAmeSession(peerAuth, max(cfg.iterations, 8))
   startedAt = getMonoTime()
   for i in 0 ..< cfg.iterations:
     opened = openAmeDacFrame(receiver, frames[i])
@@ -411,26 +414,47 @@ proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
     if frames.len > 0: frames[0] else: @[],
     startedAt, endedAt)
 
-proc initBenchFomke(a: AmeAuthPackage,
-    cipher: FomkeMessageCipher): FomkeState =
-  ## a/cipher: stable AME exchange and selected one-time message construction.
-  result = initFomkeFromAme(a.current.exchange, 0, frInitiator,
-    messageCipher = cipher)
-
-proc benchFomkeSeal(cfg: BenchConfig, cipher: FomkeMessageCipher,
-    prepared: bool, name: string): BenchResult =
-  ## cfg/cipher/prepared/name: one short-message send-path latency benchmark.
+proc layeredBenchAuth(seed: openArray[uint8],
+    role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
+  ## seed: one stable secret for a layout that switches TWO cipher and TWO
+  ## authenticator slots on. Comparing this against the single-slot layout is
+  ## what the numbers below are for: it prices the cost of stacking.
+  const K: AmeKemAlgorithms = [akaFireSaber, akaX25519]
   var
-    auth: AmeAuthPackage = exactBenchAuth(
-      @[byte 41, 42, 43, 44, 45, 46, 47, 48])
-    state: FomkeState = initBenchFomke(auth, cipher)
+    layout: AmeSuiteLayout = initAmeSuiteLayout(K,
+      initAmeCipherAlgorithms([acaXChaCha20, acaGimli]),
+      initAmeMacAlgorithms([amaBlake3, amaPoly1305]),
+      initAmeHashAlgorithms([defaultAmeHashSlot()]),
+      initAmeSignatureAlgorithms(defaultAmeSigSlots()),
+      initAmeKdfAlgorithms(defaultAmeKdfSlots()))
+    tier: AmeMaskTier = fullAmeMaskTier(layout)
+    state: AmeExchangeState = initAmeExchangeState(K)
+    secret: ByteSeq = @seed
+  tier.masks.kem = 0b10000000'u8
+  applyAmeExchange(state, initAmeExchangeRequest(K, tier,
+    0b10000000'u8), [secret])
+  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
+
+proc initBenchFomke(a: AmeAuthPackage): FomkeState =
+  ## a: stable AME exchange turned into one ratchet.
+  result = initFomkeFromAme(a.current.exchange, a.current.layout,
+    a.current.tier, frInitiator)
+
+proc benchFomkeSeal(cfg: BenchConfig, layered: bool,
+    prepared: bool, name: string): BenchResult =
+  ## cfg/layered/prepared/name: one short-message send-path latency benchmark.
+  var
+    auth: AmeAuthPackage =
+      if layered: layeredBenchAuth(@[byte 41, 42, 43, 44, 45, 46, 47, 48])
+      else: exactBenchAuth(@[byte 41, 42, 43, 44, 45, 46, 47, 48])
+    state: FomkeState = initBenchFomke(auth)
     cache: FomkeSendCache
     payload: ByteSeq = buildPayload(cfg.payloadBytes)
     message: FomkeMessage
     startedAt: MonoTime
     endedAt: MonoTime
   if prepared and cfg.warmup > 0:
-    cache = prepareFomkeSendCache(state, cfg.warmup, cfg.payloadBytes)
+    cache = prepareFomkeSendCache(state, cfg.warmup)
     for _ in 0 ..< cfg.warmup:
       message = sealFomkeMessagePrepared(state, cache, payload)
       mixSinkBytes(message.ciphertext)
@@ -442,9 +466,9 @@ proc benchFomkeSeal(cfg: BenchConfig, cipher: FomkeMessageCipher,
       mixSinkBytes(message.authTag)
   clearFomkeSendCache(cache)
   clearFomkeState(state)
-  state = initBenchFomke(auth, cipher)
+  state = initBenchFomke(auth)
   if prepared:
-    cache = prepareFomkeSendCache(state, cfg.iterations, cfg.payloadBytes)
+    cache = prepareFomkeSendCache(state, cfg.iterations)
     startedAt = getMonoTime()
     for _ in 0 ..< cfg.iterations:
       message = sealFomkeMessagePrepared(state, cache, payload)
@@ -458,36 +482,38 @@ proc benchFomkeSeal(cfg: BenchConfig, cipher: FomkeMessageCipher,
       mixSinkBytes(message.ciphertext)
       mixSinkBytes(message.authTag)
     endedAt = getMonoTime()
-  result = initResult(name, cfg, fomkeWireLen(payload.len),
+  result = initResult(name, cfg,
+    fomkeWireLen(payload.len, state.tagLen),
     message.ciphertext, startedAt, endedAt)
   clearFomkeSendCache(cache)
   clearFomkeState(state)
 
-proc benchFomkePrepare8(cfg: BenchConfig, cipher: FomkeMessageCipher,
+proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
     name: string): BenchResult =
-  ## cfg/cipher/name: one eight-message cache-build throughput benchmark.
+  ## cfg/layered/name: one eight-message cache-build throughput benchmark.
   var
-    auth: AmeAuthPackage = exactBenchAuth(
-      @[byte 51, 52, 53, 54, 55, 56, 57, 58])
-    state: FomkeState = initBenchFomke(auth, cipher)
+    auth: AmeAuthPackage =
+      if layered: layeredBenchAuth(@[byte 51, 52, 53, 54, 55, 56, 57, 58])
+      else: exactBenchAuth(@[byte 51, 52, 53, 54, 55, 56, 57, 58])
+    state: FomkeState = initBenchFomke(auth)
     cache: FomkeSendCache
     startedAt: MonoTime
     endedAt: MonoTime
     cacheBytes: int = 0
     sample: ByteSeq = @[]
   for _ in 0 ..< cfg.warmup:
-    cache = prepareFomkeSendCache(state, 8, cfg.payloadBytes)
-    mixSinkBytes(cache.entries[0].gimli.bytes)
+    cache = prepareFomkeSendCache(state, 8)
+    mixSinkBytes(cache.entries[0].material)
     clearFomkeSendCache(cache)
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
-    cache = prepareFomkeSendCache(state, 8, cfg.payloadBytes)
-    mixSinkBytes(cache.entries[0].gimli.bytes)
+    cache = prepareFomkeSendCache(state, 8)
+    mixSinkBytes(cache.entries[0].material)
     clearFomkeSendCache(cache)
   endedAt = getMonoTime()
-  cache = prepareFomkeSendCache(state, 8, cfg.payloadBytes)
+  cache = prepareFomkeSendCache(state, 8)
   cacheBytes = fomkePreparedSecretBytes(cache)
-  sample = cache.entries[0].gimli.bytes
+  sample = cache.entries[0].material
   result = initResult(name, cfg, cacheBytes, sample, startedAt, endedAt)
   clearFomkeSendCache(cache)
   clearFomkeState(state)
@@ -542,8 +568,9 @@ proc benchXChaChaStreamPrepare8(cfg: BenchConfig): BenchResult =
     endedAt: MonoTime
     i: int = 0
   while i < 8:
-    key = deriveGb3Hkdf(@[byte 81 + uint8(i)], @[], @[byte 82],
-      gb3BlockBytes)
+    ## TMEAEAD wants its whole key block, not a single 32-byte key: it slices
+    ## five keys out of what it is handed.
+    key = deriveTmeAeadKeyMaterial(@[byte 81 + uint8(i)], @[byte 82])
     nonce = deriveGb3Hkdf(@[byte 91 + uint8(i)], @[], @[byte 92],
       tmeAeadNonceBytes)
     keys.add(key)
@@ -651,20 +678,22 @@ proc main() =
     results.add(benchAmeDacSeal(cfg))
   if shouldRun(cfg, "ame_dac_open"):
     results.add(benchAmeDacOpen(cfg))
-  if shouldRun(cfg, "fomke_tme_seal"):
-    results.add(benchFomkeSeal(cfg, fmcTmeAead, false, "fomke_tme_seal"))
-  if shouldRun(cfg, "fomke_tme_cached_seal"):
-    results.add(benchFomkeSeal(cfg, fmcTmeAead, true,
-      "fomke_tme_cached_seal"))
-  if shouldRun(cfg, "fomke_gg_seal"):
-    results.add(benchFomkeSeal(cfg, fmcGgAead, false, "fomke_gg_seal"))
-  if shouldRun(cfg, "fomke_gg_cached_seal"):
-    results.add(benchFomkeSeal(cfg, fmcGgAead, true,
-      "fomke_gg_cached_seal"))
-  if shouldRun(cfg, "fomke_tme_prepare8"):
-    results.add(benchFomkePrepare8(cfg, fmcTmeAead, "fomke_tme_prepare8"))
-  if shouldRun(cfg, "fomke_gg_prepare8"):
-    results.add(benchFomkePrepare8(cfg, fmcGgAead, "fomke_gg_prepare8"))
+  ## One slot versus two: what stacking a second cipher and a second
+  ## authenticator actually costs per message.
+  if shouldRun(cfg, "fomke_seal_1slot"):
+    results.add(benchFomkeSeal(cfg, false, false, "fomke_seal_1slot"))
+  if shouldRun(cfg, "fomke_cached_seal_1slot"):
+    results.add(benchFomkeSeal(cfg, false, true,
+      "fomke_cached_seal_1slot"))
+  if shouldRun(cfg, "fomke_seal_2slot"):
+    results.add(benchFomkeSeal(cfg, true, false, "fomke_seal_2slot"))
+  if shouldRun(cfg, "fomke_cached_seal_2slot"):
+    results.add(benchFomkeSeal(cfg, true, true,
+      "fomke_cached_seal_2slot"))
+  if shouldRun(cfg, "fomke_prepare8_1slot"):
+    results.add(benchFomkePrepare8(cfg, false, "fomke_prepare8_1slot"))
+  if shouldRun(cfg, "fomke_prepare8_2slot"):
+    results.add(benchFomkePrepare8(cfg, true, "fomke_prepare8_2slot"))
   if shouldRun(cfg, "gimli_stream_prepare8"):
     results.add(benchGimliStreamPrepare8(cfg))
   if shouldRun(cfg, "xchacha_stream_prepare8"):
