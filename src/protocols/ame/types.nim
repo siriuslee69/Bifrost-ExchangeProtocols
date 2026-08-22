@@ -8,9 +8,11 @@ import ../dac/types as dac_types
 import ../../analysis_pragmas
 
 const
-  ameMagic* = [uint8('A'), uint8('M'), uint8('E'), uint8('2')]
-  ameFormatVersion* = 2'u16
-  ameFrameHeaderLen* = 36
+  ameMagic* = [uint8('A'), uint8('M'), uint8('E')]
+    ## Three letters, not four. The version is the byte that follows, so the
+    ## first four bytes of every AME frame read as "AME" plus one number.
+  ameFormatVersion* = 3'u8
+  ameFrameHeaderLen* = 34
   ameMaxAlgorithmSlots* = 8
   ameProtectionKeyLen* = 32
   ameProtectionAuthTagLen* = 32
@@ -31,7 +33,11 @@ type
     ampkProblem = 0x08'u8,
     ampkPing = 0x09'u8,
     ampkPong = 0x0A'u8,
-    ampkDacControl = 0x0B'u8
+    ampkDacControl = 0x0B'u8,
+    ampkClientHello = 0x0C'u8,
+    ampkHelloRetry = 0x0D'u8,
+    ampkServerHello = 0x0E'u8,
+    ampkClientFinish = 0x0F'u8
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,
@@ -227,8 +233,8 @@ type
     authTag*: ByteSeq
 
   AmeFrameHeader* {.role: truthState.} = object
-    magic*: array[4, uint8]
-    formatVersion*: uint16
+    magic*: array[3, uint8]
+    formatVersion*: uint8
     packetKind*: AmePacketKind
     messageClass*: AmeMessageClass
     sessionId*: uint64
@@ -246,33 +252,28 @@ type
     algorithm*: AmeSignatureAlgorithm
     publicKey*: ByteSeq
 
-  AmeIdentityBundle* {.role: truthState.} = object
-    subjectKeyId*: string
-    signingKeys*: seq[AmeIdentitySigningKey]
-
-  AmeAuthoritySignature* {.role: truthState.} = object
-    authority*: string
-    algorithm*: AmeSignatureAlgorithm
-    authorityPublicKey*: ByteSeq
-    signature*: ByteSeq
-
+  ## The signing side of an authority. One keypair per occupied slot, in the
+  ## same order the public stack lists them, so slot `i` of `signingKeys`
+  ## always pairs with slot `i` of `secretKeys`.
   AmeAuthorityRoot* {.role: configurator.} = object
     authority*: string
-    algorithm*: AmeSignatureAlgorithm
-    publicKey*: ByteSeq
+    signingKeys*: seq[AmeIdentitySigningKey]
+      ## The authority's public keys, one per slot. A certificate must carry
+      ## one valid proof for every slot listed here -- an authority that signs
+      ## with two algorithms cannot be forged by breaking only one of them.
 
   AmePeerTrustResult* {.role: truthState.} = object
     ok*: bool
     authority*: string
-    algorithm*: AmeSignatureAlgorithm
+    algorithms*: seq[AmeSignatureAlgorithm]
     subjectKeyId*: string
+    serial*: uint64
     err*: string
 
 # ---- session / connection state (session state) ----
 
 const
   ameSessionProtocolLongName* = "Adaptive Message Encryption"
-  ameProtectedBodyHeaderLen* = 12
   defaultAmeInboxCapacity* = 64
   defaultAmeMaxFrameBytes* = 16_777_216
   ameBytesPerMiB* = 1_048_576'u64
@@ -367,12 +368,6 @@ type
     initialized*: bool
     highest*: uint32
     bitmap*: uint64
-
-  AmeProtectedBody* {.role: truthState.} = object
-    epochId*: uint32
-    nonce*: ByteSeq
-    authTag*: ByteSeq
-    payload*: ByteSeq
 
   AmePacket* {.role: truthState.} = object
     payload*: ByteSeq

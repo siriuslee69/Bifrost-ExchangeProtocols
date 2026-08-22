@@ -6,6 +6,7 @@ import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
 import ../../ame/level1/exchange_paths
+import ../../ame/level1/suites
 import ../types
 import ../level0/gb3hkdf
 import ../level1/chain
@@ -13,9 +14,8 @@ import ./wire
 import ../../../analysis_pragmas
 
 const
-  fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R'), uint8('1')]
-  fomkeStateLegacyVersion = 1'u16
-  fomkeStateVersion = 2'u16
+  fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]
+  fomkeStateVersion = 1'u8
 
 proc requireStateBytes(A: openArray[uint8], cursor, count: int) {.role: parser,
     tag: {tagFomke, tagParsing, tagValidation}.} =
@@ -104,14 +104,10 @@ proc decodeStateKdfMode(v: uint8): Gb3KdfMode {.role: parser,
     return gb3MemoryMixed
   raise newException(ValueError, "FOMKE state KDF mode is invalid")
 
-proc decodeStateMessageCipher(v: uint8): FomkeMessageCipher {.role: parser,
+proc decodeStateTagLen(v: uint8): AmeAuthTagLen {.role: parser,
     tag: {tagFomke, tagParsing}.} =
-  ## v: stable forward-only message cipher identifier.
-  if v == uint8(ord(fmcTmeAead)):
-    return fmcTmeAead
-  if v == uint8(ord(fmcGgAead)):
-    return fmcGgAead
-  raise newException(ValueError, "FOMKE state message cipher is invalid")
+  ## v: stable agreed authentication-tag length.
+  result = ameAuthTagLenFromId(v)
 
 proc appendStateChain(A: var ByteSeq, C: FomkeChainState) {.
     role: stateController, tag: {tagCryptoBoundary, tagFomke, tagWrite}.} =
@@ -136,18 +132,17 @@ proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
   appendStateField(A, K.keyMaterial)
 
 proc readStateSkipped(A: openArray[uint8], cursor: var int,
-    epoch: uint32, messageCipher: FomkeMessageCipher): FomkeSkippedKey {.
+    epoch: uint32): FomkeSkippedKey {.
     role: parser,
     tag: {tagCryptoBoundary, tagFomke, tagParsing}.} =
-  ## A/cursor/epoch/messageCipher: consume one skipped key for this state.
-  var
-    keyBytes: int = fomkeMessageKeyBytesFor(messageCipher)
+  ## A/cursor/epoch: consume one skipped key belonging to this state.
   result.epoch = readStateU32(A, cursor)
   result.index = readStateU64(A, cursor)
   result.lane = decodeStateLane(readStateU8(A, cursor))
   result.keyMaterial = readStateField(A, cursor,
-    fomkeMaxMessageKeyBytes.uint32)
-  if result.epoch != epoch or result.keyMaterial.len != keyBytes:
+    fomkeMessageKeyBytes.uint32)
+  if result.epoch != epoch or
+      result.keyMaterial.len != fomkeMessageKeyBytes:
     raise newException(ValueError, "FOMKE skipped state is invalid")
 
 proc validateDecodedPending(S: FomkeState) {.role: parser,
@@ -173,12 +168,14 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: stateController,
   validateFomkeState(S)
   validateDecodedPending(S)
   appendAmeBytes(result, fomkeStateMagic)
-  appendAmeU16(result, fomkeStateVersion)
+  result.add(fomkeStateVersion)
   result.add(uint8(ord(S.role)))
-  result.add(uint8(ord(S.messageCipher)))
+  result.add(uint8(ord(S.tagLen)))
   appendAmeU32(result, S.epoch)
   algorithms = encodeAmeKemAlgorithms(S.algorithms)
   appendStateField(result, algorithms)
+  appendStateField(result, encodeAmeSuiteLayout(S.layout))
+  appendStateField(result, encodeAmeMaskTier(S.tier))
   appendStateChain(result, S.lane1)
   appendStateChain(result, S.lane2)
   appendAmeU32(result, S.maxSkip)
@@ -205,29 +202,30 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   ## A: strict bounded plaintext state from an authenticated checkpoint.
   var
     algorithms: ByteSeq = @[]
+    layout: ByteSeq = @[]
+    tier: ByteSeq = @[]
     commit: ByteSeq = @[]
     count: uint32 = 0'u32
     pendingFlag: uint8 = 0'u8
-    version: uint16 = 0'u16
     cursor: int = 0
     i: uint32 = 0'u32
   if A.len < 6 or uint64(A.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE state length is invalid")
   requireStateBytes(A, 0, 4)
-  if A[0 .. 3] != fomkeStateMagic:
+  if A[0 .. 2] != fomkeStateMagic:
     raise newException(ValueError, "FOMKE state identity mismatch")
-  cursor = 4
-  version = readStateU16(A, cursor)
-  if version != fomkeStateLegacyVersion and version != fomkeStateVersion:
+  if A[3] != fomkeStateVersion:
     raise newException(ValueError, "FOMKE state version mismatch")
+  cursor = 4
   result.role = decodeStateRole(readStateU8(A, cursor))
-  if version == fomkeStateVersion:
-    result.messageCipher = decodeStateMessageCipher(readStateU8(A, cursor))
-  else:
-    result.messageCipher = fmcTmeAead
+  result.tagLen = decodeStateTagLen(readStateU8(A, cursor))
   result.epoch = readStateU32(A, cursor)
   algorithms = readStateField(A, cursor, uint32(ameMaxAlgorithmSlots + 1))
   result.algorithms = decodeAmeKemAlgorithms(algorithms)
+  layout = readStateField(A, cursor, 256'u32)
+  result.layout = decodeAmeSuiteLayout(layout)
+  tier = readStateField(A, cursor, 32'u32)
+  result.tier = decodeAmeMaskTier(result.layout, tier)
   result.lane1 = readStateChain(A, cursor)
   result.lane2 = readStateChain(A, cursor)
   result.maxSkip = readStateU32(A, cursor)
@@ -241,8 +239,7 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   if count > result.maxSkip or count > fomkeMaxSkipLimit:
     raise newException(ValueError, "FOMKE skipped state exceeds its limit")
   while i < count:
-    result.skipped.add(readStateSkipped(A, cursor, result.epoch,
-      result.messageCipher))
+    result.skipped.add(readStateSkipped(A, cursor, result.epoch))
     i = i + 1'u32
   pendingFlag = readStateU8(A, cursor)
   if pendingFlag > 1'u8:

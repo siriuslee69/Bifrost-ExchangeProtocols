@@ -1,12 +1,30 @@
 ## -------------------------------------------------------------------------
-## AME Protection <- immutable layout and tier-selected protection layers
+## AME Protection <- at-rest sealing keyed straight from the exchange
 ## -------------------------------------------------------------------------
+##
+## This is NOT the path a frame takes. Live traffic is protected once, by the
+## message ratchet (see protocols/fomke). This module exists for the other
+## case: bytes that have to sit still somewhere -- a package on disk, a blob
+## handed to a repair layer -- where there is no ratchet position to derive
+## from and the nonce must therefore be stored beside the ciphertext.
+##
+##   live frame      plaintext -> ratchet step -> ciphertext + tag
+##   package at rest plaintext -> random nonce  -> ciphertext + tag + nonce
+##
+## Both use the SAME slot construction from level1/tier_aead: every
+## switched-on cipher XORed in turn, every switched-on authenticator XORed
+## into one tag. Only where the key material comes from differs.
+##
+## The key block that construction wants looks like this:
+##
+##   [ nonce ][ cipher key 0 ][ cipher key 1 ][ mac key 0 ][ mac key 1 ]
+##
+## so this file derives the key part from the exchange and puts the caller's
+## nonce in front of it.
 
 import tyr/helpers/random as tyr_random
-import ../level1/symmetric
 
 import tyr/helpers/tiers as tyr_alg
-
 
 import ../../types
 import ../types
@@ -14,46 +32,24 @@ import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/derivation
+import ../level1/tier_aead
 import ../../../analysis_pragmas
 
-proc nonceLen(a: AmeCipherAlgorithm): int {.role: helper.} =
-  ## a: exact cipher whose native nonce size is returned.
-  case a
-  of acaXChaCha20, acaGimli: result = 24
-  of acaAesCtr: result = 16
-  of acaChaCha20: result = 12
+export ameTierNonceLen, ameCipherNonceLen
 
 proc ameProtectionNonceLen*(L: AmeSuiteLayout,
     t: AmeMaskTier): int {.role: parser.} =
-  ## L/t: layout and tier whose selected cipher nonce lengths are summed.
-  var i: int = 0
-  validateAmeTier(L, t)
-  while i < int(L.ciphers.length):
-    if algorithmSlotSelected(t.masks.cipher, i):
-      result = result + nonceLen(L.ciphers.algorithms[i])
-    i = i + 1
+  ## L/t: how many nonce bytes this tier needs in total. One switched-on
+  ## cipher contributes its own nonce size; two contribute both, end to end.
+  result = ameTierNonceLen(L, t)
 
 proc randomAmeNonce*(L: AmeSuiteLayout,
     t: AmeMaskTier): ByteSeq {.role: dataFetcher.} =
-  ## L/t: immutable layout and tier determining nonce bytes.
+  ## L/t: fresh nonce of exactly the size this tier needs.
   result = tyr_random.cryptoRand(tyr_alg.raSystem, ameProtectionNonceLen(L, t))
 
-proc nonceSlice(A: openArray[byte], offset: int,
-    a: AmeCipherAlgorithm): ByteSeq {.role: parser.} =
-  ## A/offset/a: nonce prefix, current offset, and cipher slot.
-  var
-    n: int = nonceLen(a)
-    i: int = 0
-  if offset < 0 or offset > A.len - n:
-    raise newException(ValueError, "AME nonce prefix is too short")
-  result = newSeq[byte](n)
-  while i < n:
-    result[i] = A[offset + i]
-    i = i + 1
-
 proc requireProtection(L: AmeSuiteLayout, t: AmeMaskTier,
-    E: AmeExchangeState) {.
-    role: parser.} =
+    E: AmeExchangeState) {.role: parser.} =
   ## L/t/E: immutable layout, active tier, and exchange state to validate.
   validateAmeTier(L, t)
   if not kemLayoutsEquivalent(L.kems, E.algorithms):
@@ -61,87 +57,34 @@ proc requireProtection(L: AmeSuiteLayout, t: AmeMaskTier,
   if (t.masks.kem and not E.activeMask) != 0'u8:
     raise newException(ValueError, "AME protection tier lacks a KEM secret")
 
-proc cryptPayload(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
-    nonce, msg, keyContext: openArray[byte]): ByteSeq {.role: orchestrator.} =
-  ## L/t/E/nonce/msg/keyContext: tier, state, input, and channel binding.
+proc buildAtRestMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
+    E: AmeExchangeState, nonce, keyContext: openArray[byte]): ByteSeq {.
+    role: truthBuilder, tag: {tagCryptoBoundary}.} =
+  ## L/t/E/nonce/keyContext: caller's nonce followed by one key per
+  ## switched-on slot, derived from the exchange and bound to `keyContext`.
   var
-    key: ByteSeq = @[]
-    n: ByteSeq = @[]
-    label: string = ""
-    offset: int = 0
     i: int = 0
+    slot: int = 0
+    key: ByteSeq = @[]
+    label: string = ""
   requireProtection(L, t, E)
-  if nonce.len != ameProtectionNonceLen(L, t):
+  if nonce.len != ameTierNonceLen(L, t):
     raise newException(ValueError, "AME nonce length mismatch")
-  result = @msg
+  appendAmeBytes(result, nonce)
   while i < int(L.ciphers.length):
     if algorithmSlotSelected(t.masks.cipher, i):
       label = "cipher:" & $uint8(ord(L.ciphers.algorithms[i])) & ":" & $i
-      key = deriveAmeLayerKey(E, L, t, label, context = keyContext)
-      n = nonceSlice(nonce, offset, L.ciphers.algorithms[i])
-      result = ameCipherXor(L.ciphers.algorithms[i], key, n, result)
-      offset = offset + n.len
+      key = deriveAmeLayerKey(E, L, t, label, ameProtectionKeyLen, keyContext)
+      appendAmeBytes(result, key)
+      secureClearAmeBytes(key)
     i = i + 1
-
-proc nativeMacLen(a: AmeMacAlgorithm, wanted: int): int {.role: helper.} =
-  ## a/wanted: MAC primitive and requested common tag length.
-  if a == amaPoly1305:
-    return 16
-  if a == amaSha3 and wanted <= 28:
-    return 28
-  result = wanted
-
-proc normalizeMac(A: openArray[byte], wanted: int): ByteSeq {.role: helper.} =
-  ## A/wanted: native tag expanded or compressed into the common tag length.
-  var
-    seed: ByteSeq = @[]
-  if A.len == wanted:
-    return @A
-  appendAmeLabel(seed, "AME-MAC-NORMALIZE-v1")
-  appendAmeU32(seed, uint32(A.len))
-  appendAmeBytes(seed, A)
-  result = blake3AmeHash(seed, wanted)
-
-proc authenticateAme*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
-    data: openArray[byte], authTagLen: int = ameProtectionAuthTagLen,
-    keyContext: openArray[byte] = []): ByteSeq {.
-    role: orchestrator.} =
-  ## L/t/E/data/authTagLen/keyContext: MAC inputs and channel binding.
-  var
-    key: ByteSeq = @[]
-    raw: ByteSeq = @[]
-    tag: ByteSeq = @[]
-    label: string = ""
-    i: int = 0
-  requireProtection(L, t, E)
-  if authTagLen <= 0:
-    raise newException(ValueError, "AME authentication tag length is invalid")
-  result = newSeq[byte](authTagLen)
-  while i < int(L.macs.length):
-    if algorithmSlotSelected(t.masks.mac, i):
-      label = "mac:" & $uint8(ord(L.macs.algorithms[i])) & ":" & $i
-      key = deriveAmeLayerKey(E, L, t, label, context = keyContext)
-      raw = ameMacTag(L.macs.algorithms[i], key, data,
-        nativeMacLen(L.macs.algorithms[i], authTagLen))
-      tag = normalizeMac(raw, authTagLen)
-      xorAmeInto(result, tag)
-    i = i + 1
-
-proc authInput(L: AmeSuiteLayout, t: AmeMaskTier, tagLen: AmeAuthTagLen,
-    nonce, aad, cipher: openArray[byte]): ByteSeq {.role: truthBuilder.} =
-  ## L/t/tagLen/nonce/aad/cipher: canonical authenticated fields.
-  ## The tag length is authenticated alongside everything else, so an
-  ## attacker cannot talk one side down to a shorter tag than it agreed.
-  appendAmeLabel(result, "AME-PROTECTED-TIER-v3")
-  appendAmeBytes(result, encodeAmeSuiteLayout(L))
-  appendAmeBytes(result, encodeAmeMaskTier(t))
-  result.add(uint8(ord(tagLen)))
-  appendAmeU32(result, uint32(aad.len))
-  appendAmeBytes(result, aad)
-  appendAmeU32(result, uint32(nonce.len))
-  appendAmeBytes(result, nonce)
-  appendAmeU32(result, uint32(cipher.len))
-  appendAmeBytes(result, cipher)
+  while slot < int(L.macs.length):
+    if algorithmSlotSelected(t.masks.mac, slot):
+      label = "mac:" & $uint8(ord(L.macs.algorithms[slot])) & ":" & $slot
+      key = deriveAmeLayerKey(E, L, t, label, ameProtectionKeyLen, keyContext)
+      appendAmeBytes(result, key)
+      secureClearAmeBytes(key)
+    slot = slot + 1
 
 proc protectAmeMessageWithNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState,
@@ -149,14 +92,17 @@ proc protectAmeMessageWithNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
     keyContext: openArray[byte] = [],
     tagLen: AmeAuthTagLen = aatl32):
     AmeProtectedMessage {.role: orchestrator.} =
-  ## L/t/E/nonce/msg/aad: exact persisted-message inputs. Callers that store a
-  ## nonce beside ciphertext use this entrypoint to replay the same nonce at
-  ## open time.
-  ## tagLen: how many tag bytes this session agreed to carry.
-  result.payload = cryptPayload(L, t, E, nonce, msg, keyContext)
-  result.authTag = authenticateAme(L, t, E,
-    authInput(L, t, tagLen, nonce, aad, result.payload), int(ord(tagLen)),
-    keyContext)
+  ## L/t/E/nonce/msg/aad/keyContext/tagLen: exact at-rest inputs. Callers that
+  ## store a nonce beside the ciphertext replay it here at open time.
+  var
+    material: ByteSeq = buildAtRestMaterial(L, t, E, nonce, keyContext)
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
+  try:
+    sealed = sealAmeTier(L, t, material, msg, aad, tagLen)
+    result.payload = sealed.ciphertext
+    result.authTag = sealed.authTag
+  finally:
+    secureClearAmeBytes(material)
 
 proc protectAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState,
@@ -164,7 +110,7 @@ proc protectAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier,
     keyContext: openArray[byte] = [],
     tagLen: AmeAuthTagLen = aatl32): tuple[
     message: AmeProtectedMessage, nonce: ByteSeq] {.role: orchestrator.} =
-  ## L/t/E/msg/aad/tagLen: tier-selected protection with a fresh random nonce.
+  ## L/t/E/msg/aad/keyContext/tagLen: at-rest sealing with a fresh nonce.
   result.nonce = randomAmeNonce(L, t)
   result.message = protectAmeMessageWithNonce(L, t, E, result.nonce, msg, aad,
     keyContext, tagLen)
@@ -175,21 +121,14 @@ proc openAmeMessage*(L: AmeSuiteLayout, t: AmeMaskTier, E: AmeExchangeState,
     tagLen: AmeAuthTagLen = aatl32): tuple[
     ok: bool, payload: ByteSeq] {.
     role: orchestrator.} =
-  ## L/t/E/nonce/message/aad: exact authenticated open inputs.
-  ## tagLen: the length THIS session agreed. The arriving tag is measured
-  ## against it, never against the length the message claims for itself. A
-  ## caller that recomputed the expected tag at `message.authTag.len` would
-  ## let a sender truncate the tag to one byte and forge with probability
-  ## 1/256. The length is also inside the authenticated input, so a peer
-  ## that shortened its own tags cannot make them verify here.
+  ## L/t/E/nonce/message/aad/keyContext/tagLen: exact authenticated open.
+  ## `tagLen` is what THIS side agreed, never what the stored blob claims for
+  ## itself, so a shortened tag is refused instead of being checked at its own
+  ## easier length.
   var
-    expected: ByteSeq = @[]
-  if message.authTag.len != int(ord(tagLen)):
-    return
-  expected = authenticateAme(L, t, E,
-    authInput(L, t, tagLen, nonce, aad, message.payload), int(ord(tagLen)),
-    keyContext)
-  if not constantTimeEqualAme(expected, message.authTag):
-    return
-  result.payload = cryptPayload(L, t, E, nonce, message.payload, keyContext)
-  result.ok = true
+    material: ByteSeq = buildAtRestMaterial(L, t, E, nonce, keyContext)
+  try:
+    result = openAmeTier(L, t, material, message.payload, message.authTag,
+      aad, tagLen)
+  finally:
+    secureClearAmeBytes(material)

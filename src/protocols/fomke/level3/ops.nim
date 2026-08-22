@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## FOMKE Ops <- canonical GB3HKDF, TMEAEAD, GGAEAD, chain, and wire exports
+## FOMKE Ops <- canonical GB3HKDF, chain, wire, and checkpoint exports
 ## -------------------------------------------------------------------------
 
 import ../types

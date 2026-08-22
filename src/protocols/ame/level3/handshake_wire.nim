@@ -1,6 +1,40 @@
 ## -------------------------------------------------------------------------
-## AME Handshake Wire <- strict certificate and initial-handshake codecs
+## AME Handshake Wire <- the four handshake records, byte for byte
 ## -------------------------------------------------------------------------
+##
+## Each record begins with three letters and one version byte, so the first
+## four bytes read as a name:
+##
+##   "AMC1"  client hello        "AMS1"  server hello
+##   "AMR1"  hello retry         "AMF1"  client finish
+##
+## Fixed-size fields carry no length. The nonce is always 32 bytes, so
+## writing "32" in front of it every time would say nothing. Variable fields
+## carry a length in front, u16 where the field is small by construction and
+## u32 only where a post-quantum key can genuinely run to megabytes.
+##
+## Client hello (AMC1)
+##   +---+---+---+---+-------------------+------------------------------+
+##   | A | M | C | 1 |    session id     |   nonce (32 bytes, fixed)    |
+##   +---+---+---+---+-------------------+------------------------------+
+##     0   1   2   3    4..11               12..43
+##
+##   +--------+---------+--------+--------+--------+---------+
+##   | u16 len| layout  | u16 len|  tier  | u16 len| cookie  |  then u32+offer
+##   +--------+---------+--------+--------+--------+---------+
+##
+## Hello retry (AMR1)
+##   "AMR" | ver | session id u64 | u16 len | cookie
+##
+## Server hello (AMS1)
+##   "AMS" | ver | nonce (32) | u32 len | KEM reply
+##         | tagLen u8 | tag (tagLen bytes) | u32 len | sealed block
+##
+## Client finish (AMF1)
+##   "AMF" | ver | tagLen u8 | tag (tagLen bytes) | u32 len | sealed block
+##
+## The sealed block in the last two is ciphertext. It holds the certificate
+## and the proofs; nothing outside it says who either side is.
 
 from ../../types import ByteSeq
 import ../types
@@ -11,15 +45,14 @@ import ../level1/suites
 import ../../../analysis_pragmas
 
 const
-  ameHandshakeWireVersion = 3'u16
-  ameIdentityMagic = [uint8('A'), uint8('M'), uint8('I'), uint8('1')]
-  ameClientHelloMagic = [uint8('A'), uint8('M'), uint8('C'), uint8('1')]
-  ameServerHelloMagic = [uint8('A'), uint8('M'), uint8('S'), uint8('1')]
-  ameClientFinishMagic = [uint8('A'), uint8('M'), uint8('F'), uint8('1')]
-  ameHandshakeTextMax = 4096'u32
+  ameHandshakeWireVersion = 1'u8
+  ameClientHelloMagic = [uint8('A'), uint8('M'), uint8('C')]
+  ameHelloRetryMagic = [uint8('A'), uint8('M'), uint8('R')]
+  ameServerHelloMagic = [uint8('A'), uint8('M'), uint8('S')]
+  ameClientFinishMagic = [uint8('A'), uint8('M'), uint8('F')]
+  ameHandshakeSmallMax = 65_535'u32
   ameHandshakeFieldMax = 16_777_216'u32
-  ameIdentityKeyMax = 1_048_576'u32
-  ameSignatureProofMax = 1_048_576'u32
+  ameCookieMax = 255'u32
 
 proc requireHandshakeBytes(A: openArray[uint8], cursor, count: int) {.
     role: parser, tag: {tagParsing, tagValidation}.} =
@@ -60,276 +93,169 @@ proc readHandshakeU64(A: openArray[uint8], cursor: var int): uint64 {.
     i = i + 1
   cursor = cursor + 8
 
-proc appendHandshakeField(A: var ByteSeq, B: openArray[uint8]) {.
+proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
+    role: parser, tag: {tagParsing}.} =
+  ## A/cursor/n: consume a field whose size the format already fixes.
+  requireHandshakeBytes(A, cursor, n)
+  if n > 0:
+    result = @A[cursor ..< cursor + n]
+  cursor = cursor + n
+
+proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
     role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
-  ## A/B: append one bounded length-framed wire field.
+  ## A/B: append one field whose length fits a u16 by construction.
+  if uint64(B.len) > uint64(ameHandshakeSmallMax):
+    raise newException(ValueError, "AME handshake field exceeds its limit")
+  appendAmeU16(A, uint16(B.len))
+  appendAmeBytes(A, B)
+
+proc readSmallField(A: openArray[uint8], cursor: var int,
+    maximum: uint32 = ameHandshakeSmallMax): ByteSeq {.role: parser,
+    tag: {tagCodecBoundary, tagParsing}.} =
+  ## A/cursor/maximum: consume one bounded u16-framed field.
+  var
+    count: int = 0
+  count = checkedAmeWireLen(uint32(readHandshakeU16(A, cursor)), maximum,
+    "AME handshake field")
+  result = readFixed(A, cursor, count)
+
+proc appendLargeField(A: var ByteSeq, B: openArray[uint8]) {.
+    role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
+  ## A/B: append one field that a post-quantum key may legitimately fill.
   if uint64(B.len) > uint64(ameHandshakeFieldMax):
     raise newException(ValueError, "AME handshake field exceeds its limit")
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
 
-proc readHandshakeField(A: openArray[uint8], cursor: var int,
+proc readLargeField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = ameHandshakeFieldMax): ByteSeq {.role: parser,
     tag: {tagCodecBoundary, tagParsing}.} =
-  ## A/cursor/maximum: consume one bounded length-framed field.
+  ## A/cursor/maximum: consume one bounded u32-framed field.
   var
     count: int = 0
   count = checkedAmeWireLen(readHandshakeU32(A, cursor), maximum,
     "AME handshake field")
-  requireHandshakeBytes(A, cursor, count)
-  if count > 0:
-    result = @A[cursor ..< cursor + count]
-  cursor = cursor + count
+  result = readFixed(A, cursor, count)
 
-proc appendHandshakeString(A: var ByteSeq, s: string) {.
-    role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
-  ## A/s: append one bounded UTF-8 identity field.
-  var
-    B: ByteSeq = @[]
-    i: int = 0
-  if uint64(s.len) > uint64(ameHandshakeTextMax):
-    raise newException(ValueError, "AME handshake text exceeds its limit")
-  B.setLen(s.len)
-  while i < s.len:
-    B[i] = uint8(ord(s[i]))
-    i = i + 1
-  appendHandshakeField(A, B)
-
-proc readHandshakeString(A: openArray[uint8], cursor: var int): string {.
-    role: parser, tag: {tagCodecBoundary, tagParsing}.} =
-  ## A/cursor: consume one bounded identity field.
-  var
-    B: ByteSeq = @[]
-    i: int = 0
-  B = readHandshakeField(A, cursor, ameHandshakeTextMax)
-  result.setLen(B.len)
-  while i < B.len:
-    result[i] = char(B[i])
-    i = i + 1
-
-proc requireHandshakeHeader(A: openArray[uint8], magic: array[4, uint8],
+proc requireHandshakeHeader(A: openArray[uint8], magic: array[3, uint8],
     cursor: var int) {.role: parser,
     tag: {tagCodecBoundary, tagParsing, tagValidation}.} =
   ## A/magic/cursor: validate one top-level handshake record header.
-  if A.len < 6 or A[0 .. 3] != magic:
+  if A.len < 4 or A[0 .. 2] != magic:
     raise newException(ValueError, "AME handshake wire identity mismatch")
-  cursor = 4
-  if readHandshakeU16(A, cursor) != ameHandshakeWireVersion:
+  if A[3] != ameHandshakeWireVersion:
     raise newException(ValueError, "AME handshake wire version mismatch")
+  cursor = 4
 
-proc signatureAlgorithmFromByte(v: uint8): AmeSignatureAlgorithm {.
-    role: parser, tag: {tagParsing, tagValidation}.} =
-  ## v: stable Bifrost signature algorithm identifier.
-  if int(v) < ord(low(AmeSignatureAlgorithm)) or
-      int(v) > ord(high(AmeSignatureAlgorithm)):
-    raise newException(ValueError, "AME certificate algorithm is invalid")
-  result = AmeSignatureAlgorithm(v)
-
-proc appendHandshakeProofs(A: var ByteSeq, P: openArray[ByteSeq]) {.
+proc appendRecordHeader(A: var ByteSeq, magic: array[3, uint8]) {.
     role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
-  ## A/P: append one bounded ordered proof stack.
-  var
-    i: int = 0
-  if P.len == 0 or P.len > ameMaxAlgorithmSlots:
-    raise newException(ValueError, "AME handshake proof count is invalid")
-  A.add(uint8(P.len))
-  while i < P.len:
-    appendHandshakeField(A, P[i])
-    i = i + 1
-
-proc readHandshakeProofs(A: openArray[uint8], cursor: var int): seq[ByteSeq] {.
-    role: parser, tag: {tagCodecBoundary, tagParsing}.} =
-  ## A/cursor: consume one bounded ordered proof stack.
-  var
-    count: int = int(readHandshakeU8(A, cursor))
-  if count == 0 or count > ameMaxAlgorithmSlots:
-    raise newException(ValueError, "AME handshake proof count is invalid")
-  while result.len < count:
-    result.add(readHandshakeField(A, cursor, ameSignatureProofMax))
-
-proc appendIdentitySigningKeys(A: var ByteSeq,
-    K: openArray[AmeIdentitySigningKey]) {.role: stateController,
-    tag: {tagCodecBoundary, tagWrite}.} =
-  ## A/K: append one bounded ordered identity public-key stack.
-  var
-    i: int = 0
-  if K.len == 0 or K.len > ameMaxAlgorithmSlots:
-    raise newException(ValueError, "AME certificate signing-key count is invalid")
-  A.add(uint8(K.len))
-  while i < K.len:
-    if K[i].publicKey.len == 0:
-      raise newException(ValueError, "AME certificate signing key is empty")
-    A.add(uint8(ord(K[i].algorithm)))
-    appendHandshakeField(A, K[i].publicKey)
-    i = i + 1
-
-proc readIdentitySigningKeys(A: openArray[uint8], cursor: var int):
-    seq[AmeIdentitySigningKey] {.role: parser,
-    tag: {tagCodecBoundary, tagParsing}.} =
-  ## A/cursor: consume one bounded ordered identity public-key stack.
-  var
-    count: int = int(readHandshakeU8(A, cursor))
-    key: AmeIdentitySigningKey
-  if count == 0 or count > ameMaxAlgorithmSlots:
-    raise newException(ValueError, "AME certificate signing-key count is invalid")
-  while result.len < count:
-    key.algorithm = signatureAlgorithmFromByte(readHandshakeU8(A, cursor))
-    key.publicKey = readHandshakeField(A, cursor, ameIdentityKeyMax)
-    if key.publicKey.len == 0:
-      raise newException(ValueError, "AME certificate signing key is empty")
-    result.add(key)
-
-proc encodeAmeIdentityCertificate*(c: AmeIdentityCertificate): ByteSeq {.
-    role: stateController, tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
-  ## c: authority certificate or unsigned direct-pinning identity descriptor.
-  var
-    certificateShape: bool = c.authority.len > 0 and
-      c.authoritySignature.len > 0 and c.validFromUnix >= 0 and
-      c.validUntilUnix > c.validFromUnix
-    pinnedShape: bool = c.authority.len == 0 and
-      c.authoritySignature.len == 0 and c.validFromUnix == 0 and
-      c.validUntilUnix == high(int64)
-  if c.subject.len == 0 or c.signingKeys.len == 0 or
-      not (certificateShape or pinnedShape):
-    raise newException(ValueError, "AME certificate is incomplete")
-  appendAmeBytes(result, ameIdentityMagic)
-  appendAmeU16(result, ameHandshakeWireVersion)
-  appendHandshakeString(result, c.authority)
-  appendHandshakeString(result, c.subject)
-  appendIdentitySigningKeys(result, c.signingKeys)
-  appendAmeU64(result, cast[uint64](c.validFromUnix))
-  appendAmeU64(result, cast[uint64](c.validUntilUnix))
-  appendHandshakeField(result, c.authoritySignature)
-
-proc decodeAmeIdentityCertificate*(A: openArray[uint8]):
-    AmeIdentityCertificate {.role: parser,
-    tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
-  ## A: complete bounded ACT1 certificate or pinned identity descriptor bytes.
-  var
-    cursor: int = 0
-    certificateShape: bool = false
-    pinnedShape: bool = false
-  requireHandshakeHeader(A, ameIdentityMagic, cursor)
-  result.authority = readHandshakeString(A, cursor)
-  result.subject = readHandshakeString(A, cursor)
-  result.signingKeys = readIdentitySigningKeys(A, cursor)
-  result.validFromUnix = cast[int64](readHandshakeU64(A, cursor))
-  result.validUntilUnix = cast[int64](readHandshakeU64(A, cursor))
-  result.authoritySignature = readHandshakeField(A, cursor,
-    ameSignatureProofMax)
-  certificateShape = result.authority.len > 0 and
-    result.authoritySignature.len > 0 and result.validFromUnix >= 0 and
-    result.validUntilUnix > result.validFromUnix
-  pinnedShape = result.authority.len == 0 and
-    result.authoritySignature.len == 0 and result.validFromUnix == 0 and
-    result.validUntilUnix == high(int64)
-  if cursor != A.len or result.subject.len == 0 or
-      result.signingKeys.len == 0 or
-      not (certificateShape or pinnedShape):
-    raise newException(ValueError, "AME certificate wire value is invalid")
+  ## A/magic: three letters and one version byte.
+  appendAmeBytes(A, magic)
+  A.add(ameHandshakeWireVersion)
 
 proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: stateController,
     tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
-  ## h: authenticated client hello and exact AME KEM offer.
-  var
-    layout: ByteSeq = @[]
-    tier: ByteSeq = @[]
-    certificate: ByteSeq = @[]
-    offer: ByteSeq = @[]
-  if h.sessionId == 0'u64 or h.nonce.len != ameHandshakeNonceLen or
-      h.proofs.len == 0:
+  ## h: client hello and exact AME KEM offer. Carries no identity.
+  if h.sessionId == 0'u64 or h.nonce.len != ameHandshakeNonceLen:
     raise newException(ValueError, "AME client hello is incomplete")
-  layout = encodeAmeSuiteLayout(h.layout)
-  tier = encodeAmeMaskTier(h.initialTier)
-  certificate = encodeAmeIdentityCertificate(h.certificate)
-  offer = encodeAmeExchangeOffer(h.offer)
-  appendAmeBytes(result, ameClientHelloMagic)
-  appendAmeU16(result, ameHandshakeWireVersion)
+  if uint64(h.cookie.len) > uint64(ameCookieMax):
+    raise newException(ValueError, "AME client hello cookie is too large")
+  appendRecordHeader(result, ameClientHelloMagic)
   appendAmeU64(result, h.sessionId)
-  appendHandshakeField(result, h.nonce)
-  appendHandshakeField(result, layout)
-  appendHandshakeField(result, tier)
-  appendHandshakeField(result, certificate)
-  appendHandshakeField(result, offer)
-  appendHandshakeProofs(result, h.proofs)
+  appendAmeBytes(result, h.nonce)
+  appendSmallField(result, encodeAmeSuiteLayout(h.layout))
+  appendSmallField(result, encodeAmeMaskTier(h.initialTier))
+  appendSmallField(result, h.cookie)
+  appendLargeField(result, encodeAmeExchangeOffer(h.offer))
 
 proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
     role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
-  ## A: complete bounded ACH1 client hello bytes.
+  ## A: complete bounded AMC1 client hello bytes.
   var
     B: ByteSeq = @[]
     cursor: int = 0
   requireHandshakeHeader(A, ameClientHelloMagic, cursor)
   result.sessionId = readHandshakeU64(A, cursor)
-  result.nonce = readHandshakeField(A, cursor, ameHandshakeNonceLen.uint32)
-  B = readHandshakeField(A, cursor)
+  result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
+  B = readSmallField(A, cursor)
   result.layout = decodeAmeSuiteLayout(B)
-  B = readHandshakeField(A, cursor)
+  B = readSmallField(A, cursor)
   result.initialTier = decodeAmeMaskTier(result.layout, B)
-  B = readHandshakeField(A, cursor)
-  result.certificate = decodeAmeIdentityCertificate(B)
-  B = readHandshakeField(A, cursor)
+  result.cookie = readSmallField(A, cursor, ameCookieMax)
+  B = readLargeField(A, cursor)
   result.offer = decodeAmeExchangeOffer(result.layout.kems, B)
-  result.proofs = readHandshakeProofs(A, cursor)
-  if cursor != A.len or result.sessionId == 0'u64 or
-      result.nonce.len != ameHandshakeNonceLen or result.proofs.len == 0:
+  if cursor != A.len or result.sessionId == 0'u64:
     raise newException(ValueError, "AME client hello wire value is invalid")
+
+proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: stateController,
+    tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+  ## r: the server's request that the client prove its return address.
+  if r.sessionId == 0'u64 or r.cookie.len == 0 or
+      uint64(r.cookie.len) > uint64(ameCookieMax):
+    raise newException(ValueError, "AME hello retry is incomplete")
+  appendRecordHeader(result, ameHelloRetryMagic)
+  appendAmeU64(result, r.sessionId)
+  appendSmallField(result, r.cookie)
+
+proc decodeAmeHelloRetry*(A: openArray[uint8]): AmeHelloRetry {.role: parser,
+    tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+  ## A: complete bounded AMR1 hello retry bytes.
+  var
+    cursor: int = 0
+  requireHandshakeHeader(A, ameHelloRetryMagic, cursor)
+  result.sessionId = readHandshakeU64(A, cursor)
+  result.cookie = readSmallField(A, cursor, ameCookieMax)
+  if cursor != A.len or result.sessionId == 0'u64 or result.cookie.len == 0:
+    raise newException(ValueError, "AME hello retry wire value is invalid")
 
 proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: stateController,
     tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
-  ## h: authenticated server hello and exact AME KEM reply.
-  var
-    certificate: ByteSeq = @[]
-    reply: ByteSeq = @[]
-  if h.nonce.len != ameHandshakeNonceLen or h.proofs.len == 0:
+  ## h: server nonce and KEM answer in the clear, identity sealed after them.
+  if h.nonce.len != ameHandshakeNonceLen or
+      h.authTag.len != int(ord(h.tagLen)) or h.sealed.len == 0:
     raise newException(ValueError, "AME server hello is incomplete")
-  certificate = encodeAmeIdentityCertificate(h.certificate)
-  reply = encodeAmeExchangeReply(h.reply)
-  appendAmeBytes(result, ameServerHelloMagic)
-  appendAmeU16(result, ameHandshakeWireVersion)
-  appendHandshakeField(result, h.nonce)
-  appendHandshakeField(result, certificate)
-  appendHandshakeField(result, reply)
-  appendHandshakeProofs(result, h.proofs)
+  appendRecordHeader(result, ameServerHelloMagic)
+  appendAmeBytes(result, h.nonce)
+  appendLargeField(result, encodeAmeExchangeReply(h.reply))
+  result.add(uint8(ord(h.tagLen)))
+  appendAmeBytes(result, h.authTag)
+  appendLargeField(result, h.sealed)
 
 proc decodeAmeServerHello*(L: AmeSuiteLayout,
     A: openArray[uint8]): AmeServerHello {.
     role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
-  ## L/A: immutable negotiated layout and complete bounded server hello bytes.
+  ## L/A: negotiated layout and complete bounded AMS1 server hello bytes.
   var
     B: ByteSeq = @[]
     cursor: int = 0
   requireHandshakeHeader(A, ameServerHelloMagic, cursor)
-  result.nonce = readHandshakeField(A, cursor, ameHandshakeNonceLen.uint32)
-  B = readHandshakeField(A, cursor)
-  result.certificate = decodeAmeIdentityCertificate(B)
-  B = readHandshakeField(A, cursor)
+  result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
+  B = readLargeField(A, cursor)
   result.reply = decodeAmeExchangeReply(L.kems, B)
-  result.proofs = readHandshakeProofs(A, cursor)
-  if cursor != A.len or result.nonce.len != ameHandshakeNonceLen or
-      result.proofs.len == 0:
+  result.tagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
+  result.authTag = readFixed(A, cursor, int(ord(result.tagLen)))
+  result.sealed = readLargeField(A, cursor)
+  if cursor != A.len or result.sealed.len == 0:
     raise newException(ValueError, "AME server hello wire value is invalid")
 
-proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
-  ## f: client transcript confirmation.
-  if f.requestId == 0'u32 or f.transcriptHash.len == 0 or f.proofs.len == 0:
+proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.
+    role: stateController, tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+  ## f: the client's sealed identity and transcript confirmation.
+  if f.authTag.len != int(ord(f.tagLen)) or f.sealed.len == 0:
     raise newException(ValueError, "AME client finish is incomplete")
-  appendAmeBytes(result, ameClientFinishMagic)
-  appendAmeU16(result, ameHandshakeWireVersion)
-  appendAmeU32(result, f.requestId)
-  appendHandshakeField(result, f.transcriptHash)
-  appendHandshakeProofs(result, f.proofs)
+  appendRecordHeader(result, ameClientFinishMagic)
+  result.add(uint8(ord(f.tagLen)))
+  appendAmeBytes(result, f.authTag)
+  appendLargeField(result, f.sealed)
 
 proc decodeAmeClientFinish*(A: openArray[uint8]): AmeClientFinish {.
     role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
-  ## A: complete bounded ACF1 client finish bytes.
+  ## A: complete bounded AMF1 client finish bytes.
   var
     cursor: int = 0
   requireHandshakeHeader(A, ameClientFinishMagic, cursor)
-  result.requestId = readHandshakeU32(A, cursor)
-  result.transcriptHash = readHandshakeField(A, cursor)
-  result.proofs = readHandshakeProofs(A, cursor)
-  if cursor != A.len or result.requestId == 0'u32 or
-      result.transcriptHash.len == 0 or result.proofs.len == 0:
+  result.tagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
+  result.authTag = readFixed(A, cursor, int(ord(result.tagLen)))
+  result.sealed = readLargeField(A, cursor)
+  if cursor != A.len or result.sealed.len == 0:
     raise newException(ValueError, "AME client finish wire value is invalid")

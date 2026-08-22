@@ -1,17 +1,36 @@
 ## -------------------------------------------------------------------------
 ## FOMKE Wire <- bounded message and KEM-upgrade commit codecs
 ## -------------------------------------------------------------------------
+##
+## The message envelope, byte by byte:
+##
+##   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+##   | F | O | M | 1 |   epoch   |        index              |
+##   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+##     0   1   2   3   4..7        8..15
+##
+##   +----+----+---+---+---+---+
+##   |lane|tlen|  cipherLen    |  then: tag (tlen bytes), then ciphertext
+##   +----+----+---+---+---+---+
+##     16   17   18..21           22..
+##
+## Nothing here repeats what the receiver can work out for itself. The nonce
+## is derived from the ratchet on both sides, so it is absent. The tag length
+## is one byte and must match what the session agreed -- it is written down
+## so a decoder can walk the frame without holding session state, never so a
+## sender can choose it.
 
 import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
+import ../../ame/level1/exchange_paths
 import ../types
 import ../../../analysis_pragmas
 
 const
-  fomkeUpgradeMagic = [uint8('F'), uint8('K'), uint8('U'), uint8('2')]
-  fomkeUpgradeVersion = 2'u16
-  fomkeUpgradeFixedLen = 111
+  fomkeUpgradeMagic = [uint8('F'), uint8('K'), uint8('U')]
+  fomkeUpgradeVersion = 1'u8
+  fomkeUpgradeFixedLen = 108
 
 proc validateFomkeUpgradeShape(c: FomkeUpgradeCommit) {.role: parser,
     tag: {tagExchange, tagFomke, tagValidation}.} =
@@ -72,34 +91,32 @@ proc fomkeLaneFromByte(v: uint8): FomkeLane {.role: parser,
     return flLane2
   raise newException(ValueError, "FOMKE sender lane is invalid")
 
-proc fomkeWireLen*(plaintextLen: int): int {.role: helper,
-    tag: {tagAppApi, tagFomke, tagPacket}.} =
-  ## plaintextLen: length-preserving FOMKE ciphertext size.
+proc fomkeWireLen*(plaintextLen: int, tagLen: AmeAuthTagLen): int {.
+    role: helper, tag: {tagAppApi, tagFomke, tagPacket}.} =
+  ## plaintextLen/tagLen: envelope size for a payload of this length. The
+  ## ciphers are all keystream XOR, so the ciphertext is exactly as long as
+  ## the plaintext -- the only growth is the header and the tag.
   if plaintextLen < 0 or uint64(plaintextLen) > uint64(fomkeMaxCiphertextBytes):
     raise newException(ValueError, "FOMKE ciphertext length exceeds its limit")
-  result = fomkeHeaderLen + fomkeAeadNonceBytes + fomkeAeadTagBytes +
-    plaintextLen
+  result = fomkeHeaderLen + int(ord(tagLen)) + plaintextLen
 
 proc encodeFomkeMessage*(m: FomkeMessage): ByteSeq {.role: stateController,
     tag: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket}.} =
   ## m: complete forward-only message envelope.
   var
     i: int = 0
-  if m.epoch == 0'u32 or m.nonce.len != fomkeAeadNonceBytes or
-      m.authTag.len != fomkeAeadTagBytes or
+  if m.epoch == 0'u32 or m.authTag.len != int(ord(m.tagLen)) or
       uint64(m.ciphertext.len) > uint64(fomkeMaxCiphertextBytes):
     raise newException(ValueError, "FOMKE message is invalid")
   while i < fomkeMagic.len:
     result.add(fomkeMagic[i])
     i = i + 1
-  appendAmeU16(result, fomkeFormatVersion)
+  result.add(fomkeFormatVersion)
   appendAmeU32(result, m.epoch)
   appendAmeU64(result, m.index)
   result.add(uint8(ord(m.senderLane)))
-  appendAmeU16(result, uint16(m.nonce.len))
-  appendAmeU16(result, uint16(m.authTag.len))
+  result.add(uint8(ord(m.tagLen)))
   appendAmeU32(result, uint32(m.ciphertext.len))
-  appendAmeBytes(result, m.nonce)
   appendAmeBytes(result, m.authTag)
   appendAmeBytes(result, m.ciphertext)
 
@@ -107,27 +124,22 @@ proc decodeFomkeMessage*(A: openArray[uint8]): FomkeMessage {.role: parser,
     tag: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket, tagParsing}.} =
   ## A: complete bounded FOM1 wire bytes.
   var
-    nonceLen: int = 0
     tagLen: int = 0
     cipherLen: int = 0
     offset: int = fomkeHeaderLen
-  if A.len < fomkeHeaderLen or A[0 .. 3] != fomkeMagic:
+  if A.len < fomkeHeaderLen or A[0 .. 2] != fomkeMagic:
     raise newException(ValueError, "FOMKE message identity mismatch")
-  if readFomkeU16(A, 4) != fomkeFormatVersion:
+  if A[3] != fomkeFormatVersion:
     raise newException(ValueError, "FOMKE message version mismatch")
-  result.epoch = readFomkeU32(A, 6)
-  result.index = readFomkeU64(A, 10)
-  result.senderLane = fomkeLaneFromByte(A[18])
-  nonceLen = int(readFomkeU16(A, 19))
-  tagLen = int(readFomkeU16(A, 21))
-  cipherLen = checkedAmeWireLen(readFomkeU32(A, 23),
+  result.epoch = readFomkeU32(A, 4)
+  result.index = readFomkeU64(A, 8)
+  result.senderLane = fomkeLaneFromByte(A[16])
+  result.tagLen = ameAuthTagLenFromId(A[17])
+  tagLen = int(ord(result.tagLen))
+  cipherLen = checkedAmeWireLen(readFomkeU32(A, 18),
     fomkeMaxCiphertextBytes, "FOMKE ciphertext")
-  if result.epoch == 0'u32 or nonceLen != fomkeAeadNonceBytes or
-      tagLen != fomkeAeadTagBytes or
-      A.len != offset + nonceLen + tagLen + cipherLen:
+  if result.epoch == 0'u32 or A.len != offset + tagLen + cipherLen:
     raise newException(ValueError, "FOMKE message length mismatch")
-  result.nonce = @A[offset ..< offset + nonceLen]
-  offset = offset + nonceLen
   result.authTag = @A[offset ..< offset + tagLen]
   offset = offset + tagLen
   result.ciphertext = @A[offset ..< offset + cipherLen]
@@ -142,7 +154,7 @@ proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
   while i < fomkeUpgradeMagic.len:
     result.add(fomkeUpgradeMagic[i])
     i = i + 1
-  appendAmeU16(result, fomkeUpgradeVersion)
+  result.add(fomkeUpgradeVersion)
   appendAmeU32(result, c.requestId)
   appendAmeU32(result, c.baseEpoch)
   appendAmeU32(result, c.targetEpoch)
@@ -160,40 +172,40 @@ proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
   while i < ameMaxAlgorithmSlots:
     appendAmeU32(result, c.generations[i])
     i = i + 1
-  appendAmeU16(result, uint16(c.confirmationTag.len))
+  result.add(uint8(c.confirmationTag.len))
   appendAmeBytes(result, c.confirmationTag)
 
 proc decodeFomkeUpgradeCommit*(A: openArray[uint8]): FomkeUpgradeCommit {.
     role: parser,
     tag: {tagAppApi, tagCodecBoundary, tagExchange, tagFomke, tagParsing}.} =
-  ## A: complete bounded FKU2 commit bytes.
+  ## A: complete bounded FKU1 commit bytes.
   var
     i: int = 0
-    offset: int = 45
+    offset: int = 43
     tagLen: int = 0
-  if A.len < fomkeUpgradeFixedLen or A[0 .. 3] != fomkeUpgradeMagic:
+  if A.len < fomkeUpgradeFixedLen or A[0 .. 2] != fomkeUpgradeMagic:
     raise newException(ValueError, "FOMKE upgrade identity mismatch")
-  if readFomkeU16(A, 4) != fomkeUpgradeVersion:
+  if A[3] != fomkeUpgradeVersion:
     raise newException(ValueError, "FOMKE upgrade version mismatch")
-  result.requestId = readFomkeU32(A, 6)
-  result.baseEpoch = readFomkeU32(A, 10)
-  result.targetEpoch = readFomkeU32(A, 14)
-  result.targetTier.tierId = readFomkeU32(A, 18)
-  result.targetTier.masks.kem = A[22]
-  result.targetTier.masks.cipher = A[23]
-  result.targetTier.masks.mac = A[24]
-  result.targetTier.masks.hash = A[25]
-  result.targetTier.masks.signature = A[26]
-  result.targetTier.masks.kdf = A[27]
-  result.exchangeMask = A[28]
-  result.lane1Index = readFomkeU64(A, 29)
-  result.lane2Index = readFomkeU64(A, 37)
+  result.requestId = readFomkeU32(A, 4)
+  result.baseEpoch = readFomkeU32(A, 8)
+  result.targetEpoch = readFomkeU32(A, 12)
+  result.targetTier.tierId = readFomkeU32(A, 16)
+  result.targetTier.masks.kem = A[20]
+  result.targetTier.masks.cipher = A[21]
+  result.targetTier.masks.mac = A[22]
+  result.targetTier.masks.hash = A[23]
+  result.targetTier.masks.signature = A[24]
+  result.targetTier.masks.kdf = A[25]
+  result.exchangeMask = A[26]
+  result.lane1Index = readFomkeU64(A, 27)
+  result.lane2Index = readFomkeU64(A, 35)
   while i < ameMaxAlgorithmSlots:
     result.generations[i] = readFomkeU32(A, offset)
     offset = offset + 4
     i = i + 1
-  tagLen = int(readFomkeU16(A, offset))
-  offset = offset + 2
+  tagLen = int(A[offset])
+  offset = offset + 1
   if result.requestId == 0'u32 or result.baseEpoch == 0'u32 or
       result.targetEpoch != result.baseEpoch + 1'u32 or
       tagLen != gb3BlockBytes or

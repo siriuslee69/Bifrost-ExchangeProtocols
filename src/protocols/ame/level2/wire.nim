@@ -1,6 +1,28 @@
 ## -------------------------------------------------------------------------
-## AME Wire <- fixed AME2 frame header and exact payload framing
+## AME Wire <- fixed AME frame header and exact payload framing
 ## -------------------------------------------------------------------------
+##
+## Every frame on the wire starts with the same 34 bytes:
+##
+##   offset size field
+##   ------ ---- ------------------------------------------------------
+##        0    3 "AME"
+##        3    1 format version (3)
+##        4    1 packet kind      (what this frame is, e.g. lane data)
+##        5    1 message class    (what the payload is for)
+##        6    8 session id
+##       14    4 root lane id     \
+##       18    4 parent lane id    > which stream inside the session
+##       22    4 lane id          /
+##       26    4 sequence         (position in this lane)
+##       30    4 payload length
+##   ------ ---- ------------------------------------------------------
+##       34      payload starts here
+##
+## The header is NOT encrypted -- a receiver has to read it before it knows
+## which keys to reach for. It IS authenticated: every byte above is fed into
+## the tag over the payload, so a header edited in flight makes the payload
+## fail to open. Numbers are little-endian throughout.
 
 import ../../types
 import ../types
@@ -59,7 +81,7 @@ proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
   while i < ameMagic.len:
     result.add(h.magic[i])
     i = i + 1
-  appendAmeU16(result, h.formatVersion)
+  result.add(h.formatVersion)
   result.add(uint8(ord(h.packetKind)))
   result.add(uint8(ord(h.messageClass)))
   appendAmeU64(result, h.sessionId)
@@ -79,22 +101,22 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
     if A[i] != ameMagic[i]:
       raise newException(ValueError, "AME frame magic mismatch")
     i = i + 1
-  if readU16(A, 4) != ameFormatVersion:
+  if A[3] != ameFormatVersion:
     raise newException(ValueError, "AME frame version mismatch")
-  if not packetKindValid(A[6]) or A[6] == 0'u8:
+  if not packetKindValid(A[4]) or A[4] == 0'u8:
     raise newException(ValueError, "AME frame packet kind mismatch")
-  if not messageClassValid(A[7]):
+  if not messageClassValid(A[5]):
     raise newException(ValueError, "AME frame message class mismatch")
   result.magic = ameMagic
   result.formatVersion = ameFormatVersion
-  result.packetKind = AmePacketKind(A[6])
-  result.messageClass = AmeMessageClass(A[7])
-  result.sessionId = readU64(A, 8)
-  result.rootLaneId = readU32(A, 16)
-  result.parentLaneId = readU32(A, 20)
-  result.laneId = readU32(A, 24)
-  result.sequence = readU32(A, 28)
-  result.payloadLen = readU32(A, 32)
+  result.packetKind = AmePacketKind(A[4])
+  result.messageClass = AmeMessageClass(A[5])
+  result.sessionId = readU64(A, 6)
+  result.rootLaneId = readU32(A, 14)
+  result.parentLaneId = readU32(A, 18)
+  result.laneId = readU32(A, 22)
+  result.sequence = readU32(A, 26)
+  result.payloadLen = readU32(A, 30)
 
 proc encodeAmeFrame*(h: AmeFrameHeader,
     payload: openArray[uint8]): ByteSeq {.role: stateController.} =

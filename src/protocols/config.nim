@@ -18,10 +18,8 @@ type
     defaultAmeInboxCapacity*: int
     defaultTimeoutMs*: int
     peerTrustRequired*: bool
-    tmeAeadPregeneration*: bool
-    ggAeadPregeneration*: bool
+    fomkePregeneration*: bool
     fomkePregenerationMessages*: int
-    fomkePregenerationPayloadBytes*: int
     ameLayout*: AmeSuiteLayout
     ameInitialTier*: AmeMaskTier
 
@@ -37,22 +35,17 @@ proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
   result.defaultAmeInboxCapacity = defaultAmeInboxCapacity
   result.defaultTimeoutMs = 4000
   result.peerTrustRequired = true
-  result.tmeAeadPregeneration = false
-  result.ggAeadPregeneration = true
+  result.fomkePregeneration = true
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
-  result.fomkePregenerationPayloadBytes = fomkeDefaultPreparedPayloadBytes
   result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
     defaultAmeKemSlots()))
   result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
 
-proc fomkePregenerationEnabledFor*(c: BifrostConfig,
-    a: FomkeMessageCipher): bool {.role: parser.} =
-  ## c/a: runtime policy and selected FOMKE message construction.
-  case a
-  of fmcTmeAead:
-    result = c.tmeAeadPregeneration
-  of fmcGgAead:
-    result = c.ggAeadPregeneration
+proc fomkePregenerationEnabled*(c: BifrostConfig): bool {.role: parser.} =
+  ## c: runtime policy for preparing future message keys ahead of time.
+  ## Turning it off costs latency and buys forward secrecy for messages that
+  ## have not been sent yet -- see `prepareFomkeSendCache`.
+  result = c.fomkePregeneration
 
 proc hexNibble(c: char): uint8 {.role: parser.} =
   ## c: one hexadecimal character.
@@ -100,15 +93,6 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
       c.fomkePregenerationMessages > fomkeMaxPreparedMessages:
     raise newException(ValueError,
       "Bifrost FOMKE pregeneration message count is invalid")
-  if c.fomkePregenerationPayloadBytes < 0 or
-      c.fomkePregenerationPayloadBytes > int(fomkeMaxCiphertextBytes):
-    raise newException(ValueError,
-      "Bifrost FOMKE pregeneration payload size is invalid")
-  if c.fomkePregenerationPayloadBytes > 0 and
-      c.fomkePregenerationMessages >
-      fomkeMaxPreparedStreamBytes div c.fomkePregenerationPayloadBytes:
-    raise newException(ValueError,
-      "Bifrost FOMKE pregeneration cache is too large")
   discard encodeAmeSuiteLayout(c.ameLayout)
   validateAmeTier(c.ameLayout, c.ameInitialTier)
 
@@ -155,12 +139,9 @@ proc parseBifrostConfigText*(text: string,
     of "defaultameinboxcapacity": result.defaultAmeInboxCapacity = parseInt(value)
     of "defaulttimeoutms": result.defaultTimeoutMs = parseInt(value)
     of "peertrustrequired": result.peerTrustRequired = parseBool(value)
-    of "tmeaeadpregeneration": result.tmeAeadPregeneration = parseBool(value)
-    of "ggaeadpregeneration": result.ggAeadPregeneration = parseBool(value)
+    of "fomkepregeneration": result.fomkePregeneration = parseBool(value)
     of "fomkepregenerationmessages":
       result.fomkePregenerationMessages = parseInt(value)
-    of "fomkepregenerationpayloadbytes":
-      result.fomkePregenerationPayloadBytes = parseInt(value)
     of "amelayouthex":
       result.ameLayout = decodeAmeSuiteLayout(decodeConfigHex(value))
     of "ameinitialtierhex":
