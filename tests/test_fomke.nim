@@ -537,17 +537,43 @@ suite "FOMKE":
       alice: FomkeState = initFomkeFromAme(state, fomkeLayout(), fomkeInitialTier(), frInitiator)
       message: FomkeMessage = sealFomkeMessage(alice, @[byte 7, 8, 9])
       encoded: ByteSeq = encodeFomkeMessage(message)
-      decoded: FomkeMessage = decodeFomkeMessage(encoded)
+      decoded: FomkeMessage = decodeFomkeMessage(encoded, message.tagLen)
       descriptor: ProtocolDescriptor = initFomkeDescriptor()
+      damaged: ByteSeq = @[]
     check decoded.epoch == message.epoch
     check decoded.index == message.index
     check decoded.senderLane == message.senderLane
+    check decoded.tagLen == message.tagLen
     check decoded.ciphertext == message.ciphertext
+    ## Thirteen bytes of header, then the tag, then the ciphertext. No magic,
+    ## no version, no length field, no tag-length byte.
     check encoded.len == fomkeWireLen(3, message.tagLen)
+    check encoded.len == fomkeHeaderLen + int(ord(message.tagLen)) + 3
     check descriptor.protocolId == "bifrost.fomke"
-    encoded[0] = 0'u8
+    ## Epoch zero is not a real epoch, so it is refused rather than treated
+    ## as one.
+    damaged = encoded
+    damaged[0] = 0'u8
+    damaged[1] = 0'u8
+    damaged[2] = 0'u8
+    damaged[3] = 0'u8
     expect ValueError:
-      discard decodeFomkeMessage(encoded)
+      discard decodeFomkeMessage(damaged, message.tagLen)
+    ## An unknown sender lane is refused too.
+    damaged = encoded
+    damaged[12] = 9'u8
+    expect ValueError:
+      discard decodeFomkeMessage(damaged, message.tagLen)
+    ## Too short to hold a tag at the agreed length.
+    damaged = encoded
+    damaged.setLen(fomkeHeaderLen + int(ord(message.tagLen)) - 1)
+    expect ValueError:
+      discard decodeFomkeMessage(damaged, message.tagLen)
+    ## The caller's tag length decides the split, so asking for a longer tag
+    ## than the sender used moves the boundary and yields other bytes -- it
+    ## is the tag check that refuses this, never the decoder.
+    check decodeFomkeMessage(encoded, aatl16).ciphertext !=
+      message.ciphertext
 
   test "state codec preserves directional and skipped ratchet state":
     var

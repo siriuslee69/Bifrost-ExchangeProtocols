@@ -4,21 +4,33 @@
 ##
 ## The message envelope, byte by byte:
 ##
-##   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-##   | F | O | M | 1 |   epoch   |        index              |
-##   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+
-##     0   1   2   3   4..7        8..15
+##   +---+---+---+---+---+---+---+---+---+---+---+---+----+
+##   |   epoch   |            index              |lane|
+##   +---+---+---+---+---+---+---+---+---+---+---+---+----+
+##     0..3        4..11                          12
 ##
-##   +----+----+---+---+---+---+
-##   |lane|tlen|  cipherLen    |  then: tag (tlen bytes), then ciphertext
-##   +----+----+---+---+---+---+
-##     16   17   18..21           22..
+##   then: tag (the length THIS session agreed), then ciphertext
 ##
-## Nothing here repeats what the receiver can work out for itself. The nonce
-## is derived from the ratchet on both sides, so it is absent. The tag length
-## is one byte and must match what the session agreed -- it is written down
-## so a decoder can walk the frame without holding session state, never so a
-## sender can choose it.
+## Thirteen bytes, and every one of them is something the receiver cannot
+## work out for itself. Four things a reader might expect are deliberately
+## absent, and each was removed because it repeated something already known:
+##
+##   no magic, no version   This envelope only ever travels as the body of
+##                          an AME frame, and that frame's packet kind
+##                          already says the body is one of these. A second
+##                          name for the same thing is four wasted bytes on
+##                          every message.
+##   no nonce               Derived from the ratchet position, which both
+##                          sides hold.
+##   no ciphertext length   It is whatever is left after the tag. The frame
+##                          that carries this envelope already delimits it.
+##   no tag length          The receiver uses what its own epoch agreed and
+##                          would refuse any other value anyway, so writing
+##                          it down only offered an attacker a field to
+##                          edit. `decodeFomkeMessage` is told the length by
+##                          its caller instead -- which is also what makes a
+##                          retiring epoch with a different tag length
+##                          decode correctly rather than by luck.
 
 import ../../types
 import ../../ame/types
@@ -103,46 +115,38 @@ proc fomkeWireLen*(plaintextLen: int, tagLen: AmeAuthTagLen): int {.
 proc encodeFomkeMessage*(m: FomkeMessage): ByteSeq {.role: stateController,
     tag: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket}.} =
   ## m: complete forward-only message envelope.
-  var
-    i: int = 0
   if m.epoch == 0'u32 or m.authTag.len != int(ord(m.tagLen)) or
       uint64(m.ciphertext.len) > uint64(fomkeMaxCiphertextBytes):
     raise newException(ValueError, "FOMKE message is invalid")
-  while i < fomkeMagic.len:
-    result.add(fomkeMagic[i])
-    i = i + 1
-  result.add(fomkeFormatVersion)
   appendAmeU32(result, m.epoch)
   appendAmeU64(result, m.index)
   result.add(uint8(ord(m.senderLane)))
-  result.add(uint8(ord(m.tagLen)))
-  appendAmeU32(result, uint32(m.ciphertext.len))
   appendAmeBytes(result, m.authTag)
   appendAmeBytes(result, m.ciphertext)
 
-proc decodeFomkeMessage*(A: openArray[uint8]): FomkeMessage {.role: parser,
+proc decodeFomkeMessage*(A: openArray[uint8],
+    tagLen: AmeAuthTagLen): FomkeMessage {.role: parser,
     tag: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket, tagParsing}.} =
-  ## A: complete bounded FOM1 wire bytes.
+  ## A/tagLen: the envelope, and the tag length the caller's own epoch
+  ## agreed. The length is a parameter rather than a field because it is the
+  ## one thing here that must never come from the sender: a message that
+  ## could name its own tag length could name a short one.
   var
-    tagLen: int = 0
-    cipherLen: int = 0
+    n: int = int(ord(tagLen))
     offset: int = fomkeHeaderLen
-  if A.len < fomkeHeaderLen or A[0 .. 2] != fomkeMagic:
-    raise newException(ValueError, "FOMKE message identity mismatch")
-  if A[3] != fomkeFormatVersion:
-    raise newException(ValueError, "FOMKE message version mismatch")
-  result.epoch = readFomkeU32(A, 4)
-  result.index = readFomkeU64(A, 8)
-  result.senderLane = fomkeLaneFromByte(A[16])
-  result.tagLen = ameAuthTagLenFromId(A[17])
-  tagLen = int(ord(result.tagLen))
-  cipherLen = checkedAmeWireLen(readFomkeU32(A, 18),
-    fomkeMaxCiphertextBytes, "FOMKE ciphertext")
-  if result.epoch == 0'u32 or A.len != offset + tagLen + cipherLen:
+  if A.len < fomkeHeaderLen + n:
     raise newException(ValueError, "FOMKE message length mismatch")
-  result.authTag = @A[offset ..< offset + tagLen]
-  offset = offset + tagLen
-  result.ciphertext = @A[offset ..< offset + cipherLen]
+  if uint64(A.len - fomkeHeaderLen - n) > uint64(fomkeMaxCiphertextBytes):
+    raise newException(ValueError, "FOMKE ciphertext length exceeds its limit")
+  result.epoch = readFomkeU32(A, 0)
+  result.index = readFomkeU64(A, 4)
+  result.senderLane = fomkeLaneFromByte(A[12])
+  result.tagLen = tagLen
+  if result.epoch == 0'u32:
+    raise newException(ValueError, "FOMKE message epoch must be positive")
+  result.authTag = @A[offset ..< offset + n]
+  offset = offset + n
+  result.ciphertext = @A[offset ..< A.len]
 
 proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
     role: stateController,

@@ -65,8 +65,8 @@ OWNERSHIP (API)
 
 WIRE (bytes, outer to inner)
   [stream 4 | DAC1 27/29]
-    -> AME header 34
-      -> FOM1 envelope 22 + tag + ciphertext
+    -> AME header 26
+      -> FOMKE envelope 13 + tag + ciphertext
         -> app bytes
 ```
 
@@ -78,8 +78,8 @@ See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes
 |  +-------------------------- AME frame ------------------------------------+|
 |  | AME header (session, lane tree, sequence, kind, class)                  ||
 |  |   plain to read, but every byte of it goes into the tag below           ||
-|  |  +------------------- FOM1 envelope -----------------------------------+||
-|  |  | epoch | index | lane | tagLen | ctLen | tag | ciphertext            |||
+|  |  +------------------ FOMKE envelope -----------------------------------+||
+|  |  | epoch | index | lane | tag | ciphertext                            |||
 |  |  |   opened once -> app bytes. There is no second layer either side.   |||
 |  |  +---------------------------------------------------------------------+||
 |  +-------------------------------------------------------------------------+|
@@ -631,7 +631,7 @@ and nothing should: the old formats are not in the library any more.
 | Path | Purpose |
 |---|---|
 | `src/protocols/ame/` | Suite/KEM/protect, AME wire, session, handshake, secure package |
-| `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOM1 wire |
+| `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOMKE envelope wire |
 | `src/protocols/preparation/` | Shared future-message stream preparation backends |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
 | `src/protocols/dac/` | Framing, ACK, repair, path control, drift payloads |
@@ -664,8 +664,8 @@ bytes of any layer read as a name and a number:
 
 ```text
 DAC1  -> transport and repair framing              (dac/level0/framing.nim)
-AME3  -> routing header, then one FOMKE envelope   (ame/level2/wire.nim)
-FOM1  -> the message envelope: header, tag, ct     (fomke/level2/wire.nim)
+AME4  -> routing header, then one FOMKE envelope   (ame/level2/wire.nim)
+FOMKE -> the message envelope: header, tag, ct     (fomke/level2/wire.nim)
 FKU1  -> tier-bound AME/FOMKE upgrade confirmation (fomke/level2/wire.nim)
 ```
 
@@ -691,10 +691,10 @@ the application's own bytes. A frame is encrypted exactly once.
 
 ```text
 PHASE A -- the handshake (no session keys yet)
-  [stream 4 | DAC1] -> AME3 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
+  [stream 4 | DAC1] -> AME4 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
 
 PHASE B -- after the handshake
-  [stream 4 | DAC1] -> AME3 header -> FOM1 envelope -> plaintext
+  [stream 4 | DAC1] -> AME4 header -> FOMKE envelope -> plaintext
 ```
 
 ### TCP/TLS stream frame
@@ -724,18 +724,33 @@ Extended    = 29 B   (BodyLen = u32, flag bit 8)
 +-----+---+---+----+---------+-----+-----+-----+-------+------+
 ```
 
-### AME Frame — fixed **34 B**
+### AME Frame — fixed **26 B**
 
-Magic is three bytes, `"AME"`; the version byte after it is **3**.
+Magic is three bytes, `"AME"`; the version byte after it is **4**.
 
 ```text
-offset  0     3    4     5      6        14      18       22     26     30      34
-        +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
-        | AME |Ver | Kind|Cls+Fl| Session|RootLn |ParentLn| Lane | Seq  |PayLen | Payload |
-        | 3B  |u8  | u8  | u8   | u64    |u32    |u32     | u32  | u32  |u32    | n bytes |
-        +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
-Total = 34 + PayLen
+offset  0     3    4     5      6        14      18     22      26
+        +-----+----+-----+------+--------+-------+------+------+---------+
+        | AME |Ver | Kind|Cls+Fl| Session|RootLn | Lane | Seq  | Payload |
+        | 3B  |u8  | u8  | u8   | u64    |u32    | u32  | u32  | n bytes |
+        +-----+----+-----+------+--------+-------+------+------+---------+
+Total = 26 + n
 ```
+
+Two fields that used to sit here are gone, both for the same reason — they
+restated something the receiver already had:
+
+- **No payload length.** The decoder required it to equal `frame.len - header`,
+  which the caller already knew: a stream carrier delimits the frame with its
+  own 4-byte prefix, a datagram carrier is delimited by the datagram. The tag
+  still commits to the ciphertext length, which is where that belongs. A frame
+  truncated in flight now fails on the tag rather than on a length field —
+  the better of the two failures, since the check that catches it is the
+  authenticated one.
+- **No parent lane id.** It was set equal to the root lane id when a session
+  was built and never changed after, so it carried a copy of the field four
+  bytes to its left.
+
 
 Byte 5 carries two fields, because neither needs a whole byte:
 
@@ -773,28 +788,34 @@ switched on when message sizes would say something (which command, who is
 typing) rather than by default. `ameFrameOverheadBytes(S)` returns the
 worst-case total per frame, for a caller sizing datagrams against an MTU.
 
-### FOM1 Message — header **22 B**
+### FOMKE Envelope — header **13 B**
 
 ```text
-offset  0     3    4       8            16    17     18      22
-        +-----+----+-------+------------+-----+------+-------+--------+------------+
-        | FOM |Ver | Epoch | Index      |Lane |TagLen|CiphLen| AuthTag| Ciphertext |
-        | 3B  |u8  | u32   | u64        |u8   |u8    |u32    | T bytes| n bytes    |
-        +-----+----+-------+------------+-----+------+-------+--------+------------+
-Total = 22 + T + n     (T is 16, 24 or 32; n equals the plaintext length)
+offset  0       4            12     13
+        +-------+------------+------+--------+------------+
+        | Epoch | Index      | Lane | AuthTag| Ciphertext |
+        | u32   | u64        | u8   | T bytes| n bytes    |
+        +-------+------------+------+--------+------------+
+Total = 13 + T + n     (T is 16, 24 or 32; n equals the plaintext length)
 ```
 
-Three things are deliberately **absent**:
+Thirteen bytes, and every one of them is something the receiver cannot work
+out for itself. Four fields a reader might expect are **absent**:
 
+- **No magic and no version.** This envelope only ever travels as the body of
+  an AME frame, and that frame's packet kind already says what the body is. A
+  second name for the same thing cost four bytes on every message.
 - **No nonce.** Both sides derive it from the same ratchet step, so sending it
   would only repeat something the receiver already holds. That is 24 bytes per
   message saved and one fewer field an attacker can influence.
-- **No nonce-length field.** Nothing to describe.
-- **Tag length is one byte, and it is checked, not obeyed.** The receiver
-  compares it against what its own session agreed. If it trusted the number in
-  the message, a sender could shrink its tag to one byte and forge with a
-  1-in-256 guess. The byte is written down only so a decoder can walk the
-  frame without holding session state.
+- **No ciphertext length.** It is whatever follows the tag; the frame already
+  delimits the envelope.
+- **No tag length.** The receiver splits tag from ciphertext using the length
+  its own epoch agreed, and would refuse any other value anyway. Removing the
+  field removed a number an attacker could edit — and made the retiring-epoch
+  case correct rather than lucky, since a frame in flight when the tag length
+  changed is now decoded again with the old epoch's length instead of trusting
+  a byte the sender wrote.
 
 What the tag covers: a label, the slot layout, the tier, the tag length, the
 message's epoch/index/lane, the caller's binding bytes (which include the
@@ -811,19 +832,26 @@ Travels inside an authenticated EpochReady frame.
 |---|---:|
 | Stream header | 4 |
 | DAC1 base / ext | 27 / 29 |
-| AME header | 34 |
-| FOM1 header + tag | 22 + 32 = 54 |
+| AME header | 26 |
+| FOMKE header + tag | 13 + 32 = 45 |
 | FKU1 | 108 |
-| **TCP data overhead** | **4 + 34 + 54 + P = 92 + P** |
-| **DAC data overhead** | **27 + 34 + 54 + P = 115 + P** |
+| **TCP data overhead** | **4 + 26 + 45 + P = 75 + P** |
+| **DAC data overhead** | **27 + 26 + 45 + P = 98 + P** |
 
-With a 16-byte tag the last two become **76 + P** and **99 + P**.
+With a 16-byte tag the last two become **59 + P** and **82 + P**.
 
-For comparison, the previous format carried a 36-byte AME header, a 12-byte
-protected body header, a 24-byte nonce, a 32-byte outer tag, and *then* a
-27-byte FOM header with its own 24-byte nonce and 32-byte tag: **187 bytes**
-of overhead per frame, with the payload encrypted twice. The same frame now
-costs **88 bytes** and is encrypted once.
+Where that number came from, in three steps:
+
+| | AME header | envelope + tag | per frame |
+|---|---:|---:|---:|
+| two nested AEADs | 36 | 12 + 24 + 32, then 27 + 24 + 32 | **187** |
+| one AEAD | 34 | 22 + 32 | **88** |
+| nothing restated | 26 | 13 + 32 | **71** |
+
+The first step removed a whole layer of encryption. The second removed six
+fields that each repeated something the receiver already had — two lengths,
+two names, a version and a tag length. Nothing was traded away for either:
+every byte dropped was a byte a receiver either ignored or refused.
 
 ### Handshake records
 

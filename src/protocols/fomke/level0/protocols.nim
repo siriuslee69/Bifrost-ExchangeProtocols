@@ -16,8 +16,8 @@ proc initFomkeDescriptor*(): ProtocolDescriptor {.role: wrapper,
   result.protocolId = fomkeProtocolId
   result.name = "FOMKE"
   result.kind = pkControl
-  result.version = fomkeFormatVersion
-  result.minVersion = fomkeFormatVersion
+  result.version = fomkeProtocolVersion
+  result.minVersion = fomkeProtocolVersion
   result.capabilities.supportsEncryption = true
   result.capabilities.supportsReliability = false
   result.capabilities.supportsAck = true

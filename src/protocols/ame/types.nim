@@ -11,8 +11,8 @@ const
   ameMagic* = [uint8('A'), uint8('M'), uint8('E')]
     ## Three letters, not four. The version is the byte that follows, so the
     ## first four bytes of every AME frame read as "AME" plus one number.
-  ameFormatVersion* = 3'u8
-  ameFrameHeaderLen* = 34
+  ameFormatVersion* = 4'u8
+  ameFrameHeaderLen* = 26
   ameMaxAlgorithmSlots* = 8
   ameProtectionKeyLen* = 32
   ameProtectionAuthTagLen* = 32
@@ -272,10 +272,8 @@ type
       ## Shares one wire byte with `messageClass`; see `ameFrameFlagPadded`.
     sessionId*: uint64
     rootLaneId*: uint32
-    parentLaneId*: uint32
     laneId*: uint32
     sequence*: uint32
-    payloadLen*: uint32
 
   AmeDecodedFrame* {.role: truthState.} = object
     header*: AmeFrameHeader
@@ -414,7 +412,6 @@ type
     remoteTcp*: transport_types.TcpAddress
     sessionId*: uint64
     rootLaneId*: uint32
-    parentLaneId*: uint32
     laneId*: uint32
     ameSequence*: uint32
     dacSequence*: uint32

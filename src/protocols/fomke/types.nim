@@ -7,7 +7,7 @@
 ##
 ##   one AME frame
 ##   +---------------------------+-------------------------------------+
-##   | AME header (34 bytes)     | FOMKE envelope                      |
+##   | AME header (26 bytes)     | FOMKE envelope                      |
 ##   | plain, but authenticated  | header + tag + ciphertext           |
 ##   +---------------------------+-------------------------------------+
 ##
@@ -43,26 +43,35 @@ const
   fomkeDefaultPreparedMessages* = 8
   fomkeMaxPreparedMessages* = 4_096
 
-  fomkeMagic* = [uint8('F'), uint8('O'), uint8('M')]
-    ## Three letters. The version byte follows, so the first four bytes read
-    ## as "FOM" plus one number -- "FOM1" for this format.
-  fomkeFormatVersion* = 1'u8
-  fomkeHeaderLen* = 22
+  fomkeProtocolVersion* = 2'u8
+    ## The envelope format's number. It is NOT a wire field -- nothing on the
+    ## wire states it, because an AME frame's own version already fixes what
+    ## its body looks like. This exists so the protocol registry can name the
+    ## format, and it moved to 2 when the envelope lost its magic, its length
+    ## field and its tag-length byte.
+  fomkeHeaderLen* = 13
     ##  offset size field
     ##  ------ ---- --------------------------------------------------
-    ##       0    3 "FOM"
-    ##       3    1 format version (1)
-    ##       4    4 epoch          (which KEM generation this belongs to)
-    ##       8    8 message index  (position in the chain)
-    ##      16    1 sender lane    (1 = initiator sends, 2 = responder)
-    ##      17    1 tag length     (16, 24 or 32)
-    ##      18    4 ciphertext length
+    ##       0    4 epoch          (which KEM generation this belongs to)
+    ##       4    8 message index  (position in the chain)
+    ##      12    1 sender lane    (1 = initiator sends, 2 = responder)
     ##  ------ ---- --------------------------------------------------
-    ##      22      tag, then ciphertext
+    ##      13      tag, then ciphertext
     ##
-    ## There is no nonce on the wire and no nonce-length field. Both sides
-    ## derive the nonce from the same ratchet step, so sending it would only
-    ## repeat something the receiver already holds.
+    ## Thirteen bytes, and nothing here that the receiver could work out for
+    ## itself. Four fields a reader might expect are gone on purpose:
+    ##
+    ##   no magic or version  This envelope only ever travels as the body of
+    ##                        an AME frame, whose packet kind already says
+    ##                        what the body is.
+    ##   no nonce             Both sides derive it from the same ratchet
+    ##                        step, so sending it repeats what they hold.
+    ##   no ciphertext length The frame delimits the envelope; the
+    ##                        ciphertext is whatever follows the tag.
+    ##   no tag length        The receiver uses the length its own epoch
+    ##                        agreed. A field here would have been a number
+    ##                        an attacker could edit and a receiver would
+    ##                        refuse anyway.
   fomkeMaxCiphertextBytes* = 16_777_216'u32
   fomkeMaxStateBytes* = 2_097_152'u32
   fomkeCheckpointKeyMinBytes* = 32

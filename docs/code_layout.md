@@ -41,7 +41,7 @@ src/protocols
 │   ├── level0/  <- GB3HKDF and protocol descriptor
 │   ├── level1/  <- directional chains and exact AME upgrade commits
 │   │                (the ratchet is the ONLY payload protection)
-│   ├── level2/  <- FOM1/FKU1 bounded wire codecs, plus the checkpoint store
+│   ├── level2/  <- envelope/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface
 ├── preparation/
 │   ├── types.nim
@@ -83,7 +83,7 @@ config.toml / userconfig.toml
 raw bytes
   -> transport stream frame or UDP datagram
   -> AME frame decode             <- one framing, both carriers
-  -> FOM1 envelope (epoch + index + lane + tag + ciphertext)
+  -> FOMKE envelope (epoch + index + lane + tag + ciphertext)
   -> FOMKE auth, THEN decrypt     <- one layer, checked before opening
   -> caller payload
 ```
@@ -127,7 +127,7 @@ plaintext
 caller payload
   -> FOMKE directional message ratchet
   -> slot construction: XOR every cipher, XOR every authenticator
-  -> FOM1 envelope (no nonce on the wire -- both sides derive it)
+  -> FOMKE envelope (no nonce, no lengths, no magic on the wire)
   -> AME frame encode             <- one framing, both carriers
   -> transport stream frame or UDP datagram send
 ```

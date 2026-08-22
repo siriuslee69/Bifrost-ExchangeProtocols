@@ -192,7 +192,7 @@ suite "AME mask-tier sessions":
     decoded = decodeAmeFrame(frame)
     check decoded.header.sessionId == sender.sessionId
     check decoded.header.laneId == sender.laneId
-    check frame.len == ameFrameHeaderLen + int(decoded.header.payloadLen)
+    check frame.len == ameFrameHeaderLen + decoded.payload.len
     check not peekDacFrameIdentity(frame).ok
     opened = openAmeDacFrame(receiver, frame)
     check opened.ok
@@ -208,7 +208,7 @@ suite "AME mask-tier sessions":
       body: FomkeMessage
       opened: AmeOpenResult
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
-    body = decodeFomkeMessage(decodeAmeFrame(frame).payload)
+    body = decodeFomkeMessage(decodeAmeFrame(frame).payload, sender.fomke.tagLen)
     check body.epoch == sender.fomke.epoch
     check body.senderLane == flLane1
     ## No nonce on the wire and no nonce-length field: both sides derive the
@@ -253,7 +253,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       frame = sealAmeDacFrame(sender, payload)
       check frame.len == ameFrameHeaderLen +
-        int(decodeAmeFrame(frame).header.payloadLen)
+        decodeAmeFrame(frame).payload.len
       opened = openAmeDacFrame(receiver, frame)
       check opened.ok
       check opened.packet.payload == payload
@@ -612,13 +612,25 @@ suite "AME mask-tier sessions":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
-      envelope: ByteSeq = @[byte 'F', byte 'O', byte 'M', 1,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 32, 0x00, 0x80, 0x00, 0x00]
-    ## The header says the ciphertext is 0x800000 bytes long while the frame
-    ## carries none. A decoder that trusted the field would try to allocate
-    ## eight megabytes on one short datagram.
+      envelope: ByteSeq = @[]
+      decoded: FomkeMessage
+      i: int = 0
+    ## The envelope used to carry a ciphertext length, and this test used to
+    ## check that a header claiming eight megabytes on a short datagram was
+    ## refused rather than believed. That field is gone, and with it the
+    ## whole class of lie: the ciphertext is whatever actually arrived after
+    ## the tag, so a short datagram can only ever produce a short ciphertext.
+    ## Thirteen header bytes, a 32-byte tag, and two bytes of ciphertext.
+    while i < fomkeHeaderLen + 32 + 2:
+      envelope.add(if i == 0: 1'u8 elif i == 12: 1'u8 else: 0'u8)
+      i = i + 1
+    decoded = decodeFomkeMessage(envelope, aatl32)
+    check decoded.ciphertext.len == 2
+    ## Under the header-plus-tag floor there is nothing to authenticate, and
+    ## the decoder stops rather than reading past the end.
+    envelope.setLen(fomkeHeaderLen + 31)
     expect ValueError:
-      discard decodeFomkeMessage(envelope)
+      discard decodeFomkeMessage(envelope, aatl32)
     connection.nextAmeSequence = high(uint32)
     expect ValueError:
       discard sealAmeTcpFrame(connection, @[byte 1])
@@ -803,7 +815,8 @@ suite "AME payload padding":
       opened: AmeOpenResult
     ## One byte and forty bytes leave the same size frame.
     check short.len == longer.len
-    check ameFrameOverheadBytes(sender) == 34 + fomkeWireLen(0, aatl32) + 64
+    check ameFrameOverheadBytes(sender) ==
+      ameFrameHeaderLen + fomkeWireLen(0, aatl32) + 64
     opened = openAmeTcpFrame(receiver, short)
     check opened.ok
     check opened.packet.payload == @[byte 1]

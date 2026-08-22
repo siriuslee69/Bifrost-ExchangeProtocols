@@ -511,3 +511,60 @@ AME and FOMKE become one layer: compact framing, private handshake, real hybrids
 
 - 444 tests pass, plus every build-flag, DAC-flag, fuzz, chunky-AEAD, TLS,
   examples, benchmark and hygiene task.
+
+## 2026-08-22 (third pass) — frames compressed, Reed-Solomon landed, pins fixed
+
+- **Frame overhead 88 -> 71 bytes, measured** (`ame_dac_seal`: 1112 -> 1095
+  wire bytes on a 1024-byte payload). Nothing was traded away for it: every
+  byte removed was one a receiver either ignored or refused.
+
+  - AME header 34 -> 26. `payloadLen` went because the decoder required it to
+    equal `A.len - header`, a second opinion on a number the caller already
+    held -- the stream carrier has its own length prefix, the datagram
+    carrier is the datagram. `parentLaneId` went because
+    `initAmeSession` set it equal to `rootLaneId` and nothing ever changed
+    it. Format version 3 -> 4.
+  - FOMKE envelope 22 -> 13. Magic and version went because the envelope only
+    ever travels as an AME frame body whose packet kind already fixes the
+    format. `cipherLen` went because it is the remainder after the tag.
+    `tagLen` went because the receiver uses what its own epoch agreed and
+    refuses anything else; `decodeFomkeMessage` now takes the length as a
+    parameter.
+
+- **Removing the tag-length byte exposed a live bug and fixed it.**
+  `confirmFomkeUpgrade` updates the ratchet's epoch and tier but never its
+  tag length, so `setAmeAuthTagLen` staged a value, rotated, and then went on
+  sealing at the old length. The wire byte had been hiding it: both sides
+  used the sender's stated length and agreed, so the knob silently did
+  nothing instead of failing. The ratchet is now moved onto
+  `params.authTagLen` at every rotation point, including the responder's
+  candidate.
+
+- **A frame truncated in flight now fails on the tag rather than on a length
+  field.** That is the better of the two failures -- the check that catches it
+  is the authenticated one -- and it is what
+  `test_ame_build_flags` and the fuzz suite now assert. The fuzz test that
+  used to feed a length field claiming two gigabytes was rewritten: that
+  field no longer exists, so the test instead truncates a valid frame at
+  every length and requires each one to either decode to a correspondingly
+  shorter payload or be refused.
+
+- **Reed-Solomon: nothing needed implementing.** The codec, its GF(256)
+  backend and their tests all existed in the working trees and had simply
+  never been committed -- `ecc_reed_solomon.nim` was untracked in Eir,
+  `gf256.nim` untracked in SIMD-Nexus. Both are committed now
+  (SIMD-Nexus `ba8db37`, Eir `fcb5a0e`), tests green in both repositories,
+  and Bifrost's submodules are pinned to them.
+
+  The pin was the actual defect: `submodules/Eir-CompressionAndECC` sat on
+  the first scaffold commit, whose tree has no Reed-Solomon at all. Verified
+  before and after with a probe compiled against the submodule paths alone --
+  `undeclared identifier: 'RsCodec'` before, clean build after. Nothing else
+  had noticed because `config.nims` prefers sibling checkouts, and those
+  exist on this machine.
+
+  **Both new commits are local.** They must be pushed before any other clone
+  can resolve the pins.
+
+- 444 tests pass, plus every build-flag, DAC-flag, fuzz, chunky-AEAD, MITM,
+  TLS, examples, benchmark and hygiene task.

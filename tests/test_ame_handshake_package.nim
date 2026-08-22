@@ -527,7 +527,7 @@ suite "AME handshake transport":
     ## A lane-data frame is not a handshake record and must not be read as one.
     expect ValueError:
       discard decodeAmeHandshakeFrame(encodeAmeFrame(ampkLaneData,
-        amcUserdata, 0'u8, 1'u64, 0'u32, 0'u32, 0'u32, 0'u32,
+        amcUserdata, 0'u8, 1'u64, 0'u32, 0'u32, 0'u32,
         @[byte 1, 2, 3]))
 
 suite "AME secure package":

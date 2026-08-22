@@ -33,11 +33,11 @@ import ./fuzz_support
 proc sampleAmeFrame(): ByteSeq =
   ## A well-formed AME frame carrying lane data.
   result = encodeAmeFrame(ampkLaneData, amcUserdata, 0'u8,
-    0x1122334455667788'u64, 1'u32, 2'u32, 3'u32, 4'u32, rampBytes(96))
+    0x1122334455667788'u64, 1'u32, 3'u32, 4'u32, rampBytes(96))
 
 proc sampleFomkeMessage(): ByteSeq =
-  ## A well-formed FOMKE envelope with a 32-byte tag. There is no nonce on
-  ## the wire, so the header is 22 bytes and the tag follows it directly.
+  ## A well-formed FOMKE envelope with a 32-byte tag. Thirteen header bytes,
+  ## then the tag, then the ciphertext -- no magic, no nonce, no lengths.
   var
     m: FomkeMessage
   m.epoch = 3'u32
@@ -50,11 +50,11 @@ proc sampleFomkeMessage(): ByteSeq =
 
 proc sampleAmeSealedFrame(): ByteSeq =
   ## An AME frame whose payload is a FOMKE envelope, which is the shape that
-  ## actually arrives on the wire: two nested length fields, not one.
+  ## actually arrives on the wire.
   var
     body: ByteSeq = sampleFomkeMessage()
   result = encodeAmeFrame(ampkLaneData, amcUserdata, 0'u8, 7'u64, 1'u32,
-    1'u32, 1'u32, 9'u32, body)
+    1'u32, 9'u32, body)
 
 suite "AME frame fuzz":
   test "the frame header decoder never raises a Defect":
@@ -67,30 +67,40 @@ suite "AME frame fuzz":
 
   test "the FOMKE envelope decoder never raises a Defect":
     fuzzBody("decodeFomkeMessage", 103'u64, sampleFomkeMessage()):
-      discard decodeFomkeMessage(data)
+      discard decodeFomkeMessage(data, aatl32)
 
   test "a nested frame plus envelope survives mutation at either depth":
     fuzzBody("decodeAmeFrame + envelope", 104'u64, sampleAmeSealedFrame()):
-      discard decodeFomkeMessage(decodeAmeFrame(data).payload)
+      discard decodeFomkeMessage(decodeAmeFrame(data).payload, aatl32)
 
-  test "a declared payload length far past the buffer is refused":
+  test "no length on the wire can disagree with the bytes that arrived":
     var
       f: ByteSeq = sampleAmeFrame()
-      i: int = 0
-    ## The frame header's length field sits at offset 30 now that the magic
-    ## is three bytes and the version one.
-    f[30] = 0xFF'u8
-    f[31] = 0xFF'u8
-    f[32] = 0xFF'u8
-    f[33] = 0x7F'u8
-    expect CatchableError:
-      discard decodeAmeFrame(f)
-    while i < 4:
-      f = sampleFomkeMessage()
-      f[18 + i] = 0xFF'u8
-      expect CatchableError:
-        discard decodeFomkeMessage(f)
-      i = i + 1
+      body: ByteSeq = @[]
+    ## Neither the frame nor the envelope carries a length field any more, so
+    ## the classic attack on this shape -- claim two gigabytes, send eight
+    ## bytes, watch the receiver allocate -- has nothing to write into. Both
+    ## decoders take the length from the buffer they were handed.
+    ##
+    ## What is left to check is that they agree with it. Every truncation of
+    ## a valid frame either decodes to a correspondingly shorter payload or
+    ## is refused; none of them reads past the end.
+    while f.len > 0:
+      if f.len < ameFrameHeaderLen:
+        expect CatchableError:
+          discard decodeAmeFrame(f)
+      else:
+        check decodeAmeFrame(f).payload.len == f.len - ameFrameHeaderLen
+      f.setLen(f.len - 1)
+    body = sampleFomkeMessage()
+    while body.len > 0:
+      if body.len < fomkeHeaderLen + 32:
+        expect CatchableError:
+          discard decodeFomkeMessage(body, aatl32)
+      else:
+        check decodeFomkeMessage(body, aatl32).ciphertext.len ==
+          body.len - fomkeHeaderLen - 32
+      body.setLen(body.len - 1)
 
 suite "BFX2 fuzz":
   test "the envelope decoder never raises a Defect":

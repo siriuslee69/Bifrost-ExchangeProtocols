@@ -176,10 +176,10 @@ proc mibPerSec(r: BenchResult): float =
   let totalPayloadBytes = float(r.payloadBytes) * float(r.iterations)
   result = totalPayloadBytes / (1024.0 * 1024.0) / (float(r.totalNs) / 1_000_000_000.0)
 
-proc buildAmeBenchAad(payloadLen: int): ByteSeq =
+proc buildAmeBenchAad(): ByteSeq =
   var h: AmeFrameHeader
   h = initAmeFrameHeader(ampkLaneData, amcUserdata, 0'u8,
-    7'u64, 1'u32, 1'u32, 5'u32, 3'u32, uint32(payloadLen))
+    7'u64, 1'u32, 5'u32, 3'u32)
   result = encodeAmeFrameHeader(h)
 
 proc exactBenchAuth(seed: openArray[uint8],
@@ -208,7 +208,7 @@ proc benchAmeProtect(cfg: BenchConfig): BenchResult =
   var
     auth: AmeAuthPackage = exactBenchAuth(@[byte 1, 2, 3, 4, 5, 6, 7, 8])
     payload: ByteSeq = buildPayload(cfg.payloadBytes)
-    aad: ByteSeq = buildAmeBenchAad(payload.len)
+    aad: ByteSeq = buildAmeBenchAad()
     sealed: tuple[message: AmeProtectedMessage, nonce: ByteSeq]
     env: AmeProtectedMessage
     startedAt: MonoTime
@@ -237,7 +237,7 @@ proc benchAmeOpen(cfg: BenchConfig): BenchResult =
     auth: AmeAuthPackage = exactBenchAuth(
       @[byte 11, 12, 13, 14, 15, 16, 17, 18])
     payload: ByteSeq = buildPayload(cfg.payloadBytes)
-    aad: ByteSeq = buildAmeBenchAad(payload.len)
+    aad: ByteSeq = buildAmeBenchAad()
     sealed: tuple[message: AmeProtectedMessage, nonce: ByteSeq]
     opened: tuple[ok: bool, payload: ByteSeq]
     startedAt: MonoTime
@@ -334,7 +334,7 @@ proc benchBfx2Decode(cfg: BenchConfig): BenchResult =
       raise newException(ValueError, "BFX2 decode benchmark warmup failed: " &
         decoded.err)
     mixSinkBytes(decoded.payload)
-    mixSinkUint(decoded.header.payloadLen)
+    mixSinkUint(decoded.payload.len)
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
     decoded = decodeBfxEnvelope(envelope)
@@ -342,7 +342,7 @@ proc benchBfx2Decode(cfg: BenchConfig): BenchResult =
       raise newException(ValueError, "BFX2 decode benchmark failed: " &
         decoded.err)
     mixSinkBytes(decoded.payload)
-    mixSinkUint(decoded.header.payloadLen)
+    mixSinkUint(decoded.payload.len)
   endedAt = getMonoTime()
   result = initResult("bfx2_decode", cfg, envelope.len, envelope, startedAt, endedAt)
 

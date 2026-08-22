@@ -38,7 +38,6 @@ type
     path*: AmeTierPath
     sessionId*: uint64
     rootLaneId*: uint32
-    parentLaneId*: uint32
     laneId*: uint32
     nextAmeSequence*: uint32
     messageClass*: AmeMessageClass
@@ -590,6 +589,7 @@ proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
     S.fomkeCandidateActive = false
   else:
     confirmFomkeUpgrade(S.fomke, fomkeCommit)
+  S.fomke.tagLen = S.auth.current.params.authTagLen
   restoreConfiguredAmeFomkeCache(S)
   requireAmeAuth(S.auth)
 
@@ -647,7 +647,7 @@ proc initAmeSession*(a: AmeAuthPackage,
   result.path = path
   result.sessionId = result.auth.sessionId
   result.rootLaneId = rootLaneId
-  result.parentLaneId = rootLaneId
+
   result.laneId = laneId
   result.pathLane = pathLane
   result.messageClass = messageClass
@@ -801,7 +801,7 @@ proc `$`*(i: AmeSessionInfo): string {.role: wrapper.} =
 ## There is exactly one construction on this path and it runs exactly once:
 ##
 ##   plaintext --> FOMKE envelope --> AME frame
-##                 (ciphertext+tag)   (34-byte header + that envelope)
+##                 (ciphertext+tag)   (26-byte header + that envelope)
 ##
 ## The header is written FIRST, because it is the thing the tag commits to.
 ## Its payload length is worked out ahead of the seal, which is possible
@@ -809,10 +809,11 @@ proc `$`*(i: AmeSessionInfo): string {.role: wrapper.} =
 ## exactly as long as the plaintext, so the envelope size is arithmetic, not
 ## a guess.
 
-proc frameBodyLen(S: AmeSession, payloadLen: int, what: string): uint32 {.
+proc requireFrameBodyFits(S: AmeSession, payloadLen: int, what: string) {.
     role: parser.} =
-  ## S/payloadLen/what: envelope length checked before it is narrowed to the
-  ## u32 wire field, so an oversized payload fails closed instead of wrapping.
+  ## S/payloadLen/what: refuse an oversized payload before anything is sealed.
+  ## The frame carries no length field any more, so this is not about a field
+  ## overflowing -- it is about not handing a peer a frame it must refuse.
   var
     n: int = 0
   if payloadLen < 0:
@@ -820,7 +821,6 @@ proc frameBodyLen(S: AmeSession, payloadLen: int, what: string): uint32 {.
   n = fomkeWireLen(payloadLen, S.fomke.tagLen)
   if n > defaultAmeMaxFrameBytes - ameFrameHeaderLen:
     raise newException(ValueError, "AME " & what & " exceeds maximum")
-  result = uint32(n)
 
 proc frameFlags(S: AmeSession): uint8 {.role: parser.} =
   ## S: session whose epoch decides what the header must announce about the
@@ -875,19 +875,25 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     message: FomkeMessage
     opened: FomkeOpenResult
     padding: AmePaddingPolicy = S.auth.current.params.padding
+  ## The envelope carries no tag length, so the split between tag and
+  ## ciphertext comes from what THIS epoch agreed. A retiring epoch that used
+  ## a different length is decoded again below with its own value, which is
+  ## the only way that case can be right rather than lucky.
+  aad = buildAad(carrier, f.header)
   try:
-    message = decodeFomkeMessage(f.payload)
+    message = decodeFomkeMessage(f.payload, S.fomke.tagLen)
+    opened = openFomkeMessage(S.fomke, message, aad)
+    if not opened.ok and S.fomkeRetiringFramesLeft > 0:
+      message = decodeFomkeMessage(f.payload, S.fomkeRetiring.tagLen)
+      if S.fomkeRetiring.epoch == message.epoch:
+        opened = openFomkeMessage(S.fomkeRetiring, message, aad)
+        ## A frame already travelling when the epoch turned was padded under
+        ## the OLD epoch's policy, so that is the policy to strip with.
+        padding = S.auth.retiring.params.padding
   except ValueError as exc:
+    secureClearAmeBytes(aad)
     result.err = exc.msg
     return
-  aad = buildAad(carrier, f.header)
-  opened = openFomkeMessage(S.fomke, message, aad)
-  if not opened.ok and S.fomkeRetiringFramesLeft > 0 and
-      S.fomkeRetiring.epoch == message.epoch:
-    opened = openFomkeMessage(S.fomkeRetiring, message, aad)
-    ## A frame that was already in flight when the epoch turned was padded
-    ## under the OLD epoch's policy, so that is the policy to strip with.
-    padding = S.auth.retiring.params.padding
   secureClearAmeBytes(aad)
   if not opened.ok:
     result.err = "AME authentication failed: " & opened.err
@@ -930,9 +936,10 @@ proc sealAmeTcpFrame*(S: var AmeSession,
     raise newException(ValueError, "AME send sequence is exhausted")
   var
     body: ByteSeq = padFramePayload(S, payload)
-    h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
-      S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-      frameBodyLen(S, body.len, "TCP payload"))
+    h: AmeFrameHeader
+  requireFrameBodyFits(S, body.len, "TCP payload")
+  h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
+    S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
   result = encodeAmeFrame(h, sealFrameBody(S, h, acrTcp, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
@@ -949,9 +956,10 @@ proc sealAmeDacFrame*(S: var AmeSession,
     raise newException(ValueError, "AME DAC send sequence is exhausted")
   var
     body: ByteSeq = padFramePayload(S, payload)
-    h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
-      S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-      frameBodyLen(S, body.len, "DAC payload"))
+    h: AmeFrameHeader
+  requireFrameBodyFits(S, body.len, "DAC payload")
+  h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
+    S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
   result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
@@ -965,7 +973,7 @@ proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
     return "AME expected lane data"
   if f.header.messageClass != S.messageClass or
       f.header.sessionId != S.sessionId or f.header.rootLaneId != S.rootLaneId or
-      f.header.parentLaneId != S.parentLaneId or f.header.laneId != S.laneId:
+      f.header.laneId != S.laneId:
     return "AME frame binding mismatch"
 
 proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
@@ -1036,7 +1044,6 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
   result.packet.remoteTcp = remoteTcp
   result.packet.sessionId = f.header.sessionId
   result.packet.rootLaneId = f.header.rootLaneId
-  result.packet.parentLaneId = f.header.parentLaneId
   result.packet.laneId = f.header.laneId
   result.packet.ameSequence = f.header.sequence
   if carrier == acrDac:
@@ -1081,9 +1088,9 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
   body = padFramePayload(S, payload)
+  requireFrameBodyFits(S, body.len, "control payload")
   h = initAmeFrameHeader(kind, amcControl, frameFlags(S), S.sessionId,
-    S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-    frameBodyLen(S, body.len, "control payload"))
+    S.rootLaneId, S.laneId, S.nextAmeSequence)
   result = encodeAmeFrame(h, sealFrameBody(S, h, carrier, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
@@ -1094,7 +1101,7 @@ proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
     return "AME control packet kind mismatch"
   if f.header.sessionId != S.sessionId or
       f.header.rootLaneId != S.rootLaneId or
-      f.header.parentLaneId != S.parentLaneId or f.header.laneId != S.laneId:
+      f.header.laneId != S.laneId:
     return "AME control frame binding mismatch"
 
 proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
@@ -1123,7 +1130,8 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
       result.err = "AME session has no candidate epoch"
       return
     try:
-      message = decodeFomkeMessage(f.payload)
+      message = decodeFomkeMessage(f.payload,
+        S.pendingIncoming.candidate.params.authTagLen)
     except ValueError as exc:
       result.err = exc.msg
       return
@@ -1131,6 +1139,7 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
     S.fomkeCandidateActive = false
     S.fomkeCandidate = cloneFomkeState(S.fomke)
     confirmFomkeUpgrade(S.fomkeCandidate, S.fomkeCandidate.pending.commit)
+    S.fomkeCandidate.tagLen = S.pendingIncoming.candidate.params.authTagLen
     aad = buildAad(carrier, f.header)
     fomkeOpened = openFomkeMessage(S.fomkeCandidate, message, aad)
     secureClearAmeBytes(aad)
@@ -1196,9 +1205,9 @@ proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
     h: AmeFrameHeader
   appendAmeBytes(tagged, body)
   tagged = padFramePayload(S, tagged)
+  requireFrameBodyFits(S, tagged.len, "DAC control payload")
   h = initAmeFrameHeader(ampkDacControl, amcControl, frameFlags(S),
-    S.sessionId, S.rootLaneId, S.parentLaneId, S.laneId, S.nextAmeSequence,
-    frameBodyLen(S, tagged.len, "DAC control payload"))
+    S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
   result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, tagged))
   secureClearAmeBytes(tagged)
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
@@ -1317,6 +1326,10 @@ proc finishAmeTcpExchangeFrame*(S: var AmeSession,
   fomkeCommit = S.fomke.pending.commit
   retireAmeFomke(S, cloneFomkeState(S.fomke))
   confirmFomkeUpgrade(S.fomke, fomkeCommit)
+  ## The new epoch may have agreed a different tag length. The envelope no
+  ## longer states one, so the ratchet has to be moved onto it here or the
+  ## two sides would split the tag at different offsets.
+  S.fomke.tagLen = S.auth.current.params.authTagLen
   result = sealControlFrame(S, ampkEpochReady, acrTcp,
     encodeEpochReady(requestId, S.auth.current.epochId,
       S.auth.current.tier, fomkeCommit))
@@ -1373,6 +1386,10 @@ proc finishAmeDacExchangeFrame*(S: var AmeSession,
   fomkeCommit = S.fomke.pending.commit
   retireAmeFomke(S, cloneFomkeState(S.fomke))
   confirmFomkeUpgrade(S.fomke, fomkeCommit)
+  ## The new epoch may have agreed a different tag length. The envelope no
+  ## longer states one, so the ratchet has to be moved onto it here or the
+  ## two sides would split the tag at different offsets.
+  S.fomke.tagLen = S.auth.current.params.authTagLen
   result = sealControlFrame(S, ampkEpochReady, acrDac,
     encodeEpochReady(requestId, S.auth.current.epochId,
       S.auth.current.tier, fomkeCommit))

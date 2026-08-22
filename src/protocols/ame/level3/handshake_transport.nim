@@ -8,7 +8,7 @@
 ## got that wrong (reading half a record, say) had a security bug, not a
 ## cosmetic one.
 ##
-## They travel as ordinary AME frames. Same 34-byte header as everything
+## They travel as ordinary AME frames. Same 26-byte header as everything
 ## else, with a packet kind that says which record this is:
 ##
 ##   +--------------------------+--------------------------------+
@@ -77,7 +77,7 @@ proc encodeAmeHandshakeFrame*(kind: AmePacketKind, sessionId: uint64,
   ## -- the padding that hides identity sizes happens INSIDE the sealed block
   ## instead, under the tunables the responder names in its own record.
   result = encodeAmeFrame(kind, amcControl, 0'u8, sessionId, 0'u32, 0'u32,
-    0'u32, step, record)
+    step, record)
 
 proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
     role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
@@ -88,7 +88,7 @@ proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
     raise newException(ValueError, "AME frame is not a handshake record")
   if f.header.messageClass != amcControl or f.header.flags != 0'u8 or
       f.header.sessionId == 0'u64 or
-      f.header.rootLaneId != 0'u32 or f.header.parentLaneId != 0'u32 or
+      f.header.rootLaneId != 0'u32 or
       f.header.laneId != 0'u32:
     raise newException(ValueError, "AME handshake frame binding is invalid")
   if f.payload.len == 0 or f.payload.len > ameHandshakeMaxRecordBytes:

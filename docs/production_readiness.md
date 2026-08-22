@@ -141,6 +141,8 @@ nonces, and one of them entirely redundant.
                      [FOM 27][nonce 24][tag 32][ciphertext]     = 187 B
 
   after    [AME 34][FOM 22][tag 32][ciphertext]                 =  88 B
+
+  then     [AME 26][FOMKE 13][tag 32][ciphertext]              =  71 B
 ```
 
 FOMKE is now the only payload protection, and it uses the construction the
@@ -179,7 +181,7 @@ A DAC datagram is one AME frame. It used to be two headers:
 
 ```text
   before   [DAC1 27B][AME2 36B][epoch|nonce|tag|ciphertext]
-  after             [AME  34B][FOM1 22B|tag|ciphertext]
+  after             [AME  26B][FOMKE 13B|tag|ciphertext]
 ```
 
 Every field in that DAC header was already beside it or derivable. Session and

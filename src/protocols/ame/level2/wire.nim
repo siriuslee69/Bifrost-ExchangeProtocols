@@ -2,22 +2,33 @@
 ## AME Wire <- fixed AME frame header and exact payload framing
 ## -------------------------------------------------------------------------
 ##
-## Every frame on the wire starts with the same 34 bytes:
+## Every frame on the wire starts with the same 26 bytes:
 ##
 ##   offset size field
 ##   ------ ---- ------------------------------------------------------
 ##        0    3 "AME"
-##        3    1 format version (3)
+##        3    1 format version (4)
 ##        4    1 packet kind      (what this frame is, e.g. lane data)
 ##        5    1 message class + frame flags   (see below)
 ##        6    8 session id
-##       14    4 root lane id     \
-##       18    4 parent lane id    > which stream inside the session
-##       22    4 lane id          /
-##       26    4 sequence         (position in this lane)
-##       30    4 payload length
+##       14    4 root lane id     \  which stream inside the session
+##       18    4 lane id          /
+##       22    4 sequence         (position in this lane)
 ##   ------ ---- ------------------------------------------------------
-##       34      payload starts here
+##       26      payload starts here
+##
+## Two fields that used to be here are gone, and both went for the same
+## reason -- they restated something the receiver already had:
+##
+##   payload length  The decoder required it to equal `A.len - header`, so it
+##                   was a second opinion about a number the caller already
+##                   held. A stream carrier delimits the frame with its own
+##                   length prefix; a datagram carrier is delimited by the
+##                   datagram. The tag still covers the ciphertext length,
+##                   which is where that commitment belongs.
+##   parent lane id  It was set equal to the root lane id when a session was
+##                   built and never changed afterwards, so it carried a
+##                   copy of the field four bytes to its left.
 ##
 ## Byte 5 carries two fields, because neither needs a whole byte:
 ##
@@ -65,11 +76,13 @@ proc frameFlagsValid(flags: uint8): bool {.role: parser.} =
     (flags and ameFrameClassMask) == 0'u8
 
 proc initAmeFrameHeader*(kind: AmePacketKind, messageClass: AmeMessageClass,
-    flags: uint8, sessionId: uint64, rootLaneId, parentLaneId, laneId,
-    sequence, payloadLen: uint32): AmeFrameHeader {.role: wrapper.} =
+    flags: uint8, sessionId: uint64, rootLaneId, laneId,
+    sequence: uint32): AmeFrameHeader {.role: wrapper.} =
   ## kind/messageClass/flags: what the frame is, what its payload is for, and
   ## what was done to that payload before it was sealed.
-  ## session/lane/sequence/payloadLen: exact frame metadata.
+  ## session/lane/sequence: exact frame metadata. There is no payload length
+  ## here -- the carrier delimits the frame, so the payload is whatever
+  ## follows this header.
   if kind == ampkUnknown:
     raise newException(ValueError, "AME packet kind is unknown")
   if not frameFlagsValid(flags):
@@ -81,10 +94,8 @@ proc initAmeFrameHeader*(kind: AmePacketKind, messageClass: AmeMessageClass,
   result.flags = flags
   result.sessionId = sessionId
   result.rootLaneId = rootLaneId
-  result.parentLaneId = parentLaneId
   result.laneId = laneId
   result.sequence = sequence
-  result.payloadLen = payloadLen
 
 proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
     role: stateController.} =
@@ -104,10 +115,8 @@ proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
   result.add(uint8(ord(h.messageClass)) or h.flags)
   appendAmeU64(result, h.sessionId)
   appendAmeU32(result, h.rootLaneId)
-  appendAmeU32(result, h.parentLaneId)
   appendAmeU32(result, h.laneId)
   appendAmeU32(result, h.sequence)
-  appendAmeU32(result, h.payloadLen)
 
 proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
     role: parser.} =
@@ -135,40 +144,38 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
   result.flags = A[5] and not ameFrameClassMask
   result.sessionId = readU64(A, 6)
   result.rootLaneId = readU32(A, 14)
-  result.parentLaneId = readU32(A, 18)
-  result.laneId = readU32(A, 22)
-  result.sequence = readU32(A, 26)
-  result.payloadLen = readU32(A, 30)
+  result.laneId = readU32(A, 18)
+  result.sequence = readU32(A, 22)
 
 proc encodeAmeFrame*(h: AmeFrameHeader,
     payload: openArray[uint8]): ByteSeq {.role: stateController.} =
   ## h/payload: header and exact payload bytes.
-  if uint32(payload.len) != h.payloadLen:
-    raise newException(ValueError, "AME frame payload length mismatch")
+  requireAmeU32Len(payload.len, "frame payload")
   result = encodeAmeFrameHeader(h)
   appendAmeBytes(result, payload)
 
 proc encodeAmeFrame*(kind: AmePacketKind, messageClass: AmeMessageClass,
-    flags: uint8, sessionId: uint64, rootLaneId, parentLaneId, laneId,
+    flags: uint8, sessionId: uint64, rootLaneId, laneId,
     sequence: uint32, payload: openArray[uint8]): ByteSeq {.
     role: stateController.} =
   ## kind/messageClass/flags/session/lane/sequence/payload: complete frame.
   var h: AmeFrameHeader
   requireAmeU32Len(payload.len, "frame payload")
   h = initAmeFrameHeader(kind, messageClass, flags, sessionId, rootLaneId,
-    parentLaneId, laneId, sequence, uint32(payload.len))
+    laneId, sequence)
   result = encodeAmeFrame(h, payload)
 
 proc decodeAmeFrame*(A: openArray[uint8]): AmeDecodedFrame {.role: parser.} =
-  ## A: complete AME2 frame.
+  ## A: one complete AME frame, delimited by the caller. The payload is
+  ## everything past the header -- there is no length field to disagree with
+  ## the bytes that actually arrived.
   var
     i: int = 0
     n: int = 0
   result.header = decodeAmeFrameHeader(A)
-  n = checkedAmeWireLen(result.header.payloadLen,
-    uint32(max(0, A.len - ameFrameHeaderLen)), "frame payload")
-  if A.len != ameFrameHeaderLen + n:
-    raise newException(ValueError, "AME frame payload length mismatch")
+  n = A.len - ameFrameHeaderLen
+  if n > defaultAmeMaxFrameBytes - ameFrameHeaderLen:
+    raise newException(ValueError, "AME frame payload exceeds maximum")
   result.payload = newSeq[uint8](n)
   while i < n:
     result.payload[i] = A[ameFrameHeaderLen + i]

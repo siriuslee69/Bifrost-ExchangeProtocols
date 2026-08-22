@@ -150,14 +150,13 @@ suite "MITM on a live session":
     check h.flags == 0'u8
     check h.sessionId == sender.sessionId
     check h.rootLaneId == sender.rootLaneId
-    check h.parentLaneId == sender.parentLaneId
     check h.laneId == sender.laneId
     check h.sequence == 0'u32
     ## The length is readable, and with padding off it IS the plaintext
     ## length. That is a real leak and it is why padding exists.
-    check h.payloadLen == uint32(fomkeWireLen(plaintext.len, aatl32))
+    check frame.len == ameFrameHeaderLen + fomkeWireLen(plaintext.len, aatl32)
     ## Everything past the header is opaque. Re-encoding the decoded header
-    ## reproduces the first 34 bytes exactly and nothing more.
+    ## reproduces the first 26 bytes exactly and nothing more.
     check @(frame[0 ..< ameFrameHeaderLen]) == encodeAmeFrameHeader(h)
     check not windowFound(frame[ameFrameHeaderLen ..< frame.len],
       plaintext, 4)

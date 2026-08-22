@@ -16,6 +16,7 @@ import std/unittest
 
 import ../src/protocols/types
 import ../src/protocols/ame
+import ../src/protocols/fomke/types
 import ../src/protocols/config
 
 const
@@ -237,14 +238,25 @@ suite "AME runtime parameters":
       opened: AmeOpenResult = openAmeTcpFrame(receiver, frame)
     check not opened.ok
 
-  test "a truncated tag is refused whatever length was agreed":
+  test "a truncated frame is refused whatever length was agreed":
     var
       sender: AmeSession = tagLenSession(aatl32)
       receiver: AmeSession = tagLenSession(aatl32, aerResponder)
       frame: ByteSeq = sealAmeTcpFrame(sender, @[byte 1, 2])
-    frame.setLen(frame.len - 1)
+      short: ByteSeq = frame
+    ## The frame carries no length field any more, so a byte lopped off the
+    ## end is not a parse error -- it is simply one byte less ciphertext, and
+    ## what refuses it is the tag. That is the better of the two failures:
+    ## the check that rejects it is the authenticated one.
+    short.setLen(short.len - 1)
+    check not openAmeTcpFrame(receiver, short).ok
+    ## Cut past the tag and there is nothing left to authenticate, so the
+    ## decoder stops before any key work happens.
+    short.setLen(fomkeHeaderLen)
     expect ValueError:
-      discard openAmeTcpFrame(receiver, frame)
+      discard openAmeTcpFrame(receiver, short)
+    ## The whole frame still opens, so the truncations were what failed.
+    check openAmeTcpFrame(receiver, frame).ok
 
   test "setting a tag length stages it instead of breaking the live epoch":
     var S: AmeSession = tagLenSession(aatl32)
