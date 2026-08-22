@@ -1004,8 +1004,19 @@ proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
   ## proof covers what the client will independently rebuild, not the
   ## ciphertext the client has not opened yet.
   proofs = signIdentityStack(c.layout, c.initialTier, clear, identity)
+  ## What the sealed block holds, in order:
+  ##
+  ##   certificate body   (self-delimiting, NOT length-framed -- it starts
+  ##                       with its own label and every field inside it
+  ##                       carries a length)
+  ##   authority proofs   u32 count, then u32-framed proofs
+  ##   transcript proofs  u32 count, then u32-framed proofs
+  ##
+  ## The certificate body goes in raw because it is the exact byte string the
+  ## authority signed. Wrapping it in another length would mean the bytes
+  ## verified and the bytes stored were not the same thing.
   block1 = @[]
-  appendHandshakeBytes(block1, certificateSubject(descriptor))
+  appendAmeBytes(block1, certificateSubject(descriptor))
   appendHandshakeProofs(block1, descriptor.authorityProofs)
   appendHandshakeProofs(block1, proofs)
   try:
@@ -1150,7 +1161,7 @@ proc sealClientIdentity(S: AmeClientHandshake, h: AmeServerHello,
     transcript, 32)
   proofs = signIdentityStack(S.hello.layout, S.hello.initialTier,
     transcriptHash, identity)
-  appendHandshakeBytes(body, certificateSubject(descriptor))
+  appendAmeBytes(body, certificateSubject(descriptor))
   appendHandshakeProofs(body, descriptor.authorityProofs)
   appendHandshakeBytes(body, transcriptHash)
   appendHandshakeProofs(body, proofs)

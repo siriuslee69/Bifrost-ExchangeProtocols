@@ -3,7 +3,7 @@
 ## ---------------------------------------------------------------------
 ##
 ## The DAC harness covers the datagram layer. These are the other three
-## parsers an attacker reaches: the AME frame and protected body that wrap
+## parsers an attacker reaches: the AME frame and FOMKE envelope that wrap
 ## every session, the BFX2 envelope that carries structured data, and the
 ## TLS 1.3 record and handshake decoders.
 ##
@@ -19,6 +19,8 @@ import ../src/protocols/types
 import ../src/protocols/ame/types
 import ../src/protocols/ame/level2/wire
 import ../src/protocols/ame/level2/session
+import ../src/protocols/fomke/types
+import ../src/protocols/fomke/level2/wire
 import ../src/protocols/bfx2/types
 import ../src/protocols/bfx2/writer
 import ../src/protocols/bfx2/reader
@@ -33,21 +35,24 @@ proc sampleAmeFrame(): ByteSeq =
   result = encodeAmeFrame(ampkLaneData, amcUserdata, 0x1122334455667788'u64,
     1'u32, 2'u32, 3'u32, 4'u32, rampBytes(96))
 
-proc sampleAmeProtectedBody(): ByteSeq =
-  ## A well-formed protected body with a 32-byte tag.
+proc sampleFomkeMessage(): ByteSeq =
+  ## A well-formed FOMKE envelope with a 32-byte tag. There is no nonce on
+  ## the wire, so the header is 22 bytes and the tag follows it directly.
   var
-    e: AmeProtectedBody
-  e.epochId = 3'u32
-  e.nonce = rampBytes(24)
-  e.authTag = rampBytes(32)
-  e.payload = rampBytes(128)
-  result = encodeAmeProtectedBody(e)
+    m: FomkeMessage
+  m.epoch = 3'u32
+  m.index = 9'u64
+  m.senderLane = flLane1
+  m.tagLen = aatl32
+  m.authTag = rampBytes(32)
+  m.ciphertext = rampBytes(128)
+  result = encodeFomkeMessage(m)
 
 proc sampleAmeSealedFrame(): ByteSeq =
-  ## An AME frame whose payload is a protected body, which is the shape that
+  ## An AME frame whose payload is a FOMKE envelope, which is the shape that
   ## actually arrives on the wire: two nested length fields, not one.
   var
-    body: ByteSeq = sampleAmeProtectedBody()
+    body: ByteSeq = sampleFomkeMessage()
   result = encodeAmeFrame(ampkLaneData, amcUserdata, 7'u64, 1'u32, 1'u32,
     1'u32, 9'u32, body)
 
@@ -60,29 +65,31 @@ suite "AME frame fuzz":
     fuzzBody("decodeAmeFrame", 102'u64, sampleAmeFrame()):
       discard decodeAmeFrame(data)
 
-  test "the protected body decoder never raises a Defect":
-    fuzzBody("decodeAmeProtectedBody", 103'u64, sampleAmeProtectedBody()):
-      discard decodeAmeProtectedBody(data)
+  test "the FOMKE envelope decoder never raises a Defect":
+    fuzzBody("decodeFomkeMessage", 103'u64, sampleFomkeMessage()):
+      discard decodeFomkeMessage(data)
 
-  test "a nested frame plus body survives mutation at either depth":
-    fuzzBody("decodeAmeFrame + body", 104'u64, sampleAmeSealedFrame()):
-      discard decodeAmeProtectedBody(decodeAmeFrame(data).payload)
+  test "a nested frame plus envelope survives mutation at either depth":
+    fuzzBody("decodeAmeFrame + envelope", 104'u64, sampleAmeSealedFrame()):
+      discard decodeFomkeMessage(decodeAmeFrame(data).payload)
 
   test "a declared payload length far past the buffer is refused":
     var
       f: ByteSeq = sampleAmeFrame()
       i: int = 0
+    ## The frame header's length field sits at offset 30 now that the magic
+    ## is three bytes and the version one.
+    f[30] = 0xFF'u8
+    f[31] = 0xFF'u8
     f[32] = 0xFF'u8
-    f[33] = 0xFF'u8
-    f[34] = 0xFF'u8
-    f[35] = 0x7F'u8
+    f[33] = 0x7F'u8
     expect CatchableError:
       discard decodeAmeFrame(f)
     while i < 4:
-      f = sampleAmeProtectedBody()
-      f[8 + i] = 0xFF'u8
+      f = sampleFomkeMessage()
+      f[18 + i] = 0xFF'u8
       expect CatchableError:
-        discard decodeAmeProtectedBody(f)
+        discard decodeFomkeMessage(f)
       i = i + 1
 
 suite "BFX2 fuzz":

@@ -1,6 +1,11 @@
 ## -------------------------------------------------------------------------
-## AME Handshake/Package Tests <- authority trust, compression, and repair
+## AME Handshake/Package Tests <- private identities, trust, and repair
 ## -------------------------------------------------------------------------
+##
+## The handshake under test hides who is talking. Only the two nonces and the
+## key material travel in the clear; both certificates ride inside sealed
+## blocks. These tests check that, and check what happens when each of the
+## things that could go wrong does.
 
 import std/unittest
 
@@ -9,18 +14,23 @@ import ../src/protocols/ame/types
 import ../src/protocols/ame/level1/exchange_paths
 import ../src/protocols/ame/level1/suites
 import ../src/protocols/ame/level1/path_triggers
-import ../src/protocols/ame/types
+import ../src/protocols/ame/level1/signatures
+import ../src/protocols/ame/level2/wire
 import ../src/protocols/ame/level3/handshake
 import ../src/protocols/ame/level2/session
 import ../src/protocols/ame/level1/compression
 import ../src/protocols/ame/level3/secure_package
 import ../src/protocols/ame/level3/handshake_wire
+import ../src/protocols/ame/level3/handshake_transport
 import ../src/protocols/dac/types
 import ../src/protocols/dac/level0/defaults
 import ../src/protocols/dac/level2/package_transfer
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]
+  nowUnix: int64 = 500'i64
+  validFrom: int64 = 100'i64
+  validUntil: int64 = 1000'i64
 
 proc handshakeLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(handshakeKems)
@@ -35,119 +45,128 @@ proc handshakeTier(L: AmeSuiteLayout,
 proc handshakePath(L: AmeSuiteLayout, t: AmeMaskTier): AmeTierPath =
   result = initAmeTierPath(L, [t])
 
-proc authorityRoot(a: AmeAuthorityKey): AmeAuthorityRoot =
-  result = initAmeAuthorityRoot(a)
+## One complete pair of endpoints, run to a finished session. Every test that
+## needs a working handshake starts from here rather than repeating it.
+type
+  Pair = object
+    authority: AmeAuthorityKey
+    root: AmeAuthorityRoot
+    clientKey: AmeIdentityKey
+    serverKey: AmeIdentityKey
+    clientCert: AmeIdentityCertificate
+    serverCert: AmeIdentityCertificate
+    layout: AmeSuiteLayout
+    tier: AmeMaskTier
 
-suite "AME authority handshake and secure package":
+proc newPair(name: string): Pair =
+  result.authority = initAmeAuthorityKey(name & "-root")
+  result.root = initAmeAuthorityRoot(result.authority)
+  result.clientKey = initAmeIdentityKey(name & "-client")
+  result.serverKey = initAmeIdentityKey(name & "-server")
+  result.clientCert = issueAmeIdentityCertificate(result.authority,
+    result.clientKey, 11'u64, validFrom, validUntil)
+  result.serverCert = issueAmeIdentityCertificate(result.authority,
+    result.serverKey, 22'u64, validFrom, validUntil)
+  result.layout = handshakeLayout()
+  result.tier = handshakeTier(result.layout)
+
+suite "AME private handshake":
   test "seeded authority and peer identities are reproducible":
     var
-      authoritySeed: ByteSeq = newSeq[byte](32)
-      identitySeed: ByteSeq = newSeq[byte](32)
+      authoritySeeds: seq[ByteSeq] = @[]
+      identitySeeds: seq[ByteSeq] = @[]
+      algorithms: AmeSignatureAlgorithms = initAmeSignatureAlgorithms(
+        defaultAmeSigSlots())
       authority0: AmeAuthorityKey
       authority1: AmeAuthorityKey
       identity0: AmeIdentityKey
       identity1: AmeIdentityKey
+      seed: ByteSeq = @[]
       i: int = 0
-    while i < authoritySeed.len:
-      authoritySeed[i] = uint8(i + 1)
-      identitySeed[i] = uint8(i + 33)
+      j: int = 0
+    while i < int(algorithms.length):
+      seed = newSeq[byte](32)
+      j = 0
+      while j < seed.len:
+        seed[j] = uint8(j + 1 + i * 7)
+        j = j + 1
+      authoritySeeds.add(seed)
+      seed = newSeq[byte](32)
+      j = 0
+      while j < seed.len:
+        seed[j] = uint8(j + 33 + i * 7)
+        j = j + 1
+      identitySeeds.add(seed)
       i = i + 1
-    authority0 = initAmeAuthorityKey("seeded-root", asaEd25519, authoritySeed)
-    authority1 = initAmeAuthorityKey("seeded-root", asaEd25519, authoritySeed)
-    identity0 = initAmeIdentityKey("seeded-peer", asaEd25519, identitySeed)
-    identity1 = initAmeIdentityKey("seeded-peer", asaEd25519, identitySeed)
-    check authority0.publicKey == authority1.publicKey
-    check authority0.secretKey == authority1.secretKey
+    authority0 = initAmeAuthorityKey("seeded-root", algorithms, authoritySeeds)
+    authority1 = initAmeAuthorityKey("seeded-root", algorithms, authoritySeeds)
+    identity0 = initAmeIdentityKey("seeded-peer", algorithms, identitySeeds)
+    identity1 = initAmeIdentityKey("seeded-peer", algorithms, identitySeeds)
+    check authority0.signingKeys == authority1.signingKeys
+    check authority0.secretKeys == authority1.secretKeys
     check identity0.signingKeys == identity1.signingKeys
-    check identity0.secretKeys == identity1.secretKeys
+    check authority0.signingKeys.len == int(algorithms.length)
 
-  test "seeded signature stacks are reproducible per layout slot":
+  test "neither certificate appears anywhere in the clear":
     var
-      algorithms: AmeSignatureAlgorithms = initAmeSignatureAlgorithms([
-        asaEd25519, asaFalcon512])
-      seeds: seq[ByteSeq] = @[newSeq[byte](32), newSeq[byte](48)]
-      identity0: AmeIdentityKey
-      identity1: AmeIdentityKey
-      i: int = 0
-    while i < seeds[0].len:
-      seeds[0][i] = uint8(i + 1)
-      i = i + 1
-    i = 0
-    while i < seeds[1].len:
-      seeds[1][i] = uint8(i + 65)
-      i = i + 1
-    identity0 = initAmeIdentityKey("seeded-stack", algorithms, seeds)
-    identity1 = initAmeIdentityKey("seeded-stack", algorithms, seeds)
-    check identity0.signingKeys == identity1.signingKeys
-    check identity0.secretKeys == identity1.secretKeys
-
-  test "initial handshake preserves an exact caller-selected KEM mask":
-    var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("mask-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("mask-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("mask-server")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 100'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 100'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout, 0b10000000'u8)
-      client: AmeClientHandshake
-      server: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
+      p: Pair = newPair("private")
+      client: AmeClientHandshake = beginAmeHandshake(42'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
+      helloWire: ByteSeq = @[]
+      serverWire: ByteSeq = @[]
+      finishWire: ByteSeq = @[]
       clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
-    client = beginAmeHandshake(71'u64, layout, tier, clientCert, clientKey)
-    check client.hello.offer.request.exchangeMask == 0b10000000'u8
-    check client.hello.proofs.len == 2
-    server = answerAmeHandshake(client.hello, @[handshakePath(layout, tier)],
-      root, serverCert,
-      serverKey, 500'i64)
+      subject: ByteSeq = @[]
+      i: int = 0
+      found: bool = false
     check server.ok
-    clientDone = finishAmeHandshake(client, server.state.serverHello,
-      root, clientKey, 500'i64)
+    helloWire = encodeAmeClientHello(client.hello)
+    serverWire = encodeAmeServerHello(server.state.serverHello)
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
     check clientDone.ok
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish)
-    check serverDone.ok
-    check clientDone.auth.current.exchange.activeMask == 0b10000000'u8
-    check serverDone.auth.current.exchange.activeMask == 0b10000000'u8
+    finishWire = encodeAmeClientFinish(clientDone.finish)
+    ## The subject name is the most recognisable thing in a certificate. If
+    ## it appeared in any record on the wire, an observer would learn who is
+    ## connecting without breaking anything.
+    subject = @[]
+    for c in "private-server":
+      subject.add(uint8(ord(c)))
+    for wire in [helloWire, serverWire, finishWire]:
+      i = 0
+      while i + subject.len <= wire.len:
+        if wire[i ..< i + subject.len] == subject:
+          found = true
+        i = i + 1
+    check not found
 
-  test "authority-authenticated initial handshake creates equal epochs":
+  test "authority-authenticated handshake creates equal epochs":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("example-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("client-1")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("server-1")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 100'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 100'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmeHandshake(42'u64, layout, tier,
-        clientCert, clientKey)
-      server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-        root, serverCert,
-        serverKey, 500'i64)
+      p: Pair = newPair("example")
+      client: AmeClientHandshake = beginAmeHandshake(42'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
       clientDone: AmeHandshakeResult
       serverDone: AmeHandshakeResult
       helloWire: ByteSeq = @[]
       serverWire: ByteSeq = @[]
       finishWire: ByteSeq = @[]
+    check server.ok
+    ## Every record makes a full round trip through its codec, so the test
+    ## exercises the wire form and not just the in-memory objects.
     helloWire = encodeAmeClientHello(client.hello)
     client.hello = decodeAmeClientHello(helloWire)
-    check server.ok
     serverWire = encodeAmeServerHello(server.state.serverHello)
-    server.state.serverHello = decodeAmeServerHello(layout, serverWire)
-    check client.hello.proofs.len == 2
-    check server.state.serverHello.proofs.len == 2
-    clientDone = finishAmeHandshake(client, server.state.serverHello, root,
-      clientKey, 500'i64)
+    server.state.serverHello = decodeAmeServerHello(p.layout, serverWire)
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
     check clientDone.ok
     finishWire = encodeAmeClientFinish(clientDone.finish)
     clientDone.finish = decodeAmeClientFinish(finishWire)
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish)
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.root,
+      nowUnix)
+    check serverDone.err == ""
     check serverDone.ok
     check clientDone.auth.current.epochId == 1'u32
     check clientDone.auth.sessionId == 42'u64
@@ -156,233 +175,316 @@ suite "AME authority handshake and secure package":
     check serverDone.auth.endpointRole == aerResponder
     check clientDone.auth.current.exchange.sharedSecrets[0] ==
       serverDone.auth.current.exchange.sharedSecrets[0]
-    check clientDone.peerTrust.subjectKeyId == "server-1"
-    check serverDone.peerTrust.subjectKeyId == "client-1"
+    check clientDone.auth.current.transcriptSalt ==
+      serverDone.auth.current.transcriptSalt
+    check clientDone.peerTrust.subjectKeyId == "example-server"
+    check serverDone.peerTrust.subjectKeyId == "example-client"
+    check clientDone.peerTrust.serial == 22'u64
+    check serverDone.peerTrust.serial == 11'u64
     helloWire.setLen(helloWire.len - 1)
     expect ValueError:
       discard decodeAmeClientHello(helloWire)
 
-  test "authenticated session id cannot be replaced by live session setup":
+  test "both sides start a working ratchet from the finished handshake":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("session-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("session-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("session-server")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmeHandshake(77'u64, layout, tier,
-        clientCert, clientKey)
-      server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-        root, serverCert, serverKey, 5'i64)
-      clientDone: AmeHandshakeResult = finishAmeHandshake(client,
-        server.state.serverHello, root, clientKey, 5'i64)
-    expect ValueError:
-      discard initAmeSession(clientDone.auth, sessionId = 78'u64,
-        peerTrustRequired = false)
-    check initAmeSession(clientDone.auth,
-      peerTrustRequired = false).sessionId == 77'u64
-
-  test "consumptive finish erases retained handshake secrets":
-    var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("clear-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("clear-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("clear-server")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmeHandshake(88'u64, layout, tier,
-        clientCert, clientKey)
-      server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-        root, serverCert, serverKey, 5'i64)
-      clientDone: AmeHandshakeResult = finishAmeHandshake(client,
-        server.state.serverHello, root, clientKey, 5'i64)
-      serverDone: AmeHandshakeResult = acceptAmeHandshake(server.state,
-        clientDone.finish)
+      p: Pair = newPair("ratchet")
+      client: AmeClientHandshake = beginAmeHandshake(7'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
+      clientDone: AmeHandshakeResult
+      serverDone: AmeHandshakeResult
+      clientSession: AmeSession
+      serverSession: AmeSession
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.root,
+      nowUnix)
     check clientDone.ok and serverDone.ok
-    check client.secretKeys.len == 0
-    check client.hello.sessionId == 0'u64
-    check server.state.sharedSecrets.len == 0
-    check server.state.localSignatureSecretKeys.len == 0
+    clientSession = initAmeSession(clientDone.auth,
+      peerTrust = clientDone.peerTrust)
+    serverSession = initAmeSession(serverDone.auth,
+      peerTrust = serverDone.peerTrust)
+    frame = sealAmeTcpFrame(clientSession, @[byte 1, 2, 3])
+    opened = openAmeTcpFrame(serverSession, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 1, 2, 3]
+    frame = sealAmeTcpFrame(serverSession, @[byte 4, 5])
+    opened = openAmeTcpFrame(clientSession, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 4, 5]
 
-  test "handshake rejects a tier outside the supported path and mask tampering":
+  test "one broken authority algorithm is not enough to forge a certificate":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("tier-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("tier-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("tier-server")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      initial: AmeMaskTier = handshakeTier(layout, 0b10000000'u8)
-      other: AmeMaskTier = initial
-      client: AmeClientHandshake
-      answer: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
-    other.tierId = 2'u32
-    client = beginAmeHandshake(72'u64, layout, other, clientCert, clientKey)
-    answer = answerAmeHandshake(client.hello,
-      [handshakePath(layout, initial)], root, serverCert, serverKey, 5'i64)
-    check not answer.ok
-    check answer.err == "client exact AME layout and initial tier are not supported"
-    client = beginAmeHandshake(73'u64, layout, initial, clientCert, clientKey)
-    client.hello.initialTier.tierId = 3'u32
-    answer = answerAmeHandshake(client.hello,
-      [handshakePath(layout, client.hello.initialTier)], root, serverCert,
-      serverKey, 5'i64)
-    check not answer.ok
-    check answer.err == "client hello initial tier exchange is invalid"
+      p: Pair = newPair("hybrid")
+      forged: AmeIdentityCertificate = p.serverCert
+      trust: AmePeerTrustResult
+    check p.serverCert.authorityProofs.len == p.root.signingKeys.len
+    check p.serverCert.authorityProofs.len >= 2
+    ## Keep the first proof valid and destroy the second. An implementation
+    ## that stopped after one good signature would accept this.
+    forged.authorityProofs[1][0] = forged.authorityProofs[1][0] xor 0xFF'u8
+    trust = verifyAmeIdentityCertificate(forged, p.root, nowUnix)
+    check not trust.ok
+    check trust.err == "certificate authority proof is invalid"
+    ## Dropping the post-quantum half entirely must not work either.
+    forged = p.serverCert
+    forged.authorityProofs.setLen(1)
+    trust = verifyAmeIdentityCertificate(forged, p.root, nowUnix)
+    check not trust.ok
+    check trust.err == "certificate proof count does not match the pinned root"
+
+  test "a revoked serial is refused while the same subject can be reissued":
+    var
+      p: Pair = newPair("revoke")
+      replacement: AmeIdentityCertificate
+      trust: AmePeerTrustResult
+    trust = verifyAmeIdentityCertificate(p.serverCert, p.root, nowUnix,
+      [22'u64])
+    check not trust.ok
+    check trust.err == "certificate serial is revoked"
+    ## Revocation names the certificate, not the holder, so the same subject
+    ## gets a fresh one and carries on.
+    replacement = issueAmeIdentityCertificate(p.authority, p.serverKey,
+      23'u64, validFrom, validUntil)
+    trust = verifyAmeIdentityCertificate(replacement, p.root, nowUnix,
+      [22'u64])
+    check trust.ok
+    check trust.subjectKeyId == "revoke-server"
+
+  test "certificate validity and a wildly wrong clock both fail closed":
+    var
+      p: Pair = newPair("clock")
+      trust: AmePeerTrustResult
+    trust = verifyAmeIdentityCertificate(p.serverCert, p.root, 50'i64)
+    check not trust.ok
+    check trust.err == "identity is outside its validity period"
+    trust = verifyAmeIdentityCertificate(p.serverCert, p.root, 5000'i64)
+    check not trust.ok
+    ## A clock a year out of step does not get to guess. It is refused as
+    ## unusable rather than silently accepting or rejecting everything.
+    trust = verifyAmeIdentityCertificate(p.serverCert, p.root,
+      validUntil + ameMaxCertificateSkewSeconds + 1'i64)
+    check not trust.ok
+    check trust.err ==
+      "local clock is too far outside the identity validity window"
+    trust = verifyAmeIdentityCertificate(p.serverCert, p.root, 0'i64)
+    check not trust.ok
+
+  test "a pinned identity expires like any other":
+    var
+      identity: AmeIdentityKey = initAmeIdentityKey("pinned-peer")
+      descriptor: AmeIdentityCertificate = pinnedIdentityDescriptor(identity,
+        validFrom, validUntil)
+      pin: AmePinnedPeerIdentity = pinnedPeerIdentity(identity)
+      trust: AmePeerTrustResult
+    trust = verifyPinnedPeerIdentity(descriptor, pin, nowUnix)
+    check trust.ok
+    check trust.authority == "pinned-peer"
+    trust = verifyPinnedPeerIdentity(descriptor, pin, validUntil + 1'i64)
+    check not trust.ok
+    check trust.err == "identity is outside its validity period"
+    expect ValueError:
+      discard pinnedIdentityDescriptor(identity, 500'i64, 100'i64)
 
   test "reciprocal public-key pins authenticate the complete handshake":
     var
-      clientKey: AmeIdentityKey = initAmeIdentityKey("pinned-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("pinned-server")
+      clientKey: AmeIdentityKey = initAmeIdentityKey("pin-client")
+      serverKey: AmeIdentityKey = initAmeIdentityKey("pin-server")
+      clientDesc: AmeIdentityCertificate = pinnedIdentityDescriptor(clientKey,
+        validFrom, validUntil)
+      serverDesc: AmeIdentityCertificate = pinnedIdentityDescriptor(serverKey,
+        validFrom, validUntil)
       clientPin: AmePinnedPeerIdentity = pinnedPeerIdentity(clientKey)
       serverPin: AmePinnedPeerIdentity = pinnedPeerIdentity(serverKey)
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmePinnedHandshake(84'u64, layout,
-        tier, clientKey)
-      server = answerAmePinnedHandshake(client.hello,
-        [handshakePath(layout, tier)], clientPin,
-        serverKey)
+      client: AmeClientHandshake = beginAmeHandshake(9'u64, layout, tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
+        serverDesc, serverKey)
       clientDone: AmeHandshakeResult
       serverDone: AmeHandshakeResult
-      helloWire: ByteSeq = @[]
-      serverWire: ByteSeq = @[]
-    helloWire = encodeAmeClientHello(client.hello)
-    client.hello = decodeAmeClientHello(helloWire)
     check server.ok
-    serverWire = encodeAmeServerHello(server.state.serverHello)
-    server.state.serverHello = decodeAmeServerHello(layout, serverWire)
     clientDone = finishAmePinnedHandshake(client, server.state.serverHello,
-      serverPin, clientKey)
+      serverPin, clientDesc, clientKey, nowUnix)
+    check clientDone.err == ""
     check clientDone.ok
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish)
+    serverDone = acceptAmePinnedHandshake(server.state, clientDone.finish,
+      clientPin, nowUnix)
     check serverDone.ok
     check clientDone.peerTrust.authority == "pinned-peer"
-    check clientDone.peerTrust.subjectKeyId == "pinned-server"
-    check serverDone.peerTrust.authority == "pinned-peer"
-    check serverDone.peerTrust.subjectKeyId == "pinned-client"
-    check clientDone.auth.current.exchange.sharedSecrets[0] ==
-      serverDone.auth.current.exchange.sharedSecrets[0]
+    check serverDone.peerTrust.subjectKeyId == "pin-client"
+    check clientDone.auth.current.transcriptSalt ==
+      serverDone.auth.current.transcriptSalt
 
-  test "wrong pins and certificate descriptors fail closed":
+  test "the wrong pin and a mixed-up trust mode both fail closed":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("pin-root")
-      clientKey: AmeIdentityKey = initAmeIdentityKey("pin-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("pin-server")
-      strangerKey: AmeIdentityKey = initAmeIdentityKey("pin-stranger")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
+      clientKey: AmeIdentityKey = initAmeIdentityKey("mix-client")
+      serverKey: AmeIdentityKey = initAmeIdentityKey("mix-server")
+      otherKey: AmeIdentityKey = initAmeIdentityKey("mix-server")
+      clientDesc: AmeIdentityCertificate = pinnedIdentityDescriptor(clientKey,
+        validFrom, validUntil)
+      serverDesc: AmeIdentityCertificate = pinnedIdentityDescriptor(serverKey,
+        validFrom, validUntil)
+      wrongPin: AmePinnedPeerIdentity = pinnedPeerIdentity(otherKey)
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
-      pinnedClient: AmeClientHandshake = beginAmePinnedHandshake(85'u64,
-        layout, tier, clientKey)
-      certifiedClient: AmeClientHandshake = beginAmeHandshake(86'u64,
-        layout, tier, clientCert, clientKey)
-      answer: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
-    answer = answerAmePinnedHandshake(pinnedClient.hello,
-      [handshakePath(layout, tier)],
-      pinnedPeerIdentity(strangerKey), serverKey)
-    check not answer.ok
-    check answer.err == "peer identity does not match the pinned public key"
-    answer = answerAmePinnedHandshake(certifiedClient.hello,
-      [handshakePath(layout, tier)],
-      pinnedPeerIdentity(clientKey), serverKey)
-    check not answer.ok
-    check answer.err ==
-      "pinned peer sent a certificate instead of a direct identity"
+      client: AmeClientHandshake = beginAmeHandshake(9'u64, layout, tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
+        serverDesc, serverKey)
+      clientDone: AmeHandshakeResult
+      certified: Pair = newPair("mixed")
+    ## Same subject name, different keys. The name is not what is checked.
+    clientDone = finishAmePinnedHandshake(client, server.state.serverHello,
+      wrongPin, clientDesc, clientKey, nowUnix)
+    check not clientDone.ok
+    check clientDone.err == "peer identity does not match the pinned public key"
+    ## An unsigned pinned descriptor offered where a certificate is required.
+    check not verifyAmeIdentityCertificate(serverDesc, certified.root,
+      nowUnix).ok
+    ## A signed certificate offered where a direct pin is required.
+    check not verifyPinnedPeerIdentity(certified.serverCert,
+      pinnedPeerIdentity(certified.serverKey), nowUnix).ok
 
-  test "tampered and expired authority handshakes fail closed":
+  test "tampering anywhere in the server hello fails closed":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("root-a")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("client-a")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("server-a")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 100'i64, 200'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 100'i64, 200'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmeHandshake(7'u64, layout, tier,
-        clientCert, clientKey)
-      answer: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
-    answer = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-      root, serverCert,
-      serverKey, 300'i64)
-    check not answer.ok
-    check answer.err == "certificate is outside its validity period"
-    client.hello.proofs[0][0] = client.hello.proofs[0][0] xor 1'u8
-    answer = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-      root, serverCert,
-      serverKey, 150'i64)
-    check not answer.ok
-    check answer.err == "client hello identity proof is invalid"
-    client = beginAmeHandshake(8'u64, layout, tier, clientCert, clientKey)
-    answer = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-      root, serverCert,
-      serverKey, 150'i64, ["client-a"])
-    check not answer.ok
-    check answer.err == "certificate subject is revoked"
+      p: Pair = newPair("tamper")
+      client: AmeClientHandshake = beginAmeHandshake(3'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
+      saved: AmeClientHandshake = client
+      hello: AmeServerHello
+      done: AmeHandshakeResult
+    hello = server.state.serverHello
+    hello.nonce[0] = hello.nonce[0] xor 0x01'u8
+    client = saved
+    done = finishAmeHandshake(client, hello, p.root, p.clientCert,
+      p.clientKey, nowUnix)
+    check not done.ok
+    hello = server.state.serverHello
+    hello.sealed[0] = hello.sealed[0] xor 0x01'u8
+    client = saved
+    done = finishAmeHandshake(client, hello, p.root, p.clientCert,
+      p.clientKey, nowUnix)
+    check not done.ok
+    hello = server.state.serverHello
+    hello.authTag[0] = hello.authTag[0] xor 0x01'u8
+    client = saved
+    done = finishAmeHandshake(client, hello, p.root, p.clientCert,
+      p.clientKey, nowUnix)
+    check not done.ok
 
-  test "every selected initial KEM signature is required":
+  test "an unsupported layout or tier is refused before any key work":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("stack-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("stack-client")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("stack-server")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      client: AmeClientHandshake = beginAmeHandshake(9'u64, layout, tier,
-        clientCert, clientKey)
-      answer: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
-    check client.hello.proofs.len == 2
-    client.hello.proofs[1][0] = client.hello.proofs[1][0] xor 1'u8
-    answer = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-      root, serverCert, serverKey, 5'i64)
-    check not answer.ok
-    check answer.err == "client hello identity proof is invalid"
-    check answer.state.sharedSecrets.len == 0
+      p: Pair = newPair("policy")
+      other: AmeMaskTier = handshakeTier(p.layout, 0b10000000'u8)
+      client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello,
+        [handshakePath(p.layout, other)], p.serverCert, p.serverKey)
+    check not server.ok
+    check server.err == "client exact AME layout and initial tier are not supported"
 
-  test "compressed authenticated package repairs loss and restores plaintext":
+  test "a zero session id is refused rather than raising":
     var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("package-root")
-      root: AmeAuthorityRoot = authority.authorityRoot()
-      clientKey: AmeIdentityKey = initAmeIdentityKey("sender")
-      serverKey: AmeIdentityKey = initAmeIdentityKey("receiver")
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      clientHs: AmeClientHandshake = beginAmeHandshake(99'u64, layout, tier,
-        clientCert, clientKey)
-      serverHs = answerAmeHandshake(clientHs.hello,
-        [handshakePath(layout, tier)], root, serverCert,
-        serverKey, 5'i64)
-      sender: AmeHandshakeResult = finishAmeHandshake(clientHs,
-        serverHs.state.serverHello, root, clientKey, 5'i64)
-      receiver: AmeHandshakeResult = acceptAmeHandshake(serverHs.state,
-        sender.finish)
+      p: Pair = newPair("zero")
+      client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
+      server: tuple[ok: bool, state: AmeServerHandshake, err: string]
+    client.hello.sessionId = 0'u64
+    server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+      p.tier)], p.serverCert, p.serverKey)
+    check not server.ok
+    check server.err == "client hello shape is invalid"
+    expect ValueError:
+      discard beginAmeHandshake(0'u64, p.layout, p.tier)
+
+  test "the finish erases the handshake secrets it consumed":
+    var
+      p: Pair = newPair("erase")
+      client: AmeClientHandshake = beginAmeHandshake(8'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
+      clientDone: AmeHandshakeResult
+      serverDone: AmeHandshakeResult
+    check client.secretKeys.len > 0
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
+    check clientDone.ok
+    check client.secretKeys.len == 0
+    check client.hello.sessionId == 0'u64
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.root,
+      nowUnix)
+    check serverDone.ok
+    check server.state.sharedSecrets.len == 0
+
+suite "AME anti-flood cookie":
+  test "a cookie only verifies for the address it was minted for":
+    var
+      p: Pair = newPair("cookie")
+      secret: AmeCookieSecret = initAmeCookieSecret()
+      here: ByteSeq = @[byte 10, 0, 0, 1]
+      elsewhere: ByteSeq = @[byte 10, 0, 0, 2]
+      client: AmeClientHandshake = beginAmeHandshake(4'u64, p.layout, p.tier)
+      cookie: ByteSeq = @[]
+      retried: AmeClientHandshake
+    check not ameCookieValid(secret, here, nowUnix, client.hello)
+    cookie = issueAmeCookie(secret, here, nowUnix, client.hello)
+    retried = beginAmeHandshake(4'u64, p.layout, p.tier, 1'u32, cookie)
+    ## The cookie is bound to the hello it was minted for, so it has to be
+    ## replayed with that same nonce.
+    retried.hello.nonce = client.hello.nonce
+    check ameCookieValid(secret, here, nowUnix, retried.hello)
+    check not ameCookieValid(secret, elsewhere, nowUnix, retried.hello)
+    check not ameCookieValid(secret, here,
+      nowUnix + ameCookieLifetimeSeconds + 1'i64, retried.hello)
+    check not ameCookieValid(initAmeCookieSecret(), here, nowUnix,
+      retried.hello)
+    retried.hello.cookie[9] = retried.hello.cookie[9] xor 0xFF'u8
+    check not ameCookieValid(secret, here, nowUnix, retried.hello)
+
+suite "AME handshake transport":
+  test "records ride ordinary AME frames and refuse to arrive out of order":
+    var
+      p: Pair = newPair("transport")
+      client: AmeClientHandshake = beginAmeHandshake(77'u64, p.layout, p.tier)
+      frame: ByteSeq = encodeAmeClientHelloFrame(client.hello)
+      decoded: AmeHandshakeFrame = decodeAmeHandshakeFrame(frame)
+      retry: AmeHelloRetry
+    check decoded.kind == ampkClientHello
+    check decoded.sessionId == 77'u64
+    check decoded.step == ameHandshakeStepHello
+    check decodeAmeClientHello(decoded.record).sessionId == 77'u64
+    requireHandshakeFrame(decoded, ampkClientHello, ameHandshakeStepHello)
+    ## A record that shows up where a different one belongs is refused before
+    ## it is even parsed.
+    expect ValueError:
+      requireHandshakeFrame(decoded, ampkServerHello,
+        ameHandshakeStepServerHello)
+    expect ValueError:
+      requireHandshakeFrame(decoded, ampkClientHello,
+        ameHandshakeStepRetriedHello)
+    expect ValueError:
+      requireHandshakeFrame(decoded, ampkClientHello,
+        ameHandshakeStepHello, 78'u64)
+    retry.sessionId = 77'u64
+    retry.cookie = newSeq[byte](40)
+    decoded = decodeAmeHandshakeFrame(encodeAmeHelloRetryFrame(retry))
+    check decoded.kind == ampkHelloRetry
+    check decoded.step == ameHandshakeStepRetry
+    ## A lane-data frame is not a handshake record and must not be read as one.
+    expect ValueError:
+      discard decodeAmeHandshakeFrame(encodeAmeFrame(ampkLaneData,
+        amcUserdata, 1'u64, 0'u32, 0'u32, 0'u32, 0'u32, @[byte 1, 2, 3]))
+
+suite "AME secure package":
+  test "an authenticated package repairs loss and restores plaintext":
+    var
+      p: Pair = newPair("package")
+      client: AmeClientHandshake = beginAmeHandshake(99'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.serverCert, p.serverKey)
+      sender: AmeHandshakeResult
+      receiver: AmeHandshakeResult
       plaintext: ByteSeq = newSeq[byte](20_000)
       plan: AmeSecurePackagePlan
       packageReceiver: DacPackageReceiver
@@ -394,6 +496,9 @@ suite "AME authority handshake and secure package":
     while i < plaintext.len:
       plaintext[i] = uint8(i mod 251)
       i = i + 1
+    sender = finishAmeHandshake(client, server.state.serverHello, p.root,
+      p.clientCert, p.clientKey, nowUnix)
+    receiver = acceptAmeHandshake(server.state, sender.finish, p.root, nowUnix)
     check sender.ok and receiver.ok
     plan = planAmeSecurePackage(sender.auth, 55'u64, plaintext,
       cleanLanDacDefaults())
@@ -416,18 +521,25 @@ suite "AME authority handshake and secure package":
     check restored.payload == plaintext
     check restored.status == dcsCommittedWithRepair
 
-  test "Eir compression shrinks repeated data and restores it exactly":
+  test "compression is off by default and must be asked for by name":
     var
       plaintext: ByteSeq = newSeq[byte](10_000)
-      policy: AmeCompressionPolicy = defaultAmeCompressionPolicy()
+      plain: AmeCompressionPolicy = defaultAmeCompressionPolicy()
+      squeezed: AmeCompressionPolicy = compressedAmeCompressionPolicy()
       encoded: ByteSeq = @[]
       decoded: ByteSeq = @[]
     for i in 0 ..< plaintext.len:
       plaintext[i] = if i < 5000: 4'u8 else: 8'u8
-    encoded = encodeAmeCompressed(plaintext, policy)
+    ## Compressing before encrypting leaks: the ciphertext length reveals how
+    ## well the plaintext compressed. So the default policy does not.
+    check plain.algorithm == aczNone
+    encoded = encodeAmeCompressed(plaintext, plain)
+    check encoded[4] == uint8(ord(aczNone))
+    check decodeAmeCompressed(encoded, plain) == plaintext
+    encoded = encodeAmeCompressed(plaintext, squeezed)
     check encoded[4] == uint8(ord(aczEirRle))
     check encoded.len < plaintext.len
-    decoded = decodeAmeCompressed(encoded, policy)
+    decoded = decodeAmeCompressed(encoded, squeezed)
     check decoded == plaintext
 
   test "one missing chunk is recovered from the group XOR shard":
@@ -435,7 +547,7 @@ suite "AME authority handshake and secure package":
       data: ByteSeq = newSeq[byte](5000)
       plan: DacPackagePlan
       receiver: DacPackageReceiver
-      result: DacPackageResult
+      outcome: DacPackageResult
       i: int = 0
     while i < data.len:
       data[i] = uint8(i mod 251)
@@ -446,75 +558,24 @@ suite "AME authority handshake and secure package":
       if chunk.chunkId != 2'u16:
         receiver.acceptDacPackageChunk(chunk)
     check receiver.repairGroup(plan.repairs[0]).ok
-    result = finishDacPackage(receiver)
-    check result.ok
-    check result.payload == data
+    outcome = finishDacPackage(receiver)
+    check outcome.ok
+    check outcome.payload == data
 
   test "decompression bomb metadata is rejected before Eir decode":
     var
       envelope: ByteSeq = @[byte 'E', byte 'I', byte 'R', byte '1',
         byte ord(aczEirRle), 0, 0, 1, 0, 1, 0, 0, 0, 0]
     expect ValueError:
-      discard decodeAmeCompressed(envelope)
+      discard decodeAmeCompressed(envelope,
+        compressedAmeCompressionPolicy())
 
   test "authority root construction rejects incomplete pinning material":
-    var
-      authority: AmeAuthorityKey = initAmeAuthorityKey("root-guard")
     expect ValueError:
-      discard initAmeAuthorityRoot("", authority.algorithm, authority.publicKey)
+      discard initAmeAuthorityRoot("", [AmeIdentitySigningKey(
+        algorithm: asaEd25519, publicKey: @[byte 1])])
     expect ValueError:
-      discard initAmeAuthorityRoot(authority.name, authority.algorithm, @[])
-
-  test "certificate path refuses unsigned pinned descriptors":
-    var
-      layout: AmeSuiteLayout = handshakeLayout()
-      authority: AmeAuthorityKey = initAmeAuthorityKey("real-root")
-      peer: AmeIdentityKey = initAmeIdentityKey("peer", layout.signatures)
-      descriptor: AmeIdentityCertificate
-      emptyRoot: AmeAuthorityRoot
-      trust: AmePeerTrustResult
-    # a pinned descriptor carries no authority and no authority signature
-    descriptor.subject = peer.subject
-    descriptor.signingKeys = peer.signingKeys
-    descriptor.validFromUnix = 0'i64
-    descriptor.validUntilUnix = high(int64)
-    # a default-constructed root must never match its empty authority field
-    trust = verifyAmeIdentityCertificate(descriptor, emptyRoot, 500'i64)
-    check not trust.ok
-    check trust.err == "pinned authority root is incomplete"
-    # nor may a real root accept an unsigned descriptor
-    trust = verifyAmeIdentityCertificate(descriptor, authority.authorityRoot(),
-      500'i64)
-    check not trust.ok
-    check trust.err == "certificate carries no authority signature"
-
-  test "zero session id is refused by policy instead of raising":
-    var
-      layout: AmeSuiteLayout = handshakeLayout()
-      tier: AmeMaskTier = handshakeTier(layout)
-      authority: AmeAuthorityKey = initAmeAuthorityKey("policy-root")
-      clientKey: AmeIdentityKey = initAmeIdentityKey("client",
-        layout.signatures)
-      serverKey: AmeIdentityKey = initAmeIdentityKey("server",
-        layout.signatures)
-      clientCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, clientKey, 1'i64, 1000'i64)
-      serverCert: AmeIdentityCertificate = issueAmeIdentityCertificate(
-        authority, serverKey, 1'i64, 1000'i64)
-      client: AmeClientHandshake = beginAmeHandshake(64'u64, layout, tier,
-        clientCert, clientKey)
-      server: tuple[ok: bool, state: AmeServerHandshake,
-        peerTrust: AmePeerTrustResult, err: string]
-    client.hello.sessionId = 0'u64
-    server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
-      authority.authorityRoot(), serverCert, serverKey, 500'i64)
-    check not server.ok
-    check server.err == "client hello shape is invalid"
-
-  test "responder state without verified trust cannot accept a finish":
-    var
-      untrusted: AmeServerHandshake
-      accepted: AmeHandshakeResult
-    accepted = acceptAmeHandshake(untrusted, default(AmeClientFinish))
-    check not accepted.ok
-    check accepted.err == "AME responder state carries no verified peer trust"
+      discard initAmeAuthorityRoot("root", [])
+    expect ValueError:
+      discard initAmeAuthorityRoot("root", [AmeIdentitySigningKey(
+        algorithm: asaEd25519, publicKey: @[])])
