@@ -1,6 +1,6 @@
 # Bifrost Exchange Protocols
 
-Nim protocol library for transport, BFX2, DAC, AME2, and FOMKE.
+Nim protocol library for transport, BFX2, DAC, AME, and FOMKE.
 
 ## Names And Abbreviations
 
@@ -14,8 +14,8 @@ Every protocol name in this repo is an abbreviation. Spelled out once, here:
 | AME      | Adaptive Message Encryption            | suite/KEM/protect + live session |
 | FOMKE    | Forward-Only Message Key Extension     | one fresh key per message        |
 | GB3HKDF  | Gimli BLAKE3 Hash Key Derivation Func. | turns one secret into many keys  |
-| TMEAEAD  | Too Much Encryption AEAD               | layered heavy message cipher     |
-| GGAEAD   | Gimli Gimli AEAD                       | compact IoT/game message cipher  |
+| TMEAEAD  | Too Much Encryption AEAD               | standalone layered AEAD          |
+| GGAEAD   | Gimli Gimli AEAD                       | standalone compact AEAD          |
 | BFX2     | Bifrost Exchange format 2              | tagged binary envelopes          |
 +----------+----------------------------------------+----------------------------------+
 ```
@@ -32,6 +32,10 @@ Supporting terms used throughout:
 - `Epoch`: a numbered key generation. A new KEM exchange starts a new epoch.
 - `Lane`: one direction of traffic. Lane 1 is initiator to responder, lane 2 is
   responder to initiator.
+- `Slot`: one position in the session's list of algorithms. A `tier` is a set of
+  bit patterns saying which slots are switched on right now. Every switched-on
+  cipher is applied in turn; every switched-on authenticator contributes to one
+  combined tag.
 
 ## Read This First
 
@@ -59,14 +63,13 @@ Two axes matter:
 
 ```text
 OWNERSHIP (API)
-  app  ->  AmeSession  ->  AME protect/open  ->  optional FOMKE
-                     \->  DAC / TCP stream
+  app  ->  AmeSession  ->  FOMKE ratchet  ->  DAC / TCP stream
 
 WIRE (bytes, outer to inner)
   [stream 4 | DAC1 27/29]
-    -> AME2 header 36
-      -> protected body 12 + nonce + tag + ciphertext
-        -> [optional FOM1 83 + app]
+    -> AME header 34
+      -> FOM1 envelope 22 + tag + ciphertext
+        -> app bytes
 ```
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
@@ -74,13 +77,14 @@ See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes
 ```text
 +----------------------------- DAC1 frame ------------------------------------+
 | DAC header (delivery: session, lane, path-epoch, sequence)                  |
-|  +------------------------- AME2 frame -----------------------------------+ |
-|  | AME header (session, lane tree, sequence, kind, class)                 | |
-|  |  +---------------- protected body ------------------------------------+| |
-|  |  | epoch + nonceLen + tagLen + payLen | nonce | tag | ciphertext      || |
-|  |  |   after AME open -> optional FOM1 (per-message key) -> app bytes   || |
-|  |  +--------------------------------------------------------------------+| |
-|  +------------------------------------------------------------------------+ |
+|  +-------------------------- AME frame ------------------------------------+|
+|  | AME header (session, lane tree, sequence, kind, class)                  ||
+|  |   plain to read, but every byte of it goes into the tag below           ||
+|  |  +------------------- FOM1 envelope -----------------------------------+||
+|  |  | epoch | index | lane | tagLen | ctLen | tag | ciphertext            |||
+|  |  |   opened once -> app bytes. There is no second layer either side.   |||
+|  |  +---------------------------------------------------------------------+||
+|  +-------------------------------------------------------------------------+|
 +-----------------------------------------------------------------------------+
 ```
 
@@ -258,52 +262,136 @@ interoperability, fuzzing, and independent security review.
 
 ## Initial Trust
 
+The handshake settles two things at once: what keys both sides will use, and
+who the other side is. It settles the second one **in private** — an observer
+watching every byte never learns who is talking to whom.
+
 ```text
 Authority
-  +-> signs Client certificate
+  +-> signs Client certificate   (with its WHOLE algorithm stack)
   +-> signs Server certificate
 
-Client                         Server
-  |-- signed Hello + KEM keys -->| verify authority + client proof
-  |<-- signed Hello + KEM reply -| create shared candidate secrets
-  |-- signed transcript Finish ->| verify the complete conversation
-  +========== equal AME epoch ===+
+Client                                              Server
+  |--- Hello: nonce, slot layout, KEM public keys ---->|
+  |         (no identity here -- there is no key yet)  |
+  |                                                    |
+  |<-- Retry: "prove you can receive at that address" -|   optional
+  |--- the same Hello again, carrying the cookie ----->|
+  |                                                    |
+  |<-- Server Hello: nonce, KEM answer, [sealed block]-|
+  |         the sealed block holds the server's        |
+  |         certificate and its proof                  |
+  |                                                    |
+  |--- Finish: [sealed block] ------------------------>|
+  |         the client's certificate, its proof, and   |
+  |         a hash of the whole conversation           |
+  +================ equal AME epoch ===================+
 ```
 
-An epoch is returned only after the authority signature, validity period, peer
-key proof, exact AME layout and initial tier, KEM exchange, and final transcript
-proof all pass.
+**Def. 1 — sealed block.** Ciphertext under a key both sides work out from the
+KEM answer plus everything said so far. It exists from the server hello
+onwards. Nothing before it needs to be secret; nothing after it is not.
+
+**Def. 2 — cookie.** A short tag the server computes from the sender's address
+using a secret only the server holds. The server keeps no record of issuing
+one: when the cookie comes back it simply recomputes the tag. Someone who
+cannot receive at the address they claimed never gets a valid cookie, so the
+expensive work — key encapsulation, signature checks — only ever runs for a
+peer that is really there.
+
+An epoch is returned only after all of this passes: every authority proof (one
+per authority slot, not just the first), the certificate serial against the
+revocation list, the validity window, the local clock being close enough to
+that window to be worth trusting, the peer's own proof over the transcript,
+the exact slot layout and initial tier, the KEM exchange, and the final
+transcript hash.
+
+### What each side can and cannot do
+
+| | Client hello | Server hello | Finish |
+|---|---|---|---|
+| Who sent it | not stated | sealed | sealed |
+| Readable by an observer | yes | nonce + KEM answer only | nothing |
+| Costs the server real work | no (cookie first) | yes | yes |
+| Authenticated | no — it cannot be | yes | yes |
+
+The client hello is deliberately unauthenticated. There is nothing to
+authenticate it *with* yet, which is exactly why the cookie sits in front of
+the work it would otherwise trigger.
+
+### Revocation
+
+A certificate carries a **serial**: a number naming that certificate, not its
+holder. Revoking a serial takes one certificate out of use and leaves the
+subject free to be issued another. Revoking by name instead would burn the
+name forever.
+
+```nim
+var cert = issueAmeIdentityCertificate(authority, identity,
+  serial = 11'u64, validFromUnix = 100'i64, validUntilUnix = 1000'i64)
+var trust = verifyAmeIdentityCertificate(cert, root, nowUnix,
+  revokedSerials = [7'u64, 9'u64])
+```
+
+### Running it over a socket
+
+```nim
+var server = initAmeTcpServerConfig(supportedPaths, serverCert, serverKey)
+var outcome = ameTcpServerHandshake(sock, server, remoteAddr, nowUnix)
+if outcome.ok:
+  discard sealAmeTcpFrame(outcome.connection, payload)
+```
+
+```nim
+var client = initAmeTcpClientConfig(layout, tier, clientCert, clientKey)
+client.root = root
+var outcome = ameTcpClientHandshake(sock, client, sessionId = 1'u64,
+  nowUnix = nowUnix)
+```
+
+`nowUnix` is supplied by the caller on purpose. A library that silently reads
+an unset system clock and judges certificates against it is worse than one
+that makes the caller say where the time came from.
 
 ## Secure Packages
 
 ```text
 Sender
-  plaintext -> bounded Eir compression -> AME protect -> DAC chunks
-            -> XOR recovery bytes + Eir parity check
+  plaintext -> optional compression -> AME seal (one tag)
+            -> DAC chunks + parity over the SEALED bytes
 
 Receiver
   chunks -> local one-loss recovery -> exact repair fallback
-         -> BLAKE3 digest -> AME open -> bounded Eir decode -> plaintext
+         -> BLAKE3 digest -> AME open -> bounded decode -> plaintext
 ```
+
+Note the order: seal first, then cut up and add repair data. The repair layer
+works on ciphertext and needs no key at all, and the one tag over the whole
+package is checked once, at the end, on bytes already put back together.
+
+Compression is **off** by default. Compressing before encrypting leaks: the
+ciphertext is as long as the compressed input, so its length says how well the
+plaintext compressed — and if an attacker can get their own text placed beside
+a secret, a shorter result means the two matched. Ask for it by name, and only
+when no part of the payload is attacker-influenced:
 
 ```nim
 var plan = planAmeSecurePackage(senderAuth, packageId, plaintext,
-  cleanLanDacDefaults())
+  cleanLanDacDefaults(), compressedAmeCompressionPolicy())
 var incoming = initDacPackageReceiver(plan.package.manifest)
 
 for chunk in plan.package.chunks:
   incoming.acceptDacPackageChunk(chunk)
 
-var result = finishAmeSecurePackage(receiverAuth, incoming, plan.compression)
+var restored = finishAmeSecurePackage(receiverAuth, incoming, plan.compression)
 ```
 
 Applications transmit the manifest, chunks, repair hints, repair chunks, and
 commit with their own socket or event loop. Protocol state stays deterministic
 and can be tested without a live network.
+## AME
 
-## AME2
-
-AME2 exchanges exact ordered algorithm paths rather than security tiers.
+AME exchanges exact ordered algorithm paths rather than security tiers.
 
 | Family | Identifier | Slots | Selection |
 |---|---:|---:|---:|
@@ -359,29 +447,34 @@ are already active.
 
 ## FOMKE
 
-FOMKE (Forward-Only Message Key Extension) adds one fresh key per message on
-top of one exact AME KEM result. "Forward-only" means keys can only be derived
-forward, never backward: after a key is used, it and everything that could
-recreate it are erased. Stealing today's state therefore never decrypts
-yesterday's messages.
+FOMKE (Forward-Only Message Key Extension) is **the** thing that protects a
+payload once the handshake is done. There is no second wrapper around it and
+none inside it: a frame is encrypted exactly once.
+
+"Forward-only" means keys can only be derived forward, never backward. After a
+key is used, it and everything that could recreate it are erased. Taking
+today's state therefore never opens yesterday's messages. ʕ•́ᴥ•̀ʔっ♡
 
 ### How The FOMKE Algorithm Works
 
-Step 1 - root. One shared secret from one active AME KEM slot goes through
-GB3HKDF together with the epoch number, the exact encoded AME algorithm path,
-and the chosen slot. The result is a 64-byte root. The shared secret copy is
-erased.
+**Step 1 — root.** *Every* shared secret the exchange produced, for every KEM
+slot the tier switches on, goes through GB3HKDF together with the epoch
+number, the KEM path, the slot layout, the tier, and the handshake transcript.
+The result is a 64-byte root; the secrets are erased.
 
-Step 2 - lane split. The root is derived into two independent 64-byte chain
-keys, one per direction, by including the lane number in the derivation. Then
-the root itself is erased. Lane 1 always carries initiator-to-responder
-traffic, lane 2 the reverse, so both sides agree on the mapping without
-negotiation.
+Using every slot is the point. A tier that names Kyber *and* X25519 but
+derived from one of them would be a hybrid in name only — breaking the single
+contributing algorithm would be enough.
 
-Step 3 - the chain. Each send advances the sender's outbound lane one step.
-One GB3HKDF call turns the current chain key `CK(i)` into the next chain key
-plus two one-time message key blocks; the sender keeps the block for its lane
-and erases the other:
+**Step 2 — lane split.** The root becomes two independent 64-byte chain keys,
+one per direction, by including the lane number in the derivation. Then the
+root itself is erased. Lane 1 always carries initiator-to-responder traffic,
+lane 2 the reverse, so both sides agree without negotiating.
+
+**Step 3 — the chain.** Each send advances the sender's outbound lane one
+step. One GB3HKDF call turns the current chain key `CK(i)` into the next chain
+key plus one 32-byte message key per direction; the sender keeps its own and
+erases the other:
 
 ```text
 lane 1 (initiator -> responder)          lane 2 (responder -> initiator)
@@ -395,29 +488,51 @@ CK1(1) --GB3HKDF--> CK1(2) + MK1(1)      seal message index 0 on lane 2
               seal message index 1 on lane 1
 ```
 
-Every derivation input includes a version label (`FOMKE-CHAIN-BLOCK-v1` or the
-GGAEAD variant), the lane, the epoch, and the index, so no two positions in
-any chain can ever produce the same bytes. The message key block `MK` is 160
-bytes for TMEAEAD or 64 bytes for GGAEAD (see below). The chain key is 64
-bytes at every step.
+Every derivation input carries a version label, the lane, the epoch, and the
+index, so no two positions in any chain can produce the same bytes.
 
-Step 4 - nonce. The 24-byte nonce is not random. It is derived by GB3HKDF from
-the message key block itself plus epoch, index, and lane. Because the key is
-used exactly once, the deterministic nonce is also used exactly once, and a
-broken random generator cannot cause nonce reuse.
+**Step 4 — one expansion, sliced.** The 32-byte message key is expanded, in a
+single GB3HKDF call, into the whole block the slot construction needs:
 
-Step 5 - seal. The plaintext is encrypted with TMEAEAD or GGAEAD under the
-one-time key and nonce. The authenticated associated data is a version label
-plus epoch, index, lane, and the caller's own binding bytes - inside the AME session that
-binding is the carrier, session, all three lane ids, and both sequence
-numbers. After sealing, the message key is erased. The wire bytes are the FOM1
-envelope shown in the wire-format section.
+```text
+[ nonce ][ key for cipher slot 0 ][ key for cipher slot 1 ][ mac keys... ]
+```
 
-Step 6 - open (transactional). The receiver never mutates its live state on a
+The nonce sits at the front and **never travels**. Both sides derive the same
+block from the same ratchet step, so sending it would repeat something the
+receiver already holds. Because the message key is used exactly once, the
+derived nonce is used exactly once, and a broken random generator cannot cause
+nonce reuse.
+
+**Step 5 — seal.** The payload is XORed through every switched-on cipher in
+turn, and the tag is the XOR of every switched-on authenticator:
+
+```text
+plaintext --XOR slot 0--> --XOR slot 1--> ciphertext
+                                             |
+                        MAC slot 0 --> tag A +
+                        MAC slot 1 --> tag B +--> XOR --> the one tag on wire
+```
+
+Undoing the ciphers is the same walk again, because XOR is its own inverse. An
+attacker has to break **every** switched-on cipher, not the weakest one, and
+forging needs every authenticator at once.
+
+Encrypt first, then authenticate the ciphertext. A receiver therefore checks
+the tag before it decrypts anything, and never touches attacker-chosen
+plaintext. The tag covers a label, the layout, the tier, the tag length, the
+message's epoch/index/lane, the caller's binding bytes (the whole AME header),
+and the ciphertext.
+
+This is the same construction the at-rest package sealer uses — one piece of
+code, in `ame/level1/tier_aead.nim`, so there is exactly one thing to read and
+exactly one to get right.
+
+**Step 6 — open (transactional).** The receiver never mutates live state on a
 bad message. It clones the state, advances the clone's inbound lane up to the
-received index, verifies the authentication tag, and only then replaces the
-live state with the clone. Verification happens before any decryption output
-is released.
+received index, verifies the tag, and only then swaps the clone in. A forged
+message costs one derivation and changes nothing — it cannot burn ratchet
+positions or fill the skipped-key cache.
 
 Out-of-order and replay handling:
 
@@ -431,135 +546,62 @@ receive index 3 again     -> not in cache, not derivable backward -> rejected
 receive index 3 + maxSkip -> gap too large -> rejected (default 64, cap 4096)
 ```
 
-Step 7 - epoch upgrade. An AME tier transition prepares candidate chains for
-epoch `n+1` next to the live epoch `n` chains. Data is paused; the FKU2 commit
-(wire-format section) must match request id, epochs, target tier, KEM exchange
-mask, slot generations, both lane counters, and a confirmation tag derived
-from the candidate chains. Only then do the candidates atomically replace the
-live chains. On any mismatch the candidates are erased and epoch `n` continues.
+**Step 7 — epoch upgrade.** An AME tier transition prepares candidate chains
+for epoch `n+1` beside the live epoch `n` chains. The new root is derived from
+**both** the current chain keys and the fresh KEM secrets: mixing the old keys
+keeps out an attacker who only saw the new exchange, and mixing the new
+secrets lets a session recover from a past compromise, because the attacker
+never saw the new KEM result.
+
+Data is paused; the FKU1 commit must match request id, epochs, target tier,
+KEM exchange mask, slot generations, both lane counters, and a confirmation
+tag derived from the candidate chains. Only then do the candidates atomically
+replace the live chains, and the tier changes with them. On any mismatch the
+candidates are erased and epoch `n` continues.
+
+### Preparing ahead, and what it costs ₊˚⊹♡
+
+A sender may prepare a bounded run of future slots off the latency-sensitive
+path. This is **off by default**, and the reason is worth stating plainly:
+
+> A filled cache holds the key material for the next N messages in memory.
+> Forward secrecy for messages already **sent** is unaffected. But a machine
+> seized while the cache is full gives up the next N messages that had not
+> gone out yet.
+
+Turn it on when latency matters and the machine cannot be taken; leave it off
+otherwise. `fomkePreparedSecretBytes` reports exactly how much secret material
+a cache is holding, so the trade is countable rather than guessed at.
+
+```nim
+setAmeFomkePregeneration(connection, enabled = true, messageCount = 8)
+```
 
 ### The Building Blocks
 
-`GB3HKDF` (Gimli BLAKE3 Hash Key Derivation Function) is the protocol name for
-Bifrost's domain-separated, XOR-combined Gimli/BLAKE3 KDF. It is not RFC 5869
-HKDF. Each round computes one Gimli sponge branch and one BLAKE3 branch over
-the same length-framed input and XORs them, so an attacker must break both
-hash constructions to learn the output. It supports configurable rounds
-(default 3), indexed 32-byte output blocks, multiple ordered secret inputs,
-and an optional bounded memory-mixed mode for password-style hardening.
+`GB3HKDF` (Gimli BLAKE3 Hash Key Derivation Function) is Bifrost's
+domain-separated, XOR-combined Gimli/BLAKE3 KDF. It is not RFC 5869 HKDF. Each
+round computes one Gimli sponge branch and one BLAKE3 branch over the same
+length-framed input and XORs them, so an attacker must break both hash
+constructions to learn the output. It supports configurable rounds (default
+3), indexed 32-byte output blocks, multiple ordered secret inputs, and an
+optional bounded memory-mixed mode for password-style hardening.
 
-`TMEAEAD` (Too Much Encryption AEAD) is the heavy default cipher. Its 160-byte
-message key block is five independent 32-byte keys. XChaCha20, AES-CTR, and
-Gimli streams are composed over the payload. A nonce-specific Poly1305 tag is
-expanded and XOR-combined with an independent 32-byte Gimli tag.
-Authentication is verified before decryption.
+The ciphers and authenticators themselves come from the session's **slot
+layout**, not from anything FOMKE chooses. Switching a second cipher on is a
+layout decision, and it costs what the benchmark says it costs
+(`fomke_seal_1slot` against `fomke_seal_2slot`).
 
-`GGAEAD` (Gimli Gimli AEAD) is the smaller IoT/game-oriented choice. Its
-64-byte block is one 32-byte Gimli stream key and one independent 32-byte
-GimliHMAC key. The 32-byte HMAC covers a domain-separated, length-framed AAD,
-nonce, and ciphertext transcript. FOMKE therefore derives 64 message-key bytes
-per step for GGAEAD instead of 160 for TMEAEAD.
-
-Short-message senders may prepare a bounded sequence of future FOMKE slots.
-Preparation derives each one-time message key and nonce without advancing the
-live chain, then generates AAD-independent Gimli and TMEAEAD XChaCha streams in
-parallel:
-
-```text
-ordinary x86 build       1 message  -> scalar
-SSE2 / ARM NEON build    4 messages -> one 4-lane batch, scalar tail
-AVX2 server build        8 messages -> one 8-lane batch, then 4, then scalar
-```
-
-No SIMD lane is filled and discarded. A partial tail runs through the narrower
-backend. Prepared TMEAEAD only computes its AAD-bound AES counter stream and both
-authentication branches on the send path. AES-CTR selects AVX2 for complete
-32-byte groups, SSE2/NEON for complete 16-byte groups, and scalar code for a
-short tail. GGAEAD only needs the prepared Gimli bytes XORed with the payload
-before computing GimliHMAC. Authentication is never pre-accepted or skipped.
-
-The ordinary x86 tasks do not define `sse2` or `avx2`, so their prepared backend
-is scalar. `nimble testFomkeServerSimd` and `nimble benchmarksServerSimd` build
-an AVX2 server profile and require an AVX2-capable host. AME sessions use TMEAEAD by
-default. Pre-generation defaults are deliberately cipher-specific:
-
-```toml
-[fomke]
-tmeAeadPregeneration = false
-ggAeadPregeneration = true
-fomkePregenerationMessages = 8
-fomkePregenerationPayloadBytes = 256
-```
-
-TMEAEAD therefore keeps future composite key and stream material out of memory
-unless the user opts in. GGAEAD favors low-latency game/IoT traffic by default.
-The setting is copied into each session by `enableAmeFomke`; it can be
-overridden and securely cleared per connection:
-
-```nim
-enableAmeFomke(server, frResponder, 0, messageCipher = fmcGgAead)
-setAmeFomkePregeneration(server, false)
-```
-
-`buildAmeFomkeSendCache` performs a synchronous deep-copy and build. For worker
-threads, call `snapshotAmeFomkeSendState` under the connection lock, run
-`prepareFomkeSendCache` on that detached state, erase the snapshot, then call
-`installAmeFomkeSendCache` under the lock. Installation rejects and erases a
-cache if the live epoch, direction, cipher, chain key, next index, or configured
-policy changed. `ameFomkeSendCacheNeedsRefill` reports the half-empty threshold
-for a caller-owned worker/synchronization loop. Losing an uninstalled cache
-wastes work but does not advance the live ratchet.
-
-The default 8-message, 256-byte cache contains 7,040 secret bytes for TMEAEAD or
-3,776 for GGAEAD, plus sequence/object allocation overhead. Each prepared stream
-is bound to its exact cipher subkey and nonce before use. Cache dimensions are
-bounded to 4,096 messages and 16 MiB of prepared stream bytes. KEM upgrades,
-connection teardown, and explicit cache clearing erase all stored keys, nonces,
-chain snapshots, and stream bytes.
-
-```nim
-var alice = initFomkeFromAme(aliceExchange, 0, frInitiator)
-var bob = initFomkeFromAme(bobExchange, 0, frResponder)
-
-var message = sealFomkeMessage(alice, @[byte 1, 2, 3])
-var opened = openFomkeMessage(bob, message)
-doAssert opened.ok
-```
-
-AME sessions default to TMEAEAD. Select GGAEAD when enabling its forward-only inner
-message layer on both peers:
-
-```nim
-enableAmeFomke(sender, frInitiator, 0, messageCipher = fmcGgAead)
-enableAmeFomke(receiver, frResponder, 0, messageCipher = fmcGgAead)
-```
-
-The selected cipher is stored in FOMKE checkpoints and domain-separates chain
-blocks, nonces, message AAD, and KEM-upgrade confirmations. It is connection
-configuration, not an unauthenticated per-packet switch, so both peers must use
-the same value. Version-1 checkpoints decode as TMEAEAD.
-
-`enableAmeFomke` places FOMKE inside authenticated AME data frames. Later AME
-KEM exchanges automatically prepare a FOMKE candidate. `EpochReady` commits it
-only when request id, epochs, exact MSB-first mask, slot generations, both lane
-counters, and the candidate confirmation tag agree. Data is paused while the
-candidate is pending.
-
-FOMKE, GB3HKDF, TMEAEAD, and GGAEAD are Bifrost-specific constructions. Keep
-protocol versions domain-separated and obtain independent cryptographic review
-before using them as a substitute for a standardized, reviewed secure-messaging
-protocol.
-
-CHUNKYAEAD is Bifrost's chunked file construction. It preserves the existing
-`CHUNKY01` file format while owning its transform selection, fixed-width keys,
-24-byte base nonce, threaded chunk processing, authentication, and BLAKE3/Gimli
-tree hashing. Tyr supplies only the AES, XChaCha20, Gimli, and hash primitives.
-
+`TMEAEAD` and `GGAEAD` remain in the library as standalone AEAD primitives
+with their own tests and entry points. FOMKE no longer uses them: the slot
+construction generalises what they did — TMEAEAD is essentially a two-cipher,
+two-authenticator layout — so expressing it as a layout removes the choice
+from the protocol and leaves it where all the other algorithm choices live.
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `src/protocols/ame/` | Suite/KEM/protect, AME2 wire, session, handshake, secure package |
+| `src/protocols/ame/` | Suite/KEM/protect, AME wire, session, handshake, secure package |
 | `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOM1 wire |
 | `src/protocols/tmeaead/` | Bifrost five-key TMEAEAD construction |
 | `src/protocols/ggaead/` | Bifrost compact GGAEAD construction |
@@ -590,38 +632,42 @@ tree hashing. Tyr supplies only the AES, XChaCha20, Gimli, and hash primitives.
 
 ## Wire Formats: Low-Level View
 
-Four magic prefixes identify the framing layers after the AME fold:
+Every magic is **three letters plus one version byte**, so the first four
+bytes of any layer read as a name and a number:
 
 ```text
-DAC1  -> transport and repair framing            (dac/level0/framing.nim)
-AME2  -> routing header + protected body payload (ame/level2/wire.nim, session.nim)
-FOM1  -> forward-only per-message envelope       (fomke/level2/wire.nim)
-FKU2  -> tier-bound AME/FOMKE upgrade confirmation (fomke/level2/wire.nim)
+DAC1  -> transport and repair framing              (dac/level0/framing.nim)
+AME3  -> routing header, then one FOMKE envelope   (ame/level2/wire.nim)
+FOM1  -> the message envelope: header, tag, ct     (fomke/level2/wire.nim)
+FKU1  -> tier-bound AME/FOMKE upgrade confirmation (fomke/level2/wire.nim)
 ```
 
-Handshake records use separate magics and are **not** AME2-wrapped until epoch
-keys exist:
+Handshake records travel as ordinary AME frames with a handshake packet kind,
+because there are no session keys yet to protect them with:
 
 ```text
-AMI1  -> identity certificate / pinned descriptor
-AMC1  -> client hello (layout + initial tier + offer + proof)
-AMS1  -> server hello (reply + proof)
-AMF1  -> client finish (transcript + proof)
-ASP1  -> secure package detached protect shape
+AMC1  -> client hello   (packet kind 0x0C)
+AMR1  -> hello retry    (packet kind 0x0D)  -- the cookie challenge
+AMS1  -> server hello   (packet kind 0x0E)
+AMF1  -> client finish  (packet kind 0x0F)
+ASP1  -> secure package, for bytes that sit still somewhere
 ```
 
 All multi-byte integers below are little-endian. `u8/u16/u32/u64` are unsigned
 integers of 1/2/4/8 bytes. Offsets start at 0 for that layer.
-`LF(n)` means a length-framed field: `u32 len` + `n` bytes = **4 + n**.
 
-### Two phases
+### One layer of encryption, not two
+
+**Def. 3 — the frame body.** After the handshake, an AME frame's payload is
+one FOMKE envelope. Nothing wraps that envelope and nothing sits inside it but
+the application's own bytes. A frame is encrypted exactly once.
 
 ```text
-PHASE A — first key exchange (no epoch keys yet)
-  [optional TCP stream 4+body]  ->  bare AMC1 / AMS1 / AMF1
+PHASE A -- the handshake (no session keys yet)
+  [stream 4 | DAC1] -> AME3 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
 
-PHASE B — after epoch exists
-  [stream 4 | DAC1] -> AME2 -> protected body (AME protect) -> [optional FOM1]
+PHASE B -- after the handshake
+  [stream 4 | DAC1] -> AME3 header -> FOM1 envelope -> plaintext
 ```
 
 ### TCP/TLS stream frame
@@ -637,8 +683,8 @@ Total = 4 + Len
 
 ### DAC1 Frame (Data Adaptive Connection)
 
-Optional outermost delivery shell. Stage-blind: does not know handshake vs live
-crypto. Adapts body length, chunks, ACK, and repair only.
+Optional outermost delivery shell. Stage-blind: it does not know handshake
+from live traffic. It adapts body length, chunks, ACK, and repair only.
 
 ```text
 Base header = 27 B   (BodyLen = u16)
@@ -651,91 +697,109 @@ Extended    = 29 B   (BodyLen = u32, flag bit 8)
 +-----+---+---+----+---------+-----+-----+-----+-------+------+
 ```
 
-### AME2 Frame (Adaptive Message Encryption)
+### AME Frame — fixed **34 B**
 
-Fixed header is **36 B**. Format version is **2**. For live data and control,
-the payload is one **protected body** (no separate AME protected body magic).
+Magic is three bytes, `"AME"`; the version byte after it is **3**.
 
 ```text
-offset   0      4     6      7       8         16       20        24      28      32        36
-         +------+-----+------+-------+---------+--------+---------+-------+-------+---------+---------+
-         | AME2 | Ver | Kind | Class | Session | RootLn | ParentLn| Lane  | Seq   | PayLen  | Payload |
-         | 4B   | u16 | u8   | u8    | u64     | u32    | u32     | u32   | u32   | u32     | n bytes |
-         +------+-----+------+-------+---------+--------+---------+-------+-------+---------+---------+
-Total AME2 = 36 + PayLen
+offset  0     3    4     5      6        14      18       22     26     30      34
+        +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
+        | AME |Ver | Kind|Class | Session|RootLn |ParentLn| Lane | Seq  |PayLen | Payload |
+        | 3B  |u8  | u8  | u8   | u64    |u32    |u32     | u32  | u32  |u32    | n bytes |
+        +-----+----+-----+------+--------+-------+--------+------+------+-------+---------+
+Total = 34 + PayLen
 ```
+
+The header is in the clear — a receiver must read it before it knows which
+keys to reach for. It is still **authenticated**: every byte above goes into
+the tag over the payload, so a header edited in flight makes the body fail to
+open.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
-`0x07` LaneData, plus agreement/ping kinds.
+`0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records.
 
-### AME protected body (AME2 payload)
-
-Epoch, nonce, tag, and ciphertext sit directly in the AME2 payload. Header is
-**12 B** (no nested magic).
+### FOM1 Message — header **22 B**
 
 ```text
-offset   0       4        6        8        12       12+NL    12+NL+32
-         +-------+--------+--------+--------+--------+--------+-------------+
-         | Epoch | NonceLn| TagLen | PayLen | Nonce  | AuthTag| Ciphertext  |
-         | u32   | u16    | u16    | u32    | NL     | 32     | n           |
-         +-------+--------+--------+--------+--------+--------+-------------+
-
-Total = 12 + NL + 32 + n
-NL = sum of active cipher nonces (default tier: XChaCha20 only -> NL = 24)
-Tag always 32 (ameProtectionAuthTagLen)
-Ciphertext length = inner plaintext length (length-preserving)
+offset  0     3    4       8            16    17     18      22
+        +-----+----+-------+------------+-----+------+-------+--------+------------+
+        | FOM |Ver | Epoch | Index      |Lane |TagLen|CiphLen| AuthTag| Ciphertext |
+        | 3B  |u8  | u32   | u64        |u8   |u8    |u32    | T bytes| n bytes    |
+        +-----+----+-------+------------+-----+------+-------+--------+------------+
+Total = 22 + T + n     (T is 16, 24 or 32; n equals the plaintext length)
 ```
 
-Default protected-body overhead with NL=24: **12 + 24 + 32 = 68 B** before
-inner bytes.
+Three things are deliberately **absent**:
 
-AAD label is `AME-AAD` plus carrier id, the full encoded AME2 header, and when
-DAC-carried: `DAC1` plus DAC kind/flags/session/lane/epoch/seq.
+- **No nonce.** Both sides derive it from the same ratchet step, so sending it
+  would only repeat something the receiver already holds. That is 24 bytes per
+  message saved and one fewer field an attacker can influence.
+- **No nonce-length field.** Nothing to describe.
+- **Tag length is one byte, and it is checked, not obeyed.** The receiver
+  compares it against what its own session agreed. If it trusted the number in
+  the message, a sender could shrink its tag to one byte and forge with a
+  1-in-256 guess. The byte is written down only so a decoder can walk the
+  frame without holding session state.
 
-### FOM1 Message (optional inner ratchet)
+What the tag covers: a label, the slot layout, the tier, the tag length, the
+message's epoch/index/lane, the caller's binding bytes (which include the
+whole AME header), and the ciphertext. Encrypt first, then authenticate the
+ciphertext — so a receiver checks the tag before it decrypts anything.
 
-When FOMKE is enabled, AME ciphertext opens to one FOM1 envelope, not raw app
-bytes.
+### FKU1 Commit (FOMKE upgrade) — fixed **108 B**
 
-```text
-Header fixed = 27 B
-FOM1 total   = 83 + P     (P = app plaintext length; nonce 24 + tag 32 fixed)
-```
+Travels inside an authenticated EpochReady frame.
 
-FOMKE AAD label: `AME-FOMKE-AAD-v1` plus carrier, session, lane tree, sequences.
-
-### FKU2 Commit (FOMKE upgrade) - fixed **111 B**
-
-Travels inside authenticated AME control frames (EpochReady body).
-
-### Size cheat sheet (default tier, NL=24)
+### Size cheat sheet (default tier, 32-byte tag)
 
 | Item | Bytes |
 |---|---:|
 | Stream header | 4 |
 | DAC1 base / ext | 27 / 29 |
-| AME2 header | 36 |
-| Protected body fixed+nonce+tag | 68 |
-| FOM1 fixed+nonce+tag | 83 |
-| FKU2 | 111 |
-| TCP data OH, no FOMKE | **4+36+68+P = 108+P** |
-| TCP data OH, FOMKE | **4+36+68+83+P = 191+P** |
-| DAC data OH, no FOMKE | **27+36+68+P = 131+P** |
-| DAC data OH, FOMKE | **27+36+68+83+P = 214+P** |
+| AME header | 34 |
+| FOM1 header + tag | 22 + 32 = 54 |
+| FKU1 | 108 |
+| **TCP data overhead** | **4 + 34 + 54 + P = 92 + P** |
+| **DAC data overhead** | **27 + 34 + 54 + P = 115 + P** |
 
-Later tier/rekey control frames use the same AME2+protected-body shell; the
-inner body is Offer, Reply, or tier-bound EpochReady (23 B, or 134 B with FKU2).
+With a 16-byte tag the last two become **76 + P** and **99 + P**.
 
-### Initial handshake bodies (bare)
+For comparison, the previous format carried a 36-byte AME header, a 12-byte
+protected body header, a 24-byte nonce, a 32-byte outer tag, and *then* a
+27-byte FOM header with its own 24-byte nonce and 32-byte tag: **187 bytes**
+of overhead per frame, with the payload encrypted twice. The same frame now
+costs **88 bytes** and is encrypted once.
+
+### Handshake records
 
 ```text
-AMI1 cert  = variable (identity strings + PK + authority sig)
-AMC1 hello = magic+ver+session + LF(nonce32) + LF(layout) + LF(initialTier) + LF(cert) + LF(offer) + LF(proof)
-AMS1 hello = magic+ver + LF(nonce32) + LF(cert) + LF(reply) + LF(proof)
-AMF1 finish= magic+ver + requestId + LF(transcriptHash) + LF(proof)
+AMC1 hello  = "AMC" | ver | session u64 | nonce (32, fixed, no length field)
+                    | u16+layout | u16+tier | u16+cookie | u32+offer
+AMR1 retry  = "AMR" | ver | session u64 | u16+cookie
+AMS1 hello  = "AMS" | ver | nonce (32) | u32+KEM reply
+                    | tagLen u8 | tag (tagLen bytes) | u32+sealed block
+AMF1 finish = "AMF" | ver | tagLen u8 | tag (tagLen bytes) | u32+sealed block
 ```
 
-Offer/reply sizes grow with selected KEM public keys and ciphertexts
+Fixed-size fields carry no length: the nonce is always 32 bytes, so writing
+"32" in front of it every time would say nothing. Variable fields use `u16`
+where the field is small by construction and `u32` only where a post-quantum
+key can genuinely run to megabytes.
+
+The **sealed block** in the last two is ciphertext. Opened, it holds:
+
+```text
+server: certificate body | u32 count + authority proofs | u32 count + proofs
+client: certificate body | u32 count + authority proofs
+                         | u32+transcript hash | u32 count + proofs
+```
+
+The certificate body goes in raw rather than length-framed, because it is the
+exact byte string the authority signed. Wrapping it in another length would
+mean the bytes that verified and the bytes that were stored were not the same
+thing.
+
+Offer and reply sizes grow with the selected KEM public keys and ciphertexts
 (FireSaber pk 1312 / ct 1472; X25519 pk 32 / sender pk 32).
 
 ## Issue Playbook
@@ -752,30 +816,55 @@ Offer/reply sizes grow with selected KEM public keys and ciphertexts
   key agreement. Pass `rekeyMask` when you want forward secrecy to advance.
 - `AmeAuthorityRoot` must come from `initAmeAuthorityRoot`. A hand-filled root
   left at its defaults has an empty authority name and is refused.
+- **"FOMKE epoch or sender lane mismatch" right after setting up a session**
+  almost always means the endpoint role was set *after* `initAmeSession`. The
+  session starts its ratchet immediately and reads the role off the auth
+  package, so the role has to be right in `initAmeAuthPackage` — assigning
+  `auth.endpointRole` afterwards changes nothing about which lane it sends on.
+- **"FOMKE KEM upgrade is pending"** when sealing means an upgrade was staged
+  before this side finished sending. A responder must call
+  `stageAmeSessionFomkeUpgrade` *after* its reply frame has been sealed; the
+  carrier entry points already do this in the right order.
+- **"FOMKE upgrade confirmation mismatch"** means the two endpoints staged at
+  different lane positions. Deliver outstanding messages and empty the
+  skipped-key cache before starting a transition.
+- **"certificate proof count does not match the pinned root"** means the
+  certificate carries fewer proofs than the authority has slots — usually a
+  certificate issued by an older, single-algorithm authority. Reissue it.
+- **"local clock is too far outside the identity validity window"** means this
+  machine's clock is more than a day outside the certificate's window. Fix the
+  clock; the library will not guess.
+- **"AME handshake step number is wrong"** means a record arrived where a
+  different one belonged. Records carry their step in the frame sequence, and
+  a mis-ordered handshake is refused before it is parsed.
 - Data triggers count successful plaintext transfer bytes, not retry bytes.
 - Tier changes and rekeys use authenticated Offer -> Reply -> EpochReady frames.
-- FOMKE rekeys require matching lane counters and an empty skipped-key cache;
-  deliver outstanding messages before starting an AME/FOMKE epoch transition.
 - AVX2 tasks produce host-specific binaries. Use the ordinary tasks for x86
   clients or servers that may run on CPUs without AVX2.
 - Peer trust is supplied by a caller-owned certificate or provisioning verifier.
 - Initial authority trust uses `beginAmeHandshake`, `answerAmeHandshake`,
-  `finishAmeHandshake`, and `acceptAmeHandshake`.
+  `finishAmeHandshake`, and `acceptAmeHandshake`; over a socket, use
+  `ameTcpClientHandshake` and `ameTcpServerHandshake`, which run the whole
+  exchange including the cookie retry.
 - Package repair uses XOR recovery for one loss and exact-chunk fallback for
   wider loss; Eir parity verifies recovered groups.
 - Native TLS accepts only TLS 1.3, X25519, Ed25519, SHA-256, and
   `TLS_CHACHA20_POLY1305_SHA256`; unsupported suites fail closed.
-- Native TLS client trust is pinned-root only. Public operating-system trust
-  stores and RSA/ECDSA certificate paths remain unsupported.
-- TLS record compression is intentionally absent. Compress HTTP content before
-  encryption when the application negotiates a standard content encoding.
 
-The benchmark task keeps its executable under `--out:build/tools/...`.
-The default `nimble build` command is not a supported artifact path here; use
-`nimble buildLib`.
+### Standing risks
 
-`nix flake check path:$PWD` validates the package build, reproducible TLS
-transport checks, and NixOS module rules.
+- **The primitives are homemade.** GB3HKDF, the XOR-combined multi-MAC tag,
+  and the standalone TMEAEAD/GGAEAD constructions have no external analysis.
+  The constructions *around* them are careful — domain separation everywhere,
+  encrypt-then-MAC, transcript binding, constant-time comparison on secrets,
+  transactional state, secrets wiped — but layering discipline cannot rescue a
+  primitive that turns out to be weak. This is the thing to keep front of
+  mind, above any specific item above.
+- **Metadata is visible by design.** The AME header is authenticated but not
+  encrypted: session id, lane ids, sequence and length are readable by anyone
+  on the path. Identities are not, but traffic patterns are.
+- **Preparing send slots ahead weakens forward secrecy for messages not yet
+  sent.** It is off by default for that reason. See the FOMKE section.
 # Direct LAN Messenger
 
 Bifrost includes matching Android and Nim-WebUI desktop clients. They exchange

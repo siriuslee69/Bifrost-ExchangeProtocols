@@ -7,7 +7,7 @@
 | Command                   | Coverage                                      |
 +---------------------------+----------------------------------------------+
 | nimble test               | full Nim suite                               |
-| nimble testFomke          | GB3HKDF, TMEAEAD, FOMKE, and AME session composition |
+| nimble testFomke          | GB3HKDF, standalone AEADs, the FOMKE ratchet, its forward-secrecy properties, and AME session composition |
 | nimble testChunkyAead    | CHUNKYAEAD chunk encryption, authentication, and hash tree |
 | nimble testDac            | DAC defaults, wire codecs, ACK pacing, repair, scramble, link loop, link table, fuzz |
 | nimble testDacFlag        | -d:bifrostDac=off keeps the wire and refuses the adaptive layer |
@@ -54,11 +54,36 @@ AME
   -> malformed and bounded exchange parsing
   -> atomic tier transitions and KEM slot add/rekey roundtrips
   -> external verified-trust handoff
-  -> protected payload open/seal
+  -> at-rest seal/open, and the wrong tier failing rather than raising
   -> authority root construction rejects incomplete pinning material
-  -> certificate path refuses unsigned pinned descriptors
   -> zero session id refused by policy instead of raising
-  -> responder state without verified trust cannot accept a finish
+
+AME handshake (private identities)
+  -> neither certificate appears anywhere on the wire in the clear
+  -> both sides derive the same epoch, transcript salt, and working ratchet
+  -> ONE broken authority algorithm is not enough to forge a certificate
+  -> a dropped authority proof is refused, not judged on what remains
+  -> a revoked serial is refused, and the same subject can be reissued
+  -> validity window, and a clock too far outside it refusing to judge
+  -> a pinned identity expires like any other
+  -> reciprocal pins authenticate; the wrong pin and a mixed-up trust mode fail
+  -> tampering with the nonce, the sealed block, or the tag all fail closed
+  -> an unsupported layout or tier is refused before any key work
+  -> the finish erases the handshake secrets it consumed
+  -> the cookie verifies only for the address, hello, and window it was minted for
+  -> handshake records ride AME frames and refuse to arrive out of order
+
+FOMKE forward secrecy
+  -> the state that sent a message cannot open it again afterwards
+  -> a captured chain key opens nothing that came before it
+  -> the chain key is replaced, not extended, on every step
+  -> an epoch change destroys every key from the epoch before it
+  -> a failed open leaves the ratchet exactly where it was
+  -> a gap past the skip budget is refused, not absorbed
+  -> every switched-on KEM slot feeds the root, not just the first
+  -> a tier naming a KEM slot with no secret is refused
+  -> preparing ahead is bounded, and its cost in held key bytes is countable
+  -> the nonce never repeats and never travels
 
 DAC
   -> defaults validation

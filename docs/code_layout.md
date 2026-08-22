@@ -18,15 +18,17 @@ src/protocols
 ├── ame/
 │   ├── types.nim
 │   ├── level0/  <- bits, bytes, protocol descriptor
-│   ├── level1/  <- algorithms, paths, suites, derivation, triggers, compression
+│   ├── level1/  <- algorithms, paths, suites, derivation, triggers, compression,
+│   │                and tier_aead: the one cipher-XOR + MAC-XOR construction
 │   │   ├── kems/       <- one file per KEM family
 │   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
 │   │   └── symmetric/  <- one file per symmetric primitive
 │   │       (each folder has a flag-gated dispatcher beside it)
-│   ├── level2/  <- agreement, protection, trust, AME2 wire, live session
+│   ├── level2/  <- agreement, at-rest protection, trust, AME wire, session
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
-│   └── level3/  <- handshake, handshake wire, secure package, and the
-│                    DAC relay that assembles loop + peers + crypto
+│   └── level3/  <- handshake, its wire and transport, the TCP handshake
+│                    driver, secure package, and the DAC relay that
+│                    assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim
 │   ├── level0/  <- framing, transport, body codecs, sender/receiver helpers
@@ -38,7 +40,8 @@ src/protocols
 │   ├── types.nim
 │   ├── level0/  <- GB3HKDF and protocol descriptor
 │   ├── level1/  <- directional chains and exact AME upgrade commits
-│   ├── level2/  <- FOM1/FKU2 bounded wire codecs
+│   │                (the ratchet is the ONLY payload protection)
+│   ├── level2/  <- FOM1/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface
 ├── preparation/
 │   ├── types.nim
@@ -85,39 +88,42 @@ config.toml / userconfig.toml
 ```text
 raw bytes
   -> transport stream frame or UDP datagram
-  -> AME2 frame decode            <- one framing, both carriers
-  -> AME protected body (epoch + nonce + tag + ciphertext)
-  -> AME auth/decrypt
-  -> FOMKE auth/decrypt when enabled
+  -> AME frame decode             <- one framing, both carriers
+  -> FOM1 envelope (epoch + index + lane + tag + ciphertext)
+  -> FOMKE auth, THEN decrypt     <- one layer, checked before opening
   -> caller payload
 ```
 
 ## Initial Handshake
 
 ```text
-pinned authority root
-  -> verify client/server certificates and validity time
-  -> verify signed ClientHello and ServerHello
-  -> perform exact AME KEM exchange
-  -> verify signed ClientFinish transcript hash
+client hello (no identity: nonce, layout, tier, KEM public keys)
+  -> optional cookie retry, before any key work is spent
+  -> server encapsulates, derives a temporary key from KEM + transcript
+  -> server hello: nonce and KEM answer clear, certificate SEALED
+  -> client opens it, checks every authority proof, validity, serial, clock
+  -> client finish: its own certificate and transcript proof, SEALED
+  -> server opens it and checks the same things
   -> return first AmeAuthPackage to both peers
 ```
 
-Handshake records (AMC1/AMS1/AMF1) travel bare or in a TCP stream frame.
-They are not wrapped in AME2 until epoch keys exist.
+Handshake records (AMC1/AMR1/AMS1/AMF1) travel as ordinary AME frames with a
+handshake packet kind (0x0C..0x0F). They are not encrypted -- there are no
+session keys yet -- but each of the last two carries its own sealed block, so
+no identity is ever on the wire in the clear.
 
 ## Package Path
 
 ```text
 plaintext
-  -> bounded Eir compression
-  -> AME protection
-  -> DAC package plan
+  -> optional compression (OFF by default -- see the README)
+  -> AME seal, ONCE, over the whole package
+  -> DAC package plan: chunks and parity over the SEALED bytes
   -> unordered chunk delivery
   -> XOR recovery or exact repair
   -> BLAKE3 package commit
-  -> AME open
-  -> bounded Eir decode
+  -> AME open (one tag, checked once, on reassembled bytes)
+  -> bounded decode
   -> plaintext
 ```
 
@@ -125,10 +131,10 @@ plaintext
 
 ```text
 caller payload
-  -> FOMKE directional message ratchet when enabled
-  -> AME protect (epoch AEAD)
-  -> AME protected body (epoch + nonce + tag + ct)
-  -> AME2 frame encode            <- one framing, both carriers
+  -> FOMKE directional message ratchet
+  -> slot construction: XOR every cipher, XOR every authenticator
+  -> FOM1 envelope (no nonce on the wire -- both sides derive it)
+  -> AME frame encode             <- one framing, both carriers
   -> transport stream frame or UDP datagram send
 ```
 

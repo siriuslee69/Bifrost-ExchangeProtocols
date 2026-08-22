@@ -505,6 +505,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "tests/test_ame_build_flags.nim", @["-r"])
     runNim("c", "tests/test_chunkyaead.nim", @["--threads:on", "-r"])
     runNim("c", "tests/test_fomke.nim", @["-r"])
+    runNim("c", "tests/test_fomke_forward_secrecy.nim", @["-r"])
     runNim("c", "tests/test_ame_session.nim", @["-r"])
     runNim("c", "tests/test_ame_handshake_package.nim", @["-r"])
     runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
@@ -622,6 +623,7 @@ task testFuzz, "Run every wire decoder against mutated frames":
 task testFomke, "Run GB3HKDF, TMEAEAD, GGAEAD, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):
     runNim("c", "tests/test_fomke.nim", @["-r"])
+    runNim("c", "tests/test_fomke_forward_secrecy.nim", @["-r"])
 
 task testChunkyAead, "Run CHUNKYAEAD chunk encryption and hash tests":
   runNim("c", "tests/test_chunkyaead.nim", @["--threads:on", "-r"])

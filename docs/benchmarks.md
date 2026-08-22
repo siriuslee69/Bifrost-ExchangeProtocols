@@ -37,9 +37,16 @@ instead of landing in `tools/`.
 | dac_decode     | DAC1 frame decode over one package payload    |
 | bfx2_encode    | BFX2 envelope write/checksum path             |
 | bfx2_decode    | BFX2 envelope read/checksum path              |
-| ame_dac_seal   | AME over DAC protect + frame construction     |
+| ame_dac_seal   | AME over DAC seal + frame construction        |
 | ame_dac_open   | AME over DAC open + carrier validation        |
-+----------------+-----------------------------------------------+
++-------------------------+--------------------------------------+
+| fomke_seal_1slot        | ratchet seal, one cipher + one MAC   |
+| fomke_seal_2slot        | ratchet seal, two ciphers + two MACs |
+| fomke_cached_seal_*     | the same, from a prepared send slot  |
+| fomke_prepare8_*        | building eight prepared slots        |
+| gimli_stream_prepare8   | isolated Gimli keystream batching    |
+| xchacha_stream_prepare8 | isolated XChaCha keystream batching  |
++-------------------------+--------------------------------------+
 ```
 
 The harness prints:
@@ -86,3 +93,25 @@ Keep comparisons honest:
 `Otter-RepoEvaluation` and `otterBench` are still useful when a downstream repo
 already depends on that harness, but this repo no longer depends on an external
 benchmark framework to measure its own hot paths.
+
+## What The Slot Numbers Mean
+
+`fomke_seal_1slot` against `fomke_seal_2slot` prices the one decision that
+changes the shape of every message: how many cipher and authenticator slots
+the tier switches on.
+
+```text
+one slot   plaintext --XOR XChaCha20--> ciphertext, one BLAKE3 tag
+two slots  plaintext --XOR XChaCha20--> --XOR Gimli--> ciphertext,
+                     BLAKE3 tag XOR Poly1305 tag
+```
+
+Two slots costs roughly half again as much per message. What it buys is that
+an attacker must break **both** ciphers and **both** authenticators rather
+than the weaker of each. That is a deployment decision, not a protocol one,
+which is why it is a layout setting and shows up here as a measurement.
+
+The `cached_` variants seal from a prepared slot, so they exclude the key
+derivation. The gap between a cached and an uncached seal is exactly what
+`setAmeFomkePregeneration` moves off the send path — and exactly the latency
+you pay for the forward secrecy of not holding future keys in memory.
