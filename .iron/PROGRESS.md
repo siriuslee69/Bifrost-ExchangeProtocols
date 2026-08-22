@@ -1,7 +1,7 @@
 # Progress
 
 ## Current commit message
-One seal per path, a socket at last, and path reports that ask for nothing
+AME and FOMKE become one layer: compact framing, private handshake, real hybrids
 
 ## Features to implement (total)
 - Migrate downstream consumers to `AmeSuiteLayout`, `AmeMaskTier`, and `AmeTierPath`
@@ -60,6 +60,34 @@ One seal per path, a socket at last, and path reports that ask for nothing
   salt with it, so no flag combination may remove it
 - Every layout constructor refuses a slot this build cannot execute, and the
   default layout is assembled from what the build carries
+
+- FOMKE is the ONLY payload protection: one ciphertext, one tag, per frame
+- The slot construction (cipher XOR chain + XOR-combined tag) lives in one
+  file, `ame/level1/tier_aead.nim`, used by the ratchet and the at-rest sealer
+- The FOMKE root absorbs every KEM secret the tier selects, so a hybrid
+  exchange is a hybrid in fact; a tier naming a slot with no secret is refused
+- Every magic is three letters plus one version byte; AME header 36 -> 34 B,
+  FOMKE envelope 83 -> 22 + tag, total frame overhead 187 -> 88 B
+- The FOMKE nonce is derived on both sides and never travels; its length field
+  is gone; the tag-length byte is checked against the session, not obeyed
+- A session always has a working ratchet: `initAmeSession` starts it from the
+  finished exchange and the transcript, so role and lane cannot disagree
+- A bounded retiring-ratchet window keeps frames already in flight openable
+  across an epoch change, then erases those keys
+- Handshake identities are sealed from the server hello onward: no certificate
+  appears on the wire in the clear
+- Authority certificates are signed by the authority's whole algorithm stack;
+  a certificate with fewer proofs than the pinned root has slots is refused
+- Certificates carry a serial, so revocation names the certificate and the
+  same subject can be reissued
+- Pinned identities have real validity windows, and a clock too far outside a
+  certificate's window refuses to judge rather than guessing
+- A stateless retry cookie sits in front of all key work, bound to the sender's
+  address, the hello it was minted for, and a 30-second window
+- Handshake records travel as ordinary AME frames (kinds 0x0C..0x0F) carrying
+  their step in the sequence field, with a TCP driver for both sides
+- Compression is off by default on the sealed path; the package sealer honours
+  the session's negotiated tag length instead of hardcoding 32
 
 - AME exposes its first runtime parameter: the authentication tag length,
   16, 24 or 32 bytes, as an enum whose only values are those three
@@ -223,11 +251,6 @@ One seal per path, a socket at last, and path reports that ask for nothing
   nothing could turn that into the parameters a link sends with
 
 ## Next, agreed but not yet built
-- Handshake records move into that one framing: signature authenticator
-  before keys exist, epoch MAC after. Bigger than it looks -- the handshake
-  wire codecs have NO callers in src/ or examples/ either, so the handshake
-  has never crossed a transport. 2c is really "give the handshake a transport
-  path", not "change its framing"
 - Three DAC message kinds are still decoded and then ignored. `dmkPathProbe`
   measures a round trip the ACK latency already measures. `dmkPathSwitchRequest`
   and `dmkPathSwitchAck` are a NEGOTIATION, which contradicts the no-requests
@@ -237,7 +260,11 @@ One seal per path, a socket at last, and path reports that ask for nothing
   wire decision to make deliberately
 - `dmkDriftPayload` is a separate feature with codecs and tests and no
   consumer anywhere
-- ECC becomes an AME lane with its own auth tag, configured by DAC
+- A DAC handshake driver to match `handshake_tcp.nim`. The records and their
+  framing are carrier-agnostic already; only the datagram retry/timeout loop
+  is missing
+- External analysis of GB3HKDF and the XOR-combined multi-MAC tag. This is
+  the largest standing risk in the repo and no amount of layering fixes it
 - External review of the hand-written TLS 1.3 stack. Fuzzing shows the
   decoders do not crash; it says nothing about whether the state machine is
   correct, and that is still the largest hand-written surface in the repo
@@ -272,35 +299,84 @@ One seal per path, a socket at last, and path reports that ask for nothing
   can grow on purpose
 
 ## Last big change or problem
-- Reviewed the AME protocol end to end for logic and edge-case defects. Four
-  confirmed issues were found and fixed, each with a regression test:
-  1. Simultaneous rekey. Both endpoints could start an epoch transition at the
-     same time and rotate to the same epoch id from different KEM secrets, with
-     no error raised anywhere. Reproduced with a probe that showed the two
-     endpoints holding different slot-1 secrets at epoch 2, which breaks the
-     session permanently once the 100-frame retiring grace runs out. Fixed with
-     an in-flight guard plus a role-based tie-break; verified the same probe now
-     converges on one key set.
-  2. Truncated tag forgery. `openAmeMessage` recomputed the expected tag at
-     whatever length arrived, so a one-byte tag was accepted 1 time in 256.
-     Measured before the fix (1/256) and after (0/256). AME's own wire paths
-     already pinned 32 bytes, so the exposure was to direct API callers.
-  3. Signature work ahead of cheap guards in `answerAmeSessionExchange`, which
-     let replayed offers force repeated post-quantum verifications.
-  4. Missing envelope length bounds in `sealAmeDacFrame` and `sealControlFrame`.
-     `sealAmeTcpFrame` had the check; the other two narrowed to u32 unchecked.
-- One flaw was introduced and caught by its own new test: the peer-trust guard
-  in `acceptAmeHandshakeCore` sat below a `var` block that built the transcript
-  first, so an unverified state raised instead of returning an error. The guard
-  now runs before any transcript work.
-- Not changed, documented instead: a tier transition whose target selects the
-  same KEM slots as the current tier produces an exchange mask of zero. Keys
-  still change, but no new KEM runs, so forward secrecy does not advance. This
-  is deliberate and `rekeyMask` is the intended control.
-  and signed every initial and later KEM transaction according to its tier mask.
-  Receiver-side checks happen before KEM processing or candidate mutation. The
-  AME handshake wire version is now 3 and the certificate subject version is 2.
-  AME now also derives directional transcript-bound traffic keys, prevents frame
-  reflection and tier downgrade, carries signed session IDs, and exposes
-  consumptive handshake cleanup. Focused AME/FOMKE tests, both public examples,
-  the shared-library build, and the full `nimble test` matrix pass.
+- Reworked AME and FOMKE into ONE layer of payload protection, gave the
+  handshake privacy and a transport, and compacted every frame.
+
+  **1. The double encryption is gone.** A frame used to be sealed twice: an
+  outer epoch AEAD around an inner FOMKE envelope that had already sealed the
+  same bytes. FOMKE is now the only payload protection, and it uses the
+  construction the outer layer used to — every switched-on cipher slot XORed
+  over the payload in turn, every switched-on authenticator XORed into one
+  tag. That code now lives in exactly one file, `ame/level1/tier_aead.nim`,
+  called by both the live ratchet and the at-rest package sealer.
+
+  **2. Framing compacted.** Every magic is three letters plus a version byte.
+  The AME header went 36 -> 34 bytes. The FOMKE envelope went 27 + 24 nonce +
+  32 tag -> 22 + tag: the nonce is derived on both sides and no longer
+  travels, its length field is gone with it, and the tag length is one byte
+  that is *checked* against the session's agreed value rather than obeyed.
+  Total per-frame overhead: 187 -> 88 bytes, measured.
+
+  **3. A real flaw found and fixed while doing it.** `initFomke` derived its
+  root from ONE KEM slot's shared secret. A tier naming Kyber *and* X25519 was
+  therefore a hybrid in name only — breaking the single contributing algorithm
+  was enough. The root now absorbs every secret for every slot the tier
+  switches on, and a tier naming a slot with no secret is refused. Covered by
+  "every switched-on KEM slot feeds the root, not just the first".
+
+  **4. The handshake hides who is talking.** The client hello names nobody.
+  The server encapsulates, derives a temporary key from the KEM answer plus
+  the transcript, and its certificate travels sealed under it; the client's
+  does the same in the finish. An observer sees two nonces and some key
+  material. Verified by a test that scans every record's bytes for the subject
+  name and finds none.
+
+  **5. Authority certificates are hybrid.** They were signed by ONE algorithm
+  while leaf identities were stacks, so one Ed25519 break forged certificates
+  for a whole deployment. An authority now signs with its whole stack, and a
+  certificate carrying fewer proofs than the pinned root has slots is refused
+  outright rather than judged on what remains.
+
+  **6. The handshake finally has a transport.** The record codecs had no
+  callers anywhere outside tests — the handshake had never crossed a wire, and
+  every integrator had to invent framing, where getting it wrong is a security
+  bug. Records now ride ordinary AME frames with packet kinds 0x0C..0x0F,
+  carrying their step in the sequence field, plus a TCP driver that runs both
+  sides to completion including the cookie retry.
+
+  **7. Hardening, all in one pass.** A stateless retry cookie in front of all
+  key work; certificate serials so revocation names the certificate rather
+  than burning the subject's name; real validity windows on pinned identities;
+  a clock too far outside a certificate's window refusing to judge rather than
+  guessing; compression off by default on the sealed path (it leaked plaintext
+  length); the package sealer honouring the session's negotiated tag length
+  instead of hardcoding 32.
+
+- **Two ordering bugs were introduced and caught by their own tests**, both
+  worth recording because they are the same shape:
+  1. The responder staged its ratchet upgrade inside
+     `answerAmeSessionExchange`, which froze the lane counters *before* it had
+     sealed its own reply. The two endpoints then staged at different
+     positions and every rotation failed. Staging moved after that send, into
+     `stageAmeSessionFomkeUpgrade`.
+  2. The sealed identity block wrote the certificate body length-framed and
+     read it back raw. Caught immediately by the first handshake test.
+
+- **Not changed, recorded instead:** the DAC relay computes repair parity over
+  *plaintext* chunks and seals each piece separately, while the file path
+  seals once and computes parity over *ciphertext*. Both are correct, and the
+  live path cannot use the file path's ordering: each datagram is sealed with
+  its own ratchet key, so two sealed datagrams XORed together are not a sealed
+  datagram. Sealing per datagram and erasure-coding across datagrams cannot
+  both be the outer layer. Written out in full in `docs/production_readiness.md`
+  under "One Seal Per Path". If bit-level correction is ever wanted, it MUST
+  go on the file path's side of the tag — correcting bits underneath an
+  authenticator is dead code.
+
+- **Standing risk, unchanged:** the primitives are homemade. GB3HKDF, the
+  XOR-combined multi-MAC tag, and the standalone TMEAEAD/GGAEAD constructions
+  have no external analysis. The constructions around them are careful, but
+  layering discipline cannot rescue a weak primitive.
+
+- 413 tests pass, plus the build-flag, DAC-flag, fuzz, TLS, examples,
+  benchmark and hygiene tasks.
