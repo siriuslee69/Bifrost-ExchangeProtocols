@@ -32,7 +32,6 @@ import ../../types
 import ../types
 import ../../transport/types as transport_types
 import ../../transport/tcp_ops
-import ../level1/suites
 import ../level2/session
 import ./handshake
 import ./handshake_wire
