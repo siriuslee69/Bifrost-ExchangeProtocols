@@ -33,7 +33,9 @@
 
 import ../../types
 import ../types
+import ../level1/suites
 import ../level2/wire
+import ../level2/session
 import ./handshake
 import ./handshake_wire
 import ../../../analysis_pragmas
@@ -142,3 +144,80 @@ proc encodeAmeClientFinishFrame*(sessionId: uint64,
   ## sessionId/f: the client's sealed identity and transcript confirmation.
   result = encodeAmeHandshakeFrame(ampkClientFinish, sessionId,
     ameHandshakeStepFinish, encodeAmeClientFinish(f))
+
+## ╭⟢ what each side needs before it can talk
+##
+## None of this is carrier-specific. A responder needs the paths it accepts,
+## its own identity, and how it decides whom to believe; an initiator needs
+## the path it wants and the same identity material. Which socket carries the
+## records is decided by the driver, not by the policy, so both drivers take
+## these same two objects.
+
+type
+  ## What a responder needs before it can answer anybody.
+  AmeResponderPolicy* {.role: configurator.} = object
+    supported*: seq[AmeTierPath]
+    descriptor*: AmeIdentityCertificate
+    identity*: AmeIdentityKey
+    cookieSecret*: AmeCookieSecret
+    requireCookie*: bool
+      ## When true, a hello without a valid cookie is answered with a retry
+      ## instead of a key exchange. Leave it on for anything reachable from an
+      ## untrusted network; the cost is one extra round trip per connection.
+      ##
+      ## On a datagram carrier this is not really optional. Nothing proves a
+      ## source address there, so a responder without a cookie will happily do
+      ## post-quantum key work for packets that never came from anyone.
+    trustMode*: AmeTrustMode
+    root*: AmeAuthorityRoot
+    expectedPeer*: AmePinnedPeerIdentity
+    revokedSerials*: seq[uint64]
+    params*: AmeRuntimeParams
+
+  ## What an initiator needs.
+  AmeInitiatorPolicy* {.role: configurator.} = object
+    layout*: AmeSuiteLayout
+    initialTier*: AmeMaskTier
+    descriptor*: AmeIdentityCertificate
+    identity*: AmeIdentityKey
+    trustMode*: AmeTrustMode
+    root*: AmeAuthorityRoot
+    expectedPeer*: AmePinnedPeerIdentity
+    revokedSerials*: seq[uint64]
+
+  ## How a completed handshake reports itself, whatever carried it.
+  AmeHandshakeOutcome* {.role: truthState.} = object
+    ok*: bool
+    connection*: AmeSession
+    peerTrust*: AmePeerTrustResult
+    err*: string
+
+proc initAmeResponderPolicy*(supported: openArray[AmeTierPath],
+    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
+    trustMode: AmeTrustMode = atmAuthorityCertificate,
+    requireCookie: bool = true,
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
+    AmeResponderPolicy {.role: wrapper.} =
+  ## supported/descriptor/identity/trustMode/requireCookie/params: responder
+  ## policy with a freshly minted anti-flood secret.
+  if supported.len == 0:
+    raise newException(ValueError, "AME responder must support at least one path")
+  result.supported = @supported
+  result.descriptor = descriptor
+  result.identity = identity
+  result.trustMode = trustMode
+  result.requireCookie = requireCookie
+  result.params = params
+  result.cookieSecret = initAmeCookieSecret()
+
+proc initAmeInitiatorPolicy*(L: AmeSuiteLayout, initialTier: AmeMaskTier,
+    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
+    trustMode: AmeTrustMode = atmAuthorityCertificate):
+    AmeInitiatorPolicy {.role: wrapper.} =
+  ## L/initialTier/descriptor/identity/trustMode: initiator policy.
+  validateAmeTier(L, initialTier)
+  result.layout = L
+  result.initialTier = initialTier
+  result.descriptor = descriptor
+  result.identity = identity
+  result.trustMode = trustMode

@@ -39,69 +39,7 @@ import ./handshake_wire
 import ./handshake_transport
 import ../../../analysis_pragmas
 
-type
-  ## What a server needs before it can answer anybody.
-  AmeTcpServerConfig* {.role: configurator.} = object
-    supported*: seq[AmeTierPath]
-    descriptor*: AmeIdentityCertificate
-    identity*: AmeIdentityKey
-    cookieSecret*: AmeCookieSecret
-    requireCookie*: bool
-      ## When true, a hello without a valid cookie is answered with a retry
-      ## instead of a key exchange. Leave it on for anything reachable from an
-      ## untrusted network; the cost is one extra round trip per connection.
-    trustMode*: AmeTrustMode
-    root*: AmeAuthorityRoot
-    expectedPeer*: AmePinnedPeerIdentity
-    revokedSerials*: seq[uint64]
-    params*: AmeRuntimeParams
-
-  ## What a client needs.
-  AmeTcpClientConfig* {.role: configurator.} = object
-    layout*: AmeSuiteLayout
-    initialTier*: AmeMaskTier
-    descriptor*: AmeIdentityCertificate
-    identity*: AmeIdentityKey
-    trustMode*: AmeTrustMode
-    root*: AmeAuthorityRoot
-    expectedPeer*: AmePinnedPeerIdentity
-    revokedSerials*: seq[uint64]
-
-  AmeHandshakeOutcome* {.role: truthState.} = object
-    ok*: bool
-    connection*: AmeSession
-    peerTrust*: AmePeerTrustResult
-    err*: string
-
-proc initAmeTcpServerConfig*(supported: openArray[AmeTierPath],
-    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
-    trustMode: AmeTrustMode = atmAuthorityCertificate,
-    requireCookie: bool = true,
-    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
-    AmeTcpServerConfig {.role: wrapper.} =
-  ## supported/descriptor/identity/trustMode/requireCookie/params: responder
-  ## policy with a freshly minted anti-flood secret.
-  if supported.len == 0:
-    raise newException(ValueError, "AME server must support at least one path")
-  result.supported = @supported
-  result.descriptor = descriptor
-  result.identity = identity
-  result.trustMode = trustMode
-  result.requireCookie = requireCookie
-  result.params = params
-  result.cookieSecret = initAmeCookieSecret()
-
-proc initAmeTcpClientConfig*(L: AmeSuiteLayout, initialTier: AmeMaskTier,
-    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
-    trustMode: AmeTrustMode = atmAuthorityCertificate):
-    AmeTcpClientConfig {.role: wrapper.} =
-  ## L/initialTier/descriptor/identity/trustMode: initiator policy.
-  validateAmeTier(L, initialTier)
-  result.layout = L
-  result.initialTier = initialTier
-  result.descriptor = descriptor
-  result.identity = identity
-  result.trustMode = trustMode
+export handshake_transport
 
 proc peerIdBytes(a: transport_types.TcpAddress): ByteSeq {.role: helper.} =
   ## a: the remote address turned into stable bytes for the cookie.
@@ -129,7 +67,7 @@ proc readHandshakeFrame(sock: Socket, timeoutMs: int): tuple[ok: bool,
   except CatchableError as e:
     result.err = e.msg
 
-proc ameTcpServerHandshake*(sock: Socket, c: AmeTcpServerConfig,
+proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     remote: transport_types.TcpAddress, nowUnix: int64,
     timeoutMs: int = 4000,
     sessionId: uint64 = 0'u64): AmeHandshakeOutcome {.role: orchestrator,
@@ -223,7 +161,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeTcpServerConfig,
     peerTrust = accepted.peerTrust)
   result.ok = true
 
-proc ameTcpClientHandshake*(sock: Socket, c: AmeTcpClientConfig,
+proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
     sessionId: uint64, nowUnix: int64,
     timeoutMs: int = 4000): AmeHandshakeOutcome {.role: orchestrator,
     tag: {tagAppApi, tagNetworkSurface}.} =

@@ -30,13 +30,6 @@ proc readStateU8(A: openArray[uint8], cursor: var int): uint8 {.role: parser,
   result = A[cursor]
   cursor = cursor + 1
 
-proc readStateU16(A: openArray[uint8], cursor: var int): uint16 {.role: parser,
-    tag: {tagFomke, tagParsing}.} =
-  ## A/cursor: consume one little-endian u16.
-  requireStateBytes(A, cursor, 2)
-  result = uint16(A[cursor]) or (uint16(A[cursor + 1]) shl 8)
-  cursor = cursor + 2
-
 proc readStateU32(A: openArray[uint8], cursor: var int): uint32 {.role: parser,
     tag: {tagFomke, tagParsing}.} =
   ## A/cursor: consume one little-endian u32.

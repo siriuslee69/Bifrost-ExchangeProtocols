@@ -2,7 +2,7 @@
 ## TLS 1.3 Client Session <- event-driven controlled-profile client engine
 ## -----------------------------------------------------------------------
 
-import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/certs/[oid, x509, chain]
 import tyr/helpers/random
 import tyr/hashes/sha256
 import tyr/kems/x25519
@@ -26,8 +26,23 @@ type
     tcsClosed,
     tcsFailed
 
+  ## How the client decides whether to believe the server.
+  ##
+  ##   pinnedRootCertificateDer   exactly one self-issued root, and the
+  ##                              server must send exactly one certificate
+  ##                              directly under it. No intermediates, no
+  ##                              path building, nothing to get wrong.
+  ##
+  ##   trustedRootsDer            a set of anchors, and the server may send
+  ##                              a leaf plus the intermediates that lead to
+  ##                              one of them. This is what talking to a
+  ##                              server you did not provision requires.
+  ##
+  ## Set one or the other. Setting both is a configuration that cannot mean
+  ## two things at once, so it is refused rather than silently ranked.
   Tls13ClientConfig* {.role: configurator.} = object
     pinnedRootCertificateDer*: ByteSeq
+    trustedRootsDer*: seq[ByteSeq]
     serverName*: string
     alpn*: seq[string]
     nowUnix*: int64
@@ -47,6 +62,8 @@ type
     connection: Tls13Connection
     transcript: Tls13Transcript
     rootCertificate: X509Certificate
+    trustAnchors: TrustStore
+    pinned: bool
     peerCertificate*: X509Certificate
     x25519SecretKey: ByteSeq
     handshakeSecrets: Tls13HandshakeSecrets
@@ -92,17 +109,43 @@ proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
 
 proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
     role: truthBuilder, tag: {tagTls, tagTransport}.} =
-  ## C: pinned root, expected identity, ALPN list, time, and optional test seed.
-  var R: X509ReadResult = parseX509CertificateDer(C.pinnedRootCertificateDer)
-  if not R.ok:
-    raise newException(ValueError, "TLS pinned root is invalid: " & R.err)
+  ## C: pinned root or trust anchors, expected identity, ALPN list, time, and
+  ## optional test seed.
+  var
+    R: X509ReadResult
+    added: string = ""
+    i: int = 0
   if C.x25519Seed.len notin {0, 32}:
     raise newException(ValueError, "TLS client X25519 seed must be empty or 32 bytes")
+  if C.pinnedRootCertificateDer.len > 0 and C.trustedRootsDer.len > 0:
+    raise newException(ValueError,
+      "TLS client takes a pinned root or a trust store, not both")
+  if C.pinnedRootCertificateDer.len == 0 and C.trustedRootsDer.len == 0:
+    raise newException(ValueError,
+      "TLS client needs a pinned root or at least one trust anchor")
   result.state = tcsStart
   result.config = C
   result.connection = initTls13Connection()
   result.transcript = initTls13Transcript()
-  result.rootCertificate = R.certificate
+  result.trustAnchors = initTrustStore()
+  result.pinned = C.pinnedRootCertificateDer.len > 0
+  if result.pinned:
+    R = parseX509CertificateDer(C.pinnedRootCertificateDer)
+    if not R.ok:
+      raise newException(ValueError, "TLS pinned root is invalid: " & R.err)
+    result.rootCertificate = R.certificate
+    return
+  ## Every anchor is checked here rather than at handshake time, so a bad
+  ## trust store is a setup error the caller sees immediately instead of a
+  ## connection failure they have to trace back.
+  while i < C.trustedRootsDer.len:
+    R = parseX509CertificateDer(C.trustedRootsDer[i])
+    if not R.ok:
+      raise newException(ValueError, "TLS trust anchor is invalid: " & R.err)
+    added = result.trustAnchors.addTrustedRoot(R.certificate)
+    if added.len > 0:
+      raise newException(ValueError, "TLS trust anchor is unusable: " & added)
+    i = i + 1
 
 proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
     role: dataWriter, tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
@@ -172,24 +215,51 @@ proc acceptEncryptedExtensions(S: var Tls13ClientSession, H: Tls13Handshake,
 proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
     tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+  ## The pinned profile takes exactly one certificate under exactly one root.
+  ## The trust-store profile takes a leaf plus whatever intermediates lead to
+  ## an anchor, which is what a server nobody provisioned actually sends.
   var
     R = decodeTls13Certificate(H.body)
     leaf: X509ReadResult
+    parsed: X509ReadResult
+    intermediates: seq[X509Certificate] = @[]
     policy: tuple[ok: bool, err: string]
+    chain: ChainVerifyResult
+    i: int = 1
   if not R.ok or R.message.requestContext.len != 0 or
-      R.message.entries.len != 1:
+      R.message.entries.len == 0:
     S.failClient(O, if R.err.len > 0: R.err else:
-      "TLS controlled profile requires one server certificate")
+      "TLS server sent no certificate")
+    return
+  if S.pinned and R.message.entries.len != 1:
+    S.failClient(O, "TLS controlled profile requires one server certificate")
+    return
+  if R.message.entries.len > maxChainDepth:
+    S.failClient(O, "TLS server certificate chain is too long")
     return
   leaf = parseX509CertificateDer(R.message.entries[0].certificateDer)
   if not leaf.ok:
     S.failClient(O, leaf.err)
     return
-  policy = verifyPinnedServerCertificate(leaf.certificate,
-    S.rootCertificate, S.config.nowUnix, S.config.serverName)
-  if not policy.ok:
-    S.failClient(O, policy.err)
-    return
+  if S.pinned:
+    policy = verifyPinnedServerCertificate(leaf.certificate,
+      S.rootCertificate, S.config.nowUnix, S.config.serverName)
+    if not policy.ok:
+      S.failClient(O, policy.err)
+      return
+  else:
+    while i < R.message.entries.len:
+      parsed = parseX509CertificateDer(R.message.entries[i].certificateDer)
+      if not parsed.ok:
+        S.failClient(O, parsed.err)
+        return
+      intermediates.add(parsed.certificate)
+      i = i + 1
+    chain = verifyCertificateChain(leaf.certificate, intermediates,
+      S.trustAnchors, S.config.nowUnix, S.config.serverName)
+    if not chain.ok:
+      S.failClient(O, chain.err)
+      return
   S.peerCertificate = leaf.certificate
   S.transcript.appendTls13Transcript(H.encoded)
   S.state = tcsAwaitCertificateVerify

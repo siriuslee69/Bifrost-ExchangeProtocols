@@ -84,10 +84,6 @@ proc copyBytes(A: openArray[uint8]): ByteSeq {.role: helper.} =
   ## A: source bytes copied into owned storage.
   result = @A
 
-proc readU16(A: openArray[uint8], o: int): uint16 {.role: parser.} =
-  ## A/o: source bytes and little-endian offset.
-  result = uint16(A[o]) or (uint16(A[o + 1]) shl 8)
-
 proc readU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
   ## A/o: source bytes and little-endian offset.
   result = uint32(A[o]) or (uint32(A[o + 1]) shl 8) or

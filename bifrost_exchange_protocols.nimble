@@ -510,6 +510,9 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "tests/test_ame_handshake_package.nim", @["-r"])
     runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
     runNim("c", "tests/test_mitm_and_loss.nim", @["-r"])
+    runNim("c", "tests/test_ame_tcp_handshake.nim", @["--threads:on", "-r"])
+    runNim("c", "tests/test_ame_dac_handshake.nim", @["--threads:on", "-r"])
+    runNim("c", "tests/test_ame_session_api.nim", @["-r"])
 
     runNim("c", "tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
     runNim("c", "tests/test_dac_defaults.nim", @["-r"])
@@ -529,6 +532,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "tests/test_bfx2_external_bridge.nim", @["-r"])
     runNim("c", "tests/test_lan_message.nim", @["-r"])
     runNim("c", "tests/test_tls13_foundation.nim", @["-r"])
+    runNim("c", "tests/test_tls13_webpki.nim", @["-r"])
 
 task testTls, "Run TLS-enabled transport tests (host OpenSSL or Nix fallback)":
   ensureOpenSslBuildEnv("nimble testTls")

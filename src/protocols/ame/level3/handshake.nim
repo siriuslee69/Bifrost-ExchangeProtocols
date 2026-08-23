@@ -870,6 +870,21 @@ proc clearSecretRows(S: var seq[ByteSeq]) {.role: stateController.} =
   S.setLen(0)
 
 ## ╭⟢ the anti-flood cookie
+##
+## The cookie proves one thing: that whoever sent the hello can also receive
+## at the address it came from. It is a timestamp plus a tag over that
+## timestamp, the address, and the session id -- and deliberately NOT over
+## the hello nonce or the key material.
+##
+## That omission is load-bearing. A client answering a retry builds a whole
+## new hello, fresh KEM keys and all, so that a flood of forged addresses
+## leaves the server holding nothing. A cookie bound to the first hello's
+## nonce could never validate against the second one, which would make
+## `requireCookie` a switch that rejects every client that obeys it.
+##
+## Nothing is lost by leaving the nonce out. The cookie is not what proves
+## the hello is genuine -- the transcript hash is, and it covers every field
+## either side ever sends.
 
 proc initAmeCookieSecret*(): AmeCookieSecret {.role: dataFetcher.} =
   ## A fresh server-side secret. Never leaves the machine, never goes on the
@@ -879,12 +894,11 @@ proc initAmeCookieSecret*(): AmeCookieSecret {.role: dataFetcher.} =
 proc cookieSubject(peerId: openArray[uint8], issuedAtUnix: int64,
     h: AmeClientHello): ByteSeq {.role: truthBuilder.} =
   ## peerId/issuedAtUnix/h: the caller's stable name for the remote address,
-  ## when the cookie was minted, and the hello it belongs to.
-  appendAmeLabel(result, "AME-COOKIE-v1")
+  ## when the cookie was minted, and the hello whose session id binds it.
+  appendAmeLabel(result, "AME-COOKIE-v2")
   appendHandshakeBytes(result, peerId)
   appendHandshakeI64(result, issuedAtUnix)
   appendAmeU64(result, h.sessionId)
-  appendHandshakeBytes(result, h.nonce)
 
 proc issueAmeCookie*(secret: AmeCookieSecret, peerId: openArray[uint8],
     nowUnix: int64, h: AmeClientHello): ByteSeq {.role: truthBuilder,
@@ -1213,7 +1227,6 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
     transcript: ByteSeq = @[]
     clear: ByteSeq = @[]
     finish: tuple[ok: bool, finish: AmeClientFinish, err: string]
-    key: AmeIdentitySigningKey
   if policyError.len > 0:
     result.err = policyError
     return
@@ -1289,7 +1302,6 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     cursor: int = 0
     transcript: ByteSeq = @[]
     expected: ByteSeq = @[]
-    key: AmeIdentitySigningKey
   if f.authTag.len != int(ord(S.serverHello.params.authTagLen)) or
       f.params != S.serverHello.params or f.sealed.len == 0:
     result.err = "client finish shape is invalid"

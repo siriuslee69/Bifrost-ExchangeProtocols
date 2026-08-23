@@ -35,7 +35,6 @@
 import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
-import ../../ame/level1/exchange_paths
 import ../types
 import ../../../analysis_pragmas
 
@@ -67,13 +66,6 @@ proc validateFomkeUpgradeShape(c: FomkeUpgradeCommit) {.role: parser,
       raise newException(ValueError,
         "FOMKE unselected upgrade generation is present")
     i = i + 1
-
-proc readFomkeU16(A: openArray[uint8], offset: int): uint16 {.role: parser,
-    tag: {tagFomke, tagParsing}.} =
-  ## A/offset: source and little-endian u16 position.
-  if offset < 0 or offset > A.len - 2:
-    raise newException(ValueError, "FOMKE u16 is truncated")
-  result = uint16(A[offset]) or (uint16(A[offset + 1]) shl 8)
 
 proc readFomkeU32(A: openArray[uint8], offset: int): uint32 {.role: parser,
     tag: {tagFomke, tagParsing}.} =

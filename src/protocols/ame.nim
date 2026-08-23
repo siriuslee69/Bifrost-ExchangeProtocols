@@ -121,6 +121,13 @@ when acrDac in ameCarriersBuilt and dacAdaptiveBuilt:
   import ./ame/level3/secure_package as ame_secure_package
   export ame_dac_relay, ame_dac_endpoint, ame_secure_package
 
+when acrDac in ameCarriersBuilt:
+  ## The datagram handshake driver. Unlike the packages above it needs only
+  ## the DAC socket, not the adaptive layer, because a handshake is a handful
+  ## of records rather than a planned transfer.
+  import ./ame/level3/handshake_dac as ame_handshake_dac
+  export ame_handshake_dac
+
 when acrTcp in ameCarriersBuilt:
   ## The stream-socket handshake driver. It owns a socket, so it only exists
   ## in a build that carries TCP at all.

@@ -139,4 +139,97 @@ noOverlapCli.alpn = @["h2"]
 chk("a client whose ALPN list shares nothing is refused",
     not handshake(alpnSrv, noOverlapCli).ok)
 
+# --- trust store: a real path through an intermediate ----------------------
+#
+# Every case above pins one root and takes exactly one certificate under it.
+# That is the easy half of certificate validation and the only half that had
+# ever run. A server nobody provisioned sends a leaf plus the intermediates
+# that lead to an anchor, and the client has to walk them.
+var chainSrv: Tls13ServerConfig
+chainSrv.certificateChainDer = @[rd("tests/fixtures/webpki/cleaf.der"),
+                                 rd("tests/fixtures/webpki/cint.der")]
+chainSrv.rsaPrivateKeyDer = rd("tests/fixtures/webpki/cleaf.pk8")
+
+var chainCli: Tls13ClientConfig
+chainCli.trustedRootsDer = @[rd("tests/fixtures/webpki/croot.der")]
+chainCli.serverName = "mail.fjord.example"
+chainCli.nowUnix = nowU
+let r3 = handshake(chainSrv, chainCli)
+chk("TLS 1.3 handshake across root -> intermediate -> leaf", r3.ok)
+if not r3.ok: echo "   err: ", r3.err
+else: chk("chained session carries application data",
+          r3.echoed == "MAIL FROM:<a@b.example>")
+
+# Without the intermediate there is no path to the anchor, even though the
+# anchor itself is trusted and the leaf is genuine.
+var noIntSrv = chainSrv
+noIntSrv.certificateChainDer = @[rd("tests/fixtures/webpki/cleaf.der")]
+chk("reject a leaf whose issuer was not supplied",
+    not handshake(noIntSrv, chainCli).ok)
+
+# A trust store that does not contain the root the chain leads to.
+var wrongAnchor = chainCli
+wrongAnchor.trustedRootsDer = @[rd("tests/fixtures/webpki/rroot.der")]
+chk("reject a chain that leads to an untrusted anchor",
+    not handshake(chainSrv, wrongAnchor).ok)
+
+# The hostname check applies to the chained profile too.
+var chainWrongHost = chainCli
+chainWrongHost.serverName = "evil.example"
+chk("reject a chained certificate that does not cover the hostname",
+    not handshake(chainSrv, chainWrongHost).ok)
+
+# The pinned profile must keep refusing extra certificates: pinning means
+# one hop, and accepting a bundle would quietly turn it into path building.
+var pinnedWithExtra = rsaCli
+chk("a pinned client refuses a multi-certificate chain",
+    not handshake(chainSrv, pinnedWithExtra).ok)
+
+# Two anchors configured, one of which is the right one.
+var twoAnchors = chainCli
+twoAnchors.trustedRootsDer = @[rd("tests/fixtures/webpki/rroot.der"),
+                               rd("tests/fixtures/webpki/croot.der")]
+chk("a trust store with several anchors finds the right one",
+    handshake(chainSrv, twoAnchors).ok)
+
+# A chain that is cryptographically perfect but violates a constraint one of
+# its own certificates carries. dint1 says pathlen:0; dint2 sits below it.
+var depthSrv: Tls13ServerConfig
+depthSrv.certificateChainDer = @[rd("tests/fixtures/webpki/dleaf.der"),
+                                 rd("tests/fixtures/webpki/dint2.der"),
+                                 rd("tests/fixtures/webpki/dint1.der")]
+depthSrv.rsaPrivateKeyDer = rd("tests/fixtures/webpki/dleaf.pk8")
+
+var depthCli: Tls13ClientConfig
+depthCli.trustedRootsDer = @[rd("tests/fixtures/webpki/droot.der")]
+depthCli.serverName = "mail.fjord.example"
+depthCli.nowUnix = nowU
+chk("reject a chain that exceeds an intermediate path length constraint",
+    not handshake(depthSrv, depthCli).ok)
+
+# --- configuration errors are refused at setup, not at handshake time ------
+var bothModes: Tls13ClientConfig
+bothModes.pinnedRootCertificateDer = rd("tests/fixtures/webpki/rroot.der")
+bothModes.trustedRootsDer = @[rd("tests/fixtures/webpki/croot.der")]
+bothModes.nowUnix = nowU
+var bothThrew = false
+try: discard initTls13ClientSession(bothModes)
+except CatchableError: bothThrew = true
+chk("refuse a client configured with both a pin and a trust store", bothThrew)
+
+var neither: Tls13ClientConfig
+neither.nowUnix = nowU
+var neitherThrew = false
+try: discard initTls13ClientSession(neither)
+except CatchableError: neitherThrew = true
+chk("refuse a client with no way to judge the server", neitherThrew)
+
+var notACa: Tls13ClientConfig
+notACa.trustedRootsDer = @[rd("tests/fixtures/webpki/rleaf.der")]
+notACa.nowUnix = nowU
+var notACaThrew = false
+try: discard initTls13ClientSession(notACa)
+except CatchableError: notACaThrew = true
+chk("refuse a trust anchor that is not a CA", notACaThrew)
+
 echo "TLS RSA/ECDSA failures: ", fails

@@ -82,7 +82,6 @@ proc ameSigFamilyName*(f: AmeSigFamily): string {.role: parser.} =
 
 proc ameSigFamilySetName*(F: set[AmeSigFamily]): string {.role: parser.} =
   ## F: families rendered as a comma list for an error message.
-  var f: AmeSigFamily
   for f in F:
     if result.len > 0:
       result.add(",")

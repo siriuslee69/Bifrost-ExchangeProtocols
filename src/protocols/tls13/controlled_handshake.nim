@@ -2,7 +2,7 @@
 ## TLS 1.3 Controlled Handshake <- in-memory Ed25519/X25519 state machine
 ## -----------------------------------------------------------------------
 
-import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/certs/[x509, verify]
 import tyr/hashes/sha256
 import tyr/kems/x25519
 

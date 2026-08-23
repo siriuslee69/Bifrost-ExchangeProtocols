@@ -334,18 +334,43 @@ var trust = verifyAmeIdentityCertificate(cert, root, nowUnix,
 ### Running it over a socket
 
 ```nim
-var server = initAmeTcpServerConfig(supportedPaths, serverCert, serverKey)
+var server = initAmeResponderPolicy(supportedPaths, serverCert, serverKey)
 var outcome = ameTcpServerHandshake(sock, server, remoteAddr, nowUnix)
 if outcome.ok:
   discard sealAmeTcpFrame(outcome.connection, payload)
 ```
 
 ```nim
-var client = initAmeTcpClientConfig(layout, tier, clientCert, clientKey)
+var client = initAmeInitiatorPolicy(layout, tier, clientCert, clientKey)
 client.root = root
 var outcome = ameTcpClientHandshake(sock, client, sessionId = 1'u64,
   nowUnix = nowUnix)
 ```
+
+The same policy objects drive the datagram carrier. Only the driver changes,
+because `AmeResponderPolicy` and `AmeInitiatorPolicy` say what each side will
+accept, not which socket carries it:
+
+```nim
+var done = ameDacServerHandshake(sock, server, nowUnix)
+if done.outcome.ok:
+  sendDacFrameBytes(sock, done.remote,
+    sealAmeDacFrame(done.outcome.connection, payload))
+```
+
+```nim
+var outcome = ameDacClientHandshake(sock, peer, client, sessionId = 1'u64,
+  nowUnix = nowUnix)
+```
+
+The DAC responder returns the address it ended up talking to rather than being
+told one: on a datagram socket it learns who its peer is by listening. It also
+retransmits nothing -- the initiator owns every timer -- so a responder holds
+no per-peer state until a handshake actually completes.
+
+Leave `requireCookie` on for DAC. Nothing proves a source address there, and a
+responder without a cookie will do post-quantum key exchanges for packets that
+never came from anyone.
 
 `nowUnix` is supplied by the caller on purpose. A library that silently reads
 an unset system clock and judges certificates against it is worse than one

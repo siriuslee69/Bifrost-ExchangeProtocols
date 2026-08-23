@@ -2,7 +2,7 @@
 ## TLS 1.3 Server Session <- event-driven controlled-profile server flight
 ## -----------------------------------------------------------------------
 
-import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
+import tyr/certs/[oid, x509]
 import tyr/signatures/ed25519
 import tyr/helpers/random
 import tyr/hashes/sha256
