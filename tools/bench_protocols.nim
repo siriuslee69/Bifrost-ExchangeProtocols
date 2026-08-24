@@ -527,54 +527,6 @@ proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] =
       int(outLen)))
     i = i + 1
 
-proc benchGimliStreamPrepare8(cfg: BenchConfig): BenchResult =
-  ## cfg: isolated eight-message Gimli stream generation benchmark.
-  var
-    keys: seq[ByteSeq] = benchStreamKeys(61'u8,
-      uint8(ameProtectionKeyLen))
-    nonces: seq[ByteSeq] = benchStreamKeys(71'u8,
-      uint8(ameCipherNonceLen(acaGimli)))
-    streams: seq[ByteSeq] = @[]
-    startedAt: MonoTime
-    endedAt: MonoTime
-  for _ in 0 ..< cfg.warmup:
-    streams = prepareGimliStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0])
-  startedAt = getMonoTime()
-  for _ in 0 ..< cfg.iterations:
-    streams = prepareGimliStreams(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0])
-  endedAt = getMonoTime()
-  result = initResult("gimli_stream_prepare8", cfg,
-    8 * cfg.payloadBytes, streams[0], startedAt, endedAt)
-  clearBenchRows(keys)
-  clearBenchRows(nonces)
-  clearBenchRows(streams)
-
-proc benchXChaChaStreamPrepare8(cfg: BenchConfig): BenchResult =
-  ## cfg: isolated eight-message XChaCha stream generation benchmark.
-  var
-    keys: seq[ByteSeq] = benchStreamKeys(81'u8,
-      uint8(ameProtectionKeyLen))
-    nonces: seq[ByteSeq] = benchStreamKeys(91'u8,
-      uint8(ameCipherNonceLen(acaXChaCha20)))
-    streams: seq[ByteSeq] = @[]
-    startedAt: MonoTime
-    endedAt: MonoTime
-  for _ in 0 ..< cfg.warmup:
-    streams = prepareXChaChaStreamRows(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0])
-  startedAt = getMonoTime()
-  for _ in 0 ..< cfg.iterations:
-    streams = prepareXChaChaStreamRows(keys, nonces, cfg.payloadBytes)
-    mixSinkBytes(streams[0])
-  endedAt = getMonoTime()
-  result = initResult("xchacha_stream_prepare8", cfg,
-    8 * cfg.payloadBytes, streams[0], startedAt, endedAt)
-  clearBenchRows(keys)
-  clearBenchRows(nonces)
-  clearBenchRows(streams)
-
 proc printResults(results: openArray[BenchResult]) =
   const
     nameWidth = 26
@@ -674,10 +626,6 @@ proc main() =
     results.add(benchFomkePrepare8(cfg, false, "fomke_prepare8_1slot"))
   if shouldRun(cfg, "fomke_prepare8_2slot"):
     results.add(benchFomkePrepare8(cfg, true, "fomke_prepare8_2slot"))
-  if shouldRun(cfg, "gimli_stream_prepare8"):
-    results.add(benchGimliStreamPrepare8(cfg))
-  if shouldRun(cfg, "xchacha_stream_prepare8"):
-    results.add(benchXChaChaStreamPrepare8(cfg))
   if results.len == 0:
     raise newException(ValueError, "no benchmarks matched --only filter")
   printResults(results)

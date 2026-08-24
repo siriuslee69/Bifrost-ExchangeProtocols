@@ -657,7 +657,6 @@ and nothing should: the old formats are not in the library any more.
 |---|---|
 | `src/protocols/ame/` | Suite/KEM/protect, AME wire, session, handshake, secure package |
 | `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOMKE envelope wire |
-| `src/protocols/preparation/` | Shared future-message stream preparation backends |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
 | `src/protocols/dac/` | Framing, ACK, repair, path control, drift payloads |
 | `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O and relay helpers |

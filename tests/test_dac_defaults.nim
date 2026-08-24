@@ -54,9 +54,25 @@ suite "DAC defaults":
     check recovery.transferClass == dtcRecovery
     check recovery.parityShards == 6'u16
     check recovery.ackMode == damVerified
-    check recovery.useTcpRepair
     check validateDacDefaults(clean)
     check validateDacDefaults(recovery)
+
+  test "every lane has one validated preset, except the one that cannot":
+    var
+      lane: DacPathLane
+    ## A lane move has to land on a complete parameter set, so each lane
+    ## resolves to a preset that passes the same validation a hand-built
+    ## config would.
+    for lane in [dplSuperCleanPath, dplCleanPath, dplMobilePath, dplThinPath,
+        dplLossyPath, dplRecoveryPath]:
+      check validateDacDefaults(dacDefaultsForPath(lane))
+      check dacDefaultsForPath(lane).pathLane == lane
+    ## BlockedUdpPath is the exception, and it fails loudly rather than
+    ## handing back a datagram policy for a path that carries no datagrams.
+    ## The path policy never targets this lane, so reaching here means a
+    ## caller went looking for parameters it should not have wanted.
+    expect ValueError:
+      discard dacDefaultsForPath(dplBlockedUdpPath)
 
   test "frame headers pack flags and keep DAC magic/version byte":
     var
@@ -162,12 +178,14 @@ suite "DAC defaults":
       discard initDacPackageManifest(9'u64, dtcUserData,
         initDacDefaults(dplLossyPath, dtcUserData, drmReedSolomon, damBatch,
           768'u16, high(uint16), 1'u16, 16'u16, 500'u16,
-          350'u16, 2'u8, 1'u8, false, false, false), 2048'u64, digest)
+          350'u16, 2'u8), 2048'u64, digest)
+    ## A repair mode with no parity shards is inconsistent, and a manifest
+    ## built from it must not be accepted.
     expect ValueError:
       discard initDacPackageManifest(10'u64, dtcUserData,
-        initDacDefaults(dplBlockedUdpPath, dtcUserData, drmNone, damExplicit,
-          4096'u16, 0'u16, 0'u16, 1'u16, 500'u16, 0'u16,
-          0'u8, 1'u8, true, false, true), 2048'u64, digest)
+        initDacDefaults(dplLossyPath, dtcUserData, drmReedSolomon, damExplicit,
+          1024'u16, 16'u16, 0'u16, 8'u16, 500'u16, 300'u16,
+          2'u8), 2048'u64, digest)
     expect ValueError:
       discard initDacRepairHint(7'u64, 1'u32, 1'u16, 0'u16, 1'u16,
         drmReedSolomon, drrMissing)

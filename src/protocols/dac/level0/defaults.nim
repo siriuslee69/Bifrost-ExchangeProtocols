@@ -18,12 +18,15 @@ const
 | Bad signal                  | LossyPath         | 768         | 16D + 4P    | 16 chunks | 500 ms      | 350 ms      |
 | Heavy packet loss           | LossyPath         | 512         | 12D + 6P    | 8 chunks  | 300 ms      | 200 ms      |
 | High jitter/reorder         | LossyPath         | 1000        | 24D + 3P    | 32 chunks | 1200 ms     | 900 ms      |
-| UDP blocked                 | BlockedUdpPath    | 4096 stream | none        | 1 frame   | 0 ms        | n/a         |
 | NAT/path unstable           | Mobile + Lossy    | 768         | 16D + 3P    | 16 chunks | 500 ms      | 300 ms      |
 | Receiver overloaded         | ThinPath          | 576         | 8D + 1P     | 8 chunks  | 1500 ms     | 1000 ms     |
 | Battery saver               | MobilePath        | 900         | 16D + 1P    | 64 chunks | 2500 ms     | 1000 ms     |
 | Critical weak recovery      | Lossy + Recovery  | 512         | 8D + 6P     | 4 chunks  | 200 ms      | 150 ms      |
 +-----------------------------+-------------------+-------------+-------------+-----------+-------------+-------------+
+
+The BlockedUdpPath lane has no row. It is the one lane that is not a set
+of datagram parameters: it means UDP does not work on this path at all, and
+the answer to it is the TCP carrier rather than a gentler DAC profile.
 
 The ACK batch and deadline are a starting point, not a fixed rule: the
 receiver moves them from what it observes arriving. Notice that heavy loss
@@ -35,15 +38,13 @@ radios, where the cost being saved is a wake-up, not bandwidth.
 proc initDacDefaults*(p: DacPathLane, c: DacTransferClass,
     repair: DacRepairMode, ack: DacAckMode, chunkBytes, dataShards,
     parityShards, ackBatchChunks, ackMaxDelayMs, repairWaitMs: uint16,
-    repairRounds, activeGroups: uint8,
-    useTcpRepair, compressManifest, orderedStream: bool,
+    repairRounds: uint8,
     bodyLenMode: DacBodyLenMode = dblU16,
     maxBodyLen: uint32 = uint32(high(uint16))): DacScenarioDefaults {.role: wrapper.} =
   ## p/c/repair/ack: path, transfer, repair, and ACK policies.
   ## chunkBytes/dataShards/parityShards: frame and repair-group sizing.
   ## ackBatchChunks/ackMaxDelayMs: starting ACK batch size and time bound.
-  ## repairWaitMs/repairRounds/activeGroups: repair control defaults.
-  ## useTcpRepair/compressManifest/orderedStream: mode toggles.
+  ## repairWaitMs/repairRounds: repair control defaults.
   ## bodyLenMode/maxBodyLen: width and maximum for the DAC body length field.
   result.pathLane = p
   result.bodyLenMode = bodyLenMode
@@ -58,10 +59,6 @@ proc initDacDefaults*(p: DacPathLane, c: DacTransferClass,
   result.ackMaxDelayMs = ackMaxDelayMs
   result.repairWaitMs = repairWaitMs
   result.repairRounds = repairRounds
-  result.activeGroups = activeGroups
-  result.useTcpRepair = useTcpRepair
-  result.compressManifest = compressManifest
-  result.orderedStream = orderedStream
 
 proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
   ## d: DAC scenario defaults to validate before use.
@@ -75,11 +72,7 @@ proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
     return false
   if d.ackMode != damSilent and d.ackBatchChunks == 0'u16:
     return false
-  if d.orderedStream:
-    result = d.repairMode == drmNone and d.dataShards == 0'u16 and
-      d.parityShards == 0'u16 and d.activeGroups > 0'u8
-    return
-  if d.dataShards == 0'u16 or d.activeGroups == 0'u8:
+  if d.dataShards == 0'u16:
     return false
   if d.repairMode == drmNone:
     result = d.parityShards == 0'u16
@@ -89,80 +82,64 @@ proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
 proc superCleanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class for same-room server or same-rack paths.
   result = initDacDefaults(dplSuperCleanPath, c, drmNone, damBatch, 32768'u16,
-    64'u16, 0'u16, 256'u16, 25'u16, 25'u16, 1'u8, 8'u8,
-    false, false, false, dblU32, dacSuperCleanMaxBodyLen)
+    64'u16, 0'u16, 256'u16, 25'u16, 25'u16, 1'u8,
+    dblU32, dacSuperCleanMaxBodyLen)
 
 proc cleanLanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplCleanPath, c, drmXor, damBatch, 1200'u16,
-    32'u16, 1'u16, 64'u16, 100'u16, 75'u16, 2'u8, 4'u8,
-    false, false, false)
+    32'u16, 1'u16, 64'u16, 100'u16, 75'u16, 2'u8)
 
 proc mobileDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplMobilePath, c, drmReedSolomon, damBatch,
-    900'u16, 24'u16, 2'u16, 32'u16, 400'u16, 250'u16,
-    2'u8, 2'u8, false, false, false)
+    900'u16, 24'u16, 2'u16, 32'u16, 400'u16, 250'u16, 2'u8)
 
 proc meteredDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmTcpExact, damNackOnly,
-    700'u16, 16'u16, 1'u16, 16'u16, 700'u16, 500'u16,
-    2'u8, 1'u8, true, true, false)
+    700'u16, 16'u16, 1'u16, 16'u16, 700'u16, 500'u16, 2'u8)
 
 proc thinDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
-    12'u16, 1'u16, 12'u16, 1000'u16, 700'u16, 2'u8,
-    1'u8, false, true, false)
+    12'u16, 1'u16, 12'u16, 1000'u16, 700'u16, 2'u8)
 
 proc badSignalDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    768'u16, 16'u16, 4'u16, 16'u16, 500'u16, 350'u16,
-    3'u8, 2'u8, false, false, false)
+    768'u16, 16'u16, 4'u16, 16'u16, 500'u16, 350'u16, 3'u8)
 
 proc heavyLossDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damExplicit,
-    512'u16, 12'u16, 6'u16, 8'u16, 300'u16, 200'u16,
-    3'u8, 1'u8, true, false, false)
+    512'u16, 12'u16, 6'u16, 8'u16, 300'u16, 200'u16, 3'u8)
 
 proc jitterDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    1000'u16, 24'u16, 3'u16, 32'u16, 1200'u16, 900'u16,
-    3'u8, 2'u8, false, false, false)
-
-proc blockedUdpDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplBlockedUdpPath, c, drmNone, damExplicit,
-    4096'u16, 0'u16, 0'u16, 1'u16, 0'u16, 0'u16, 0'u8,
-    1'u8, false, false, true)
+    1000'u16, 24'u16, 3'u16, 32'u16, 1200'u16, 900'u16, 3'u8)
 
 proc unstablePathDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    768'u16, 16'u16, 3'u16, 16'u16, 500'u16, 300'u16,
-    3'u8, 2'u8, false, false, false)
+    768'u16, 16'u16, 3'u16, 16'u16, 500'u16, 300'u16, 3'u8)
 
 proc overloadedDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
-    8'u16, 1'u16, 8'u16, 1500'u16, 1000'u16, 1'u8,
-    1'u8, false, true, false)
+    8'u16, 1'u16, 8'u16, 1500'u16, 1000'u16, 1'u8)
 
 proc batterySaverDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplMobilePath, c, drmXor, damBatch, 900'u16,
-    16'u16, 1'u16, 64'u16, 2500'u16, 1000'u16, 1'u8,
-    1'u8, false, false, false)
+    16'u16, 1'u16, 64'u16, 2500'u16, 1000'u16, 1'u8)
 
 proc recoveryWeakDacDefaults*(): DacScenarioDefaults {.role: wrapper.} =
   ## recoveryWeakDacDefaults: initialize weak-network recovery defaults.
   result = initDacDefaults(dplRecoveryPath, dtcRecovery, drmReedSolomon,
     damVerified, 512'u16, 8'u16, 6'u16, 4'u16, 200'u16,
-    150'u16, 4'u8, 1'u8, true, false, false)
+    150'u16, 4'u8)
 
 proc dacDefaultsForPath*(p: DacPathLane,
     c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
@@ -183,6 +160,14 @@ proc dacDefaultsForPath*(p: DacPathLane,
   of dplLossyPath:
     result = badSignalDacDefaults(c)
   of dplBlockedUdpPath:
-    result = blockedUdpDacDefaults(c)
+    ## There is no datagram policy for a path that carries no datagrams.
+    ## The lane is a signal, not a configuration: a peer reporting it is
+    ## saying "UDP does not work here", and the answer is a different
+    ## carrier, not different DAC parameters. Asking for defaults on this
+    ## lane means a caller kept sending where sending cannot work, so it
+    ## fails loudly and names the fix.
+    raise newException(ValueError,
+      "DAC has no defaults for a blocked-UDP path; carry the session over " &
+      "the TCP carrier (acrTcp) instead")
   of dplRecoveryPath:
     result = recoveryWeakDacDefaults()

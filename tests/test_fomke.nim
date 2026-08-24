@@ -18,9 +18,6 @@ import ../src/protocols/ame/level1/path_triggers
 import ../src/protocols/ame/level2/session
 import ../src/protocols/fomke/types
 import ../src/protocols/fomke/level0/gb3hkdf
-import ../src/protocols/preparation/types
-import ../src/protocols/preparation/gimli_batch
-import ../src/protocols/preparation/xchacha_streams
 import ../src/protocols/fomke/level0/protocols
 import ../src/protocols/fomke/level1/chain
 import ../src/protocols/fomke/level2/wire
@@ -93,46 +90,6 @@ proc installSignaturePeers(A, B: var AmeSession) =
   A.auth.peerSignaturePublicKeys = bKeys.publicKeys
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
-
-suite "Gimli prepared backend":
-  test "compiled lane width matches the selected target profile":
-    when defined(avx2):
-      check gimliPreparedBatchWidth() == 8
-    elif defined(sse2) or defined(neon) or defined(arm64) or defined(aarch64):
-      check gimliPreparedBatchWidth() == 4
-    else:
-      check gimliPreparedBatchWidth() == 1
-    when defined(bifrostTyrXChaChaBatch):
-      check preparedXChaChaWidth() == gimliPreparedBatchWidth()
-    else:
-      check preparedXChaChaWidth() == 1
-    ## The AES-CTR slot used to pick its own vector width here. It now hands
-    ## Tyr `acbAuto` and lets the cipher choose, so there is no Bifrost-side
-    ## width left to assert.
-
-  test "XChaCha batches match scalar streams across block boundaries":
-    var
-      keys: seq[ByteSeq] = @[]
-      nonces: seq[ByteSeq] = @[]
-      streams: seq[ByteSeq] = @[]
-      expected: ByteSeq = @[]
-      lengths: array[7, int] = [0, 1, 31, 63, 64, 65, 257]
-      i: int = 0
-      j: int = 0
-    while i < 13:
-      keys.add(deriveGb3Hkdf(@[byte 101 + uint8(i)], @[], @[byte 102],
-        gb3BlockBytes))
-      nonces.add(deriveGb3Hkdf(@[byte 111 + uint8(i)], @[], @[byte 112],
-        ameCipherNonceLen(acaXChaCha20)))
-      i = i + 1
-    while j < lengths.len:
-      streams = prepareXChaChaStreamRows(keys, nonces, lengths[j])
-      i = 0
-      while i < streams.len:
-        expected = tyr_xchacha.xchacha20Stream(keys[i], nonces[i], lengths[j])
-        check streams[i] == expected
-        i = i + 1
-      j = j + 1
 
 suite "GB3HKDF":
   test "sequential derivation is deterministic and block selectable":

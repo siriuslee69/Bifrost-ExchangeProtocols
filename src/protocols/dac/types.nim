@@ -220,23 +220,6 @@ type
     repairWaitMs*: uint16
     repairRounds*: uint8
 
-    ## The four below are DECLARED BUT NOT CONSULTED. Every scenario
-    ## constructor sets them, nothing anywhere reads them back, and none of
-    ## them reaches the wire. They are recorded intent, not behaviour:
-    ##
-    ##   activeGroups      no receiver bounds its in-flight repair groups
-    ##   useTcpRepair      exact chunk repair is always available, flag or not
-    ##   compressManifest  manifests are never compressed
-    ##   orderedStream     no path reorders or refuses to reorder on this
-    ##
-    ## Setting one changes nothing. They are kept because they name work that
-    ## was agreed and not built; treat a value here as a note to a future
-    ## implementer rather than as a knob.
-    activeGroups*: uint8
-    useTcpRepair*: bool
-    compressManifest*: bool
-    orderedStream*: bool
-
   ## DacAckRangeEntry: one contiguous sequence receipt.
   DacAckRangeEntry* {.role: truthState.} = object
     startSeq*: uint32

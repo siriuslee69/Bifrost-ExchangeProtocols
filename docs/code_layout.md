@@ -43,10 +43,6 @@ src/protocols
 │   │                (the ratchet is the ONLY payload protection)
 │   ├── level2/  <- envelope/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface
-├── preparation/
-│   ├── types.nim
-│   ├── gimli_batch.nim
-│   └── xchacha_streams.nim  <- thin Tyr batch/scalar selector
 └── chunkyaead/
     ├── level0/  <- format types and memory policy
     ├── level1/  <- nonce and streaming crypto operations

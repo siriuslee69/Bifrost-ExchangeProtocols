@@ -29,9 +29,6 @@ if tyrRoot.len > 0:
   addPathIfExists(joinPath(tyrRoot, "src"))
   addPathIfExists(joinPath(tyrRoot, ".iron", "meta"))
   addPathIfExists(joinPath(tyrRoot, "tools", "meta"))
-  if fileExists(joinPath(tyrRoot, "src", "tyr", "ciphers",
-      "xchacha20_batch.nim")):
-    switch("define", "bifrostTyrXChaChaBatch")
 
 ## Sibling checkouts win over the pinned submodules for the same reason Tyr
 ## does above: Bifrost, Eir, and SIMD-Nexus move together, and the DAC repair

@@ -223,14 +223,20 @@ Flags tell the receiver how to treat the body.
 
 ### DacScenarioDefaults
 
-Defaults are the chosen behavior for one path condition.
+Defaults are the chosen behavior for one path condition. Every field here is
+read by something: a value that changed nothing would be a note to a future
+implementer wearing the costume of a knob, which is worse than no note.
+
+BlockedUdpPath has no defaults at all. It is a signal that UDP does not work
+on this path, and the answer is the TCP carrier, so asking for its parameters
+raises rather than returning a datagram policy that cannot be used.
 
 ```text
 +--------------------------- SuperClean Defaults ------------------------+
-| Path=SuperCleanPath | BodyLenMode=u32 | Transfer=UserData              |
-| Repair=None | ACK=Batch | MaxBodyLen=16777216 | ChunkBytes=32768       |
-| DataShards=64 | ParityShards=0 | AckBatch=256 | AckDelay=25ms          |
-| AckRanges=2 | GapBits=16 | RepairWait=25ms | ActiveGroups=8           |
+| PathLane=SuperCleanPath | BodyLenMode=u32 | TransferClass=UserData     |
+| RepairMode=None | AckMode=Batch | MaxBodyLen=16777216                  |
+| ChunkBytes=32768 | DataShards=64 | ParityShards=0                      |
+| AckBatchChunks=256 | AckMaxDelayMs=25 | RepairWaitMs=25 | Rounds=1     |
 +------------------------------------------------------------------------+
 ```
 

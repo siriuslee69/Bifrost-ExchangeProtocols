@@ -44,8 +44,6 @@ instead of landing in `tools/`.
 | fomke_seal_2slot        | ratchet seal, two ciphers + two MACs |
 | fomke_cached_seal_*     | the same, from a prepared send slot  |
 | fomke_prepare8_*        | building eight prepared slots        |
-| gimli_stream_prepare8   | isolated Gimli keystream batching    |
-| xchacha_stream_prepare8 | isolated XChaCha keystream batching  |
 +-------------------------+--------------------------------------+
 ```
 
