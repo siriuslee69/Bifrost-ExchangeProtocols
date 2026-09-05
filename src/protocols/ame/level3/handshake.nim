@@ -1490,3 +1490,33 @@ proc acceptAmePinnedHandshake*(S: var AmeServerHandshake, f: AmeClientFinish,
       default(AmeAuthorityRoot), expectedPeer, nowUnix, [])
   finally:
     clearAmeServerHandshake(S)
+
+## ╭⟢ one handshake shape, three authentication inputs
+##
+## The wire path is deliberately unchanged across AM1M, AM1S and AM1C:
+##
+##   hello(KEM public keys) -> answer(KEM ciphertext) -> finish(transcript)
+##
+## Only the authentication input differs. These constructors make that choice
+## explicit while keeping callers on the same exchange functions.
+proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthentication {.
+    role: wrapper.} =
+  ## peer: public key expected from the remote endpoint (AM1S).
+  if peer.subject.len == 0 or peer.signingKeys.len == 0:
+    raise newException(ValueError, "AME pinned authentication is incomplete")
+  result.mode = atmPinnedPeerKey
+  result.expectedPeer = peer
+
+proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthentication {.
+    role: wrapper.} =
+  ## root: authority key stack used to validate certificates (AM1C).
+  if root.authority.len == 0 or root.signingKeys.len == 0:
+    raise newException(ValueError, "AME certificate authentication is incomplete")
+  result.mode = atmAuthorityCertificate
+  result.root = root
+
+proc clearAmeAuthentication*(A: var AmeAuthentication) {.
+    role: stateController.} =
+  ## A: erase provisioned PSK material after the handshake lifecycle ends.
+  secureClearAmeBytes(A.psk)
+  A = default(AmeAuthentication)
