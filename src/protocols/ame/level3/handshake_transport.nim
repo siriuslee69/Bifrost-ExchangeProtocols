@@ -173,6 +173,7 @@ type
     expectedPeer*: AmePinnedPeerIdentity
     revokedSerials*: seq[uint64]
     params*: AmeRuntimeParams
+    authentication*: AmeAuthentication
 
   ## What an initiator needs.
   AmeInitiatorPolicy* {.role: configurator.} = object
@@ -184,6 +185,7 @@ type
     root*: AmeAuthorityRoot
     expectedPeer*: AmePinnedPeerIdentity
     revokedSerials*: seq[uint64]
+    authentication*: AmeAuthentication
 
   ## How a completed handshake reports itself, whatever carried it.
   AmeHandshakeOutcome* {.role: truthState.} = object

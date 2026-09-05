@@ -496,6 +496,26 @@ suite "AME anti-flood cookie":
     check not ameCookieValid(secret, here, nowUnix, retried.hello)
 
 suite "AME handshake transport":
+  # {.testKind: tkUnit.}
+  test "AM1M proof binds the provisioned identity and transcript":
+    var
+      secret: ByteSeq = newSeq[byte](32)
+      auth: AmeAuthentication
+      transcript: ByteSeq = @[byte 1, 2, 3]
+      proof: ByteSeq
+      altered: ByteSeq
+    for i in 0 ..< secret.len:
+      secret[i] = byte(i + 1)
+    auth = initAmePskAuthentication("peer-a", secret)
+    proof = amePskTranscriptProof(auth, transcript)
+    check verifyAmePskTranscript(auth, transcript, proof)
+    altered = transcript & @[byte 4]
+    check not verifyAmePskTranscript(auth, altered, proof)
+    auth.pskId = "peer-b"
+    check not verifyAmePskTranscript(auth, transcript, proof)
+    clearAmeAuthentication(auth)
+    check auth.psk.len == 0
+
   # {.testKind: tkRegression.}
   test "authentication mode is carried in and bound to the hello":
     var

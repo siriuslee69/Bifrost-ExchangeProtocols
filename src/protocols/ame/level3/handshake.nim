@@ -1028,6 +1028,8 @@ proc clientHelloPolicyError*(c: AmeClientHello,
       c.offer.baseEpochId != 0'u32:
     return "client hello shape is invalid"
   try:
+    if c.mode == atmPskMac and c.offer.signatures.len != 0:
+      return "AM1M hello must not carry signature proofs"
     validateAmeTier(c.layout, c.initialTier)
     if not tiersEquivalent(c.offer.request.targetTier, c.initialTier) or
         c.offer.request.exchangeMask != c.initialTier.masks.kem or
@@ -1203,6 +1205,8 @@ proc serverHelloPolicyError(S: AmeClientHandshake,
     h: AmeServerHello): string {.role: parser.} =
   ## S/h: cheap responder shape checks before any key work.
   try:
+    if h.mode != S.hello.mode:
+      return "server authentication mode does not match client hello"
     if h.nonce.len != ameHandshakeNonceLen or h.reply.signatures.len != 0 or
         h.reply.requestId == 0'u32 or
         h.authTag.len != int(ord(h.params.authTagLen)) or h.sealed.len == 0:
@@ -1257,7 +1261,8 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     trustMode: AmeTrustMode, root: AmeAuthorityRoot,
     expectedPeer: AmePinnedPeerIdentity, nowUnix: int64,
-    revokedSerials: openArray[uint64]): AmeHandshakeResult {.
+    revokedSerials: openArray[uint64],
+    pskAuth: AmeAuthentication = default(AmeAuthentication)): AmeHandshakeResult {.
     role: orchestrator.} =
   ## S/h/descriptor/identity/trustMode/root/expectedPeer/nowUnix/revoked:
   ## open the server's identity, judge it, then answer with our own.
@@ -1272,6 +1277,16 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
   if policyError.len > 0:
     result.err = policyError
     return
+  if trustMode == atmPskMac:
+    if pskAuth.mode != atmPskMac:
+      result.err = "PSK authentication is not configured"
+      return
+    transcript = handshakeTranscript(S.hello, h)
+    if identityBlock.identityBlock.proofs.len == 0 or
+        not verifyAmePskTranscript(pskAuth, transcript,
+          identityBlock.identityBlock.proofs[0]):
+      result.err = "PSK transcript proof is invalid"
+      return
   try:
     secrets = openAmeExchangeReply(S.hello.layout.kems, S.hello.offer,
       h.reply, S.secretKeys)
@@ -1298,7 +1313,7 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
     return
   clear = serverHelloClearSubject(S.hello, h)
   try:
-    if not verifyIdentityStack(S.hello.layout, S.hello.initialTier, clear,
+    if trustMode != atmPskMac and not verifyIdentityStack(S.hello.layout, S.hello.initialTier, clear,
         identityBlock.identityBlock.proofs,
         identityBlock.identityBlock.certificate):
       result.err = "server hello identity proof is invalid"
@@ -1454,6 +1469,16 @@ proc finishAmeHandshake*(S: var AmeClientHandshake, h: AmeServerHello,
     result = finishAmeHandshakeCore(S, h, descriptor, identity,
       atmAuthorityCertificate, root, default(AmePinnedPeerIdentity), nowUnix,
       revokedSerials)
+  finally:
+    clearAmeClientHandshake(S)
+
+proc finishAmePskHandshake*(S: var AmeClientHandshake, h: AmeServerHello,
+    auth: AmeAuthentication, descriptor: AmeIdentityCertificate,
+    identity: AmeIdentityKey, nowUnix: int64): AmeHandshakeResult {.
+    role: orchestrator, tag: {tagAppApi}.} =
+  try:
+    result = finishAmeHandshakeCore(S, h, descriptor, identity, atmPskMac,
+      default(AmeAuthorityRoot), default(AmePinnedPeerIdentity), nowUnix, [], auth)
   finally:
     clearAmeClientHandshake(S)
 

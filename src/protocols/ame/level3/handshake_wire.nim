@@ -228,6 +228,7 @@ proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: stateController,
       h.authTag.len != int(ord(h.params.authTagLen)) or h.sealed.len == 0:
     raise newException(ValueError, "AME server hello is incomplete")
   appendRecordHeader(result, ameServerHelloMagic)
+  result.add(uint8(ord(h.mode)))
   appendAmeBytes(result, h.nonce)
   appendLargeField(result, encodeAmeExchangeReply(h.reply))
   result.add(uint8(ord(h.params.authTagLen)))
@@ -243,6 +244,10 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
     B: ByteSeq = @[]
     cursor: int = 0
   requireHandshakeHeader(A, ameServerHelloMagic, cursor)
+  var modeByte: uint8 = readHandshakeU8(A, cursor)
+  if modeByte > uint8(ord(high(AmeTrustMode))):
+    raise newException(ValueError, "AME authentication mode is invalid")
+  result.mode = AmeTrustMode(modeByte)
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readLargeField(A, cursor)
   result.reply = decodeAmeExchangeReply(L.kems, B)
