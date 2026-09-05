@@ -114,6 +114,7 @@ type
   ## The cleartext half of a client hello. No identity here on purpose.
   AmeClientHello* {.role: truthState.} = object
     sessionId*: uint64
+    mode*: AmeTrustMode
     nonce*: ByteSeq
     layout*: AmeSuiteLayout
     initialTier*: AmeMaskTier
@@ -128,6 +129,7 @@ type
   ## says who the server is inside the sealed block.
   AmeServerHello* {.role: truthState.} = object
     nonce*: ByteSeq
+    mode*: AmeTrustMode
     reply*: AmeExchangeReply
     params*: AmeRuntimeParams
       ## The tunables the responder picked for the first epoch. In the clear,
@@ -816,6 +818,7 @@ proc clientHelloSubject*(h: AmeClientHello): ByteSeq {.role: truthBuilder.} =
   ## h: the client hello as the transcript records it.
   appendAmeLabel(result, "AME-CLIENT-HELLO-v4")
   appendAmeU64(result, h.sessionId)
+  result.add(uint8(ord(h.mode)))
   appendHandshakeBytes(result, h.nonce)
   appendHandshakeBytes(result, encodeAmeSuiteLayout(h.layout))
   appendHandshakeBytes(result, encodeAmeMaskTier(h.initialTier))
@@ -829,6 +832,7 @@ proc serverHelloClearSubject*(c: AmeClientHello,
   ## contain fields both sides hold before those keys exist.
   appendAmeLabel(result, "AME-SERVER-HELLO-CLEAR-v4")
   appendHandshakeBytes(result, clientHelloSubject(c))
+  result.add(uint8(ord(s.mode)))
   appendHandshakeBytes(result, s.nonce)
   appendHandshakeBytes(result, encodeAmeExchangeReply(s.reply))
   result.add(uint8(ord(s.params.authTagLen)))
@@ -979,7 +983,7 @@ proc ameCookieValid*(secret: AmeCookieSecret, peerId: openArray[uint8],
 
 proc beginAmeHandshake*(sessionId: uint64, L: AmeSuiteLayout,
     initialTier: AmeMaskTier, requestId: uint32 = 1'u32,
-    cookie: openArray[uint8] = []): AmeClientHandshake {.
+    cookie: openArray[uint8] = [], mode: AmeTrustMode = atmAuthorityCertificate): AmeClientHandshake {.
     role: orchestrator, tag: {tagAppApi, tagExchange}.} =
   ## sessionId/L/initialTier/requestId/cookie: client inputs. The hello names
   ## no identity at all -- that waits until there is a key to hide it under.
@@ -995,6 +999,7 @@ proc beginAmeHandshake*(sessionId: uint64, L: AmeSuiteLayout,
   request = initAmeExchangeRequest(L.kems, initialTier, initialTier.masks.kem)
   keys = generateAmeExchangeKeys(L.kems, request)
   result.hello.sessionId = sessionId
+  result.hello.mode = mode
   result.hello.nonce = tyr_random.cryptoRand(tyr_alg.raSystem,
     ameHandshakeNonceLen)
   result.hello.layout = L
@@ -1052,6 +1057,7 @@ proc buildServerHello(S: var AmeServerHandshake, identity: AmeIdentityKey,
   S.sharedSecrets = answer.sharedSecrets
   S.serverHello.nonce = tyr_random.cryptoRand(tyr_alg.raSystem,
     ameHandshakeNonceLen)
+  S.serverHello.mode = c.mode
   S.serverHello.reply = answer.reply
   S.serverHello.params = params
   clear = serverHelloClearSubject(c, S.serverHello)

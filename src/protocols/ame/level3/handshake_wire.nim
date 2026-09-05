@@ -170,6 +170,7 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: stateController,
     raise newException(ValueError, "AME client hello cookie is too large")
   appendRecordHeader(result, ameClientHelloMagic)
   appendAmeU64(result, h.sessionId)
+  result.add(uint8(ord(h.mode)))
   appendAmeBytes(result, h.nonce)
   appendSmallField(result, encodeAmeSuiteLayout(h.layout))
   appendSmallField(result, encodeAmeMaskTier(h.initialTier))
@@ -184,6 +185,10 @@ proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
     cursor: int = 0
   requireHandshakeHeader(A, ameClientHelloMagic, cursor)
   result.sessionId = readHandshakeU64(A, cursor)
+  var modeByte: uint8 = readHandshakeU8(A, cursor)
+  if modeByte > uint8(ord(high(AmeTrustMode))):
+    raise newException(ValueError, "AME authentication mode is invalid")
+  result.mode = AmeTrustMode(modeByte)
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readSmallField(A, cursor)
   result.layout = decodeAmeSuiteLayout(B)
