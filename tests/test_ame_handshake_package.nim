@@ -496,6 +496,18 @@ suite "AME anti-flood cookie":
     check not ameCookieValid(secret, here, nowUnix, retried.hello)
 
 suite "AME handshake transport":
+  # {.testKind: tkRegression.}
+  test "authentication mode is carried in and bound to the hello":
+    var
+      p: Pair = newPair("mode-wire")
+      h: AmeClientHandshake = beginAmeHandshake(91'u64, p.layout, p.tier,
+        mode = atmPskMac)
+      encoded: ByteSeq = encodeAmeClientHello(h.hello)
+      decoded: AmeClientHello = decodeAmeClientHello(encoded)
+    check decoded.mode == atmPskMac
+    decoded.mode = atmPinnedPeerKey
+    check clientHelloSubject(decoded) != clientHelloSubject(h.hello)
+
   test "records ride ordinary AME frames and refuse to arrive out of order":
     var
       p: Pair = newPair("transport")
