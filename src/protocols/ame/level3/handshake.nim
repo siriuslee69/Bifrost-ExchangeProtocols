@@ -70,7 +70,15 @@ const
 type
   AmeTrustMode* = enum
     atmAuthorityCertificate,
-    atmPinnedPeerKey
+    atmPinnedPeerKey,
+    atmPskMac
+
+  AmeAuthentication* {.role: configurator.} = object
+    mode*: AmeTrustMode
+    pskId*: string
+    psk*: ByteSeq
+    root*: AmeAuthorityRoot
+    expectedPeer*: AmePinnedPeerIdentity
 
   AmePinnedPeerIdentity* {.role: configurator.} = object
     subject*: string
@@ -180,6 +188,34 @@ proc appendHandshakeBytes(A: var ByteSeq, B: openArray[uint8]) {.
   requireAmeU32Len(B.len, "handshake bytes")
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
+
+proc initAmePskAuthentication*(identifier: string,
+    secret: openArray[uint8]): AmeAuthentication {.role: wrapper.} =
+  ## identifier/secret: AM1M provisioning material for a shared exchange path.
+  if identifier.len == 0 or secret.len < 16:
+    raise newException(ValueError, "AME PSK authentication is incomplete")
+  result.mode = atmPskMac
+  result.pskId = identifier
+  result.psk = @secret
+
+proc amePskTranscriptProof*(a: AmeAuthentication,
+    transcript: openArray[uint8]): ByteSeq {.role: truthBuilder.} =
+  ## a/transcript: transcript MAC for AM1M adapters.
+  var subject: ByteSeq = @[]
+  if a.mode != atmPskMac or a.psk.len < 16:
+    raise newException(ValueError, "AME PSK authentication is not configured")
+  appendAmeLabel(subject, "AME-AM1M-TRANSCRIPT-v1")
+  appendHandshakeString(subject, a.pskId)
+  appendHandshakeBytes(subject, transcript)
+  result = ameMacTag(amaBlake3, a.psk, subject, 32)
+  secureClearAmeBytes(subject)
+
+proc verifyAmePskTranscript*(a: AmeAuthentication,
+    transcript, proof: openArray[uint8]): bool {.role: parser.} =
+  ## a/transcript/proof: constant-time transcript proof check.
+  var expected: ByteSeq = amePskTranscriptProof(a, transcript)
+  result = constantTimeEqualAme(expected, proof)
+  secureClearAmeBytes(expected)
 
 proc appendHandshakeProofs(A: var ByteSeq, P: openArray[ByteSeq]) {.
     role: stateController.} =

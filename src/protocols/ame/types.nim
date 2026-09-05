@@ -293,8 +293,13 @@ type
       ## one valid proof for every slot listed here -- an authority that signs
       ## with two algorithms cannot be forged by breaking only one of them.
 
+  AmeAuthenticationMode* = enum
+    am1c = 0, am1s = 1, am1m = 2
+      ## AM1R describes relay topology, so it is not an authentication mode.
+
   AmePeerTrustResult* {.role: truthState.} = object
     ok*: bool
+    mode*: AmeAuthenticationMode
     authority*: string
     algorithms*: seq[AmeSignatureAlgorithm]
     subjectKeyId*: string
@@ -386,6 +391,9 @@ type
     retiringFramesLeft*: int
     sessionId*: uint64
     endpointRole*: AmeEndpointRole
+    authenticationMode*: AmeAuthenticationMode
+    exchangeAuthenticationKey*: ByteSeq
+      ## Session-derived AM1M proof key; never the provisioned PSK.
     localSignatureSecretKeys*: seq[ByteSeq]
     peerSignaturePublicKeys*: seq[ByteSeq]
 
