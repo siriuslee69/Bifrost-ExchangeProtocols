@@ -18,7 +18,7 @@ proc writeVector(path: string; content: string) =
 
 proc main() =
   let repoRoot = getCurrentDir()
-  let vectorsRoot = joinPath(repoRoot, "tests", "vectors")
+  let vectorsRoot = joinPath(repoRoot, "evaluation", "tests", "vectors")
 
   let helloPayload = %*{
     "kind": "hello",

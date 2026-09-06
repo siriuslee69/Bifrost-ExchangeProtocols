@@ -120,7 +120,8 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
       result.err = "AME hello retry cookie is invalid"
       return
-  answered = answerAmeHandshake(hello, c.supported, c.descriptor, c.identity,
+  answered = answerAmeHandshake(hello, c.supported, c.authentication, c.descriptor,
+    c.identity,
     c.params)
   if not answered.ok:
     result.err = answered.err
@@ -145,12 +146,8 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     clearAmeServerHandshake(answered.state)
     result.err = e.msg
     return
-  if c.trustMode == atmAuthorityCertificate:
-    accepted = acceptAmeHandshake(answered.state, finish, c.root, nowUnix,
-      c.revokedSerials)
-  else:
-    accepted = acceptAmePinnedHandshake(answered.state, finish,
-      c.expectedPeer, nowUnix)
+  accepted = acceptAmeHandshake(answered.state, finish, c.authentication,
+    nowUnix, c.revokedSerials)
   if not accepted.ok:
     result.err = accepted.err
     result.peerTrust = accepted.peerTrust
@@ -176,7 +173,8 @@ proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
     result.err = "AME client session id must be positive"
     return
   try:
-    state = beginAmeHandshake(sessionId, c.layout, c.initialTier)
+    state = beginAmeHandshake(sessionId, c.layout, c.initialTier,
+      mode = c.authentication.mode)
     sendTcpFrame(sock, encodeAmeClientHelloFrame(state.hello))
   except CatchableError as e:
     clearAmeClientHandshake(state)
@@ -196,7 +194,7 @@ proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
       retry = decodeAmeHelloRetry(got.frame.record)
       clearAmeClientHandshake(state)
       state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
-        retry.cookie)
+        retry.cookie, c.authentication.mode)
       sendTcpFrame(sock, encodeAmeClientHelloFrame(state.hello,
         retried = true))
     except CatchableError as e:
@@ -217,12 +215,8 @@ proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
     clearAmeClientHandshake(state)
     result.err = e.msg
     return
-  if c.trustMode == atmAuthorityCertificate:
-    finished = finishAmeHandshake(state, serverHello, c.root, c.descriptor,
-      c.identity, nowUnix, c.revokedSerials)
-  else:
-    finished = finishAmePinnedHandshake(state, serverHello, c.expectedPeer,
-      c.descriptor, c.identity, nowUnix)
+  finished = finishAmeHandshake(state, serverHello, c.authentication,
+    c.descriptor, c.identity, nowUnix, c.revokedSerials)
   if not finished.ok:
     result.err = finished.err
     result.peerTrust = finished.peerTrust

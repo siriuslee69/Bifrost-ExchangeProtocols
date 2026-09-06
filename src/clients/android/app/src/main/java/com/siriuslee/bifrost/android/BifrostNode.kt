@@ -22,16 +22,16 @@ import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 import kotlin.random.Random
 
-internal data class AecDacSession(
+internal data class AmeDacSession(
   val peerName: String,
   val tier: AmeTier,
   val seed: ByteArray,
   val rootLaneId: Long,
-  val remote: AecDacPeer,
+  val remote: AmeDacPeer,
   val createdAtMillis: Long,
 )
 
-private data class AecDacRootAck(
+private data class AmeDacRootAck(
   val message: BifrostMessage,
   val rootLaneId: Long,
 )
@@ -40,8 +40,8 @@ internal class BifrostNodeRuntimeState {
   @Volatile
   private var io: ExecutorService = Executors.newCachedThreadPool()
 
-  val aecDacSessions = ConcurrentHashMap<Long, AecDacSession>()
-  val completedAecDacSessions = ConcurrentHashMap<Long, Long>()
+  val ameDacSessions = ConcurrentHashMap<Long, AmeDacSession>()
+  val completedAmeDacSessions = ConcurrentHashMap<Long, Long>()
 
   @Synchronized
   fun executor(): ExecutorService {
@@ -53,33 +53,33 @@ internal class BifrostNodeRuntimeState {
 
   @Synchronized
   fun stop() {
-    aecDacSessions.clear()
-    completedAecDacSessions.clear()
+    ameDacSessions.clear()
+    completedAmeDacSessions.clear()
     io.shutdownNow()
   }
 
-  fun pruneExpiredAecDacSessions(nowMillis: Long, maxAgeMillis: Long) {
-    for ((sessionId, session) in aecDacSessions.entries) {
+  fun pruneExpiredAmeDacSessions(nowMillis: Long, maxAgeMillis: Long) {
+    for ((sessionId, session) in ameDacSessions.entries) {
       if (nowMillis - session.createdAtMillis >= maxAgeMillis) {
-        aecDacSessions.remove(sessionId, session)
+        ameDacSessions.remove(sessionId, session)
       }
     }
-    for ((sessionId, completedAtMillis) in completedAecDacSessions.entries) {
+    for ((sessionId, completedAtMillis) in completedAmeDacSessions.entries) {
       if (nowMillis - completedAtMillis >= maxAgeMillis) {
-        completedAecDacSessions.remove(sessionId, completedAtMillis)
+        completedAmeDacSessions.remove(sessionId, completedAtMillis)
       }
     }
   }
 
-  fun consumeAecDacSession(sessionId: Long, session: AecDacSession): Boolean =
-    aecDacSessions.remove(sessionId, session)
+  fun consumeAmeDacSession(sessionId: Long, session: AmeDacSession): Boolean =
+    ameDacSessions.remove(sessionId, session)
 
-  fun markAecDacSessionCompleted(sessionId: Long, completedAtMillis: Long) {
-    completedAecDacSessions[sessionId] = completedAtMillis
+  fun markAmeDacSessionCompleted(sessionId: Long, completedAtMillis: Long) {
+    completedAmeDacSessions[sessionId] = completedAtMillis
   }
 
-  fun isAecDacSessionCompleted(sessionId: Long): Boolean =
-    completedAecDacSessions.containsKey(sessionId)
+  fun isAmeDacSessionCompleted(sessionId: Long): Boolean =
+    completedAmeDacSessions.containsKey(sessionId)
 }
 
 class BifrostNode(
@@ -117,7 +117,7 @@ class BifrostNode(
     const val dacRootAckSequence = 1L
     const val dacLaneDataSequence = 2L
     const val dacLaneAckSequence = 3L
-    const val aecDacSessionTtlMillis = 15_000L
+    const val ameDacSessionTtlMillis = 15_000L
     const val dacMaxFrameBytes = 64 * 1024
   }
 
@@ -304,11 +304,11 @@ class BifrostNode(
 
   private fun startDacServer() {
     if (!demoSecurityEnabled()) {
-      emit(ProtocolKind.AME, LogDirection.INFO, "local", "debug-only demo AEC/DAC listener disabled in release")
+      emit(ProtocolKind.AME, LogDirection.INFO, "local", "debug-only demo AME/DAC/DAC listener disabled in release")
       return
     }
     if (!NativeAme.loaded) {
-      emit(ProtocolKind.AME, LogDirection.ERROR, "local", "native bridge missing; AEC/DAC listener disabled")
+      emit(ProtocolKind.AME, LogDirection.ERROR, "local", "native bridge missing; AME/DAC/DAC listener disabled")
       return
     }
     submitIo {
@@ -376,13 +376,13 @@ class BifrostNode(
         if (ameFrame.isRoot) {
           handleDacRootFrame(sock, packet, dac, ameFrame)
         } else {
-          handleAecDacLaneFrame(sock, packet, frame, dac)
+          handleAmeDacLaneFrame(sock, packet, frame, dac)
         }
       } catch (_: SocketTimeoutException) {
       } catch (_: SocketException) {
         if (running.get()) emit(ProtocolKind.AME, LogDirection.ERROR, "local", "DAC socket closed")
       } catch (t: Throwable) {
-        if (running.get()) emit(ProtocolKind.AME, LogDirection.ERROR, "local", "AEC/DAC rejected: ${t.message ?: t.javaClass.simpleName}")
+        if (running.get()) emit(ProtocolKind.AME, LogDirection.ERROR, "local", "AME/DAC/DAC rejected: ${t.message ?: t.javaClass.simpleName}")
       }
     }
   }
@@ -394,9 +394,9 @@ class BifrostNode(
     rootFrame: BifrostWire.AmeFrame,
   ) {
     val nowMillis = System.currentTimeMillis()
-    runtimeState.pruneExpiredAecDacSessions(nowMillis, aecDacSessionTtlMillis)
+    runtimeState.pruneExpiredAmeDacSessions(nowMillis, ameDacSessionTtlMillis)
     try {
-      requireAecDacSessionNotCompleted(runtimeState, rootFrame.sessionId, "AME/DAC root request")
+      requireAmeDacSessionNotCompleted(runtimeState, rootFrame.sessionId, "AME/DAC root request")
     } catch (t: IllegalArgumentException) {
       emit(ProtocolKind.AME, LogDirection.ERROR, packet.address.hostAddress ?: "dac-peer", t.message ?: "AME/DAC root request rejected")
       return
@@ -405,7 +405,7 @@ class BifrostNode(
     require(dac.header.sessionId == rootFrame.sessionId) { "AME/DAC root session mismatch" }
     require(dac.header.laneId == ameRootLaneId) { "AME/DAC expected root lane" }
     require(dac.header.sequence == dacRootRequestSequence) { "AME/DAC root sequence mismatch" }
-    requireAecDacRootFrame(
+    requireAmeDacRootFrame(
       frame = rootFrame,
       expectedSessionId = dac.header.sessionId,
       expectedSequence = ameRootRequestSequence,
@@ -413,18 +413,18 @@ class BifrostNode(
       context = "AME/DAC root request",
     )
     val rootMessage = BifrostWire.decodeMessage(rootFrame.payload)
-    requireAecDacDataMessage(rootMessage, "AME/DAC root request")
+    requireAmeDacDataMessage(rootMessage, "AME/DAC root request")
     maybeAutoUpgradeFrom(rootFrame, rootMessage.senderName)
     val profile = rootFrame.profile ?: ameProfile()
     val tier = profile.tier
-    val remote = aecDacPeerOf(packet)
-    requireAecDacSessionPeer(
+    val remote = ameDacPeerOf(packet)
+    requireAmeDacSessionPeer(
       sessionId = rootFrame.sessionId,
       actual = remote,
-      existing = runtimeState.aecDacSessions[rootFrame.sessionId]?.remote,
+      existing = runtimeState.ameDacSessions[rootFrame.sessionId]?.remote,
     )
-    val seed = deriveAecSessionSeed(local.nodeId, rootMessage.senderId, rootFrame.sessionId, tier)
-    val session = AecDacSession(
+    val seed = deriveAmeDacSessionSeed(local.nodeId, rootMessage.senderId, rootFrame.sessionId, tier)
+    val session = AmeDacSession(
       peerName = rootMessage.senderName,
       tier = tier,
       seed = seed,
@@ -451,26 +451,26 @@ class BifrostNode(
       payload = rootAckFrame,
     )
     sock.send(DatagramPacket(rootAckDac, rootAckDac.size, packet.address, packet.port))
-    runtimeState.aecDacSessions[rootFrame.sessionId] = session
+    runtimeState.ameDacSessions[rootFrame.sessionId] = session
     emit(ProtocolKind.AME, LogDirection.OUT, rootMessage.senderName, "DAC root ack #${rootMessage.sequence}")
   }
 
-  private fun handleAecDacLaneFrame(
+  private fun handleAmeDacLaneFrame(
     sock: DatagramSocket,
     packet: DatagramPacket,
     frame: ByteArray,
     dac: DacReferenceWire.DecodedFrame,
   ) {
-    runtimeState.pruneExpiredAecDacSessions(System.currentTimeMillis(), aecDacSessionTtlMillis)
+    runtimeState.pruneExpiredAmeDacSessions(System.currentTimeMillis(), ameDacSessionTtlMillis)
     val session = try {
-      requireAecDacSession(runtimeState, dac.header.sessionId, "AEC/DAC lane frame")
+      requireAmeDacSession(runtimeState, dac.header.sessionId, "AME/DAC/DAC lane frame")
     } catch (t: IllegalArgumentException) {
-      emit(ProtocolKind.AME, LogDirection.ERROR, packet.address.hostAddress ?: "dac-peer", t.message ?: "AEC/DAC lane frame rejected")
+      emit(ProtocolKind.AME, LogDirection.ERROR, packet.address.hostAddress ?: "dac-peer", t.message ?: "AME/DAC/DAC lane frame rejected")
       return
     }
-    requireAecDacPeer(packet, session.remote, "AEC/DAC lane frame")
-    val message = consumeAecDacSessionAfter(runtimeState, dac.header.sessionId, session) {
-      val lanePayload = NativeAec.openDac(
+    requireAmeDacPeer(packet, session.remote, "AME/DAC/DAC lane frame")
+    val message = consumeAmeDacSessionAfter(runtimeState, dac.header.sessionId, session) {
+      val lanePayload = NativeAmeDac.openDac(
         frame = frame,
         seed = session.seed,
         tier = session.tier,
@@ -481,13 +481,13 @@ class BifrostNode(
         rootLaneId = session.rootLaneId,
       )
       val decoded = BifrostWire.decodeMessage(lanePayload)
-      requireAecDacDataMessage(decoded, "AME/DAC lane frame")
+      requireAmeDacDataMessage(decoded, "AME/DAC lane frame")
       decoded
     }
-    runtimeState.markAecDacSessionCompleted(dac.header.sessionId, System.currentTimeMillis())
+    runtimeState.markAmeDacSessionCompleted(dac.header.sessionId, System.currentTimeMillis())
     emit(ProtocolKind.AME, LogDirection.IN, message.senderName, "DAC lane $ameLaneId protected ${message.body}")
     val ackMessage = BifrostWire.ackFor(local, message, sequence.getAndIncrement())
-    val ackFrame = NativeAec.sealDac(
+    val ackFrame = NativeAmeDac.sealDac(
       payload = BifrostWire.encodeMessage(ackMessage),
       seed = session.seed,
       tier = session.tier,
@@ -574,11 +574,11 @@ class BifrostNode(
 
   private fun sendAme(peer: PeerEndpoint, body: String) {
     if (!demoSecurityEnabled()) {
-      emit(ProtocolKind.AME, LogDirection.ERROR, peer.displayName, "debug-only demo AEC/DAC is disabled in release")
+      emit(ProtocolKind.AME, LogDirection.ERROR, peer.displayName, "debug-only demo AME/DAC/DAC is disabled in release")
       return
     }
     if (!NativeAme.loaded) {
-      emit(ProtocolKind.AME, LogDirection.ERROR, peer.displayName, "native bridge missing; AME/AEC send disabled")
+      emit(ProtocolKind.AME, LogDirection.ERROR, peer.displayName, "native bridge missing; AME/AME/DAC send disabled")
       return
     }
     val sessionId = Random.nextLong(1, Long.MAX_VALUE)
@@ -592,7 +592,7 @@ class BifrostNode(
         dac.soTimeout = 3500
         val address = InetAddress.getByName(peer.host)
         dac.connect(address, peer.dacPort)
-        val expectedPeer = aecDacPeerOf(address, peer.dacPort)
+        val expectedPeer = ameDacPeerOf(address, peer.dacPort)
         val rootPayload = BifrostWire.encodeMessage(rootMessage)
         val rootFrame = BifrostWire.encodeAmeRootFrame(
           BifrostWire.AmePacketKind.UPGRADE_REQUEST,
@@ -612,9 +612,9 @@ class BifrostNode(
         dac.send(DatagramPacket(rootDacFrame, rootDacFrame.size))
         emit(ProtocolKind.AME, LogDirection.OUT, peer.displayName, "DAC root upgrade ${profile.tier.label}")
         val rootAck = readDacRootAck(dac, peer, expectedPeer, sessionId, rootLaneId)
-        val seed = deriveAecSessionSeed(local.nodeId, rootAck.message.senderId, sessionId, profile.tier)
+        val seed = deriveAmeDacSessionSeed(local.nodeId, rootAck.message.senderId, sessionId, profile.tier)
 
-        val dacFrame = NativeAec.sealDac(
+        val dacFrame = NativeAmeDac.sealDac(
           payload = BifrostWire.encodeMessage(laneMessage),
           seed = seed,
           tier = profile.tier,
@@ -626,7 +626,7 @@ class BifrostNode(
         )
         dac.send(DatagramPacket(dacFrame, dacFrame.size))
         emit(ProtocolKind.AME, LogDirection.OUT, peer.displayName, "DAC lane $ameLaneId protected $body")
-        readAecDacAck(dac, peer, expectedPeer, seed, profile.tier, sessionId, rootAck.rootLaneId)
+        readAmeDacAck(dac, peer, expectedPeer, seed, profile.tier, sessionId, rootAck.rootLaneId)
       }
     } catch (t: Throwable) {
       emit(ProtocolKind.AME, LogDirection.ERROR, peer.displayName, t.message ?: t.javaClass.simpleName)
@@ -646,20 +646,20 @@ class BifrostNode(
   private fun readDacRootAck(
     sock: DatagramSocket,
     peer: PeerEndpoint,
-    expectedPeer: AecDacPeer,
+    expectedPeer: AmeDacPeer,
     sessionId: Long,
     rootLaneId: Long,
-  ): AecDacRootAck {
+  ): AmeDacRootAck {
     val packet = DatagramPacket(ByteArray(dacMaxFrameBytes), dacMaxFrameBytes)
     sock.receive(packet)
-    requireAecDacPeer(packet, expectedPeer, "AME/DAC root ack")
+    requireAmeDacPeer(packet, expectedPeer, "AME/DAC root ack")
     val dac = DacReferenceWire.decodeFrame(packet.data.copyOfRange(packet.offset, packet.offset + packet.length))
     require(dac.header.messageKind == DacReferenceWire.MessageKind.PACKAGE_CHUNK) { "AME/DAC expected DAC package chunk" }
     require(dac.header.sessionId == sessionId) { "AME/DAC root ack session mismatch" }
     require(dac.header.laneId == ameRootLaneId) { "AME/DAC root ack lane mismatch" }
     require(dac.header.sequence == dacRootAckSequence) { "AME/DAC root ack sequence mismatch" }
     val ackFrame = BifrostWire.decodeAmeFrame(dac.payload)
-    requireAecDacRootFrame(
+    requireAmeDacRootFrame(
       frame = ackFrame,
       expectedSessionId = sessionId,
       expectedSequence = ameRootAckSequence,
@@ -668,17 +668,17 @@ class BifrostNode(
       expectedRootLaneId = rootLaneId,
     )
     val ack = BifrostWire.decodeMessage(ackFrame.payload)
-    requireAecDacAckMessage(ack, "AME/DAC root ack")
+    requireAmeDacAckMessage(ack, "AME/DAC root ack")
     maybeAutoUpgradeFrom(ackFrame, ack.senderName)
     val label = ameFrameLabel(ackFrame)
     emit(ProtocolKind.AME, LogDirection.IN, peer.displayName, "DAC $label ${ack.body}")
-    return AecDacRootAck(message = ack, rootLaneId = ackFrame.rootLaneId)
+    return AmeDacRootAck(message = ack, rootLaneId = ackFrame.rootLaneId)
   }
 
-  private fun readAecDacAck(
+  private fun readAmeDacAck(
     sock: DatagramSocket,
     peer: PeerEndpoint,
-    expectedPeer: AecDacPeer,
+    expectedPeer: AmeDacPeer,
     seed: ByteArray,
     tier: AmeTier,
     sessionId: Long,
@@ -686,9 +686,9 @@ class BifrostNode(
   ) {
     val packet = DatagramPacket(ByteArray(dacMaxFrameBytes), dacMaxFrameBytes)
     sock.receive(packet)
-    requireAecDacPeer(packet, expectedPeer, "AME/DAC lane ack")
+    requireAmeDacPeer(packet, expectedPeer, "AME/DAC lane ack")
     val frame = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
-    val ackPayload = NativeAec.openDac(
+    val ackPayload = NativeAmeDac.openDac(
       frame = frame,
       seed = seed,
       tier = tier,
@@ -699,7 +699,7 @@ class BifrostNode(
       rootLaneId = rootLaneId,
     )
     val ack = BifrostWire.decodeMessage(ackPayload)
-    requireAecDacAckMessage(ack, "AME/DAC lane ack")
+    requireAmeDacAckMessage(ack, "AME/DAC lane ack")
     emit(ProtocolKind.AME, LogDirection.IN, peer.displayName, "DAC lane $ameLaneId protected ${ack.body}")
   }
 
@@ -714,14 +714,14 @@ class BifrostNode(
     return "$base ${profile.tier.label}"
   }
 
-  private fun deriveAecSessionSeed(
+  private fun deriveAmeDacSessionSeed(
     localNodeId: String,
     remoteNodeId: String,
     sessionId: Long,
     tier: AmeTier,
   ): ByteArray {
     val ordered = listOf(localNodeId, remoteNodeId).sorted().joinToString("|")
-    val material = "BIFROST-ANDROID-AEC-DEMO-v1|$ordered|session=$sessionId|tier=${tier.id}"
+    val material = "BIFROST-ANDROID-AME/DAC-DEMO-v1|$ordered|session=$sessionId|tier=${tier.id}"
     return MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.UTF_8))
   }
 

@@ -14,7 +14,10 @@ Bifrost-ExchangeProtocols
 │   ├── bifrost_exchange_protocols.nim
 │   ├── protocols/
 │   └── clients/android/
-├── tests/
+├── evaluation/
+│   ├── tests/       verification and vector checks
+│   ├── benchmarks/  performance measurements
+│   └── statistics/  repository and code statistics
 ├── tools/
 ├── bifrost_exchange_protocols.nimble
 ├── README.md
@@ -32,7 +35,9 @@ Bifrost-ExchangeProtocols
 | examples/            | runnable protocol references                  |
 | src/protocols/       | canonical wire and transport code             |
 | src/clients/android/ | Android harness around canonical protocol lib |
-| tests/               | verification and vector checks                |
+| evaluation/tests/    | verification and vector checks                |
+| evaluation/benchmarks/ | performance measurements                    |
+| evaluation/statistics/ | repository and code statistics              |
 | tools/               | helper generators and maintenance utilities   |
 +----------------------+-----------------------------------------------+
 ```

@@ -23,9 +23,9 @@ const
     "nimbledeps",
     ".gradle",
     ".kotlin",
-    "tests/output",
-    "tests/outputs",
-    "tests/results",
+    "evaluation/tests/output",
+    "evaluation/tests/outputs",
+    "evaluation/tests/results",
     "test-results",
     "tmp",
     "temp"
@@ -36,7 +36,7 @@ const
   ]
   SourceArtifactRoots = [
     "src",
-    "tests",
+    "evaluation",
     "examples",
     "tools"
   ]

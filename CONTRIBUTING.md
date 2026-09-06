@@ -30,7 +30,7 @@ Bifrost-ExchangeProtocols
 │   │   ├── fomke/
 │   │   └── bfx2/
 │   └── clients/android/
-├── tests/
+├── evaluation/tests/
 └── tools/
 ```
 
@@ -83,7 +83,7 @@ the default `nimble build` command is not a supported artifact path here.
 AME/DAC change
    |
    v
-update tests/vectors/docs
+update evaluation/tests/vectors/docs
    |
    v
 run nimble test

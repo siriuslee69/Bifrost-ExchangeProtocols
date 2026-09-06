@@ -130,7 +130,7 @@ proc cloneFomkeSkipped(S: openArray[FomkeSkippedKey]): seq[FomkeSkippedKey] {.
   ## S: skipped-key cache copied without sharing key storage.
   var
     i: int = 0
-    item: FomkeSkippedKey
+    item: FomkeSkippedKey = default(FomkeSkippedKey)
   while i < S.len:
     item = S[i]
     item.keyMaterial = copyFomkeBytes(S[i].keyMaterial)
@@ -225,8 +225,8 @@ proc fomkeSendCacheMatches*(S: FomkeState, C: FomkeSendCache): bool {.
     tagValidation}.} =
   ## S/C: live outbound chain and one non-mutating prepared snapshot.
   var
-    lane: FomkeLane
-    chain: FomkeChainState
+    lane: FomkeLane = flLane1
+    chain: FomkeChainState = default(FomkeChainState)
   if S.pending.active or fomkePreparedMessages(C) == 0:
     return
   lane = outboundFomkeLane(S.role)
@@ -395,7 +395,7 @@ proc advanceFomkeChain(C: var FomkeChainState, lane: FomkeLane,
   ## The old chain key is erased here, which is the step that makes the
   ## ratchet one-way.
   var
-    derivedBlock: FomkeChainBlock
+    derivedBlock: FomkeChainBlock = default(FomkeChainBlock)
   result.index = C.nextIndex
   derivedBlock = deriveFomkeChainBlock(C, lane, epoch, c)
   if lane == flLane1:
@@ -445,11 +445,13 @@ proc sealFomkeMessage*(S: var FomkeState, plaintext: openArray[uint8],
     tag: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
   ## S/plaintext/aad: sender state, one message, and external binding.
   var
-    lane: FomkeLane
-    key: tuple[index: uint64, keyMaterial: ByteSeq]
+    lane: FomkeLane = flLane1
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
+      index: 0'u64, keyMaterial: @[])
     material: ByteSeq = @[]
     messageAad: ByteSeq = @[]
-    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (
+      ciphertext: @[], authTag: @[])
   requireFomkeQuiescent(S)
   lane = outboundFomkeLane(S.role)
   if lane == flLane1:
@@ -489,9 +491,10 @@ proc prepareFomkeSendCache*(S: FomkeState,
   ## gives up the next `messageCount` messages that had not been sent yet.
   ## Keep the count small on a device that can be taken.
   var
-    C: FomkeChainState
-    lane: FomkeLane
-    key: tuple[index: uint64, keyMaterial: ByteSeq]
+    C: FomkeChainState = default(FomkeChainState)
+    lane: FomkeLane = flLane1
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
+      index: 0'u64, keyMaterial: @[])
     i: int = 0
   requireFomkeQuiescent(S)
   requireFomkeSendCacheBounds(messageCount)
@@ -559,10 +562,11 @@ proc sealFomkeMessagePrepared*(S: var FomkeState, C: var FomkeSendCache,
   ## Falls back to the plain path whenever the cache no longer lines up, so a
   ## stale cache can never seal under a key the live chain has moved past.
   var
-    lane: FomkeLane
-    entry: FomkePreparedSendEntry
+    lane: FomkeLane = flLane1
+    entry: FomkePreparedSendEntry = default(FomkePreparedSendEntry)
     messageAad: ByteSeq = @[]
-    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (
+      ciphertext: @[], authTag: @[])
   requireFomkeQuiescent(S)
   lane = outboundFomkeLane(S.role)
   if not fomkeSendCacheMatches(S, C):
@@ -609,9 +613,10 @@ proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
   ## datagram that arrives late still opens; anything further ahead is refused
   ## rather than letting a peer make this side derive without bound.
   var
-    C: FomkeChainState
-    key: tuple[index: uint64, keyMaterial: ByteSeq]
-    skipped: FomkeSkippedKey
+    C: FomkeChainState = default(FomkeChainState)
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
+      index: 0'u64, keyMaterial: @[])
+    skipped: FomkeSkippedKey = default(FomkeSkippedKey)
   if lane == flLane1:
     C = cloneFomkeChain(S.lane1)
   else:
@@ -652,12 +657,12 @@ proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
   ## verified. A forged message therefore costs one derivation and changes
   ## nothing -- it cannot burn ratchet positions or fill the skipped cache.
   var
-    pending: FomkeState
-    expectedLane: FomkeLane
+    pending: FomkeState = default(FomkeState)
+    expectedLane: FomkeLane = flLane1
     key: ByteSeq = @[]
     material: ByteSeq = @[]
     messageAad: ByteSeq = @[]
-    opened: tuple[ok: bool, payload: ByteSeq]
+    opened: tuple[ok: bool, payload: ByteSeq] = (ok: false, payload: @[])
   try:
     requireFomkeQuiescent(S)
     expectedLane = inboundFomkeLane(S.role)
@@ -851,10 +856,10 @@ proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
   ## The new tier takes effect here and nowhere else, so the slot selection
   ## and the chain keys always change together.
   var
-    lane1: FomkeChainState
-    lane2: FomkeChainState
+    lane1: FomkeChainState = default(FomkeChainState)
+    lane2: FomkeChainState = default(FomkeChainState)
     targetEpoch: uint32 = 0'u32
-    targetTier: AmeMaskTier
+    targetTier: AmeMaskTier = default(AmeMaskTier)
   validateFomkeUpgrade(S, c)
   lane1 = cloneFomkeChain(S.pending.candidateLane1)
   lane2 = cloneFomkeChain(S.pending.candidateLane2)
@@ -874,3 +879,35 @@ proc cancelFomkeUpgrade*(S: var FomkeState) {.role: stateController,
     tag: {tagAppApi, tagCryptoBoundary, tagExchange, tagFomke}.} =
   ## S: unconfirmed candidate erased while current chains remain unchanged.
   clearFomkePending(S.pending)
+
+proc fomkeSkippedMessages*(S: FomkeState): int {.role: parser,
+    tag: {tagAppApi, tagFomke}.} =
+  ## S: how many jumped-over messages this side is still holding keys for.
+  ## A caller watches this to decide when to give up on them.
+  result = S.skipped.len
+
+proc discardFomkeSkipped*(S: var FomkeState): int {.role: stateController,
+    tag: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+  ## S: give up on every message that was jumped over, and say how many were
+  ## given up on. Their keys are erased, so those messages can never be
+  ## opened afterwards, even if they do turn up.
+  ##
+  ## This exists because two rules would otherwise trap a session on a lossy
+  ## link forever:
+  ##
+  ##   1. a gap wider than `maxSkip`, or a full cache, refuses the message
+  ##   2. a KEM upgrade refuses to run while any skipped key is outstanding
+  ##
+  ## A message that is lost for good is never taken out of the cache by
+  ## anything else, so after enough permanent losses the session can neither
+  ## receive across a gap nor rekey out of the state:
+  ##
+  ##   losses pile up ──▶ cache full ──▶ receive refuses
+  ##          │                          upgrade refuses
+  ##          ╰────── discardFomkeSkipped ──▶ both work again
+  ##
+  ## Calling this is the caller saying "those messages are not coming".
+  ## Nothing calls it automatically, because only the caller knows whether a
+  ## gap means a slow path or a dropped one.
+  result = S.skipped.len
+  clearFomkeSkipped(S.skipped)

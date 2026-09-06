@@ -12,11 +12,11 @@ bifrost_exchange_protocols
 bifrost_exchange_protocols_*
 src/bifrost_exchange_protocols
 src/libbifrost_exchange_protocols.*
-tests/test_*
-!tests/test_*.nim
-tests/output/
-tests/outputs/
-tests/results/
+evaluation/tests/test_*
+!evaluation/tests/test_*.nim
+evaluation/tests/output/
+evaluation/tests/outputs/
+evaluation/tests/results/
 test-results/
 tools/generate_bfx2_vectors
 examples/ame_tiers
@@ -72,4 +72,4 @@ tmp_bifrost*
 nimble.develop
 nimble.paths
 .iron/conventions/
-tests/.otter/results/
+evaluation/tests/.otter/results/

@@ -72,6 +72,39 @@ remains deployment policy; verification accepts a caller-supplied
 The wall clock is a caller parameter. A library that silently reads an unset
 system clock and judges certificates against it is worse than one that makes
 the caller say where the time came from.
+
+### The three modes, and what each one requires
+
+Steps 3 to 6 above describe AM1C, the certificate mode. The other two replace
+those steps and nothing else — the four records, their order and their sizes
+are the same in all three.
+
+| | Replaces steps 3-6 with | Provisioned in advance |
+|---|---|---|
+| AM1C | authority proofs, serial, validity, transcript proof | the authority's public keys |
+| AM1S | validity and an exact key match, then transcript proof | the peer's own public key |
+| AM1M | a name match and one tag over the transcript | a shared secret |
+
+Three properties hold across all three, and are what make the choice safe to
+make per deployment rather than per protocol:
+
+1. **The mode is bound, not merely stated.** It travels as one byte in the
+   hello and is inside the transcript both sides rebuild independently. A
+   responder refuses a hello naming a mode it does not run, before any key
+   work, rather than mirroring the client's choice back.
+2. **Failure is closed in every direction.** A wrong pin, a wrong secret, a
+   wrong name, or a mode this side does not run all end in no epoch and a
+   dropped connection. None of them fall through to a weaker check.
+3. **AM1M contributes key material, not just a verdict.** A binder derived
+   from the shared secret goes into the handshake key schedule beside the KEM
+   results, so an attacker who breaks every KEM slot still cannot open the
+   sealed blocks. The provisioned secret itself never enters the derivation.
+
+AM1M sessions hold no signature keys, so the offers and replies that rotate an
+epoch are proved with a tag under a session-derived key instead of a signature
+stack. That key comes from the finished transcript and is never the
+provisioned secret, so it differs in every session.
+
 ## Package Delivery
 
 Secure packages compress before encryption, authenticate before decompression,
@@ -312,7 +345,7 @@ A receive timeout returns `adrNone`, not an error -- a datagram loop spends
 most of its life waiting. A send that fails is counted rather than raised, so
 one unreachable peer cannot end the loop for every other peer.
 
-`tests/test_ame_dac_endpoint.nim` runs a package across two loopback UDP
+`evaluation/tests/test_ame_dac_endpoint.nim` runs a package across two loopback UDP
 sockets, which is the first time a DAC package has crossed a real socket.
 
 ## Many Peers, Bounded Memory
@@ -352,9 +385,9 @@ overflow. Seeds are deterministic, so a failure reproduces exactly, and the
 harness is checked against a deliberate out-of-bounds read to confirm it still
 reports one.
 
-- `tests/test_wire_fuzz.nim`: every DAC body decoder, the frame envelope, the
+- `evaluation/tests/test_wire_fuzz.nim`: every DAC body decoder, the frame envelope, the
   header peek, the link loop, and the link table.
-- `tests/test_wire_fuzz_protocols.nim`: AME frame headers, frames and
+- `evaluation/tests/test_wire_fuzz_protocols.nim`: AME frame headers, frames and
   protected bodies; BFX2 envelopes and value packets; TLS 1.3 records,
   handshake framing, ClientHello, ServerHello, EncryptedExtensions,
   Certificate and CertificateVerify.

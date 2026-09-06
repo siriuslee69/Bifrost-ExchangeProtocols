@@ -260,7 +260,8 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
       result.outcome.err = "AME hello retry cookie is invalid"
       return
-  answered = answerAmeHandshake(hello, c.supported, c.descriptor, c.identity,
+  answered = answerAmeHandshake(hello, c.supported, c.authentication, c.descriptor,
+    c.identity,
     c.params)
   if not answered.ok:
     result.outcome.err = answered.err
@@ -303,12 +304,8 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     clearAmeServerHandshake(answered.state)
     result.outcome.err = e.msg
     return
-  if c.trustMode == atmAuthorityCertificate:
-    accepted = acceptAmeHandshake(answered.state, finish, c.root, nowUnix,
-      c.revokedSerials)
-  else:
-    accepted = acceptAmePinnedHandshake(answered.state, finish,
-      c.expectedPeer, nowUnix)
+  accepted = acceptAmeHandshake(answered.state, finish, c.authentication,
+    nowUnix, c.revokedSerials)
   if not accepted.ok:
     result.outcome.err = accepted.err
     result.outcome.peerTrust = accepted.peerTrust
@@ -340,7 +337,8 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     result.err = "AME client session id must be positive"
     return
   try:
-    state = beginAmeHandshake(sessionId, c.layout, c.initialTier)
+    state = beginAmeHandshake(sessionId, c.layout, c.initialTier,
+      mode = c.authentication.mode)
     pending.frame = encodeAmeClientHelloFrame(state.hello)
     pending.step = ameHandshakeStepHello
     sendRecord(sock, peer, pending.frame, maxDatagramBytes)
@@ -384,7 +382,7 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
       retry = decodeAmeHelloRetry(got.frame.record)
       clearAmeClientHandshake(state)
       state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
-        retry.cookie)
+        retry.cookie, c.authentication.mode)
       pending.frame = encodeAmeClientHelloFrame(state.hello, retried = true)
       pending.step = ameHandshakeStepRetriedHello
       sendRecord(sock, peer, pending.frame, maxDatagramBytes)
@@ -416,12 +414,8 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     clearAmeClientHandshake(state)
     result.err = e.msg
     return
-  if c.trustMode == atmAuthorityCertificate:
-    finished = finishAmeHandshake(state, serverHello, c.root, c.descriptor,
-      c.identity, nowUnix, c.revokedSerials)
-  else:
-    finished = finishAmePinnedHandshake(state, serverHello, c.expectedPeer,
-      c.descriptor, c.identity, nowUnix)
+  finished = finishAmeHandshake(state, serverHello, c.authentication,
+    c.descriptor, c.identity, nowUnix, c.revokedSerials)
   if not finished.ok:
     result.err = finished.err
     result.peerTrust = finished.peerTrust

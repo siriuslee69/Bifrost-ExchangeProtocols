@@ -1,15 +1,15 @@
 # Benchmarks
 
 This repo now ships a committed protocol benchmark harness at
-`tools/bench_protocols.nim`.
+`evaluation/benchmarks/bench_protocols.nim`.
 
 ## Commands
 
 ```text
 nimble benchmarks
-nim c -d:release --out:build/tools/bench_protocols -r tools/bench_protocols.nim
-nim c -d:release --out:build/tools/bench_protocols -r tools/bench_protocols.nim -- --iterations=10000 --payload-bytes=4096
-nim c -d:release --out:build/tools/bench_protocols -r tools/bench_protocols.nim -- --only=ame_dac_seal,ame_dac_open --json-out=build/benchmarks/protocols.json
+nim c -d:release --out:build/benchmarks/bench_protocols -r evaluation/benchmarks/bench_protocols.nim
+nim c -d:release --out:build/benchmarks/bench_protocols -r evaluation/benchmarks/bench_protocols.nim -- --iterations=10000 --payload-bytes=4096
+nim c -d:release --out:build/benchmarks/bench_protocols -r evaluation/benchmarks/bench_protocols.nim -- --only=ame_dac_seal,ame_dac_open --json-out=build/benchmarks/protocols.json
 ```
 
 The default `nimble benchmarks` task runs the whole suite in release mode. The
@@ -21,7 +21,7 @@ tool itself accepts:
 - `--only=name1,name2`
 - `--json-out=PATH`
 
-Use the explicit `--out:build/tools/bench_protocols` form for direct `nim c`
+Use the explicit `--out:build/benchmarks/bench_protocols` form for direct `nim c`
 invocations so the compiled helper binary stays under ignored build roots
 instead of landing in `tools/`.
 

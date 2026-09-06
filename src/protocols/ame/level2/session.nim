@@ -15,6 +15,7 @@ import ../types
 import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
+import ../level1/symmetric
 import ../level1/path_triggers
 import ../level1/padding
 import ./wire
@@ -188,6 +189,52 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
   result.current.params = params
   requireAmeAuth(result)
 
+## ╭⟢ proving an epoch change
+##
+## Rotating an epoch means sending an offer and a reply, and each has to be
+## proved by the endpoint that sent it. HOW it is proved depends on what the
+## handshake established:
+##
+##   AM1C / AM1S  ->  one signature per active signature slot
+##   AM1M         ->  one tag under the session's own exchange key
+##
+## AM1M sessions hold no signature keys at all, so there is nothing there to
+## sign with. Both shapes travel in the same `signatures` field, and both are
+## taken over the same subject bytes, so nothing below this point has to know
+## which one it is looking at.
+
+proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
+    tag: {tagCryptoBoundary}.} =
+  ## A: the AM1M exchange key, checked before it is used.
+  if A.exchangeAuthenticationKey.len < 32:
+    raise newException(ValueError, "AME session has no exchange proof key")
+  result = A.exchangeAuthenticationKey
+
+proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
+    subject: openArray[uint8]): seq[ByteSeq] {.role: truthBuilder,
+    tag: {tagCryptoBoundary, tagExchange}.} =
+  ## S/t/subject: this endpoint's proof over one offer or reply.
+  if S.auth.authenticationMode == am1m:
+    return @[ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)]
+  result = signAmeTier(S.auth.current.layout, t, subject,
+    activeAmeSignatureKeys(S.auth.current.layout, t,
+      S.auth.localSignatureSecretKeys))
+
+proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
+    subject: openArray[uint8], P: openArray[ByteSeq]): bool {.role: parser,
+    tag: {tagCryptoBoundary, tagExchange, tagValidation}.} =
+  ## S/t/subject/P: the peer's proof over one offer or reply.
+  var expected: ByteSeq = @[]
+  if S.auth.authenticationMode != am1m:
+    return verifyAmeTier(S.auth.current.layout, t, subject,
+      activeAmeSignatureKeys(S.auth.current.layout, t,
+        S.auth.peerSignaturePublicKeys), P)
+  if P.len != 1:
+    return
+  expected = ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)
+  result = constantTimeEqualAme(expected, P[0])
+  secureClearAmeBytes(expected)
+
 proc outboundAmeDirection*(r: AmeEndpointRole): AmeTrafficDirection {.
     role: parser.} =
   ## r: local endpoint role mapped to its global send direction.
@@ -271,7 +318,7 @@ proc buildAmeFomkeSendCache*(S: AmeSession,
   ## S/messageCount: connection snapshot and future send capacity. Built off
   ## a clone, so it never disturbs the live ratchet.
   var
-    snapshot: FomkeState
+    snapshot: FomkeState = default(FomkeState)
   snapshot = cloneFomkeState(S.fomke)
   try:
     result = prepareFomkeSendCache(snapshot, messageCount)
@@ -306,7 +353,7 @@ proc prepareAmeFomkeSendCache*(S: var AmeSession,
     tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/messageCount: synchronously build and install future send slots.
   var
-    C: FomkeSendCache
+    C: FomkeSendCache = default(FomkeSendCache)
   C = buildAmeFomkeSendCache(S, messageCount)
   S.fomkePregenerationEnabled = true
   S.fomkePregenerationMessages = messageCount
@@ -321,7 +368,7 @@ proc setAmeFomkePregeneration*(S: var AmeSession, enabled: bool,
   ## Preparing ahead costs forward secrecy for messages not yet sent; see
   ## `prepareFomkeSendCache`. Turn it off on a device that can be seized.
   var
-    C: FomkeSendCache
+    C: FomkeSendCache = default(FomkeSendCache)
   if enabled:
     C = buildAmeFomkeSendCache(S, messageCount)
   clearFomkeSendCache(S.fomkeSendCache)
@@ -365,6 +412,7 @@ proc clearAmeSession*(S: var AmeSession) {.role: stateController,
   clearEpoch(S.auth.retiring)
   clearSignatureSecretKeys(S.auth.localSignatureSecretKeys)
   S.auth.peerSignaturePublicKeys.setLen(0)
+  secureClearAmeBytes(S.auth.exchangeAuthenticationKey)
   clearPendingExchange(S.pendingExchange)
   clearEpoch(S.pendingIncoming.candidate)
   clearFomkeSendCache(S.fomkeSendCache)
@@ -397,9 +445,9 @@ proc beginAmeSessionExchange*(S: var AmeSession,
       ## observer changed its mind, so the STAGED parameters always win and a
       ## value set through `setAmeAuthTagLen` reaches the peer on the very
       ## next exchange without the caller having to rebuild anything.
-    keys: AmeExchangeKeys
-    step: AmeTierStep
-    signatureTier: AmeMaskTier
+    keys: AmeExchangeKeys = default(AmeExchangeKeys)
+    step: AmeTierStep = default(AmeTierStep)
+    signatureTier: AmeMaskTier = default(AmeMaskTier)
     targetIndex: int = 0
   r.params = S.pendingParams
   if S.pendingExchange.active:
@@ -422,10 +470,8 @@ proc beginAmeSessionExchange*(S: var AmeSession,
     S.auth.current.epochId, r, keys.publicKeys)
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, r.targetTier)
-  result.signatures = signAmeTier(S.auth.current.layout, signatureTier,
-    encodeAmeExchangeOfferSubject(result), activeAmeSignatureKeys(
-      S.auth.current.layout, signatureTier,
-      S.auth.localSignatureSecretKeys))
+  result.signatures = proveExchangeSubject(S, signatureTier,
+    encodeAmeExchangeOfferSubject(result))
   S.pendingExchange.active = true
   S.pendingExchange.offer = result
   S.pendingExchange.secretKeys = keys.secretKeys
@@ -450,8 +496,9 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   ## keeps its own and rejects the offer. Both endpoints therefore converge on
   ## the initiator's transition instead of rotating to divergent epochs.
   var
-    answer: tuple[reply: AmeExchangeReply, sharedSecrets: seq[ByteSeq]]
-    signatureTier: AmeMaskTier
+    answer: tuple[reply: AmeExchangeReply, sharedSecrets: seq[ByteSeq]] = (
+      reply: default(AmeExchangeReply), sharedSecrets: @[])
+    signatureTier: AmeMaskTier = default(AmeMaskTier)
   if S.pendingIncoming.active:
     raise newException(ValueError, "AME already has an incoming exchange")
   if S.auth.current.epochId == high(uint32):
@@ -471,16 +518,12 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
     S.auth.current.exchange.activeMask)
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, o.request.targetTier)
-  if not verifyAmeTier(S.auth.current.layout, signatureTier,
-      encodeAmeExchangeOfferSubject(o), activeAmeSignatureKeys(
-        S.auth.current.layout, signatureTier,
-        S.auth.peerSignaturePublicKeys), o.signatures):
-    raise newException(ValueError, "AME exchange offer signature stack is invalid")
+  if not exchangeSubjectProved(S, signatureTier,
+      encodeAmeExchangeOfferSubject(o), o.signatures):
+    raise newException(ValueError, "AME exchange offer proof is invalid")
   answer = answerAmeExchangeOffer(S.auth.current.layout.kems, o)
-  answer.reply.signatures = signAmeTier(S.auth.current.layout, signatureTier,
-    encodeAmeExchangeReplySubject(o, answer.reply),
-    activeAmeSignatureKeys(S.auth.current.layout, signatureTier,
-      S.auth.localSignatureSecretKeys))
+  answer.reply.signatures = proveExchangeSubject(S, signatureTier,
+    encodeAmeExchangeReplySubject(o, answer.reply))
   S.pendingIncoming.active = true
   S.pendingIncoming.requestId = o.requestId
   S.pendingIncoming.request = o.request
@@ -523,8 +566,8 @@ proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
   ## S/r: initiating connection and matching reply.
   var
     secrets: seq[ByteSeq] = @[]
-    candidate: AmeEpochKeySet
-    signatureTier: AmeMaskTier
+    candidate: AmeEpochKeySet = default(AmeEpochKeySet)
+    signatureTier: AmeMaskTier = default(AmeMaskTier)
     transcriptSalt: ByteSeq = @[]
   if not S.pendingExchange.active:
     raise newException(ValueError, "AME session has no pending exchange")
@@ -532,11 +575,10 @@ proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     raise newException(ValueError, "AME pending exchange base epoch changed")
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, r.request.targetTier)
-  if not verifyAmeTier(S.auth.current.layout, signatureTier,
+  if not exchangeSubjectProved(S, signatureTier,
       encodeAmeExchangeReplySubject(S.pendingExchange.offer, r),
-      activeAmeSignatureKeys(S.auth.current.layout, signatureTier,
-        S.auth.peerSignaturePublicKeys), r.signatures):
-    raise newException(ValueError, "AME exchange reply signature stack is invalid")
+      r.signatures):
+    raise newException(ValueError, "AME exchange reply proof is invalid")
   secrets = openAmeExchangeReply(S.auth.current.layout.kems,
     S.pendingExchange.offer, r,
     S.pendingExchange.secretKeys)
@@ -599,6 +641,25 @@ proc cancelIncomingAmeSessionExchange*(S: var AmeSession) {.
   cancelFomkeUpgrade(S.fomke)
   restoreConfiguredAmeFomkeCache(S)
 
+proc ameSessionSkippedMessages*(S: AmeSession): int {.role: parser,
+    tag: {tagAppApi, tagFomke, tagProtocol}.} =
+  ## S: how many jumped-over messages the ratchet is still holding keys for.
+  result = fomkeSkippedMessages(S.fomke)
+
+proc discardAmeSessionSkipped*(S: var AmeSession): int {.
+    role: stateController,
+    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+  ## S: give up on the messages this side jumped over, and say how many.
+  ##
+  ## A rotation refuses to run while any of them are outstanding, so a link
+  ## that loses packets for good will eventually be unable to rekey. Call
+  ## this first when `ameSessionSkippedMessages` stops going down and the
+  ## messages behind it are not worth waiting for any longer. The keys are
+  ## erased, so those messages can never be opened afterwards.
+  result = discardFomkeSkipped(S.fomke)
+  clearFomkeSendCache(S.fomkeSendCache)
+  restoreConfiguredAmeFomkeCache(S)
+
 proc amePeerTrustError*(S: AmeSession): string {.role: parser.} =
   ## S: connection whose trust gate is checked.
   if not S.peerTrustRequired or S.peerTrust.ok:
@@ -624,7 +685,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     AmeSession {.role: orchestrator.} =
   ## a/path/session/lane/runtime: exact connection configuration.
   var
-    runtime: BifrostConfig
+    runtime: BifrostConfig = default(BifrostConfig)
   if inboxCapacity < 0:
     raise newException(ValueError, "AME inbox capacity must not be negative")
   requireAmeAuth(a)
@@ -677,7 +738,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     peerTrust: AmePeerTrustResult = default(AmePeerTrustResult)):
     AmeSession {.role: wrapper.} =
   ## a/session/lane/runtime: exact auth package with default AME triggers.
-  var path: AmeTierPath
+  var path: AmeTierPath = default(AmeTierPath)
   path = initAmeTierPath(a.current.layout, [a.current.tier])
   result = initAmeSession(a, path, sessionId, rootLaneId, laneId, pathLane,
     messageClass, inboxCapacity, peerTrustRequired, peerTrust)
@@ -846,7 +907,7 @@ proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
   ## S/h/carrier/payload: one ratchet step turned into one frame body.
   var
     aad: ByteSeq = buildAad(carrier, h)
-    message: FomkeMessage
+    message: FomkeMessage = default(FomkeMessage)
   try:
     if fomkePreparedMessages(S.fomkeSendCache) > 0:
       message = sealFomkeMessagePrepared(S.fomke, S.fomkeSendCache, payload,
@@ -868,8 +929,8 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
   ## bounded by a frame count, not by time.
   var
     aad: ByteSeq = @[]
-    message: FomkeMessage
-    opened: FomkeOpenResult
+    message: FomkeMessage = default(FomkeMessage)
+    opened: FomkeOpenResult = default(FomkeOpenResult)
     padding: AmePaddingPolicy = S.auth.current.params.padding
   ## The envelope carries no tag length, so the split between tag and
   ## ciphertext comes from what THIS epoch agreed. A retiring epoch that used
@@ -932,7 +993,7 @@ proc sealAmeTcpFrame*(S: var AmeSession,
     raise newException(ValueError, "AME send sequence is exhausted")
   var
     body: ByteSeq = padFramePayload(S, payload)
-    h: AmeFrameHeader
+    h: AmeFrameHeader = default(AmeFrameHeader)
   requireFrameBodyFits(S, body.len, "TCP payload")
   h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
     S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
@@ -952,7 +1013,7 @@ proc sealAmeDacFrame*(S: var AmeSession,
     raise newException(ValueError, "AME DAC send sequence is exhausted")
   var
     body: ByteSeq = padFramePayload(S, payload)
-    h: AmeFrameHeader
+    h: AmeFrameHeader = default(AmeFrameHeader)
   requireFrameBodyFits(S, body.len, "DAC payload")
   h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
     S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
@@ -1012,7 +1073,8 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
   ## the replay window forward and make honest frames get dropped.
   var
     err: string = amePeerTrustError(S)
-    opened: tuple[ok: bool, payload: ByteSeq, err: string]
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (
+      ok: false, payload: @[], err: "")
   if err.len == 0:
     err = validateFrameBinding(S, f, ampkLaneData)
   if err.len > 0:
@@ -1075,7 +1137,7 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   ## S/kind/carrier/payload: authenticated AME control message. Control rides
   ## the same ratchet as data -- there is no second construction to review.
   var
-    h: AmeFrameHeader
+    h: AmeFrameHeader = default(AmeFrameHeader)
     body: ByteSeq = @[]
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
@@ -1114,9 +1176,10 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
   var
     f: AmeDecodedFrame = decodeAmeFrame(frame)
     aad: ByteSeq = @[]
-    message: FomkeMessage
-    fomkeOpened: FomkeOpenResult
-    opened: tuple[ok: bool, payload: ByteSeq, err: string]
+    message: FomkeMessage = default(FomkeMessage)
+    fomkeOpened: FomkeOpenResult = default(FomkeOpenResult)
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (
+      ok: false, payload: @[], err: "")
     candidatePadding: AmePaddingPolicy = apadNone
   result.err = controlBindingError(S, f, expected)
   if result.err.len > 0:
@@ -1198,7 +1261,7 @@ proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
     raise newException(ValueError, "AME send sequence is exhausted")
   var
     tagged: ByteSeq = @[uint8(ord(kind))]
-    h: AmeFrameHeader
+    h: AmeFrameHeader = default(AmeFrameHeader)
   appendAmeBytes(tagged, body)
   tagged = padFramePayload(S, tagged)
   requireFrameBodyFits(S, tagged.len, "DAC control payload")
@@ -1215,8 +1278,9 @@ proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
   ## Returns the kind and body only after the frame authenticates, so the
   ## caller never dispatches on a kind an attacker chose.
   var
-    f: AmeDecodedFrame
-    opened: tuple[ok: bool, payload: ByteSeq, err: string]
+    f: AmeDecodedFrame = default(AmeDecodedFrame)
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (
+      ok: false, payload: @[], err: "")
   result.err = amePeerTrustError(S)
   if result.err.len > 0:
     return
@@ -1294,7 +1358,7 @@ proc answerAmeTcpExchangeFrame*(S: var AmeSession,
   ## S/frame: responder opens an offer and seals its candidate reply.
   var
     opened = openControlFrame(S, frame, ampkExchangeKeys, acrTcp)
-    reply: AmeExchangeReply
+    reply: AmeExchangeReply = default(AmeExchangeReply)
   if not opened.ok:
     raise newException(ValueError, opened.err)
   reply = answerAmeSessionExchange(S,
@@ -1309,7 +1373,7 @@ proc finishAmeTcpExchangeFrame*(S: var AmeSession,
   var
     opened = openControlFrame(S, frame, ampkExchangeEnvelopes, acrTcp)
     requestId: uint32 = 0'u32
-    fomkeCommit: FomkeUpgradeCommit
+    fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
   if not opened.ok:
     raise newException(ValueError, opened.err)
   requestId = S.pendingExchange.offer.requestId
@@ -1338,7 +1402,9 @@ proc confirmAmeTcpExchangeFrame*(S: var AmeSession,
     opened = openControlFrame(S, frame, ampkEpochReady, acrTcp,
       useCandidate = true)
     ready: tuple[requestId, epochId: uint32, targetTier: AmeMaskTier,
-      fomkeCommit: FomkeUpgradeCommit]
+      fomkeCommit: FomkeUpgradeCommit] = (requestId: 0'u32, epochId: 0'u32,
+      targetTier: default(AmeMaskTier),
+      fomkeCommit: default(FomkeUpgradeCommit))
   if not opened.ok:
     raise newException(ValueError, opened.err)
   ready = decodeEpochReady(S.auth.current.layout, opened.payload)
@@ -1358,7 +1424,7 @@ proc answerAmeDacExchangeFrame*(S: var AmeSession,
   ## S/frame: responder opens a DAC offer and seals its candidate reply.
   var
     opened = openControlFrame(S, frame, ampkExchangeKeys, acrDac)
-    reply: AmeExchangeReply
+    reply: AmeExchangeReply = default(AmeExchangeReply)
   if not opened.ok:
     raise newException(ValueError, opened.err)
   reply = answerAmeSessionExchange(S,
@@ -1373,7 +1439,7 @@ proc finishAmeDacExchangeFrame*(S: var AmeSession,
   var
     opened = openControlFrame(S, frame, ampkExchangeEnvelopes, acrDac)
     requestId: uint32 = 0'u32
-    fomkeCommit: FomkeUpgradeCommit
+    fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
   if not opened.ok:
     raise newException(ValueError, opened.err)
   requestId = S.pendingExchange.offer.requestId
@@ -1398,7 +1464,9 @@ proc confirmAmeDacExchangeFrame*(S: var AmeSession,
     opened = openControlFrame(S, frame, ampkEpochReady, acrDac,
       useCandidate = true)
     ready: tuple[requestId, epochId: uint32, targetTier: AmeMaskTier,
-      fomkeCommit: FomkeUpgradeCommit]
+      fomkeCommit: FomkeUpgradeCommit] = (requestId: 0'u32, epochId: 0'u32,
+      targetTier: default(AmeMaskTier),
+      fomkeCommit: default(FomkeUpgradeCommit))
   if not opened.ok:
     raise newException(ValueError, opened.err)
   ready = decodeEpochReady(S.auth.current.layout, opened.payload)

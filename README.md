@@ -304,6 +304,117 @@ that window to be worth trusting, the peer's own proof over the transcript,
 the exact slot layout and initial tier, the KEM exchange, and the final
 transcript hash.
 
+### Three ways to decide whom to believe ꒰ঌ ໒꒱
+
+The picture above shows AM1C, where an authority vouches for both sides. There
+are three modes in total. **The four messages are identical in all three** —
+same fields, same order, same sizes. Only the contents of the two sealed
+blocks change, and only because the modes prove different things.
+
+**Def. 3 — authentication mode.** The single choice of what a peer must show
+before this side will believe it. It is made once, by building one
+`AmeAuthentication`, and every step of the handshake reads that same object.
+
+| | What you provision | What travels sealed | Needs a PKI |
+|---|---|---|---|
+| **AM1C** | an authority's public keys | certificate + one signature per slot | yes |
+| **AM1S** | the peer's own public key | identity + one signature per slot | no |
+| **AM1M** | a secret both sides hold | a name + one tag under that secret | no |
+
+```nim
+# AM1C -- an authority vouches for the peer
+var auth = initAmeCertificateAuthentication(root)
+
+# AM1S -- you were handed the peer's public key in advance
+var auth = initAmePinnedAuthentication(pinnedPeerIdentity(theirKey))
+
+# AM1M -- you were handed a shared secret in advance
+var auth = initAmePskAuthentication("site-a", secretBytes)
+```
+
+That one object then goes to every call, and nothing else has to be told which
+mode is running:
+
+```nim
+var server = answerAmeHandshake(hello, supportedPaths, auth, cert, key)
+var client = finishAmeHandshake(state, serverHello, auth, cert, key, nowUnix)
+var done   = acceptAmeHandshake(server.state, finish, auth, nowUnix)
+```
+
+`cert` and `key` are the certificate and signing key this side proves itself
+with. **AM1M uses neither** — a device provisioned with a shared secret holds
+no signing key at all — so both are left out there:
+
+```nim
+var server = answerAmeHandshake(hello, supportedPaths, auth)
+var client = finishAmeHandshake(state, serverHello, auth)
+var done   = acceptAmeHandshake(server.state, finish, auth)
+```
+
+#### What AM1M actually proves ʚ♡ɞ
+
+Two separate things come out of the one provisioned secret, and it is worth
+keeping them apart.
+
+**1. A proof, so each side knows who the other is.** A tag over the
+conversation so far. The two proofs are not interchangeable: a direction byte
+sits inside the tagged bytes, so a responder's proof can never be replayed as
+an initiator's.
+
+```text
+responder proves:  tag( secret, "responder" | name | everything said so far )
+initiator proves:  tag( secret, "initiator" | name | hash of the whole exchange )
+```
+
+**2. A binder, so the keys depend on the secret too.** This is the part that
+matters, and the part it is easy to leave out. The proof alone says who is
+talking; it puts nothing into the keys. So AM1M also derives one *binder* from
+the secret and drops it into the key schedule beside the KEM results:
+
+```text
+AM1C / AM1S :  keys <- [ KEM slot 0 | KEM slot 1 | ... ]
+AM1M        :  keys <- [ KEM slot 0 | KEM slot 1 | ... | binder ]
+```
+
+Read the second row carefully. Someone who breaks **every** KEM slot still
+cannot open an AM1M sealed block, because they are missing the last input. A
+provisioned secret that only authenticated would not buy that.
+
+The provisioned secret itself never enters the derivation — only the binder
+computed from it — so a key block recovered later says nothing about a secret
+that gets reused across many sessions.
+
+#### Rotating an epoch without signature keys
+
+Every so often a session throws its keys away and agrees new ones. The offer
+and the reply that do this each have to be proved by whoever sent them, and
+AM1M has no signing key to prove them with. It uses a tag instead, under a key
+derived from the finished handshake:
+
+```text
+AM1C / AM1S  ->  one signature per active signature slot
+AM1M         ->  one tag under the session's own exchange key
+```
+
+Both travel in the same field and cover the same bytes, so nothing downstream
+has to know which one it is looking at. The exchange key is derived per
+session and is never the provisioned secret.
+
+#### What a mode mismatch does
+
+The hello names the mode it wants, and that byte is covered by the transcript.
+A responder running one mode **refuses** a hello asking for another, before it
+does any key work:
+
+```text
+client asks for AM1C, responder runs AM1M
+  -> "client asked for an authentication mode this side does not run"
+```
+
+This is checked rather than mirrored on purpose. A responder that simply
+echoed the mode back would be letting the client choose which of its own
+checks ran.
+
 ### What each side can and cannot do
 
 | | Client hello | Server hello | Finish |
@@ -334,15 +445,15 @@ var trust = verifyAmeIdentityCertificate(cert, root, nowUnix,
 ### Running it over a socket
 
 ```nim
-var server = initAmeResponderPolicy(supportedPaths, serverCert, serverKey)
+var auth = initAmeCertificateAuthentication(root)
+var server = initAmeResponderPolicy(supportedPaths, auth, serverCert, serverKey)
 var outcome = ameTcpServerHandshake(sock, server, remoteAddr, nowUnix)
 if outcome.ok:
   discard sealAmeTcpFrame(outcome.connection, payload)
 ```
 
 ```nim
-var client = initAmeInitiatorPolicy(layout, tier, clientCert, clientKey)
-client.root = root
+var client = initAmeInitiatorPolicy(layout, tier, auth, clientCert, clientKey)
 var outcome = ameTcpClientHandshake(sock, client, sessionId = 1'u64,
   nowUnix = nowUnix)
 ```
@@ -602,6 +713,42 @@ tag derived from the candidate chains. Only then do the candidates atomically
 replace the live chains, and the tier changes with them. On any mismatch the
 candidates are erased and epoch `n` continues.
 
+
+### When a message is not late but gone ⌜guide⌟
+
+Steps 5 and 6 above hold on to the keys for messages that were jumped over, so
+a datagram that turns up late still opens. Nothing takes those keys back out
+of the cache except the message itself arriving. That is fine on a link where
+everything eventually arrives, and it is a trap on one where it does not:
+
+```text
+  a message is lost for good
+        |
+        v
+  its key stays in the cache forever
+        |
+        +--> after maxSkip of them, the cache is full
+        |      -> the next gap is refused: "skipped-key cache is full"
+        |
+        +--> and a rekey refuses to run at all while any are outstanding
+               -> "skipped messages must be resolved before a KEM upgrade"
+```
+
+Both rules are deliberate — a rekey with keys still outstanding would silently
+strand them — but together they leave a lossy session with nowhere to go. So
+there is one way out, and the caller has to ask for it by name:
+
+```nim
+if ameSessionSkippedMessages(connection) > 0:
+  var gaveUp = discardAmeSessionSkipped(connection)
+  echo "gave up on ", gaveUp, " message(s)"
+```
+
+This erases those keys. The messages behind them can never be opened
+afterwards, even if the network does eventually deliver them — which is
+exactly why nothing calls it for you. Only the caller knows whether a gap
+means a slow path or a dead one.
+
 ### Preparing ahead, and what it costs ₊˚⊹♡
 
 A sender may prepare a bounded run of future slots off the latency-sensitive
@@ -662,7 +809,9 @@ and nothing should: the old formats are not in the library any more.
 | `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O and relay helpers |
 | `src/protocols/tls13/` | Pure-Nim TLS 1.3 records, handshake, and client/server sessions |
 | `src/protocols/bfx2/` | Tagged binary envelopes |
-| `tests/` | Unit and protocol tests |
+| `evaluation/tests/` | Unit and protocol tests |
+| `evaluation/benchmarks/` | Performance measurements |
+| `evaluation/statistics/` | Repository and code statistics |
 
 ## Tasks
 
@@ -902,13 +1051,24 @@ on, the sealed identity blocks are padded too: hiding *who* is connecting
 while leaving the size of their certificate on the wire only does half the
 job.
 
-The **sealed block** in the last two is ciphertext. Opened, it holds:
+The **sealed block** in the last two is ciphertext. Opened, it holds one of
+two shapes, decided by the mode byte in the hello. AM1C and AM1S look alike;
+AM1M is the short one, because it carries no certificate at all:
 
 ```text
-server: certificate body | u32 count + authority proofs | u32 count + proofs
-client: certificate body | u32 count + authority proofs
-                         | u32+transcript hash | u32 count + proofs
+AM1C / AM1S
+  server: certificate body | u32 count + authority proofs
+                           | u32 count + proofs
+  client: certificate body | u32 count + authority proofs
+                           | u32+transcript hash | u32 count + proofs
+
+AM1M
+  server: u32+name | u32 count (always 1) + one tag
+  client: u32+name | u32+transcript hash | u32 count (always 1) + one tag
 ```
+
+Both shapes are padded under the same policy, so which mode is running is not
+readable from the length of the block either.
 
 The certificate body goes in raw rather than length-framed, because it is the
 exact byte string the authority signed. Wrapping it in another length would
@@ -971,7 +1131,7 @@ Offer and reply sizes grow with the selected KEM public keys and ciphertexts
 - TLS record compression is intentionally absent. Compress HTTP content before
   encryption when the application negotiates a standard content encoding.
 
-The benchmark task keeps its executable under `--out:build/tools/...`.
+The benchmark task keeps its executable under `--out:build/benchmarks/...`.
 The default `nimble build` command is not a supported artifact path here; use
 `nimble buildLib`.
 

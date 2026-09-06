@@ -1,7 +1,8 @@
 import std/[os, strutils]
 
-let repoRoot = thisDir()
-var tyrRoot = ""
+var
+  repoRoot: string = thisDir()
+  tyrRoot: string = ""
 # Let direct `nim` calls use Nim's default per-target cache behavior.
 # Repo tasks set their own isolated local caches in the nimble file.
 
@@ -27,7 +28,10 @@ if tyrRoot.len == 0 and
 if tyrRoot.len > 0:
   addPathIfExists(tyrRoot)
   addPathIfExists(joinPath(tyrRoot, "src"))
-  addPathIfExists(joinPath(tyrRoot, ".iron", "meta"))
+  ## Tyr keeps its Otter-readable pragma definitions in `meta/`. Leaving this
+  ## path out is what made a plain `nim c` fail with
+  ## "cannot open file: metaPragmas".
+  addPathIfExists(joinPath(tyrRoot, "meta"))
   addPathIfExists(joinPath(tyrRoot, "tools", "meta"))
 
 ## Sibling checkouts win over the pinned submodules for the same reason Tyr
@@ -57,7 +61,7 @@ elif dirExists(joinPath(repoRoot, "..", "Fylgia-Utils", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Fylgia-Utils"))
   addPathIfExists(joinPath(repoRoot, "..", "Fylgia-Utils", "src"))
 
-let nimblePkgs2 = getHomeDir() / ".nimble" / "pkgs2"
+var nimblePkgs2: string = getHomeDir() / ".nimble" / "pkgs2"
 if dirExists(nimblePkgs2):
   for kind, path in walkDir(nimblePkgs2):
     if kind == pcDir and path.extractFilename().startsWith("nimsimd-"):
@@ -65,7 +69,7 @@ if dirExists(nimblePkgs2):
       break
 # begin Nimble config (version 2)
 proc useLocalNimblePaths(): bool =
-  let path = "nimble.paths"
+  const path: string = "nimble.paths"
   if not withDir(thisDir(), system.fileExists(path)):
     return false
   result = true

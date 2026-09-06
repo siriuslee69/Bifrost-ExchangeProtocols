@@ -168,12 +168,12 @@ type
       ## On a datagram carrier this is not really optional. Nothing proves a
       ## source address there, so a responder without a cookie will happily do
       ## post-quantum key work for packets that never came from anyone.
-    trustMode*: AmeTrustMode
-    root*: AmeAuthorityRoot
-    expectedPeer*: AmePinnedPeerIdentity
+    authentication*: AmeAuthentication
+      ## Whom this responder believes, and what it proves about itself. One
+      ## object, read by every step -- there is no second place that says the
+      ## same thing in different words.
     revokedSerials*: seq[uint64]
     params*: AmeRuntimeParams
-    authentication*: AmeAuthentication
 
   ## What an initiator needs.
   AmeInitiatorPolicy* {.role: configurator.} = object
@@ -181,11 +181,9 @@ type
     initialTier*: AmeMaskTier
     descriptor*: AmeIdentityCertificate
     identity*: AmeIdentityKey
-    trustMode*: AmeTrustMode
-    root*: AmeAuthorityRoot
-    expectedPeer*: AmePinnedPeerIdentity
-    revokedSerials*: seq[uint64]
     authentication*: AmeAuthentication
+      ## Same object, same job, on the initiating side.
+    revokedSerials*: seq[uint64]
 
   ## How a completed handshake reports itself, whatever carried it.
   AmeHandshakeOutcome* {.role: truthState.} = object
@@ -195,31 +193,35 @@ type
     err*: string
 
 proc initAmeResponderPolicy*(supported: openArray[AmeTierPath],
-    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
-    trustMode: AmeTrustMode = atmAuthorityCertificate,
+    a: AmeAuthentication,
+    descriptor: AmeIdentityCertificate = default(AmeIdentityCertificate),
+    identity: AmeIdentityKey = default(AmeIdentityKey),
     requireCookie: bool = true,
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
-    AmeResponderPolicy {.role: wrapper.} =
-  ## supported/descriptor/identity/trustMode/requireCookie/params: responder
-  ## policy with a freshly minted anti-flood secret.
+    AmeResponderPolicy {.role: wrapper, tag: {tagAppApi}.} =
+  ## supported/a/descriptor/identity/requireCookie/params: responder policy
+  ## with a freshly minted anti-flood secret. AM1M needs neither a certificate
+  ## nor an identity key, so both are left at their defaults there.
   if supported.len == 0:
     raise newException(ValueError, "AME responder must support at least one path")
   result.supported = @supported
+  result.authentication = a
   result.descriptor = descriptor
   result.identity = identity
-  result.trustMode = trustMode
   result.requireCookie = requireCookie
   result.params = params
   result.cookieSecret = initAmeCookieSecret()
 
 proc initAmeInitiatorPolicy*(L: AmeSuiteLayout, initialTier: AmeMaskTier,
-    descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
-    trustMode: AmeTrustMode = atmAuthorityCertificate):
-    AmeInitiatorPolicy {.role: wrapper.} =
-  ## L/initialTier/descriptor/identity/trustMode: initiator policy.
+    a: AmeAuthentication,
+    descriptor: AmeIdentityCertificate = default(AmeIdentityCertificate),
+    identity: AmeIdentityKey = default(AmeIdentityKey)):
+    AmeInitiatorPolicy {.role: wrapper, tag: {tagAppApi}.} =
+  ## L/initialTier/a/descriptor/identity: initiator policy, same rule about
+  ## the certificate and identity key as above.
   validateAmeTier(L, initialTier)
   result.layout = L
   result.initialTier = initialTier
+  result.authentication = a
   result.descriptor = descriptor
   result.identity = identity
-  result.trustMode = trustMode

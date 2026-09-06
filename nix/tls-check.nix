@@ -43,7 +43,7 @@ pkgs.stdenv.mkDerivation {
       --threads:on \
       -d:ssl \
       -r \
-      tests/test_transport_ops.nim
+      evaluation/tests/test_transport_ops.nim
 
   '';
 

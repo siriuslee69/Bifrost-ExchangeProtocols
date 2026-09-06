@@ -73,6 +73,19 @@ AME handshake (private identities)
   -> the cookie verifies only for the address, hello, and window it was minted for
   -> handshake records ride AME frames and refuse to arrive out of order
 
+AME authentication modes (AM1C / AM1S / AM1M)
+  -> the mode byte is carried in the hello and bound into the transcript
+  -> a complete AM1M handshake runs with no certificate on either side
+  -> the AM1M proof binds the provisioned name, the transcript, AND the
+     direction, so the two proofs of one handshake are not interchangeable
+  -> the wrong shared secret cannot open the sealed block at all, because
+     the binder went into the key schedule and not just into a proof
+  -> the right secret under the wrong name is refused
+  -> a responder refuses a hello naming a mode it does not run
+  -> AM1M rotates an epoch with a tag, having no signature keys to sign with
+  -> a tampered rotation proof is refused rather than ignored
+  -> the same, over a real TCP socket, through the driver
+
 FOMKE forward secrecy
   -> the state that sent a message cannot open it again afterwards
   -> a captured chain key opens nothing that came before it
@@ -80,6 +93,9 @@ FOMKE forward secrecy
   -> an epoch change destroys every key from the epoch before it
   -> a failed open leaves the ratchet exactly where it was
   -> a gap past the skip budget is refused, not absorbed
+  -> messages that never arrive can be given up on, and a rekey then runs
+  -> a full skip cache stops receiving, and giving up starts it again
+  -> a message given up on stays shut even if it does turn up later
   -> every switched-on KEM slot feeds the root, not just the first
   -> a tier naming a KEM slot with no secret is refused
   -> preparing ahead is bounded, and its cost in held key bytes is countable

@@ -379,10 +379,12 @@ proc runnableOutputPath(filePath: string): string =
   binName = parts.name
   when defined(windows):
     binName = binName & ".exe"
-  if filePath.startsWith("tests/"):
+  if filePath.startsWith("evaluation/tests/"):
     result = joinPath("build", "tests", binName)
   elif filePath.startsWith("examples/"):
     result = joinPath("build", "examples", binName)
+  elif filePath.startsWith("evaluation/benchmarks/"):
+    result = joinPath("build", "benchmarks", binName)
   elif filePath.startsWith("tools/"):
     result = joinPath("build", "tools", binName)
 
@@ -481,10 +483,10 @@ task vectors, "Regenerate committed BFX2 test vectors":
   runNim("c", "tools/generate_bfx2_vectors.nim", @["-r"])
 
 task benchmarks, "Run the committed protocol benchmark harness":
-  runNim("c", "tools/bench_protocols.nim", @["-d:release", "-r"])
+  runNim("c", "evaluation/benchmarks/bench_protocols.nim", @["-d:release", "-r"])
 
 task benchmarksServerSimd, "Run protocol benchmarks with server AVX2 batching":
-  runNim("c", "tools/bench_protocols.nim", @[
+  runNim("c", "evaluation/benchmarks/bench_protocols.nim", @[
     "-d:release", "-d:sse2", "-d:avx2",
     "--passC:-msse4.1 -mavx2", "--passL:-mavx2", "-r"
   ])
@@ -498,54 +500,54 @@ task testUi, "Discover Bifrost Otter tests and open the isolated test UI":
 
 task test, "Run bifrost_exchange_protocols tests":
   if not handoffTestTaskToLibsodiumShell("test"):
-    runNim("c", "tests/test_task_contract.nim", @["-r"])
-    runNim("c", "tests/test_http_protocol.nim", @["-r"])
-    runNim("c", "tests/test_config_exact.nim", @["-r"])
-    runNim("c", "tests/test_ame_exchange_paths.nim", @["-r"])
-    runNim("c", "tests/test_ame_build_flags.nim", @["-r"])
-    runNim("c", "tests/test_chunkyaead.nim", @["--threads:on", "-r"])
-    runNim("c", "tests/test_fomke.nim", @["-r"])
-    runNim("c", "tests/test_fomke_forward_secrecy.nim", @["-r"])
-    runNim("c", "tests/test_ame_session.nim", @["-r"])
-    runNim("c", "tests/test_ame_handshake_package.nim", @["-r"])
-    runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
-    runNim("c", "tests/test_mitm_and_loss.nim", @["-r"])
-    runNim("c", "tests/test_ame_tcp_handshake.nim", @["--threads:on", "-r"])
-    runNim("c", "tests/test_ame_dac_handshake.nim", @["--threads:on", "-r"])
-    runNim("c", "tests/test_ame_session_api.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_task_contract.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_http_protocol.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_config_exact.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_exchange_paths.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_build_flags.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_fomke.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_session.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_handshake_package.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_dac_relay.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_tcp_handshake.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_ame_dac_handshake.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_ame_session_api.nim", @["-r"])
 
-    runNim("c", "tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
-    runNim("c", "tests/test_dac_defaults.nim", @["-r"])
-    runNim("c", "tests/test_dac_wire.nim", @["-r"])
-    runNim("c", "tests/test_dac_ack_policy.nim", @["-r"])
-    runNim("c", "tests/test_dac_package_repair.nim", @["-r"])
-    runNim("c", "tests/test_dac_scramble.nim", @["-r"])
-    runNim("c", "tests/test_dac_link.nim", @["-r"])
-    runNim("c", "tests/test_dac_link_table.nim", @["-r"])
-    runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
-    runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
-    runNim("c", "tests/test_dac_drift_payload.nim", @["-r"])
-    runNim("c", "tests/test_transport_ops.nim", @["--threads:on", "-r"])
-    runNim("c", "tests/test_async_stream_ops.nim", @["-r"])
-    runNim("c", "tests/test_bfx2_wire.nim", @["-r"])
-    runNim("c", "tests/test_bfx2_geojson.nim", @["-r"])
-    runNim("c", "tests/test_bfx2_external_bridge.nim", @["-r"])
-    runNim("c", "tests/test_lan_message.nim", @["-r"])
-    runNim("c", "tests/test_tls13_foundation.nim", @["-r"])
-    runNim("c", "tests/test_tls13_webpki.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_dac_defaults.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_wire.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_ack_policy.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_drift_payload.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_transport_ops.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_async_stream_ops.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_bfx2_wire.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_bfx2_geojson.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_bfx2_external_bridge.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_lan_message.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_tls13_foundation.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_tls13_webpki.nim", @["-r"])
 
 task testTls, "Run TLS-enabled transport tests (host OpenSSL or Nix fallback)":
   ensureOpenSslBuildEnv("nimble testTls")
   if useHermeticTlsCheck:
     runHermeticTlsCheck()
   else:
-    runNim("c", "tests/test_transport_ops.nim", @["--threads:on", "-d:ssl", "-r"])
+    runNim("c", "evaluation/tests/test_transport_ops.nim", @["--threads:on", "-d:ssl", "-r"])
 
 task testNativeTls, "Run the pure-Nim TLS 1.3 foundation suite":
-  runNim("c", "tests/test_tls13_foundation.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_tls13_foundation.nim", @["-r"])
 
 task testNativeTlsWebpki, "Run TLS 1.3 handshakes with RSA and ECDSA certificates":
-  runNim("c", "tests/test_tls13_webpki.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_tls13_webpki.nim", @["-r"])
 
 task testNativeTlsInterop, "Run native TLS 1.3 client/server interoperability against OpenSSL":
   runNim("c", "tools/run_tls13_openssl_interop.nim", @["-r"])
@@ -564,14 +566,14 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
   ## Same tests, four builds: full, DAC-only, TCP-only, and the smallest
   ## profile that still completes a session. A flag combination that breaks
   ## a slim build fails here rather than on a device.
-  runNim("c", "tests/test_ame_build_flags.nim", @["-r"])
-  runNim("c", "tests/test_ame_build_flags.nim", @[
+  runNim("c", "evaluation/tests/test_ame_build_flags.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
     "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac", "-r"
   ])
-  runNim("c", "tests/test_ame_build_flags.nim", @[
+  runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
     "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=tcp", "-r"
   ])
-  runNim("c", "tests/test_ame_build_flags.nim", @[
+  runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
     "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac",
     "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
   ])
@@ -580,66 +582,66 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
 task testDacFlag, "Check that -d:bifrostDac=off removes the adaptive layer":
   ## The wire and the fixed profiles must still build with the flag off, the
   ## adaptive layer must refuse to build, and the umbrella must build both ways.
-  runNim("c", "tests/dacflag/uses_frames.nim", @["-r"])
-  runNim("c", "tests/dacflag/uses_frames.nim", @["-d:bifrostDac=off", "-r"])
-  runNim("c", "tests/dacflag/uses_link.nim", @["-r"])
-  runNim("c", "tests/dacflag/uses_link_table.nim", @["-r"])
-  runNim("c", "tests/dacflag/uses_relay.nim", @["-r"])
+  runNim("c", "evaluation/tests/dacflag/uses_frames.nim", @["-r"])
+  runNim("c", "evaluation/tests/dacflag/uses_frames.nim", @["-d:bifrostDac=off", "-r"])
+  runNim("c", "evaluation/tests/dacflag/uses_link.nim", @["-r"])
+  runNim("c", "evaluation/tests/dacflag/uses_link_table.nim", @["-r"])
+  runNim("c", "evaluation/tests/dacflag/uses_relay.nim", @["-r"])
   runNim("c", "src/bifrost_exchange_protocols.nim", @["-d:bifrostDac=off", "-o:build/dacflag_umbrella"])
   if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
-      "-o:build/dacflag_probe", "tests/dacflag/uses_link.nim"])).exitCode == 0:
+      "-o:build/dacflag_probe", "evaluation/tests/dacflag/uses_link.nim"])).exitCode == 0:
     quit("-d:bifrostDac=off still compiled the adaptive layer", 1)
   if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
-      "-o:build/dacflag_probe_table", "tests/dacflag/uses_link_table.nim"])).exitCode == 0:
+      "-o:build/dacflag_probe_table", "evaluation/tests/dacflag/uses_link_table.nim"])).exitCode == 0:
     quit("-d:bifrostDac=off still compiled the DAC link table", 1)
   if gorgeEx(shellCommand("nim", @["c", "-d:bifrostDac=off",
-      "-o:build/dacflag_probe_relay", "tests/dacflag/uses_relay.nim"])).exitCode == 0:
+      "-o:build/dacflag_probe_relay", "evaluation/tests/dacflag/uses_relay.nim"])).exitCode == 0:
     quit("-d:bifrostDac=off still compiled the AME DAC relay", 1)
   echo "OK | -d:bifrostDac=off keeps the wire and refuses the adaptive layer"
 
 task testDac, "Run DAC transport schema/default tests":
-  runNim("c", "tests/test_dac_defaults.nim", @["-r"])
-  runNim("c", "tests/test_dac_wire.nim", @["-r"])
-  runNim("c", "tests/test_dac_ack_policy.nim", @["-r"])
-  runNim("c", "tests/test_dac_package_repair.nim", @["-r"])
-  runNim("c", "tests/test_dac_scramble.nim", @["-r"])
-  runNim("c", "tests/test_dac_link.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_defaults.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_wire.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_ack_policy.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
 
-  runNim("c", "tests/test_dac_link_table.nim", @["-r"])
-
-
-  runNim("c", "tests/test_ame_dac_relay.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
 
 
+  runNim("c", "evaluation/tests/test_ame_dac_relay.nim", @["-r"])
 
-  runNim("c", "tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
-  runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
 
-  runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
-  runNim("c", "tests/test_dac_drift_payload.nim", @["-r"])
+
+  runNim("c", "evaluation/tests/test_ame_dac_endpoint.nim", @["--threads:on", "-r"])
+  runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
+
+  runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_drift_payload.nim", @["-r"])
 
 task testFuzz, "Run every wire decoder against mutated frames":
   ## The parser surface an attacker reaches first: DAC datagrams and the link
   ## table that routes them, AME frames and protected bodies, BFX2 envelopes,
   ## and the TLS 1.3 record and handshake decoders.
-  runNim("c", "tests/test_wire_fuzz.nim", @["-r"])
-  runNim("c", "tests/test_wire_fuzz_protocols.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
 
 task testFomke, "Run GB3HKDF, AEAD preset, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):
-    runNim("c", "tests/test_fomke.nim", @["-r"])
-    runNim("c", "tests/test_fomke_forward_secrecy.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_fomke.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
 
 task testMitm, "Run on-path attacker, loss, and repair tests":
   if not handoffTestTaskToLibsodiumShell("testMitm"):
-    runNim("c", "tests/test_mitm_and_loss.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
 
 task testChunkyAead, "Run CHUNKYAEAD chunk encryption and hash tests":
-  runNim("c", "tests/test_chunkyaead.nim", @["--threads:on", "-r"])
+  runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
 
 task testFomkeServerSimd, "Run FOMKE tests with server AVX2 batching":
   if not handoffTestTaskToLibsodiumShell("testFomkeServerSimd"):
-    runNim("c", "tests/test_fomke.nim", @[
+    runNim("c", "evaluation/tests/test_fomke.nim", @[
       "-d:release", "-d:sse2", "-d:avx2",
       "--passC:-msse4.1 -mavx2", "--passL:-mavx2", "-r"
     ])

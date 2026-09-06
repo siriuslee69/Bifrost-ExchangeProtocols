@@ -1,4 +1,0 @@
-title = "Bifrost Protocol Tests"
-banner = "Run Bifrost protocol, DAC, and TLS suites in isolated Otter workers."
-output_path = "tests/.otter/results"
-default_flags = []

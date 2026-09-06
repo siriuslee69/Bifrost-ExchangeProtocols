@@ -44,10 +44,12 @@ receiverCert = issueAmeIdentityCertificate(authority, receiverKey, 2'u64,
 ## an observer sees two nonces and some key material and never learns who is
 ## talking to whom.
 client = beginAmeHandshake(1'u64, layout, tier)
-server = answerAmeHandshake(client.hello, [path], receiverCert, receiverKey)
-sender = finishAmeHandshake(client, server.state.serverHello, root,
-  senderCert, senderKey, 10'i64)
-receiver = acceptAmeHandshake(server.state, sender.finish, root, 10'i64)
+server = answerAmeHandshake(client.hello, [path],
+  initAmeCertificateAuthentication(root), receiverCert, receiverKey)
+sender = finishAmeHandshake(client, server.state.serverHello,
+  initAmeCertificateAuthentication(root), senderCert, senderKey, 10'i64)
+receiver = acceptAmeHandshake(server.state, sender.finish,
+  initAmeCertificateAuthentication(root), 10'i64)
 
 for i in 0 ..< plaintext.len:
   plaintext[i] = uint8(i mod 251)
