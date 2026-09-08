@@ -131,7 +131,7 @@ proc validateGeoJsonNode*(n: JsonNode): tuple[ok: bool, err: string] {.gcsafe, r
   else:
     result = (false, bfxGeoJsonErrUnsupportedType)
 
-proc encodeGeoJsonPacket*(n: JsonNode): tuple[ok: bool, packet: ByteSeq, err: string] {.gcsafe, role: wrapper.} =
+proc encodeGeoJsonPacket*(n: JsonNode): tuple[ok: bool, packet: ByteSeq, err: string] {.gcsafe, role: helper.} =
   ## Validate and encode GeoJSON as a BFX2 dynamic value packet.
   var
     v: tuple[ok: bool, err: string]
@@ -158,7 +158,7 @@ proc encodeGeoJsonEnvelope*(
     schemaVersion: uint16;
     n: JsonNode;
     flags: uint16 = bfxFlagChecksum
-): tuple[ok: bool, packet: ByteSeq, err: string] {.gcsafe, role: wrapper.} =
+): tuple[ok: bool, packet: ByteSeq, err: string] {.gcsafe, role: helper.} =
   ## Validate + encode GeoJSON and wrap in a BFX2 envelope.
   var
     p: tuple[ok: bool, packet: ByteSeq, err: string]

@@ -20,7 +20,7 @@ template requirePathLength(n: int, what: string) =
     raise newException(ValueError, "AME " & what & " layout must contain 1..8 slots")
 
 proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
-    AmeCipherAlgorithms {.role: wrapper.} =
+    AmeCipherAlgorithms {.role: configurator.} =
   ## A: immutable ordered symmetric-cipher slots. A slot whose primitive
   ## this build left out is refused here, before any session uses it.
   var i: int = 0
@@ -32,7 +32,7 @@ proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
     i = i + 1
 
 proc initAmeMacAlgorithms*(A: openArray[AmeMacAlgorithm]):
-    AmeMacAlgorithms {.role: wrapper.} =
+    AmeMacAlgorithms {.role: configurator.} =
   ## A: ordered keyed-authentication slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "MAC")
@@ -43,7 +43,7 @@ proc initAmeMacAlgorithms*(A: openArray[AmeMacAlgorithm]):
     i = i + 1
 
 proc initAmeHashAlgorithms*(A: openArray[AmeHashAlgorithm]):
-    AmeHashAlgorithms {.role: wrapper.} =
+    AmeHashAlgorithms {.role: configurator.} =
   ## A: ordered transcript-hash slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "hash")
@@ -54,7 +54,7 @@ proc initAmeHashAlgorithms*(A: openArray[AmeHashAlgorithm]):
     i = i + 1
 
 proc initAmeSignatureAlgorithms*(A: openArray[AmeSignatureAlgorithm]):
-    AmeSignatureAlgorithms {.role: wrapper.} =
+    AmeSignatureAlgorithms {.role: configurator.} =
   ## A: ordered signature slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "signature")
@@ -65,7 +65,7 @@ proc initAmeSignatureAlgorithms*(A: openArray[AmeSignatureAlgorithm]):
     i = i + 1
 
 proc initAmeKdfAlgorithms*(A: openArray[AmeKdfAlgorithm]):
-    AmeKdfAlgorithms {.role: wrapper.} =
+    AmeKdfAlgorithms {.role: configurator.} =
   ## A: ordered KDF slots, refused if not compiled.
   var i: int = 0
   requirePathLength(A.len, "KDF")
@@ -76,24 +76,24 @@ proc initAmeKdfAlgorithms*(A: openArray[AmeKdfAlgorithm]):
     i = i + 1
 
 converter toAmeCipherAlgorithms*[N: static[int]](
-    A: array[N, AmeCipherAlgorithm]): AmeCipherAlgorithms {.role: wrapper.} =
+    A: array[N, AmeCipherAlgorithm]): AmeCipherAlgorithms {.role: helper.} =
   result = initAmeCipherAlgorithms(A)
 
 converter toAmeMacAlgorithms*[N: static[int]](
-    A: array[N, AmeMacAlgorithm]): AmeMacAlgorithms {.role: wrapper.} =
+    A: array[N, AmeMacAlgorithm]): AmeMacAlgorithms {.role: helper.} =
   result = initAmeMacAlgorithms(A)
 
 converter toAmeHashAlgorithms*[N: static[int]](
-    A: array[N, AmeHashAlgorithm]): AmeHashAlgorithms {.role: wrapper.} =
+    A: array[N, AmeHashAlgorithm]): AmeHashAlgorithms {.role: helper.} =
   result = initAmeHashAlgorithms(A)
 
 converter toAmeSignatureAlgorithms*[N: static[int]](
     A: array[N, AmeSignatureAlgorithm]): AmeSignatureAlgorithms {.
-    role: wrapper.} =
+    role: helper.} =
   result = initAmeSignatureAlgorithms(A)
 
 converter toAmeKdfAlgorithms*[N: static[int]](
-    A: array[N, AmeKdfAlgorithm]): AmeKdfAlgorithms {.role: wrapper.} =
+    A: array[N, AmeKdfAlgorithm]): AmeKdfAlgorithms {.role: helper.} =
   result = initAmeKdfAlgorithms(A)
 
 proc occupiedAmeMask*(n: uint8): uint8 {.role: helper.} =
@@ -143,7 +143,7 @@ proc requireUniqueActiveKdfs(P: AmeKdfAlgorithms, m: uint8) {.
 proc initAmeSuiteLayout*(kems: AmeKemAlgorithms,
     ciphers: AmeCipherAlgorithms, macs: AmeMacAlgorithms,
     hashes: AmeHashAlgorithms, signatures: AmeSignatureAlgorithms,
-    kdfs: AmeKdfAlgorithms): AmeSuiteLayout {.role: wrapper.} =
+    kdfs: AmeKdfAlgorithms): AmeSuiteLayout {.role: configurator.} =
   ## All parameters form one immutable ordered in-session algorithm layout.
   requirePathLength(int(kems.length), "KEM")
   requirePathLength(int(ciphers.length), "cipher")
@@ -159,7 +159,7 @@ proc initAmeSuiteLayout*(kems: AmeKemAlgorithms,
   result.kdfs = kdfs
 
 proc defaultAmeLayout*(kems: AmeKemAlgorithms): AmeSuiteLayout {.
-    role: wrapper.} =
+    role: configurator.} =
   ## kems: caller-selected KEM slots combined with conservative fixed slots.
   ## Every non-KEM slot comes from what this build carries, so the default
   ## layout is always runnable; a full build gives the same slots it always
@@ -172,7 +172,7 @@ proc defaultAmeLayout*(kems: AmeKemAlgorithms): AmeSuiteLayout {.
     initAmeKdfAlgorithms(defaultAmeKdfSlots()))
 
 proc initAmeTierMasks*(kem, cipher, mac, hash, signature,
-    kdf: uint8): AmeTierMasks {.role: wrapper.} =
+    kdf: uint8): AmeTierMasks {.role: configurator.} =
   ## Parameters are independent MSB-first selections over one suite layout.
   result.kem = kem
   result.cipher = cipher
@@ -197,7 +197,7 @@ proc validateAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier) {.role: parser.} =
   requireUniqueActiveKdfs(L.kdfs, t.masks.kdf)
 
 proc initAmeMaskTier*(L: AmeSuiteLayout, tierId: uint32,
-    masks: AmeTierMasks): AmeMaskTier {.role: wrapper.} =
+    masks: AmeTierMasks): AmeMaskTier {.role: configurator.} =
   ## L/tierId/masks: stable tier identity and complete selections to validate.
   result.tierId = tierId
   result.masks = masks
@@ -223,7 +223,7 @@ proc validateAmeTierTransition*(L: AmeSuiteLayout, current,
       "AME target tier selects an unavailable KEM slot")
 
 proc fullAmeMaskTier*(L: AmeSuiteLayout,
-    tierId: uint32 = 1'u32): AmeMaskTier {.role: wrapper.} =
+    tierId: uint32 = 1'u32): AmeMaskTier {.role: truthBuilder.} =
   ## L/tierId: tier selecting every occupied slot in each algorithm family.
   result = initAmeMaskTier(L, tierId, initAmeTierMasks(
     occupiedAmeMask(L.kems.length), occupiedAmeMask(L.ciphers.length),
@@ -244,7 +244,7 @@ template encodeNibbleLayout(result: var ByteSeq, P: untyped) =
       i = i + 2
 
 proc encodeAmeSuiteLayout*(L: AmeSuiteLayout): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## L: canonical immutable layout bytes; no tier masks are embedded.
   discard initAmeSuiteLayout(L.kems, L.ciphers, L.macs, L.hashes,
     L.signatures, L.kdfs)
@@ -316,7 +316,7 @@ proc decodeAmeSuiteLayout*(A: openArray[uint8]): AmeSuiteLayout {.
   result = initAmeSuiteLayout(result.kems, result.ciphers, result.macs,
     result.hashes, result.signatures, result.kdfs)
 
-proc encodeAmeMaskTier*(t: AmeMaskTier): ByteSeq {.role: stateController.} =
+proc encodeAmeMaskTier*(t: AmeMaskTier): ByteSeq {.role: dataWriter.} =
   ## t: stable tier id followed by six MSB-first family masks.
   if t.tierId == 0'u32:
     raise newException(ValueError, "AME tier id must be positive")

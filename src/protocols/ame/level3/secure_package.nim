@@ -46,7 +46,7 @@ proc securePackageAad(packageId: uint64, epochId: uint32,
 
 proc encodeSecurePackage(epochId: uint32, nonce: openArray[uint8],
     tagLen: AmeAuthTagLen, m: AmeProtectedMessage): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## epochId/nonce/tagLen/m: detached AME protection fields made packageable.
   ##
   ##   "ASP" | ver | epoch u32 | nonceLen u16 | tagLen u8 | ctLen u32

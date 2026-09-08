@@ -9,7 +9,7 @@ import ../../../analysis_pragmas
 const
   ameProtocolId* = "bifrost.ame"
 
-proc initAmeDescriptor*(): ProtocolDescriptor {.role: wrapper.} =
+proc initAmeDescriptor*(): ProtocolDescriptor {.role: configurator.} =
   ## Initialize the AME2 immutable-layout mask-tier protocol descriptor.
   result.protocolId = ameProtocolId
   result.name = "AME"
@@ -20,7 +20,7 @@ proc initAmeDescriptor*(): ProtocolDescriptor {.role: wrapper.} =
   result.capabilities.supportsReliability = false
   result.capabilities.supportsAck = true
 
-proc initAmeSessionDescriptor*(): ProtocolDescriptor {.role: wrapper.} =
+proc initAmeSessionDescriptor*(): ProtocolDescriptor {.role: configurator.} =
   ## Session-facing AME descriptor (encrypted live link).
   result.protocolId = ameSessionProtocolId
   result.name = "AME-Session"

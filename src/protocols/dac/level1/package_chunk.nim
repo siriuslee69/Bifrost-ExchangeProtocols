@@ -19,7 +19,7 @@ const
 """
 
 proc initDacPackageChunk*(packageId: uint64, groupId: uint32,
-    chunkId: uint16, offset: uint32, payload: ByteSeq): DacPackageChunk {.role: wrapper.} =
+    chunkId: uint16, offset: uint32, payload: ByteSeq): DacPackageChunk {.role: configurator.} =
   ## packageId/groupId/chunkId/offset: chunk identity.
   ## payload: raw chunk bytes.
   result.packageId = packageId
@@ -28,7 +28,7 @@ proc initDacPackageChunk*(packageId: uint64, groupId: uint32,
   result.offset = offset
   result.payload = copyDacBytes(payload)
 
-proc encodeDacPackageChunk*(c: DacPackageChunk): ByteSeq {.role: wrapper.} =
+proc encodeDacPackageChunk*(c: DacPackageChunk): ByteSeq {.role: helper.} =
   ## c: package chunk body to encode.
   appendDacU64(result, c.packageId)
   appendDacU32(result, c.groupId)

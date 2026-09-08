@@ -18,7 +18,7 @@ proc ntruVariant(a: AmeKemAlgorithm): tyr_ntru.NtruVariant {.role: parser.} =
   else:
     raise newException(ValueError, "AME KEM slot is not NTRU: " & ameKemName(a))
 
-proc ntruAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc ntruAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: NTRU slot to key independently.
   assignAmeKeypair(tyr_ntru.ntruTyrKeypair(ntruVariant(a)))
 

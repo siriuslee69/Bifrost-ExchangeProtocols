@@ -66,7 +66,7 @@ proc ameHandshakeKindValid*(k: AmePacketKind): bool {.role: parser.} =
 
 proc encodeAmeHandshakeFrame*(kind: AmePacketKind, sessionId: uint64,
     step: uint32, record: openArray[uint8]): ByteSeq {.
-    role: stateController, tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+    role: dataWriter, metaTags: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## kind/sessionId/step/record: wrap one handshake record in an AME frame.
   if not ameHandshakeKindValid(kind):
     raise newException(ValueError, "AME handshake packet kind is invalid")
@@ -82,7 +82,7 @@ proc encodeAmeHandshakeFrame*(kind: AmePacketKind, sessionId: uint64,
     step, record)
 
 proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
-    role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    role: parser, metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
   ## A: one complete AME frame that should carry a handshake record.
   var
     f: AmeDecodedFrame = decodeAmeFrame(A)
@@ -102,7 +102,7 @@ proc decodeAmeHandshakeFrame*(A: openArray[uint8]): AmeHandshakeFrame {.
 
 proc requireHandshakeFrame*(f: AmeHandshakeFrame, kind: AmePacketKind,
     step: uint32, sessionId: uint64 = 0'u64) {.role: parser,
-    tag: {tagValidation}.} =
+    metaTags: {tagValidation}.} =
   ## f/kind/step/sessionId: refuse a record that is not the one expected next.
   ## Passing sessionId 0 means "any", used for the very first frame a server
   ## sees, where the client picks the id.
@@ -114,8 +114,8 @@ proc requireHandshakeFrame*(f: AmeHandshakeFrame, kind: AmePacketKind,
     raise newException(ValueError, "AME handshake session id changed")
 
 proc encodeAmeClientHelloFrame*(h: AmeClientHello,
-    retried: bool = false): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagWrite}.} =
+    retried: bool = false): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagWrite}.} =
   ## h/retried: the client's first frame, or the same hello sent again with
   ## the cookie the server asked for.
   var
@@ -126,21 +126,21 @@ proc encodeAmeClientHelloFrame*(h: AmeClientHello,
     encodeAmeClientHello(h))
 
 proc encodeAmeHelloRetryFrame*(r: AmeHelloRetry): ByteSeq {.
-    role: stateController, tag: {tagAppApi, tagWrite}.} =
+    role: dataWriter, metaTags: {tagAppApi, tagWrite}.} =
   ## r: the server's cookie challenge.
   result = encodeAmeHandshakeFrame(ampkHelloRetry, r.sessionId,
     ameHandshakeStepRetry, encodeAmeHelloRetry(r))
 
 proc encodeAmeServerHelloFrame*(sessionId: uint64,
-    h: AmeServerHello): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagWrite}.} =
+    h: AmeServerHello): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagWrite}.} =
   ## sessionId/h: the server's answer plus its sealed identity.
   result = encodeAmeHandshakeFrame(ampkServerHello, sessionId,
     ameHandshakeStepServerHello, encodeAmeServerHello(h))
 
 proc encodeAmeClientFinishFrame*(sessionId: uint64,
-    f: AmeClientFinish): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagWrite}.} =
+    f: AmeClientFinish): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagWrite}.} =
   ## sessionId/f: the client's sealed identity and transcript confirmation.
   result = encodeAmeHandshakeFrame(ampkClientFinish, sessionId,
     ameHandshakeStepFinish, encodeAmeClientFinish(f))
@@ -198,7 +198,7 @@ proc initAmeResponderPolicy*(supported: openArray[AmeTierPath],
     identity: AmeIdentityKey = default(AmeIdentityKey),
     requireCookie: bool = true,
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
-    AmeResponderPolicy {.role: wrapper, tag: {tagAppApi}.} =
+    AmeResponderPolicy {.role: configurator, metaTags: {tagAppApi}.} =
   ## supported/a/descriptor/identity/requireCookie/params: responder policy
   ## with a freshly minted anti-flood secret. AM1M needs neither a certificate
   ## nor an identity key, so both are left at their defaults there.
@@ -216,7 +216,7 @@ proc initAmeInitiatorPolicy*(L: AmeSuiteLayout, initialTier: AmeMaskTier,
     a: AmeAuthentication,
     descriptor: AmeIdentityCertificate = default(AmeIdentityCertificate),
     identity: AmeIdentityKey = default(AmeIdentityKey)):
-    AmeInitiatorPolicy {.role: wrapper, tag: {tagAppApi}.} =
+    AmeInitiatorPolicy {.role: configurator, metaTags: {tagAppApi}.} =
   ## L/initialTier/a/descriptor/identity: initiator policy, same rule about
   ## the certificate and identity key as above.
   validateAmeTier(L, initialTier)

@@ -81,7 +81,7 @@ proc amePaddedLen*(n: int, p: AmePaddingPolicy): int {.role: parser.} =
   result = n + block1 - (n mod block1)
 
 proc padAmeMessage*(A: openArray[uint8], p: AmePaddingPolicy): ByteSeq {.
-    role: encryptor, tag: {tagCryptoBoundary}.} =
+    role: encryptor, metaTags: {tagCryptoBoundary}.} =
   ## A/p: plaintext and policy. Returns the bytes that get encrypted.
   var
     total: int = amePaddedLen(A.len, p)
@@ -95,7 +95,7 @@ proc padAmeMessage*(A: openArray[uint8], p: AmePaddingPolicy): ByteSeq {.
   result[total - 1] = uint8(total - A.len)
 
 proc unpadAmeMessage*(A: openArray[uint8], p: AmePaddingPolicy): ByteSeq {.
-    role: parser, tag: {tagCryptoBoundary, tagParsing, tagValidation}.} =
+    role: parser, metaTags: {tagCryptoBoundary, tagParsing, tagValidation}.} =
   ## A/p: bytes that came out of a successful decryption, and the policy this
   ## side agreed. Anything that is not exactly what `padAmeMessage` writes is
   ## refused -- length, filler and all.

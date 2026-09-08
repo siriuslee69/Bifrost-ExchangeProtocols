@@ -17,7 +17,7 @@ proc kyberVariant(a: AmeKemAlgorithm): tyr_kyber.KyberVariant {.role: parser.} =
   else:
     raise newException(ValueError, "AME KEM slot is not Kyber: " & ameKemName(a))
 
-proc kyberAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc kyberAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: Kyber slot to key independently.
   assignAmeKeypair(tyr_kyber.kyberTyrKeypair(kyberVariant(a)))
 

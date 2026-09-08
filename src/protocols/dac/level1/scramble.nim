@@ -51,7 +51,7 @@ type
 
 proc initDacScramblePolicy*(minDelayMs: uint16 = 3'u16,
     maxDelayMs: uint16 = 11'u16,
-    shuffleChunks: bool = true): DacScramblePolicy {.role: wrapper.} =
+    shuffleChunks: bool = true): DacScramblePolicy {.role: configurator.} =
   ## minDelayMs/maxDelayMs: inclusive delay range; equal values give a fixed
   ## delay, and both zero turns delaying off.
   ## shuffleChunks: whether a package's chunks leave in a random order.
@@ -62,7 +62,7 @@ proc initDacScramblePolicy*(minDelayMs: uint16 = 3'u16,
   result.maxDelayMs = maxDelayMs
   result.shuffleChunks = shuffleChunks
 
-proc quietDacScramblePolicy*(): DacScramblePolicy {.role: wrapper.} =
+proc quietDacScramblePolicy*(): DacScramblePolicy {.role: configurator.} =
   ## Return the policy that changes nothing, for paths where the extra
   ## latency costs more than the leak is worth.
   result = initDacScramblePolicy(0'u16, 0'u16, false)
@@ -71,7 +71,7 @@ proc dacScrambleActive*(p: DacScramblePolicy): bool {.role: parser.} =
   ## p: policy asked whether it does anything at all.
   result = p.shuffleChunks or p.maxDelayMs > 0'u16
 
-proc initDacScrambleState*(seed: uint64): DacScrambleState {.role: wrapper.} =
+proc initDacScrambleState*(seed: uint64): DacScrambleState {.role: configurator.} =
   ## seed: sender-local starting value. Feed it something the peer cannot
   ## guess; a session key byte or a system random word both work.
   result.seed = seed

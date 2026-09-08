@@ -18,7 +18,7 @@ proc saberVariant(a: AmeKemAlgorithm): tyr_saber.SaberVariant {.role: parser.} =
   else:
     raise newException(ValueError, "AME KEM slot is not Saber: " & ameKemName(a))
 
-proc saberAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc saberAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: Saber slot to key independently.
   assignAmeKeypair(tyr_saber.saberTyrKeypair(saberVariant(a)))
 

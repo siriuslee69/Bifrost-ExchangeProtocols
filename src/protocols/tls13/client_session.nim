@@ -56,7 +56,7 @@ type
     err*: string
 
   Tls13ClientSession* {.role: memory,
-      tag: {tagTls, tagTransport, tagCryptoBoundary}.} = object
+      metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} = object
     state*: Tls13ClientSessionState
     config: Tls13ClientConfig
     connection: Tls13Connection
@@ -71,7 +71,7 @@ type
     selectedAlpn*: string
 
 proc random32(): array[32, byte] {.role: dataFetcher,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   var
     A: ByteSeq = cryptoRandomBytes(32)
     i: int = 0
@@ -82,7 +82,7 @@ proc random32(): array[32, byte] {.role: dataFetcher,
     i = i + 1
 
 proc offeredAlpn(S: Tls13ClientSession, selected: string): bool {.role: parser,
-    tag: {tagTls, tagValidation}.} =
+    metaTags: {tagTls, tagValidation}.} =
   var i: int = 0
   while i < S.config.alpn.len:
     if S.config.alpn[i] == selected:
@@ -90,8 +90,8 @@ proc offeredAlpn(S: Tls13ClientSession, selected: string): bool {.role: parser,
     i = i + 1
 
 proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
-    e: string) {.role: stateController,
-    tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+    e: string) {.role: actor,
+    metaTags: {tagTls, tagValidation, tagCryptoBoundary}.} =
   S.state = tcsFailed
   O.err = e
   try:
@@ -108,7 +108,7 @@ proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
   S.connection.clearTls13ConnectionSecrets()
 
 proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
-    role: truthBuilder, tag: {tagTls, tagTransport}.} =
+    role: truthBuilder, metaTags: {tagTls, tagTransport}.} =
   ## C: pinned root or trust anchors, expected identity, ALPN list, time, and
   ## optional test seed.
   var
@@ -148,7 +148,7 @@ proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
     i = i + 1
 
 proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    role: dataWriter, metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## S: fresh client session whose encoded ClientHello is returned.
   var
     kp: X25519TyrKeypair
@@ -173,7 +173,7 @@ proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
 
 proc acceptServerHello(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
-    tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagValidation, tagCryptoBoundary}.} =
   var
     R: Tls13ServerHelloResult = decodeTls13ServerHello(H.body)
     shared: ByteSeq = @[]
@@ -199,7 +199,7 @@ proc acceptServerHello(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc acceptEncryptedExtensions(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
-    tag: {tagTls, tagValidation}.} =
+    metaTags: {tagTls, tagValidation}.} =
   var R = decodeTls13EncryptedExtensions(H.body)
   if not R.ok:
     S.failClient(O, R.err)
@@ -214,7 +214,7 @@ proc acceptEncryptedExtensions(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
-    tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagValidation, tagCryptoBoundary}.} =
   ## The pinned profile takes exactly one certificate under exactly one root.
   ## The trust-store profile takes a leaf plus whatever intermediates lead to
   ## an anchor, which is what a server nobody provisioned actually sends.
@@ -266,7 +266,7 @@ proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc acceptCertificateVerify(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
-    tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagValidation, tagCryptoBoundary}.} =
   var
     R = decodeTls13CertificateVerify(H.body)
     transcriptHash: Sha256Digest = S.transcript.tls13TranscriptHash()
@@ -307,7 +307,7 @@ proc acceptCertificateVerify(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc acceptServerFinished(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
-    tag: {tagTls, tagValidation, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagValidation, tagCryptoBoundary}.} =
   var
     transcriptHash: Sha256Digest = S.transcript.tls13TranscriptHash()
     expected: Tls13Secret = tls13FinishedVerifyData(
@@ -336,7 +336,7 @@ proc acceptServerFinished(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc acceptClientHandshake(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: orchestrator,
-    tag: {tagTls, tagValidation}.} =
+    metaTags: {tagTls, tagValidation}.} =
   case S.state
   of tcsAwaitServerHello:
     if H.messageType != thtServerHello:
@@ -374,7 +374,7 @@ proc acceptClientHandshake(S: var Tls13ClientSession, H: Tls13Handshake,
 
 proc feedTls13Client*(S: var Tls13ClientSession,
     A: openArray[byte]): Tls13ClientOutput {.role: orchestrator,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## S/A: client session and arbitrary next transport bytes.
   var
     step: Tls13FeedStep = S.connection.feedTls13One(A)
@@ -412,7 +412,7 @@ proc feedTls13Client*(S: var Tls13ClientSession,
 
 proc encodeTls13ClientApplication*(S: var Tls13ClientSession,
     A: openArray[byte]): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## S/A: connected client session and application bytes.
   if S.state != tcsConnected:
     raise newException(IOError, "TLS client session is not connected")
@@ -420,14 +420,14 @@ proc encodeTls13ClientApplication*(S: var Tls13ClientSession,
 
 proc encodeTls13ClientKeyUpdate*(S: var Tls13ClientSession,
     requestPeerUpdate: bool = false): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## S/requestPeerUpdate: connected client and peer-update request flag.
   if S.state != tcsConnected:
     raise newException(IOError, "TLS client session is not connected")
   result = S.connection.encodeTls13KeyUpdate(requestPeerUpdate)
 
 proc closeTls13Client*(S: var Tls13ClientSession): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    role: dataWriter, metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## S: connected client session to close cleanly.
   if S.state != tcsConnected:
     raise newException(IOError, "TLS client session is not connected")

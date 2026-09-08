@@ -70,7 +70,7 @@ proc dacSocketHasPeer(sock: DacSocket): bool {.role: helper.} =
     result = false
 
 proc unlinkLocalhostDacPeer(prev, node: ptr LocalhostDacPeerEntry) {.
-    role: stateController.} =
+    role: actor.} =
   ## prev/node: linked-list cursor for removing a stale remembered peer entry.
   if prev == nil:
     dacLocalhostPeerRegistry = node[].next
@@ -79,7 +79,7 @@ proc unlinkLocalhostDacPeer(prev, node: ptr LocalhostDacPeerEntry) {.
   deallocShared(node)
 
 proc rememberLocalhostDacPeer(sock: DacSocket, port: uint16) {.
-    role: stateController.} =
+    role: actor.} =
   ## sock/port: remember that this socket should fan out to localhost loopback
   ## aliases for the given DAC port.
   var
@@ -112,7 +112,7 @@ proc rememberLocalhostDacPeer(sock: DacSocket, port: uint16) {.
   finally:
     release(dacPeerRegistryLock)
 
-proc forgetDacPeer(sock: DacSocket) {.role: stateController.} =
+proc forgetDacPeer(sock: DacSocket) {.role: actor.} =
   ## sock: DAC socket whose remembered logical remote should be cleared.
   var
     key: int = dacPeerSockKey(sock)
@@ -167,7 +167,7 @@ proc stripDacScheme(s: string): string {.role: parser.} =
   if result.startsWith("dac://"):
     result = result[6 .. ^1]
 
-proc initDacAddress*(h: string, p: uint16): DacAddress {.role: wrapper.} =
+proc initDacAddress*(h: string, p: uint16): DacAddress {.role: configurator.} =
   ## h: peer host name or IP address.
   ## p: DAC service port.
   var carrier = transport_types.initUdpAddress(h, p)
@@ -175,13 +175,13 @@ proc initDacAddress*(h: string, p: uint16): DacAddress {.role: wrapper.} =
   result.port = carrier.port
 
 proc carrierAddressFromDac(a: DacAddress): transport_types.UdpAddress {.
-    role: wrapper.} =
+    role: truthBuilder.} =
   ## a: DAC endpoint to pass into the active packet carrier.
   result.host = a.host
   result.port = a.port
 
 proc dacAddressFromCarrier(a: transport_types.UdpAddress): DacAddress {.
-    role: wrapper.} =
+    role: truthBuilder.} =
   ## a: carrier endpoint returned by the active packet backend.
   result.host = a.host
   result.port = a.port
@@ -202,11 +202,11 @@ proc parseDacAddress*(s: string): tuple[ok: bool, a: DacAddress] {.
   result.ok = parsed.ok
   result.a = dacAddressFromCarrier(parsed.a)
 
-proc formatDacAddress*(a: DacAddress): string {.role: wrapper.} =
+proc formatDacAddress*(a: DacAddress): string {.role: truthBuilder.} =
   ## a: DAC endpoint to render.
   result = "dac://" & udp_ops.formatUdpAddress(carrierAddressFromDac(a))
 
-proc openDacListener*(a: DacAddress): DacSocket {.role: wrapper.} =
+proc openDacListener*(a: DacAddress): DacSocket {.role: truthBuilder.} =
   ## a: local DAC endpoint to bind for inbound frames.
   result = udp_ops.bindUdp(carrierAddressFromDac(a))
 

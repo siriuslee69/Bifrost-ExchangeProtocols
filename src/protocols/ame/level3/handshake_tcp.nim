@@ -70,7 +70,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     remote: transport_types.TcpAddress, nowUnix: int64,
     timeoutMs: int = 4000,
     sessionId: uint64 = 0'u64): AmeHandshakeOutcome {.role: orchestrator,
-    tag: {tagAppApi, tagNetworkSurface}.} =
+    metaTags: {tagAppApi, tagNetworkSurface}.} =
   ## sock/c/remote/nowUnix/timeoutMs/sessionId: run the responder side to
   ## completion and hand back a session that is ready to carry data.
   ##
@@ -160,7 +160,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
 proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
     sessionId: uint64, nowUnix: int64,
     timeoutMs: int = 4000): AmeHandshakeOutcome {.role: orchestrator,
-    tag: {tagAppApi, tagNetworkSurface}.} =
+    metaTags: {tagAppApi, tagNetworkSurface}.} =
   ## sock/c/sessionId/nowUnix/timeoutMs: run the initiator side to completion.
   var
     state: AmeClientHandshake

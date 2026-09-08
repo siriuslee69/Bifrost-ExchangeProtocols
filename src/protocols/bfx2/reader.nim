@@ -21,7 +21,7 @@ proc hashFieldId(k: string): uint16 {.gcsafe, role: helper.} =
     i.inc
   result = uint16(h and 0xFFFF'u32)
 
-proc readU16*(bs: ByteSeq, o: int, v: var uint16): bool {.gcsafe, role: stateController.} =
+proc readU16*(bs: ByteSeq, o: int, v: var uint16): bool {.gcsafe, role: actor.} =
   ## readU16: read 16.
   var
     b0: uint16
@@ -33,7 +33,7 @@ proc readU16*(bs: ByteSeq, o: int, v: var uint16): bool {.gcsafe, role: stateCon
   v = b0 or (b1 shl 8)
   result = true
 
-proc readU32*(bs: ByteSeq, o: int, v: var uint32): bool {.gcsafe, role: stateController.} =
+proc readU32*(bs: ByteSeq, o: int, v: var uint32): bool {.gcsafe, role: actor.} =
   ## readU32: read 32.
   var
     b0: uint32
@@ -49,7 +49,7 @@ proc readU32*(bs: ByteSeq, o: int, v: var uint32): bool {.gcsafe, role: stateCon
   v = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
   result = true
 
-proc readU64*(bs: ByteSeq, o: int, v: var uint64): bool {.gcsafe, role: stateController.} =
+proc readU64*(bs: ByteSeq, o: int, v: var uint64): bool {.gcsafe, role: actor.} =
   ## readU64: read 64.
   var
     x0: uint64

@@ -102,7 +102,7 @@ proc requireEpoch(E: AmeEpochKeySet) {.role: parser.} =
   if (E.tier.masks.kem and not E.exchange.activeMask) != 0'u8:
     raise newException(ValueError, "AME epoch tier lacks an active KEM secret")
 
-proc clearExchangeState(E: var AmeExchangeState) {.role: stateController.} =
+proc clearExchangeState(E: var AmeExchangeState) {.role: actor.} =
   ## E: exchange state whose secret slots are overwritten.
   var
     i: int = 0
@@ -111,14 +111,14 @@ proc clearExchangeState(E: var AmeExchangeState) {.role: stateController.} =
     i = i + 1
   E = default(AmeExchangeState)
 
-proc clearEpoch(E: var AmeEpochKeySet) {.role: stateController.} =
+proc clearEpoch(E: var AmeEpochKeySet) {.role: actor.} =
   ## E: epoch whose exchange secrets and transcript salt are cleared.
   clearExchangeState(E.exchange)
   secureClearAmeBytes(E.transcriptSalt)
   E = default(AmeEpochKeySet)
 
 proc clearSignatureSecretKeys(K: var seq[ByteSeq]) {.
-    role: stateController.} =
+    role: actor.} =
   ## K: complete identity signature private-key stack to erase.
   var
     i: int = 0
@@ -128,7 +128,7 @@ proc clearSignatureSecretKeys(K: var seq[ByteSeq]) {.
   K.setLen(0)
 
 proc clearPendingExchange(P: var AmePendingExchange) {.
-    role: stateController.} =
+    role: actor.} =
   ## P: outgoing exchange whose private keys are cleared.
   var
     i: int = 0
@@ -171,7 +171,7 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
     epochId: uint32 = 1'u32, sessionId: uint64 = 1'u64,
     endpointRole: AmeEndpointRole = aerInitiator,
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
-    AmeAuthPackage {.role: wrapper.} =
+    AmeAuthPackage {.role: configurator.} =
   ## L/t/E/transcriptSalt/epoch/session/role: exact initial epoch inputs.
   ## params: tunables both endpoints must hold identically. They are bound
   ## into every tag, so a peer with different values fails authentication
@@ -204,7 +204,7 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
 ## which one it is looking at.
 
 proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
-    tag: {tagCryptoBoundary}.} =
+    metaTags: {tagCryptoBoundary}.} =
   ## A: the AM1M exchange key, checked before it is used.
   if A.exchangeAuthenticationKey.len < 32:
     raise newException(ValueError, "AME session has no exchange proof key")
@@ -212,7 +212,7 @@ proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
 
 proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
     subject: openArray[uint8]): seq[ByteSeq] {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagExchange}.} =
+    metaTags: {tagCryptoBoundary, tagExchange}.} =
   ## S/t/subject: this endpoint's proof over one offer or reply.
   if S.auth.authenticationMode == am1m:
     return @[ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)]
@@ -222,7 +222,7 @@ proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
 
 proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
     subject: openArray[uint8], P: openArray[ByteSeq]): bool {.role: parser,
-    tag: {tagCryptoBoundary, tagExchange, tagValidation}.} =
+    metaTags: {tagCryptoBoundary, tagExchange, tagValidation}.} =
   ## S/t/subject/P: the peer's proof over one offer or reply.
   var expected: ByteSeq = @[]
   if S.auth.authenticationMode != am1m:
@@ -263,7 +263,7 @@ proc ameEpochKeyContext*(E: AmeEpochKeySet, sessionId: uint64,
 
 proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
     sharedSecrets: openArray[ByteSeq], transcriptSalt: openArray[uint8]) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/r/sharedSecrets/transcriptSalt: atomic authenticated epoch rotation.
   var
     next: AmeEpochKeySet = cloneEpoch(S.auth.current)
@@ -314,7 +314,7 @@ proc fomkeRoleFor(r: AmeEndpointRole): FomkeRole {.role: parser.} =
 proc buildAmeFomkeSendCache*(S: AmeSession,
     messageCount: int = fomkeDefaultPreparedMessages): FomkeSendCache {.
     role: truthBuilder,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/messageCount: connection snapshot and future send capacity. Built off
   ## a clone, so it never disturbs the live ratchet.
   var
@@ -329,13 +329,13 @@ proc buildAmeFomkeSendCache*(S: AmeSession,
 
 proc snapshotAmeFomkeSendState*(S: AmeSession): FomkeState {.
     role: helper,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S: connection copied deeply under its caller-owned synchronization lock.
   result = cloneFomkeState(S.fomke)
 
 proc installAmeFomkeSendCache*(S: var AmeSession,
-    C: var FomkeSendCache): bool {.role: stateController,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    C: var FomkeSendCache): bool {.role: actor,
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/C: live connection and caller-owned cache built from a prior snapshot.
   ## A cache that no longer lines up with the live chain is destroyed rather
   ## than installed, so a stale cache can never seal under a spent key.
@@ -350,7 +350,7 @@ proc installAmeFomkeSendCache*(S: var AmeSession,
 proc prepareAmeFomkeSendCache*(S: var AmeSession,
     messageCount: int = fomkeDefaultPreparedMessages) {.
     role: orchestrator,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/messageCount: synchronously build and install future send slots.
   var
     C: FomkeSendCache = default(FomkeSendCache)
@@ -362,8 +362,8 @@ proc prepareAmeFomkeSendCache*(S: var AmeSession,
 
 proc setAmeFomkePregeneration*(S: var AmeSession, enabled: bool,
     messageCount: int = fomkeDefaultPreparedMessages) {.
-    role: stateController,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    role: actor,
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/enabled/messageCount: per-connection policy override.
   ## Preparing ahead costs forward secrecy for messages not yet sent; see
   ## `prepareFomkeSendCache`. Turn it off on a device that can be seized.
@@ -378,7 +378,7 @@ proc setAmeFomkePregeneration*(S: var AmeSession, enabled: bool,
     S.fomkeSendCache = move(C)
 
 proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S: connection whose configured cache has fallen below half capacity.
   var
     remaining: int = fomkePreparedMessages(S.fomkeSendCache)
@@ -389,8 +389,8 @@ proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
     not S.fomke.pending.active and remaining <= threshold
 
 proc restoreConfiguredAmeFomkeCache(S: var AmeSession) {.
-    role: stateController,
-    tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    role: actor,
+    metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S: quiescent configured connection whose cache is rebuilt off data paths.
   clearFomkeSendCache(S.fomkeSendCache)
   if S.fomkePregenerationEnabled and not S.fomke.pending.active:
@@ -398,15 +398,15 @@ proc restoreConfiguredAmeFomkeCache(S: var AmeSession) {.
       S.fomkePregenerationMessages)
 
 proc retireAmeFomke(S: var AmeSession, previous: sink FomkeState) {.
-    role: stateController, tag: {tagCryptoBoundary, tagFomke}.} =
+    role: actor, metaTags: {tagCryptoBoundary, tagFomke}.} =
   ## S/previous: ratchet as it stood before the epoch turned, kept alive for a
   ## bounded number of frames so packets already in flight still open.
   clearFomkeState(S.fomkeRetiring)
   S.fomkeRetiring = previous
   S.fomkeRetiringFramesLeft = ameRetiringGraceFrames
 
-proc clearAmeSession*(S: var AmeSession) {.role: stateController,
-    tag: {tagAppApi, tagCryptoBoundary, tagProtocol}.} =
+proc clearAmeSession*(S: var AmeSession) {.role: actor,
+    metaTags: {tagAppApi, tagCryptoBoundary, tagProtocol}.} =
   ## S: current, retiring, pending AME, and FOMKE secrets to erase.
   clearEpoch(S.auth.current)
   clearEpoch(S.auth.retiring)
@@ -421,7 +421,7 @@ proc clearAmeSession*(S: var AmeSession) {.role: stateController,
   clearFomkeState(S.fomkeRetiring)
   S = default(AmeSession)
 
-proc cancelAmeSessionExchange*(S: var AmeSession) {.role: stateController.} =
+proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
   ## S: outgoing exchange cancelled and trigger returned to the due queue.
   if S.path.inFlightTierId != 0'u32:
     releaseAmeTier(S.path)
@@ -544,8 +544,8 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   ## one of them. `stageAmeSessionFomkeUpgrade` runs after that send, so both
   ## endpoints stage at the same lane positions and derive the same root.
 
-proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: stateController,
-    tag: {tagCryptoBoundary, tagExchange, tagFomke}.} =
+proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: actor,
+    metaTags: {tagCryptoBoundary, tagExchange, tagFomke}.} =
   ## S: responder that has already SENT its reply. Stages the ratchet upgrade
   ## at the lane positions both endpoints now share.
   ##
@@ -602,7 +602,7 @@ proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
 proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
     epochId: uint32, targetTier: AmeMaskTier,
     fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/requestId/epochId/targetTier/fomkeCommit: authenticated candidate identity.
   if not S.pendingIncoming.active or
       S.pendingIncoming.requestId != requestId or
@@ -632,7 +632,7 @@ proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
   requireAmeAuth(S.auth)
 
 proc cancelIncomingAmeSessionExchange*(S: var AmeSession) {.
-    role: stateController.} =
+    role: actor.} =
   ## S: incoming candidate epoch discarded before confirmation.
   clearEpoch(S.pendingIncoming.candidate)
   S.pendingIncoming = default(AmePendingIncomingExchange)
@@ -642,13 +642,13 @@ proc cancelIncomingAmeSessionExchange*(S: var AmeSession) {.
   restoreConfiguredAmeFomkeCache(S)
 
 proc ameSessionSkippedMessages*(S: AmeSession): int {.role: parser,
-    tag: {tagAppApi, tagFomke, tagProtocol}.} =
+    metaTags: {tagAppApi, tagFomke, tagProtocol}.} =
   ## S: how many jumped-over messages the ratchet is still holding keys for.
   result = fomkeSkippedMessages(S.fomke)
 
 proc discardAmeSessionSkipped*(S: var AmeSession): int {.
-    role: stateController,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    role: actor,
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S: give up on the messages this side jumped over, and say how many.
   ##
   ## A rotation refuses to run while any of them are outstanding, so a link
@@ -736,7 +736,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     inboxCapacity: int = defaultAmeInboxCapacity,
     peerTrustRequired: bool = true,
     peerTrust: AmePeerTrustResult = default(AmePeerTrustResult)):
-    AmeSession {.role: wrapper.} =
+    AmeSession {.role: configurator.} =
   ## a/session/lane/runtime: exact auth package with default AME triggers.
   var path: AmeTierPath = default(AmeTierPath)
   path = initAmeTierPath(a.current.layout, [a.current.tier])
@@ -752,25 +752,25 @@ proc inboxCapacity*(S: AmeSession): int {.role: parser.} =
   result = circ_seq.capacity(S.inbox)
 
 proc recv*(S: var AmeSession, p: var AmePacket): bool {.
-    role: stateController.} =
+    role: actor.} =
   ## S/p: connection inbox and destination packet.
   result = circ_seq.pop(S.inbox, p)
 
 proc recordTransferredBytes*(S: var AmeSession, n: uint64): AmeTierStep {.
-    role: stateController.} =
+    role: actor.} =
   ## S/n: connection and newly successful plaintext transfer bytes.
   result = feedTransferredBytes(S.path, n)
   S.lastTrigger = result
 
 proc feedAmeElapsedMs*(S: var AmeSession, elapsedMs: uint64): AmeTierStep {.
-    role: stateController.} =
+    role: actor.} =
   ## S/elapsedMs: connection and monotonic elapsed clock.
   result = feedElapsedMs(S.path, elapsedMs)
   S.lastTrigger = result
 
 proc requestAmeTier*(S: var AmeSession, tierId: uint32,
     rekeyMask: uint8 = 0'u8): AmeTierStep {.
-    role: stateController.} =
+    role: actor.} =
   ## S/tierId/rekeyMask: exact target tier and selected active KEM rekeys.
   result = requestTier(S.path, tierId, rekeyMask)
   S.lastTrigger = result
@@ -829,7 +829,7 @@ proc ameFrameOverheadBytes*(S: AmeSession): int {.role: parser.} =
   result = ameFrameHeaderLen + fomkeWireLen(0, S.fomke.tagLen) +
     amePaddingBlock(S.auth.current.params.padding)
 
-proc info*(S: AmeSession): AmeSessionInfo {.role: wrapper.} =
+proc info*(S: AmeSession): AmeSessionInfo {.role: truthBuilder.} =
   ## S: connection summarized by stable tier identity and masks.
   result.layoutBytes = encodeAmeSuiteLayout(S.auth.current.layout).len
   result.tierId = S.auth.current.tier.tierId
@@ -845,7 +845,7 @@ proc info*(S: AmeSession): AmeSessionInfo {.role: wrapper.} =
   result.peerTrusted = S.peerTrust.ok
   result.peerAuthority = S.peerTrust.authority
 
-proc `$`*(i: AmeSessionInfo): string {.role: wrapper.} =
+proc `$`*(i: AmeSessionInfo): string {.role: truthBuilder.} =
   ## i: mask-tier connection summary.
   result = "AME session=" & $i.sessionId & " lane=" & $i.laneId &
     " epoch=" & $i.epochId & " tier=" & $i.tierId &
@@ -903,7 +903,7 @@ proc buildAad(carrier: AmeCarrier,
 
 proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator,
-    tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/h/carrier/payload: one ratchet step turned into one frame body.
   var
     aad: ByteSeq = buildAad(carrier, h)
@@ -920,7 +920,7 @@ proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
 
 proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     carrier: AmeCarrier): tuple[ok: bool, payload: ByteSeq, err: string] {.
-    role: orchestrator, tag: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    role: orchestrator, metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
   ## S/f/carrier: authenticate and open one frame body.
   ##
   ## The current ratchet is tried first. If the epoch just turned, a frame
@@ -969,7 +969,7 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     return
   result.ok = true
 
-proc consumeRetiringGrace(S: var AmeSession) {.role: stateController.} =
+proc consumeRetiringGrace(S: var AmeSession) {.role: actor.} =
   ## S: connection whose old epoch expires after authenticated frame progress.
   if S.auth.retiring.epochId != 0'u32:
     if S.auth.retiringFramesLeft > 0:
@@ -1034,7 +1034,7 @@ proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
     return "AME frame binding mismatch"
 
 proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
-    role: stateController.} =
+    role: actor.} =
   ## W/sequence: bounded 64-packet replay window and authenticated sequence.
   var
     distance: uint32 = 0'u32
@@ -1312,7 +1312,7 @@ proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
 
 proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
     fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## requestId/epochId/targetTier/fomkeCommit: complete candidate identity.
   var
     encoded: ByteSeq = @[]
@@ -1483,7 +1483,7 @@ proc captureAmeSendRollback(S: AmeSession): AmeSendRollback {.role: helper.} =
 
 proc restoreAmeSend(S: var AmeSession, r: AmeSendRollback,
     fomke: var FomkeState, cache: var FomkeSendCache) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/r/fomke/cache: failed send rewound to its pre-send counters and to its
   ## pre-send ratchet. The advanced ratchet is erased
   ## before the saved one replaces it.
@@ -1496,7 +1496,7 @@ proc restoreAmeSend(S: var AmeSession, r: AmeSendRollback,
   S.fomkeSendCache = move(cache)
 
 proc discardAmeSendRollback(S: AmeSession, fomke: var FomkeState,
-    cache: var FomkeSendCache) {.role: stateController.} =
+    cache: var FomkeSendCache) {.role: actor.} =
   ## S/fomke/cache: successful send erases the superseded FOMKE ratchet copy
   ## instead of releasing its storage unwiped.
   clearFomkeSendCache(cache)

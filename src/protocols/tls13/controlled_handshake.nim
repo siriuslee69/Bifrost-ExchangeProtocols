@@ -43,18 +43,18 @@ type
     err*: string
 
 proc failHandshake(R: var Tls13ControlledResult, e: string) {.
-    role: stateController, tag: {tagTls, tagValidation}.} =
+    role: actor, metaTags: {tagTls, tagValidation}.} =
   R.clientState = thsFailed
   R.serverState = thsFailed
   R.err = e
 
 proc wrapHandshake(t: Tls13HandshakeType, body: ByteSeq): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
   result = encodeTls13Handshake(Tls13Handshake(messageType: t, body: body))
 
 proc runControlledTls13Handshake*(C: Tls13ControlledConfig):
     Tls13ControlledResult {.role: metaOrchestrator,
-    tag: {tagTls, tagOrchestrator, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagOrchestrator, tagCryptoBoundary}.} =
   ## C: deterministic controlled-profile credentials, identity, and X25519 seeds.
   var
     clientKp, serverKp: X25519TyrKeypair

@@ -48,7 +48,7 @@ proc dacChunkCount(totalLen: uint64, chunkBytes: uint16): uint16 {.role: math.} 
 
 proc initDacPackageManifest*(packageId: uint64, c: DacTransferClass,
     d: DacScenarioDefaults, totalLen: uint64,
-    digest: array[32, uint8]): DacPackageManifest {.role: wrapper.} =
+    digest: array[32, uint8]): DacPackageManifest {.role: configurator.} =
   ## packageId: logical package id.
   ## c: vertical transfer class.
   ## d: active DAC defaults.
@@ -93,7 +93,7 @@ proc validateDacPackageManifest*(m: DacPackageManifest): bool {.role: parser.} =
     return m.parityCount == 0'u16
   result = m.parityCount > 0'u16 and m.groupSize > m.parityCount
 
-proc encodeDacPackageManifest*(m: DacPackageManifest): ByteSeq {.role: wrapper.} =
+proc encodeDacPackageManifest*(m: DacPackageManifest): ByteSeq {.role: helper.} =
   ## m: package manifest body to encode.
   if not validateDacPackageManifest(m):
     raise newException(ValueError, "DAC package manifest is invalid")

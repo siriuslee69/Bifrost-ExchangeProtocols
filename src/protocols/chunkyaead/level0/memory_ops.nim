@@ -48,7 +48,7 @@ proc resolveBufferBytes*(o: ChunkyOptions): int {.role: configurator.} =
 
 proc resolveThreadCount*(o: ChunkyOptions, perThreadBytes: int64,
     chunkCount: int): int {.role: configurator,
-    tag: {tagAppApi, tagChunkyAead}.} =
+    metaTags: {tagAppApi, tagChunkyAead}.} =
   var byMem, byOpt: int
   if chunkCount <= 0: return
   if availableRamBytes() > 0 and perThreadBytes > 0:

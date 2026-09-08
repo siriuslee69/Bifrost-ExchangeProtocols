@@ -7,7 +7,7 @@ import ../../../analysis_pragmas
 
 proc initVerifiedAmePeerTrust*(authority, subjectKeyId: string,
     algorithms: openArray[AmeSignatureAlgorithm]): AmePeerTrustResult {.
-    role: wrapper.} =
+    role: configurator.} =
   ## authority/subjectKeyId/algorithms: evidence already verified by the
   ## caller's certificate, key-directory, or provisioning policy. The
   ## algorithm list is the whole stack that was checked, not just the first
@@ -21,7 +21,7 @@ proc initVerifiedAmePeerTrust*(authority, subjectKeyId: string,
   result.subjectKeyId = subjectKeyId
 
 proc initRejectedAmePeerTrust*(err: string): AmePeerTrustResult {.
-    role: wrapper.} =
+    role: configurator.} =
   ## err: external verifier failure retained for the AME trust gate.
   if err.len == 0:
     raise newException(ValueError, "AME rejected peer trust requires an error")

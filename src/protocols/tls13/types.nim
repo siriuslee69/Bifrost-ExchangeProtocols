@@ -33,36 +33,36 @@ type
     thtKeyUpdate = 24,
     thtMessageHash = 254
 
-  Tls13Record* {.role: truthState, tag: {tagTls, tagPacket}.} = object
+  Tls13Record* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
     contentType*: Tls13ContentType
     legacyVersion*: uint16
     fragment*: ByteSeq
 
-  Tls13RecordResult* {.role: truthState, tag: {tagTls, tagParsing}.} = object
+  Tls13RecordResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
     ok*: bool
     needMore*: bool
     consumed*: int
     record*: Tls13Record
     err*: string
 
-  Tls13Handshake* {.role: truthState, tag: {tagTls, tagPacket}.} = object
+  Tls13Handshake* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
     messageType*: Tls13HandshakeType
     body*: ByteSeq
     encoded*: ByteSeq
 
-  Tls13HandshakeResult* {.role: truthState, tag: {tagTls, tagParsing}.} = object
+  Tls13HandshakeResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
     ok*: bool
     needMore*: bool
     consumed*: int
     message*: Tls13Handshake
     err*: string
 
-  Tls13TrafficKeys* {.role: memory, tag: {tagTls, tagCryptoBoundary}.} = object
+  Tls13TrafficKeys* {.role: memory, metaTags: {tagTls, tagCryptoBoundary}.} = object
     key*: array[tls13AeadKeyLen, byte]
     iv*: array[tls13AeadIvLen, byte]
     sequence*: uint64
 
-  Tls13OpenResult* {.role: truthState, tag: {tagTls, tagCryptoBoundary}.} = object
+  Tls13OpenResult* {.role: truthState, metaTags: {tagTls, tagCryptoBoundary}.} = object
     ok*: bool
     contentType*: Tls13ContentType
     content*: ByteSeq

@@ -7,19 +7,19 @@ import tyr/helpers/secure_memory as tyr_secure_memory
 import ../../types
 import ../../../analysis_pragmas
 
-proc appendAmeBytes*(dst: var ByteSeq, src: openArray[byte]) {.role: stateController.} =
+proc appendAmeBytes*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## src: bytes to append.
   for b in src:
     dst.add(b)
 
-proc appendAmeU16*(dst: var ByteSeq, v: uint16) {.role: stateController.} =
+proc appendAmeU16*(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint16 to append.
   dst.add(uint8(v and 0xff'u16))
   dst.add(uint8((v shr 8) and 0xff'u16))
 
-proc appendAmeU32*(dst: var ByteSeq, v: uint32) {.role: stateController.} =
+proc appendAmeU32*(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint32 to append.
   dst.add(uint8(v and 0xff'u32))
@@ -27,7 +27,7 @@ proc appendAmeU32*(dst: var ByteSeq, v: uint32) {.role: stateController.} =
   dst.add(uint8((v shr 16) and 0xff'u32))
   dst.add(uint8((v shr 24) and 0xff'u32))
 
-proc appendAmeU64*(dst: var ByteSeq, v: uint64) {.role: stateController.} =
+proc appendAmeU64*(dst: var ByteSeq, v: uint64) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint64 to append.
   var
@@ -36,7 +36,7 @@ proc appendAmeU64*(dst: var ByteSeq, v: uint64) {.role: stateController.} =
     dst.add(uint8((v shr (8 * i)) and 0xff'u64))
     i = i + 1
 
-proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: stateController.} =
+proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## label: ASCII label bytes to append.
   for ch in label:
@@ -63,7 +63,7 @@ proc xorAmeOverlay*(a, b: openArray[byte]): ByteSeq {.role: helper.} =
     result[i] = a[i] xor b[i]
     i = i + 1
 
-proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: stateController.} =
+proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## src: source bytes with the same length.
   var
@@ -104,7 +104,7 @@ proc requireAmeU32Len*(n: int, what: string) {.role: parser.} =
   if n < 0 or uint64(n) > uint64(high(uint32)):
     raise newException(ValueError, "AME " & what & " exceeds u32")
 
-proc secureClearAmeBytes*(A: var ByteSeq) {.role: stateController.} =
+proc secureClearAmeBytes*(A: var ByteSeq) {.role: actor.} =
   ## A: secret bytes overwritten before their storage is released.
   tyr_secure_memory.secureClearBytes(A)
   A.setLen(0)

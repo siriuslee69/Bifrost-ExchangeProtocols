@@ -129,7 +129,7 @@ proc initDacLink*(sessionId: uint64, laneId: uint32,
     d: DacScenarioDefaults, seed: uint64, epochId: uint16 = 0'u16,
     policy: DacScramblePolicy = initDacScramblePolicy(),
     limits: DacPackageLimits = defaultDacPackageLimits()): DacLink {.
-    role: wrapper.} =
+    role: configurator.} =
   ## sessionId/laneId/epochId: identity stamped into every frame this link emits.
   ## d: scenario defaults seeding chunk size, repair mode and ACK pacing.
   ## seed: sender-local randomness for send delay and chunk order; feed it
@@ -154,7 +154,7 @@ proc dacLinkFlags(k: DacMessageKind): DacFrameFlags {.role: helper.} =
   result.isRepair = k in {dmkRepairChunk, dmkRepairHint}
 
 proc tagDacBody(S: var DacLink, k: DacMessageKind,
-    body: ByteSeq): DacTaggedMessage {.role: wrapper.} =
+    body: ByteSeq): DacTaggedMessage {.role: truthBuilder.} =
   ## S: link whose sequence counter advances by one.
   ## k: message kind this body answers to.
   ## body: encoded body bytes.
@@ -168,7 +168,7 @@ proc tagDacBody(S: var DacLink, k: DacMessageKind,
   S.nextSequence = S.nextSequence + 1'u32
 
 proc renderDacFrame*(S: DacLink, m: DacTaggedMessage): ByteSeq {.
-    role: stateController.} =
+    role: actor.} =
   ## S: link supplying the session, lane and epoch the frame is stamped with.
   ## m: message to carry as a bare DAC1 frame.
   ## This is the unauthenticated framing: it is what a path probe uses before a
@@ -186,7 +186,7 @@ proc renderDacFrame*(S: DacLink, m: DacTaggedMessage): ByteSeq {.
   result = encodeDacFrame(h, m.body)
 
 proc renderDacFrames*(S: DacLink,
-    M: openArray[DacTaggedMessage]): seq[ByteSeq] {.role: stateController.} =
+    M: openArray[DacTaggedMessage]): seq[ByteSeq] {.role: actor.} =
   ## S/M: link and the messages to render as bare DAC1 frames, in order.
   var
     i: int = 0
@@ -249,7 +249,7 @@ proc dacSendDelayMs*(S: var DacLink): uint16 {.role: math.} =
   ## Nothing sleeps here; pacing belongs to whoever owns the clock.
   result = dacScrambleDelayMs(S.outgoing.scramble, S.policy)
 
-proc clearDacOutgoing(S: var DacLink) {.role: stateController.} =
+proc clearDacOutgoing(S: var DacLink) {.role: actor.} =
   ## S: link whose finished outgoing package is released.
   S.outgoing.active = false
   S.outgoing.plan = default(DacPackagePlan)
@@ -259,7 +259,7 @@ proc clearDacOutgoing(S: var DacLink) {.role: stateController.} =
 
 proc openDacIncoming(S: var DacLink, m: DacPackageManifest,
     nowMs: uint32) {.
-    role: stateController.} =
+    role: actor.} =
   ## S: link starting a fresh receive.
   ## m: validated manifest describing the package.
   ## nowMs: caller clock, which seeds the progress timer.

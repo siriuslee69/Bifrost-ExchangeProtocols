@@ -113,6 +113,6 @@ proc deriveAmeLayerKey*(S: AmeExchangeState, L: AmeSuiteLayout,
 proc deriveAmeMasterKey*(S: AmeExchangeState, L: AmeSuiteLayout,
     t: AmeMaskTier, outLen: int = ameProtectionKeyLen,
     context: openArray[byte] = []): ByteSeq {.
-    role: wrapper.} =
+    role: truthBuilder.} =
   ## S/L/t/outLen/context: exact master-key derivation inputs.
   result = deriveAmeLayerKey(S, L, t, "master", outLen, context)

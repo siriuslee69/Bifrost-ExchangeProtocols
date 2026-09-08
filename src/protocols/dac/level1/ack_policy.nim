@@ -80,7 +80,7 @@ type
     peakMs*: uint16
     samples*: uint16
 
-proc initDacAckPolicy*(d: DacScenarioDefaults): DacAckPolicy {.role: wrapper.} =
+proc initDacAckPolicy*(d: DacScenarioDefaults): DacAckPolicy {.role: configurator.} =
   ## d: scenario defaults whose ACK batch and deadline seed the levers and
   ## bound how far they may relax back.
   if d.ackBatchChunks == 0'u16:
@@ -96,7 +96,7 @@ proc dacAckWindowLimit(S: DacAckPolicy): int {.role: math.} =
   result = min(int(S.ceilingChunks) * 2, dacAckMaxGapBytes * 8)
 
 proc resetDacAckBatch*(S: var DacAckPolicy, base: uint32,
-    nowMs: uint32) {.role: stateController.} =
+    nowMs: uint32) {.role: actor.} =
   ## S: policy whose pending batch is cleared.
   ## base: sequence the next batch starts at.
   ## nowMs: caller's millisecond clock.
@@ -111,7 +111,7 @@ proc dacAckGapsPending*(S: DacAckPolicy): uint16 {.role: parser.} =
   result = S.span - S.pending
 
 proc observeDacArrival*(S: var DacAckPolicy, seq: uint32,
-    nowMs: uint32): bool {.role: stateController.} =
+    nowMs: uint32): bool {.role: actor.} =
   ## S: policy updated from one arrival.
   ## seq: DAC sequence number that arrived.
   ## nowMs: caller's millisecond clock.
@@ -148,14 +148,14 @@ proc dacAckDue*(S: DacAckPolicy, nowMs: uint32): bool {.role: parser.} =
   result = S.deadlineMs > 0'u16 and
     (nowMs - S.openedMs) >= uint32(S.deadlineMs)
 
-proc halveDacAckLevers(S: var DacAckPolicy) {.role: stateController.} =
+proc halveDacAckLevers(S: var DacAckPolicy) {.role: actor.} =
   ## S: policy whose batch size and deadline are cut after observed loss.
   S.cleanRuns = 0'u8
   S.batchChunks = max(dacAckMinBatchChunks, S.batchChunks div 2'u16)
   if S.deadlineMs > 0'u16:
     S.deadlineMs = max(dacAckMinDeadlineMs, S.deadlineMs div 2'u16)
 
-proc relaxDacAckLevers(S: var DacAckPolicy) {.role: stateController.} =
+proc relaxDacAckLevers(S: var DacAckPolicy) {.role: actor.} =
   ## S: policy whose levers creep back toward the profile after clean batches.
   ## Loss halves in one step; recovery adds a quarter at a time, so a single
   ## bad patch does not make the cadence flap.
@@ -170,7 +170,7 @@ proc relaxDacAckLevers(S: var DacAckPolicy) {.role: stateController.} =
       uint32(S.deadlineMs) + (uint32(S.deadlineMs) div 4'u32) + 1'u32))
 
 proc adaptDacAckPolicy*(S: var DacAckPolicy, gaps: uint16) {.
-    role: stateController.} =
+    role: actor.} =
   ## S: policy whose levers move from the batch just closed.
   ## gaps: sequences the closed batch was missing.
   if gaps > 0'u16:
@@ -191,14 +191,14 @@ proc closeDacAckBatch*(S: var DacAckPolicy, commitCount: uint8,
   adaptDacAckPolicy(S, gaps)
   resetDacAckBatch(S, S.base + uint32(S.span), nowMs)
 
-proc initDacRepairTimer*(): DacRepairTimer {.role: wrapper.} =
+proc initDacRepairTimer*(): DacRepairTimer {.role: configurator.} =
   ## Start with no observations; the profile floor governs until one lands.
   result.delayMs = 0'u16
   result.peakMs = 0'u16
   result.samples = 0'u16
 
 proc observeDacAckLatency*(S: var DacRepairTimer,
-    ms: uint16) {.role: stateController.} =
+    ms: uint16) {.role: actor.} =
   ## S: timer state updated from one measured send-to-ACK delay.
   ## ms: milliseconds between sending a frame and seeing it acknowledged.
   if S.samples < high(uint16):

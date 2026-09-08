@@ -26,7 +26,7 @@ type
 var
   bifrostRuntimeConfig*: BifrostConfig
 
-proc defaultBifrostConfig*(): BifrostConfig {.role: wrapper.} =
+proc defaultBifrostConfig*(): BifrostConfig {.role: configurator.} =
   ## Build safe runtime defaults with an explicit hybrid KEM path. The slots
   ## come from the families this build carries, so the defaults are always
   ## runnable; see `defaultAmeKemSlots`.
@@ -71,7 +71,7 @@ proc decodeConfigHex(s: string): seq[uint8] {.role: parser.} =
     result[i] = (hexNibble(clean[i * 2]) shl 4) or hexNibble(clean[i * 2 + 1])
     i = i + 1
 
-proc encodeConfigHex*(A: openArray[uint8]): string {.role: wrapper.} =
+proc encodeConfigHex*(A: openArray[uint8]): string {.role: helper.} =
   ## A: bytes rendered as lowercase hexadecimal text.
   const digits = "0123456789abcdef"
   var i: int = 0
@@ -98,11 +98,11 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
   discard encodeAmeSuiteLayout(c.ameLayout)
   validateAmeTier(c.ameLayout, c.ameInitialTier)
 
-proc applyBifrostConfig*(c: BifrostConfig) {.role: stateController.} =
+proc applyBifrostConfig*(c: BifrostConfig) {.role: actor.} =
   ## c: caller-selected defaults validated before becoming process state.
   bifrostRuntimeConfig = sanitizeBifrostConfig(c)
 
-proc currentBifrostConfig*(): BifrostConfig {.role: wrapper.} =
+proc currentBifrostConfig*(): BifrostConfig {.role: configurator.} =
   ## Return the active process defaults, initializing them on first use.
   if bifrostRuntimeConfig.maxTcpFrameBytes == 0'u32:
     bifrostRuntimeConfig = defaultBifrostConfig()

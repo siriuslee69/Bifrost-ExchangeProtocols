@@ -8,7 +8,7 @@ import ../../analysis_pragmas
 const
   crc32Poly = 0xEDB88320'u32
 
-proc crc32*(bs: ByteSeq): uint32 {.gcsafe, role: wrapper.} =
+proc crc32*(bs: ByteSeq): uint32 {.gcsafe, role: truthBuilder.} =
   ## crc32: build crc 32.
   var
     c: uint32 = 0xFFFFFFFF'u32

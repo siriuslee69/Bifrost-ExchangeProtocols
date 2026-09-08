@@ -47,17 +47,17 @@ type
     sendFailures*: uint32
 
 proc initAmeDacEndpoint*(socket: dac_transport.DacSocket,
-    relay: AmeDacRelay): AmeDacEndpoint {.role: wrapper.} =
+    relay: AmeDacRelay): AmeDacEndpoint {.role: configurator.} =
   ## socket: an already-open DAC listener or peer socket.
   ## relay: a relay whose peers were admitted by the handshake layer.
   result.socket = socket
   result.relay = relay
 
-proc dacKeyFromAddress*(a: DacAddress): DacLinkKey {.role: wrapper.} =
+proc dacKeyFromAddress*(a: DacAddress): DacLinkKey {.role: truthBuilder.} =
   ## a: the remote address the transport reported.
   result = initDacLinkKey(a.host, a.port, dlcDatagram)
 
-proc dacAddressFromKey*(k: DacLinkKey): DacAddress {.role: wrapper.} =
+proc dacAddressFromKey*(k: DacLinkKey): DacAddress {.role: truthBuilder.} =
   ## k: peer key turned back into an address to send to.
   result = initDacAddress(k.host, k.port)
 

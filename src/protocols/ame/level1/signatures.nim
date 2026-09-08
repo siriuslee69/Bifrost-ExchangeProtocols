@@ -99,7 +99,7 @@ proc defaultAmeSigSlots*(): seq[AmeSignatureAlgorithm] {.role: configurator.} =
 ## ╭⟢ keypair
 
 proc ameSigKeypair*(a: AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: exact slot named by a value only known while running, plus
   ## optional fixed randomness for reproducible tests.
   case a
@@ -121,7 +121,7 @@ proc ameSigKeypair*(a: AmeSignatureAlgorithm,
     else: raiseExcludedSig(a)
 
 proc ameSigKeypair*(a: static AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: exact slot named by a constant, so the family is settled while
   ## compiling and no branch survives into the binary.
   when not ameSigBuilt(a):

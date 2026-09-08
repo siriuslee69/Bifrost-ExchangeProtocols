@@ -68,7 +68,7 @@ proc oneStepTowardPath(current, target: DacPathLane): DacPathLane {.role: parser
   result = pathFromRank(currentRank - 1)
 
 proc initDacPathRecommendation*(path: DacPathLane,
-    reason: DacPathSwitchReason): DacPathRecommendation {.role: wrapper.} =
+    reason: DacPathSwitchReason): DacPathRecommendation {.role: configurator.} =
   ## path/reason: recommendation payload.
   result.ok = true
   result.path = path

@@ -84,7 +84,7 @@ proc hybridPqSlot(a: AmeSignatureAlgorithm): AmeSignatureAlgorithm {.
       "AME signature slot is not a hybrid: " & ameSigName(a))
 
 proc hybridAmeKeypair*(a: AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: hybrid slot, and optional fixed randomness shared by both halves.
   var
     classical = ame_ed25519.ed25519AmeKeypair(hybridClassicalSlot(a), seed)

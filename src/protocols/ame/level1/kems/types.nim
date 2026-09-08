@@ -59,7 +59,7 @@ template assignAmeCipher*(call: untyped) =
   result.envelope.ciphertext = e.ciphertext
   result.sharedSecret = e.sharedSecret
 
-proc ameKemName*(a: AmeKemAlgorithm): string {.role: wrapper.} =
+proc ameKemName*(a: AmeKemAlgorithm): string {.role: truthBuilder.} =
   ## a: stable AME KEM identifier.
   case a
   of akaFireSaber: result = "FireSaber"

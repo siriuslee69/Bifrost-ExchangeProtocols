@@ -112,7 +112,7 @@ proc initDacLinkTable*(d: DacScenarioDefaults, seed: uint64,
     idleMs: uint32 = dacLinkIdleSweepMs,
     policy: DacScramblePolicy = initDacScramblePolicy(),
     limits: DacPackageLimits = defaultDacPackageLimits()): DacLinkTable {.
-    role: wrapper.} =
+    role: configurator.} =
   ## d: scenario defaults every admitted link starts from.
   ## seed: base randomness for send delay and chunk order; feed it something a
   ## peer cannot guess, since every link's stream is derived from it.
@@ -131,7 +131,7 @@ proc initDacLinkTable*(d: DacScenarioDefaults, seed: uint64,
   result.idleMs = idleMs
 
 proc initDacLinkKey*(host: string, port: uint16,
-    carrier: DacLinkCarrier = dlcDatagram): DacLinkKey {.role: wrapper.} =
+    carrier: DacLinkCarrier = dlcDatagram): DacLinkKey {.role: configurator.} =
   ## host/port: peer address as the transport reported it.
   ## carrier: which transport it arrived over.
   result.host = host
@@ -209,7 +209,7 @@ proc stalestDacLinkSlot(T: DacLinkTable, nowMs: uint32): int {.role: parser.} =
 
 proc placeDacLink(T: var DacLinkTable, i: int, k: DacLinkKey,
     sessionId: uint64, laneId: uint32, epochId: uint16, nowMs: uint32) {.
-    role: stateController.} =
+    role: actor.} =
   ## T/i: table and the slot being filled.
   ## k/sessionId/laneId/epochId: peer key and the identity the link answers to.
   ## nowMs: caller's millisecond clock, recorded as first contact.
@@ -331,7 +331,7 @@ proc tickDacLinkTable*(T: var DacLinkTable, nowMs: uint32): seq[DacLinkRoute] {.
     i = i + 1
 
 proc closeDacLink*(T: var DacLinkTable, k: DacLinkKey): bool {.
-    role: stateController.} =
+    role: actor.} =
   ## T/k: table and the peer whose slot is released now, whatever its state.
   ## Returns false when the peer held no slot.
   var

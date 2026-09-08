@@ -10,7 +10,7 @@ const
   dacProtocolName* = "DAC"
   dacProtocolLongName* = "Data Adaptive Connection"
 
-proc initDacDescriptor*(): ProtocolDescriptor {.role: wrapper.} =
+proc initDacDescriptor*(): ProtocolDescriptor {.role: configurator.} =
   ## initDacDescriptor: initialize DAC descriptor.
   var
     d: ProtocolDescriptor

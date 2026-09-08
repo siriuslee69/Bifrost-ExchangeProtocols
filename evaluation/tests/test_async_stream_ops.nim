@@ -8,7 +8,7 @@ import ../../src/analysis_pragmas
 import ../../src/protocols/transport/async_stream_ops
 
 proc runAsyncStreamChecks() {.async, role: orchestrator,
-    tag: {tagTransport, tagNetworkSurface}.} =
+    metaTags: {tagTransport, tagNetworkSurface}.} =
   ## Runs one localhost exchange through the shared async stream helpers.
   var
     listener: AsyncSocket

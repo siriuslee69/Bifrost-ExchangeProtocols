@@ -81,7 +81,7 @@ type
     commit*: DacPackageCommit
     err*: string
 
-proc defaultDacPackageLimits*(): DacPackageLimits {.role: wrapper.} =
+proc defaultDacPackageLimits*(): DacPackageLimits {.role: configurator.} =
   ## Return bounded package receiver defaults.
   result.maxPackageBytes = defaultDacPackageMaxBytes
   result.maxChunks = high(uint16)
@@ -98,7 +98,7 @@ proc packageDigest(A: openArray[uint8]): array[32, uint8] {.
     i = i + 1
 
 proc xorChunkInto(A: var ByteSeq, B: openArray[uint8]) {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## A/B: fixed-width XOR accumulator and one chunk.
   var
     i: int = 0
@@ -268,7 +268,7 @@ proc collectGroupRepair*(m: DacPackageManifest, groupId: uint32,
 
 proc initDacPackageReceiver*(m: DacPackageManifest,
     limits: DacPackageLimits = defaultDacPackageLimits()): DacPackageReceiver {.
-    role: wrapper.} =
+    role: configurator.} =
   ## m/limits: validated manifest and receiver resource policy.
   if not validateDacPackageManifest(m) or m.totalLen > uint64(limits.maxPackageBytes) or
       m.dataCount > limits.maxChunks:
@@ -279,7 +279,7 @@ proc initDacPackageReceiver*(m: DacPackageManifest,
   result.received = newSeq[bool](int(m.dataCount))
 
 proc acceptDacPackageChunk*(S: var DacPackageReceiver,
-    c: DacPackageChunk) {.role: stateController.} =
+    c: DacPackageChunk) {.role: actor.} =
   ## S/c: package receiver and one unordered data chunk.
   var
     i: int = int(c.chunkId)
@@ -318,7 +318,7 @@ proc groupChunkRange(S: DacPackageReceiver,
     r.chunkCount > 0'u16
 
 proc storeRepairedChunk(S: var DacPackageReceiver, id: int, A: ByteSeq,
-    R: var DacGroupRepairReport) {.role: stateController.} =
+    R: var DacGroupRepairReport) {.role: dataWriter.} =
   ## S: receiver whose chunk slot is filled.
   ## id: chunk index being restored.
   ## A: padded coding shard the codec produced.
@@ -463,7 +463,7 @@ proc answerDacRepairHint*(P: DacPackagePlan,
     raise newException(ValueError, "DAC repair hint wanted count is inconsistent")
 
 proc acceptDacRepairChunk*(S: var DacPackageReceiver,
-    c: DacRepairChunk) {.role: stateController.} =
+    c: DacRepairChunk) {.role: actor.} =
   ## S/c: receiver and one exact repair response.
   var
     original: DacPackageChunk

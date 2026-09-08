@@ -20,7 +20,7 @@ proc encodeExternalEnvelope*(
     schemaVersion: uint16;
     payload: ByteSeq;
     flags: uint16 = bfxFlagChecksum
-): tuple[ok: bool, packet: ByteSeq, err: string] {.role: wrapper.} =
+): tuple[ok: bool, packet: ByteSeq, err: string] {.role: helper.} =
   ## Encode external envelope into BFX2 wire packet.
   var
     v: tuple[ok: bool, err: string] = validateExternalEnvelope(schemaId)

@@ -63,27 +63,27 @@ const
   ameCookieMax = 255'u32
 
 proc requireHandshakeBytes(A: openArray[uint8], cursor, count: int) {.
-    role: parser, tag: {tagParsing, tagValidation}.} =
+    role: parser, metaTags: {tagParsing, tagValidation}.} =
   ## A/cursor/count: bounded source window required by a handshake decoder.
   if cursor < 0 or count < 0 or cursor > A.len - count:
     raise newException(ValueError, "AME handshake wire value is truncated")
 
 proc readHandshakeU8(A: openArray[uint8], cursor: var int): uint8 {.
-    role: parser, tag: {tagParsing}.} =
+    role: parser, metaTags: {tagParsing}.} =
   ## A/cursor: consume one byte.
   requireHandshakeBytes(A, cursor, 1)
   result = A[cursor]
   cursor = cursor + 1
 
 proc readHandshakeU16(A: openArray[uint8], cursor: var int): uint16 {.
-    role: parser, tag: {tagParsing}.} =
+    role: parser, metaTags: {tagParsing}.} =
   ## A/cursor: consume one little-endian u16.
   requireHandshakeBytes(A, cursor, 2)
   result = uint16(A[cursor]) or (uint16(A[cursor + 1]) shl 8)
   cursor = cursor + 2
 
 proc readHandshakeU32(A: openArray[uint8], cursor: var int): uint32 {.
-    role: parser, tag: {tagParsing}.} =
+    role: parser, metaTags: {tagParsing}.} =
   ## A/cursor: consume one little-endian u32.
   requireHandshakeBytes(A, cursor, 4)
   result = uint32(A[cursor]) or (uint32(A[cursor + 1]) shl 8) or
@@ -91,7 +91,7 @@ proc readHandshakeU32(A: openArray[uint8], cursor: var int): uint32 {.
   cursor = cursor + 4
 
 proc readHandshakeU64(A: openArray[uint8], cursor: var int): uint64 {.
-    role: parser, tag: {tagParsing}.} =
+    role: parser, metaTags: {tagParsing}.} =
   ## A/cursor: consume one little-endian u64.
   var
     i: int = 0
@@ -102,7 +102,7 @@ proc readHandshakeU64(A: openArray[uint8], cursor: var int): uint64 {.
   cursor = cursor + 8
 
 proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
-    role: parser, tag: {tagParsing}.} =
+    role: parser, metaTags: {tagParsing}.} =
   ## A/cursor/n: consume a field whose size the format already fixes.
   requireHandshakeBytes(A, cursor, n)
   if n > 0:
@@ -110,7 +110,7 @@ proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
   cursor = cursor + n
 
 proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
+    role: dataWriter, metaTags: {tagCodecBoundary, tagWrite}.} =
   ## A/B: append one field whose length fits a u16 by construction.
   if uint64(B.len) > uint64(ameHandshakeSmallMax):
     raise newException(ValueError, "AME handshake field exceeds its limit")
@@ -119,7 +119,7 @@ proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
 
 proc readSmallField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = ameHandshakeSmallMax): ByteSeq {.role: parser,
-    tag: {tagCodecBoundary, tagParsing}.} =
+    metaTags: {tagCodecBoundary, tagParsing}.} =
   ## A/cursor/maximum: consume one bounded u16-framed field.
   var
     count: int = 0
@@ -128,7 +128,7 @@ proc readSmallField(A: openArray[uint8], cursor: var int,
   result = readFixed(A, cursor, count)
 
 proc appendLargeField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
+    role: dataWriter, metaTags: {tagCodecBoundary, tagWrite}.} =
   ## A/B: append one field that a post-quantum key may legitimately fill.
   if uint64(B.len) > uint64(ameHandshakeFieldMax):
     raise newException(ValueError, "AME handshake field exceeds its limit")
@@ -137,7 +137,7 @@ proc appendLargeField(A: var ByteSeq, B: openArray[uint8]) {.
 
 proc readLargeField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = ameHandshakeFieldMax): ByteSeq {.role: parser,
-    tag: {tagCodecBoundary, tagParsing}.} =
+    metaTags: {tagCodecBoundary, tagParsing}.} =
   ## A/cursor/maximum: consume one bounded u32-framed field.
   var
     count: int = 0
@@ -147,7 +147,7 @@ proc readLargeField(A: openArray[uint8], cursor: var int,
 
 proc requireHandshakeHeader(A: openArray[uint8], magic: array[3, uint8],
     cursor: var int) {.role: parser,
-    tag: {tagCodecBoundary, tagParsing, tagValidation}.} =
+    metaTags: {tagCodecBoundary, tagParsing, tagValidation}.} =
   ## A/magic/cursor: validate one top-level handshake record header.
   if A.len < 4 or A[0 .. 2] != magic:
     raise newException(ValueError, "AME handshake wire identity mismatch")
@@ -156,13 +156,13 @@ proc requireHandshakeHeader(A: openArray[uint8], magic: array[3, uint8],
   cursor = 4
 
 proc appendRecordHeader(A: var ByteSeq, magic: array[3, uint8]) {.
-    role: stateController, tag: {tagCodecBoundary, tagWrite}.} =
+    role: dataWriter, metaTags: {tagCodecBoundary, tagWrite}.} =
   ## A/magic: three letters and one version byte.
   appendAmeBytes(A, magic)
   A.add(ameHandshakeWireVersion)
 
-proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## h: client hello and exact AME KEM offer. Carries no identity.
   if h.sessionId == 0'u64 or h.nonce.len != ameHandshakeNonceLen:
     raise newException(ValueError, "AME client hello is incomplete")
@@ -178,7 +178,7 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: stateController,
   appendLargeField(result, encodeAmeExchangeOffer(h.offer))
 
 proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
-    role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    role: parser, metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
   ## A: complete bounded AMC1 client hello bytes.
   var
     B: ByteSeq = @[]
@@ -200,8 +200,8 @@ proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
   if cursor != A.len or result.sessionId == 0'u64:
     raise newException(ValueError, "AME client hello wire value is invalid")
 
-proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## r: the server's request that the client prove its return address.
   if r.sessionId == 0'u64 or r.cookie.len == 0 or
       uint64(r.cookie.len) > uint64(ameCookieMax):
@@ -211,7 +211,7 @@ proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: stateController,
   appendSmallField(result, r.cookie)
 
 proc decodeAmeHelloRetry*(A: openArray[uint8]): AmeHelloRetry {.role: parser,
-    tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
   ## A: complete bounded AMR1 hello retry bytes.
   var
     cursor: int = 0
@@ -221,8 +221,8 @@ proc decodeAmeHelloRetry*(A: openArray[uint8]): AmeHelloRetry {.role: parser,
   if cursor != A.len or result.sessionId == 0'u64 or result.cookie.len == 0:
     raise newException(ValueError, "AME hello retry wire value is invalid")
 
-proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: stateController,
-    tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: dataWriter,
+    metaTags: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## h: server nonce and KEM answer in the clear, identity sealed after them.
   if h.nonce.len != ameHandshakeNonceLen or
       h.authTag.len != int(ord(h.params.authTagLen)) or h.sealed.len == 0:
@@ -238,7 +238,7 @@ proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: stateController,
 
 proc decodeAmeServerHello*(L: AmeSuiteLayout,
     A: openArray[uint8]): AmeServerHello {.
-    role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    role: parser, metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
   ## L/A: negotiated layout and complete bounded AMS1 server hello bytes.
   var
     B: ByteSeq = @[]
@@ -259,7 +259,7 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
     raise newException(ValueError, "AME server hello wire value is invalid")
 
 proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.
-    role: stateController, tag: {tagAppApi, tagCodecBoundary, tagWrite}.} =
+    role: dataWriter, metaTags: {tagAppApi, tagCodecBoundary, tagWrite}.} =
   ## f: the client's sealed identity and transcript confirmation.
   if f.authTag.len != int(ord(f.params.authTagLen)) or f.sealed.len == 0:
     raise newException(ValueError, "AME client finish is incomplete")
@@ -270,7 +270,7 @@ proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.
   appendLargeField(result, f.sealed)
 
 proc decodeAmeClientFinish*(A: openArray[uint8]): AmeClientFinish {.
-    role: parser, tag: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    role: parser, metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
   ## A: complete bounded AMF1 client finish bytes.
   var
     cursor: int = 0

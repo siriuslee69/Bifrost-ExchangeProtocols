@@ -41,7 +41,7 @@ proc validateAmeTierIndex(S: AmeTierPath, i: int) {.role: parser.} =
     raise newException(ValueError, "AME trigger tier is outside the tier path")
 
 proc initAmeTierPath*(L: AmeSuiteLayout,
-    T: openArray[AmeMaskTier]): AmeTierPath {.role: wrapper.} =
+    T: openArray[AmeMaskTier]): AmeTierPath {.role: configurator.} =
   ## L/T: immutable algorithm layout and ordered stable mask tiers.
   var
     i: int = 0
@@ -64,7 +64,7 @@ proc initAmeTierPath*(L: AmeSuiteLayout,
     result.triggers[i].enabled = true
     i = i + 1
 
-proc ameInitTierPath*(A: AmeKemAlgorithms): AmeTierPath {.role: wrapper.} =
+proc ameInitTierPath*(A: AmeKemAlgorithms): AmeTierPath {.role: truthBuilder.} =
   ## A: immutable KEM layout expanded into progressive default mask tiers.
   var
     L: AmeSuiteLayout = defaultAmeLayout(A)
@@ -81,7 +81,7 @@ proc ameInitTierPath*(A: AmeKemAlgorithms): AmeTierPath {.role: wrapper.} =
   result = initAmeTierPath(L, T.toOpenArray(0, int(A.length) - 1))
 
 proc setCurrentAmeTier*(S: var AmeTierPath, t: AmeMaskTier) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/t: path synchronized to the exact tier installed in the current epoch.
   var i: int = tierIndex(S, t.tierId)
   if i < 0 or not tiersEquivalent(S.tiers[i], t):
@@ -90,7 +90,7 @@ proc setCurrentAmeTier*(S: var AmeTierPath, t: AmeMaskTier) {.
   S.triggers[i].fired = true
 
 proc setTrigger*(S: var AmeTierPath, i: int, transferredMiB: uint64) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/i/transferredMiB: path tier and cumulative successful plaintext MiB.
   validateAmeTierIndex(S, i)
   if transferredMiB > high(uint64) div ameBytesPerMiB:
@@ -101,7 +101,7 @@ proc setTrigger*(S: var AmeTierPath, i: int, transferredMiB: uint64) {.
   S.triggers[i].fired = false
 
 proc setTimeTrigger*(S: var AmeTierPath, i: int, elapsedMs: uint64) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/i/elapsedMs: path tier and cumulative session-relative milliseconds.
   validateAmeTierIndex(S, i)
   S.triggers[i].kind = aptElapsedMs
@@ -110,7 +110,7 @@ proc setTimeTrigger*(S: var AmeTierPath, i: int, elapsedMs: uint64) {.
   S.triggers[i].fired = false
 
 proc setManualTrigger*(S: var AmeTierPath, i: int) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/i: path tier made available only through requestTier.
   validateAmeTierIndex(S, i)
   S.triggers[i].kind = aptManual
@@ -119,7 +119,7 @@ proc setManualTrigger*(S: var AmeTierPath, i: int) {.
   S.triggers[i].fired = false
 
 proc disableTrigger*(S: var AmeTierPath, i: int) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/i: path tier whose automatic trigger is disabled.
   validateAmeTierIndex(S, i)
   S.triggers[i].enabled = false
@@ -233,7 +233,7 @@ proc requestTier*(S: var AmeTierPath, tierId: uint32,
   result = pathStep(S, i, rekeyMask)
 
 proc claimAmeTier*(S: var AmeTierPath, step: AmeTierStep) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/step: one due tier moved into an active exchange transaction.
   var i: int = tierIndex(S, step.targetTier.tierId)
   if not step.available or i < 0 or
@@ -243,7 +243,7 @@ proc claimAmeTier*(S: var AmeTierPath, step: AmeTierStep) {.
   S.inFlightTierId = step.targetTier.tierId
 
 proc completeAmeTier*(S: var AmeTierPath, t: AmeMaskTier) {.
-    role: stateController.} =
+    role: actor.} =
   ## S/t: authenticated target tier installed into the current epoch.
   var i: int = tierIndex(S, t.tierId)
   if i < 0 or S.inFlightTierId != t.tierId or
@@ -253,7 +253,7 @@ proc completeAmeTier*(S: var AmeTierPath, t: AmeMaskTier) {.
   S.currentTierId = t.tierId
   S.inFlightTierId = 0'u32
 
-proc releaseAmeTier*(S: var AmeTierPath) {.role: stateController.} =
+proc releaseAmeTier*(S: var AmeTierPath) {.role: actor.} =
   ## S: failed in-flight tier returned to the due queue.
   var i: int = tierIndex(S, S.inFlightTierId)
   if i >= 0:

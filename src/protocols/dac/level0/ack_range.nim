@@ -42,7 +42,7 @@ The encoder measures both and sends the shorter one.
 """
 
 proc initDacAckRangeEntry*(startSeq: uint32,
-    count: uint16): DacAckRangeEntry {.role: wrapper.} =
+    count: uint16): DacAckRangeEntry {.role: configurator.} =
   ## startSeq/count: contiguous received sequence range.
   if count == 0'u16:
     raise newException(ValueError, "DAC ACK range count must be positive")
@@ -50,7 +50,7 @@ proc initDacAckRangeEntry*(startSeq: uint32,
   result.count = count
 
 proc initDacAckRange*(ackBase: uint32,
-    commitCount: uint8): DacAckRange {.role: wrapper.} =
+    commitCount: uint8): DacAckRange {.role: configurator.} =
   ## ackBase: sequence base for the ACK frame.
   ## commitCount: committed package count reported alongside the receipt.
   ## The result starts in run mode with no runs recorded yet.
@@ -60,7 +60,7 @@ proc initDacAckRange*(ackBase: uint32,
   result.gapMap = @[]
 
 proc initDacAckGapMap*(ackBase: uint32, commitCount: uint8,
-    gapMap: ByteSeq): DacAckRange {.role: wrapper.} =
+    gapMap: ByteSeq): DacAckRange {.role: configurator.} =
   ## ackBase: first sequence covered by bit 0 of the bitmap.
   ## commitCount: committed package count reported alongside the receipt.
   ## gapMap: one bit per sequence, set where a sequence is missing.
@@ -72,7 +72,7 @@ proc initDacAckGapMap*(ackBase: uint32, commitCount: uint8,
   result.ranges = @[]
   result.gapMap = gapMap
 
-proc addDacAckRange*(S: var DacAckRange, e: DacAckRangeEntry) {.role: stateController.} =
+proc addDacAckRange*(S: var DacAckRange, e: DacAckRangeEntry) {.role: dataWriter.} =
   ## S: ACK range state to mutate.
   ## e: range entry to append.
   if S.gapMap.len > 0:
@@ -119,7 +119,7 @@ proc dacBitSet*(A: openArray[uint8], i: int): bool {.role: parser.} =
     return false
   result = (A[i div 8] and (1'u8 shl (7 - (i mod 8)))) != 0'u8
 
-proc dacSetBit*(A: var ByteSeq, i: int) {.role: stateController.} =
+proc dacSetBit*(A: var ByteSeq, i: int) {.role: actor.} =
   ## A: bitmap mutated in place, grown as needed.
   ## i: bit index to set.
   if i < 0:
@@ -206,7 +206,7 @@ proc buildDacAckRange*(ackBase: uint32, A: openArray[uint8], n: int,
     return
   result = initDacAckGapMap(ackBase, commitCount, invertDacArrivals(A, n))
 
-proc encodeDacAckRange*(a: DacAckRange): ByteSeq {.role: wrapper.} =
+proc encodeDacAckRange*(a: DacAckRange): ByteSeq {.role: helper.} =
   ## a: ACK range body to encode.
   var
     i: int = 0

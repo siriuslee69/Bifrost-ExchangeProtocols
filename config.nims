@@ -11,6 +11,9 @@ proc addPathIfExists(pathArg: string) =
     switch("path", pathArg.replace('\\', '/'))
 
 addPathIfExists(joinPath(repoRoot, "src"))
+## `meta` is deliberately NOT on the path: Tyr ships a module of the same
+## name, and whichever landed first would win. `src/analysis_pragmas.nim`
+## reaches ours by relative path instead.
 if dirExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src"))
 else:

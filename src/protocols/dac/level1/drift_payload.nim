@@ -19,21 +19,21 @@ const
 +--------------------------------------------------------------------------+
 """
 
-proc initDacDriftSnapshot*(p: DacDriftPose, t: uint32): DacDriftPacket {.role: wrapper.} =
+proc initDacDriftSnapshot*(p: DacDriftPose, t: uint32): DacDriftPacket {.role: configurator.} =
   ## p: full pose snapshot.
   ## t: simulation or stream tick.
   result.kind = ddpkSnapshot
   result.tick = t
   result.pose = p
 
-proc initDacDriftDelta*(p: DacDriftPose, t: uint32): DacDriftPacket {.role: wrapper.} =
+proc initDacDriftDelta*(p: DacDriftPose, t: uint32): DacDriftPacket {.role: configurator.} =
   ## p: pose delta.
   ## t: simulation or stream tick.
   result.kind = ddpkDelta
   result.tick = t
   result.pose = p
 
-proc writeU32(bs: var ByteSeq, v: uint32) {.role: stateController.} =
+proc writeU32(bs: var ByteSeq, v: uint32) {.role: dataWriter.} =
   ## bs: byte sequence to update.
   ## v: little-endian value to append.
   bs.add(uint8(v and 0xff))
@@ -41,7 +41,7 @@ proc writeU32(bs: var ByteSeq, v: uint32) {.role: stateController.} =
   bs.add(uint8((v shr 16) and 0xff))
   bs.add(uint8((v shr 24) and 0xff))
 
-proc writeF32(bs: var ByteSeq, v: float32) {.role: stateController.} =
+proc writeF32(bs: var ByteSeq, v: float32) {.role: dataWriter.} =
   ## bs: byte sequence to update.
   ## v: float value to append.
   var
@@ -49,7 +49,7 @@ proc writeF32(bs: var ByteSeq, v: float32) {.role: stateController.} =
   raw = cast[uint32](v)
   writeU32(bs, raw)
 
-proc readU32(bs: ByteSeq, o: int, v: var uint32): bool {.role: stateController.} =
+proc readU32(bs: ByteSeq, o: int, v: var uint32): bool {.role: actor.} =
   ## bs: byte sequence to read.
   ## o: byte offset.
   ## v: output value.
@@ -67,7 +67,7 @@ proc readU32(bs: ByteSeq, o: int, v: var uint32): bool {.role: stateController.}
   v = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
   result = true
 
-proc readF32(bs: ByteSeq, o: int, v: var float32): bool {.role: stateController.} =
+proc readF32(bs: ByteSeq, o: int, v: var float32): bool {.role: actor.} =
   ## bs: byte sequence to read.
   ## o: byte offset.
   ## v: output value.
@@ -78,7 +78,7 @@ proc readF32(bs: ByteSeq, o: int, v: var float32): bool {.role: stateController.
   v = cast[float32](raw)
   result = true
 
-proc encodeDacDriftPacket*(p: DacDriftPacket): ByteSeq {.role: wrapper.} =
+proc encodeDacDriftPacket*(p: DacDriftPacket): ByteSeq {.role: helper.} =
   ## p: DAC drift packet to encode as a DAC body.
   result.add(uint8(ord(p.kind)))
   writeU32(result, p.tick)
@@ -89,7 +89,7 @@ proc encodeDacDriftPacket*(p: DacDriftPacket): ByteSeq {.role: wrapper.} =
   writeF32(result, p.pose.rotation.y)
   writeF32(result, p.pose.rotation.z)
 
-proc decodeDacDriftPacket*(bs: ByteSeq, p: var DacDriftPacket): bool {.role: stateController.} =
+proc decodeDacDriftPacket*(bs: ByteSeq, p: var DacDriftPacket): bool {.role: actor.} =
   ## bs: DAC drift body bytes.
   ## p: output packet.
   var

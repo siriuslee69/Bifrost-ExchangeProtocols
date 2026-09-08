@@ -23,7 +23,7 @@ proc mcelieceVariant(a: AmeKemAlgorithm): tyr_mceliece.McElieceVariant {.
     raise newException(ValueError,
       "AME KEM slot is not McEliece: " & ameKemName(a))
 
-proc mcelieceAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc mcelieceAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: McEliece slot to key independently.
   assignAmeKeypair(tyr_mceliece.mcelieceTyrKeypair(mcelieceVariant(a)))
 

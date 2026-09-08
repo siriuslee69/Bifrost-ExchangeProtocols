@@ -10,8 +10,8 @@ const
   fomkeProtocolId* = "bifrost.fomke"
   fomkeProtocolLongName* = "Forward-Only Message Key Extension"
 
-proc initFomkeDescriptor*(): ProtocolDescriptor {.role: wrapper,
-    tag: {tagAppApi, tagFomke, tagProtocol}.} =
+proc initFomkeDescriptor*(): ProtocolDescriptor {.role: configurator,
+    metaTags: {tagAppApi, tagFomke, tagProtocol}.} =
   ## Return the FOM1 protocol descriptor.
   result.protocolId = fomkeProtocolId
   result.name = "FOMKE"

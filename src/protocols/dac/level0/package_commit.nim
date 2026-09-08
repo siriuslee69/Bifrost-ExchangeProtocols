@@ -30,7 +30,7 @@ proc dacCommitDigestIsZero(digest: array[32, uint8]): bool {.role: parser.} =
 
 proc initDacPackageCommit*(packageId: uint64, digest: array[32, uint8],
     dataCount, repairCount: uint16,
-    status: DacCommitStatus): DacPackageCommit {.role: wrapper.} =
+    status: DacCommitStatus): DacPackageCommit {.role: configurator.} =
   ## packageId: committed package id.
   ## digest: package digest that was verified by the receiver.
   ## dataCount/repairCount: data and repair chunks used.
@@ -44,7 +44,7 @@ proc initDacPackageCommit*(packageId: uint64, digest: array[32, uint8],
   result.repairCount = repairCount
   result.status = status
 
-proc encodeDacPackageCommit*(c: DacPackageCommit): ByteSeq {.role: wrapper.} =
+proc encodeDacPackageCommit*(c: DacPackageCommit): ByteSeq {.role: helper.} =
   ## c: package commit body to encode.
   appendDacU64(result, c.packageId)
   appendDacBytes(result, c.digest)

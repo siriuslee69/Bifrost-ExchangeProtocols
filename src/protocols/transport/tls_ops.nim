@@ -20,7 +20,7 @@ when defined(ssl):
     of tvmPeerUseEnv:
       result = CVerifyPeerUseEnvVars
 
-  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: wrapper.} =
+  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: truthBuilder.} =
     ## t: TLS runtime settings.
     ## r: TLS role for session policy.
     result = newContext(verifyMode = toSslVerifyMode(t.verifyMode),
@@ -73,7 +73,7 @@ when defined(ssl):
       ctx = buildTlsContext(t, r)
       wrapConnectedSocket(ctx, sock, handshakeAsServer)
 else:
-  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: wrapper.} =
+  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: truthBuilder.} =
     ## t/r: unused without `-d:ssl`.
     raise newException(IOError, "TLS support requires compiling with -d:ssl")
 

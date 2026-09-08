@@ -60,7 +60,7 @@ type
     hbmChunked,
     hbmUntilClose
 
-  HttpHeader* {.role: truthState, tag: {tagProtocol, tagTypes}.} = object
+  HttpHeader* {.role: truthState, metaTags: {tagProtocol, tagTypes}.} = object
     name*: string
       ## Field name exactly as it arrived on the wire.
     value*: string
@@ -68,12 +68,12 @@ type
 
   HttpHeaders* = seq[HttpHeader]
 
-  HttpQueryParam* {.role: truthState, tag: {tagProtocol, tagTypes}.} = object
+  HttpQueryParam* {.role: truthState, metaTags: {tagProtocol, tagTypes}.} = object
     key*: string
     value*: string
 
   HttpRequest* {.role: truthState,
-      tag: {tagProtocol, tagParsing, tagNetworkSurface}.} = object
+      metaTags: {tagProtocol, tagParsing, tagNetworkSurface}.} = object
     ## One fully parsed request. `body` is present only once the parser
     ## reports the message complete.
     verb*: HttpMethod
@@ -101,7 +101,7 @@ type
       ## Lowercased value of the `Upgrade` header when `isUpgrade` is set.
 
   HttpResponse* {.role: truthState,
-      tag: {tagProtocol, tagNetworkSurface}.} = object
+      metaTags: {tagProtocol, tagNetworkSurface}.} = object
     ## One response to serialise. Either set `body`, or set
     ## `streamBody` and push chunks yourself.
     status*: int
@@ -142,7 +142,7 @@ type
     hpeInvalidTarget
 
 proc toHttpBytes*(s: string): ByteSeq {.role: helper,
-    tag: {tagProtocol, tagCodecBoundary}.} =
+    metaTags: {tagProtocol, tagCodecBoundary}.} =
   ## s: text to copy into a byte sequence.
   ##
   ## An explicit copy rather than a cast: `string` and `seq[byte]` happen
@@ -156,7 +156,7 @@ proc toHttpBytes*(s: string): ByteSeq {.role: helper,
     i = i + 1
 
 proc fromHttpBytes*(A: openArray[byte]): string {.role: helper,
-    tag: {tagProtocol, tagCodecBoundary}.} =
+    metaTags: {tagProtocol, tagCodecBoundary}.} =
   ## A: bytes to copy into text.
   var
     i: int = 0
@@ -166,7 +166,7 @@ proc fromHttpBytes*(A: openArray[byte]): string {.role: helper,
     i = i + 1
 
 proc httpStatusForParseError*(e: HttpParseError): int {.role: parser,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## e: parser failure to translate into a response status code.
   ##
   ## Framing disagreements are answered with 400 and a forced close,
@@ -181,7 +181,7 @@ proc httpStatusForParseError*(e: HttpParseError): int {.role: parser,
   else: 400
 
 proc httpMethodFromString*(s: string): HttpMethod {.role: parser,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## s: verb token taken from the request line.
   case s
   of "GET": hmGet
@@ -196,7 +196,7 @@ proc httpMethodFromString*(s: string): HttpMethod {.role: parser,
   else: hmUnknown
 
 proc httpVersionFromString*(s: string): HttpVersion {.role: parser,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## s: version token taken from the request line.
   case s
   of "HTTP/1.1": hv11
@@ -204,7 +204,7 @@ proc httpVersionFromString*(s: string): HttpVersion {.role: parser,
   else: hvUnknown
 
 proc httpMethodAllowsBody*(m: HttpMethod): bool {.role: parser,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## m: verb to check for body-carrying capability.
   ##
   ## GET/HEAD/DELETE/OPTIONS/TRACE may legally carry a body, but almost

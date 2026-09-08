@@ -23,7 +23,7 @@ const
 
 proc initDacRepairHint*(packageId: uint64, groupId: uint32,
     missingCount, corruptCount, wantedCount: uint16, gapMap: ByteSeq,
-    repairMode: DacRepairMode, reason: DacRepairReason): DacRepairHint {.role: wrapper.} =
+    repairMode: DacRepairMode, reason: DacRepairReason): DacRepairHint {.role: configurator.} =
   ## packageId/groupId: repair group identity.
   ## missingCount/corruptCount/wantedCount: receiver repair counts.
   ## gapMap: compact missing/corrupt shard identity bitmap.
@@ -45,12 +45,12 @@ proc initDacRepairHint*(packageId: uint64, groupId: uint32,
 
 proc initDacRepairHint*(packageId: uint64, groupId: uint32,
     missingCount, corruptCount, wantedCount: uint16, repairMode: DacRepairMode,
-    reason: DacRepairReason): DacRepairHint {.role: wrapper.} =
+    reason: DacRepairReason): DacRepairHint {.role: configurator.} =
   ## packageId/groupId/counts/repairMode/reason: repair hint fields.
   result = initDacRepairHint(packageId, groupId, missingCount, corruptCount,
     wantedCount, @[], repairMode, reason)
 
-proc encodeDacRepairHint*(h: DacRepairHint): ByteSeq {.role: wrapper.} =
+proc encodeDacRepairHint*(h: DacRepairHint): ByteSeq {.role: helper.} =
   ## h: repair hint body to encode.
   if h.gapMap.len == 0:
     raise newException(ValueError, "DAC repair hint gap map must not be empty")

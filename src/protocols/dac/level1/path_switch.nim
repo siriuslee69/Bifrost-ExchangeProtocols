@@ -22,7 +22,7 @@ const
 """
 
 proc initDacPathSwitch*(oldEpoch, newEpoch: uint16, oldPath,
-    newPath: DacPathLane, reason: DacPathSwitchReason): DacPathSwitch {.role: wrapper.} =
+    newPath: DacPathLane, reason: DacPathSwitchReason): DacPathSwitch {.role: configurator.} =
   ## oldEpoch/newEpoch: path epoch transition.
   ## oldPath/newPath: horizontal path lane transition.
   ## reason: switch reason.
@@ -40,7 +40,7 @@ proc validateDacPathSwitch*(s: DacPathSwitch): bool {.role: parser.} =
   ## s: path switch object to validate.
   result = s.newEpoch > s.oldEpoch and s.newPath != s.oldPath
 
-proc encodeDacPathSwitch*(s: DacPathSwitch): ByteSeq {.role: wrapper.} =
+proc encodeDacPathSwitch*(s: DacPathSwitch): ByteSeq {.role: helper.} =
   ## s: path switch body to encode.
   if not validateDacPathSwitch(s):
     raise newException(ValueError, "DAC path switch is invalid")

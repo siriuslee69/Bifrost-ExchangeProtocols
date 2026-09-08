@@ -188,7 +188,7 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     maxDatagramBytes: int = ameDacHandshakeMaxDatagram,
     acceptTimeoutMs: int = ameDacHandshakeAcceptMs):
     tuple[outcome: AmeHandshakeOutcome, remote: DacAddress] {.
-    role: orchestrator, tag: {tagAppApi, tagNetworkSurface}.} =
+    role: orchestrator, metaTags: {tagAppApi, tagNetworkSurface}.} =
   ## sock/c/nowUnix/timeoutMs/sessionId/maxDatagramBytes/acceptTimeoutMs: run
   ## the responder side to completion and hand back a session plus the address
   ## it belongs to. The address is a return value rather than an argument
@@ -320,7 +320,7 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     timeoutMs: int = 2000,
     maxDatagramBytes: int = ameDacHandshakeMaxDatagram):
     AmeHandshakeOutcome {.role: orchestrator,
-    tag: {tagAppApi, tagNetworkSurface}.} =
+    metaTags: {tagAppApi, tagNetworkSurface}.} =
   ## sock/remote/c/sessionId/nowUnix/timeoutMs/maxDatagramBytes: run the
   ## initiator side to completion against one known responder address.
   var

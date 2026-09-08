@@ -20,7 +20,7 @@ const
 
 proc initDacParityShard*(packageId: uint64, groupId: uint32,
     shardId: uint16, repairMode: DacRepairMode,
-    payload: ByteSeq): DacParityShard {.role: wrapper.} =
+    payload: ByteSeq): DacParityShard {.role: configurator.} =
   ## packageId/groupId/shardId: parity identity.
   ## repairMode: parity codec.
   ## payload: parity bytes.
@@ -30,7 +30,7 @@ proc initDacParityShard*(packageId: uint64, groupId: uint32,
   result.repairMode = repairMode
   result.payload = copyDacBytes(payload)
 
-proc encodeDacParityShard*(s: DacParityShard): ByteSeq {.role: wrapper.} =
+proc encodeDacParityShard*(s: DacParityShard): ByteSeq {.role: helper.} =
   ## s: parity shard body to encode.
   if s.repairMode == drmNone:
     raise newException(ValueError, "DAC parity shard must declare a repair mode")

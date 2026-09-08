@@ -10,7 +10,7 @@ import ../types
 import ./types
 import ../../analysis_pragmas
 
-proc formatUdpAddress*(a: UdpAddress): string {.role: wrapper.} =
+proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
   ## formatUdpAddress: format UDP address.
   var
     host: string
@@ -34,7 +34,7 @@ type
     domain: Domain
 
 proc addResolvedUdpTarget(order: var seq[ResolvedUdpTarget], host: string,
-    d: Domain) {.role: stateController.} =
+    d: Domain) {.role: dataWriter.} =
   ## order: unique resolution order collected for one host name.
   ## host/d: newly resolved literal host and matching socket family.
   var
@@ -168,7 +168,7 @@ proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.
   result.a.port = p.port
   result.ok = true
 
-proc bindUdp*(a: UdpAddress): Socket {.role: wrapper.} =
+proc bindUdp*(a: UdpAddress): Socket {.role: truthBuilder.} =
   ## bindUdp: build bind UDP.
   var
     host: string

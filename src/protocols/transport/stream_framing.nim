@@ -10,7 +10,7 @@ const
   defaultStreamFrameBytes* = 16_777_216'u32
   streamFrameHeaderLen* = 4
 
-proc appendStreamU32(dst: var ByteSeq, v: uint32) {.role: stateController.} =
+proc appendStreamU32(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian frame length.
   dst.add(uint8(v and 0xff'u32))
@@ -39,7 +39,7 @@ proc copyStreamSpan(A: openArray[uint8], offset, count: int): ByteSeq {.role: he
     i = i + 1
 
 proc encodeProtocolStreamFrame*(payload: openArray[uint8],
-    maxFrameBytes: uint32 = defaultStreamFrameBytes): ByteSeq {.role: wrapper.} =
+    maxFrameBytes: uint32 = defaultStreamFrameBytes): ByteSeq {.role: helper.} =
   ## payload: protocol bytes to frame for a TCP/TLS byte stream.
   ## maxFrameBytes: caller-side maximum accepted payload length.
   if uint64(payload.len) > uint64(high(uint32)):

@@ -21,7 +21,7 @@ proc falconVariant*(a: AmeSignatureAlgorithm): tyr_falcon.FalconVariant {.
       "AME signature slot is not Falcon: " & ameSigName(a))
 
 proc falconAmeKeypair*(a: AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: Falcon slot, and optional fixed randomness.
   if seed.len == 0:
     assignAmeSigKeypair(tyr_falcon.falconTyrKeypair(falconVariant(a)))

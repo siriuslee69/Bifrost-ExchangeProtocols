@@ -95,7 +95,7 @@ type
     remote*: UdpAddress
     err*: string
 
-proc bytesToString*(bs: ByteSeq): string {.role: wrapper.} =
+proc bytesToString*(bs: ByteSeq): string {.role: truthBuilder.} =
   ## bytesToString: build bytes to string.
   var
     i: int = 0
@@ -104,7 +104,7 @@ proc bytesToString*(bs: ByteSeq): string {.role: wrapper.} =
     result[i] = char(bs[i])
     i.inc
 
-proc stringToBytes*(s: string): ByteSeq {.role: wrapper.} =
+proc stringToBytes*(s: string): ByteSeq {.role: truthBuilder.} =
   ## stringToBytes: build string to bytes.
   var
     i: int = 0
@@ -113,7 +113,7 @@ proc stringToBytes*(s: string): ByteSeq {.role: wrapper.} =
     result[i] = uint8(ord(s[i]))
     i.inc
 
-proc defaultTlsConfig*(): TlsConfig {.role: wrapper.} =
+proc defaultTlsConfig*(): TlsConfig {.role: configurator.} =
   ## defaultTlsConfig: build the default TLS config.
   result.enabled = false
   result.verifyMode = tvmPeer
@@ -160,21 +160,21 @@ proc normalizeTransportHostValue(h: string): string {.role: parser.} =
       raise newException(ValueError, "transport host has a malformed IPv6 literal")
   result = t
 
-proc initTransportAddress*(h: string, p: uint16): TransportAddress {.role: wrapper.} =
+proc initTransportAddress*(h: string, p: uint16): TransportAddress {.role: configurator.} =
   ## initTransportAddress: initialize transport address.
   result.host = normalizeTransportHostValue(h)
   result.port = p
 
-proc initTcpAddress*(h: string, p: uint16): TcpAddress {.role: wrapper.} =
+proc initTcpAddress*(h: string, p: uint16): TcpAddress {.role: configurator.} =
   ## initTcpAddress: initialize TCP address.
   result = initTransportAddress(h, p)
 
-proc initUdpAddress*(h: string, p: uint16): UdpAddress {.role: wrapper.} =
+proc initUdpAddress*(h: string, p: uint16): UdpAddress {.role: configurator.} =
   ## initUdpAddress: initialize UDP address.
   result = initTransportAddress(h, p)
 
 proc initTcpEndpoint*(h: string, p: uint16, t: TlsConfig = defaultTlsConfig()):
-    TcpEndpoint {.role: wrapper.} =
+    TcpEndpoint {.role: configurator.} =
   ## initTcpEndpoint: initialize TCP endpoint.
   result.address = initTcpAddress(h, p)
   result.tls = t

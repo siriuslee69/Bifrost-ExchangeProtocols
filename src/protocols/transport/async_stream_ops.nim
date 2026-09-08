@@ -7,7 +7,7 @@ import std/[asyncdispatch, asyncnet]
 import ../../analysis_pragmas
 
 type
-  AsyncStreamRead* {.role: truthState, tag: {tagTransport, tagNetworkSurface,
+  AsyncStreamRead* {.role: truthState, metaTags: {tagTransport, tagNetworkSurface,
       tagTypes}.} = object
     ok*: bool
     timedOut*: bool
@@ -15,7 +15,7 @@ type
     err*: string
 
 proc closeAsyncSocket*(s: AsyncSocket) {.role: helper,
-    tag: {tagTransport, tagNetworkSurface}.} =
+    metaTags: {tagTransport, tagNetworkSurface}.} =
   ## s: socket to close when it is present and still usable.
   if s.isNil:
     return
@@ -25,7 +25,7 @@ proc closeAsyncSocket*(s: AsyncSocket) {.role: helper,
     discard
 
 proc readAsyncLine*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
-    role: dataFetcher, tag: {tagTransport, tagNetworkSurface, tagRead}.} =
+    role: dataFetcher, metaTags: {tagTransport, tagNetworkSurface, tagRead}.} =
   ## s: connected socket to read.
   ## m: maximum accepted line length.
   ## t: timeout in milliseconds; zero disables the timeout.
@@ -54,7 +54,7 @@ proc readAsyncLine*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
     result.err = e.msg
 
 proc readAsyncChunk*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
-    role: dataFetcher, tag: {tagTransport, tagNetworkSurface, tagRead}.} =
+    role: dataFetcher, metaTags: {tagTransport, tagNetworkSurface, tagRead}.} =
   ## s: connected socket to read.
   ## m: maximum bytes requested from the socket.
   ## t: timeout in milliseconds; zero disables the timeout.
@@ -85,7 +85,7 @@ proc readAsyncChunk*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async
     result.err = e.msg
 
 proc writeAsync*(s: AsyncSocket; d: string): Future[bool] {.async,
-    role: dataWriter, tag: {tagTransport, tagNetworkSurface, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTransport, tagNetworkSurface, tagWrite}.} =
   ## s: connected socket to write.
   ## d: bytes to send without framing changes.
   if s.isNil:
@@ -97,13 +97,13 @@ proc writeAsync*(s: AsyncSocket; d: string): Future[bool] {.async,
     result = false
 
 proc writeAsyncLine*(s: AsyncSocket; d: string): Future[bool] {.async,
-    role: dataWriter, tag: {tagTransport, tagNetworkSurface, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTransport, tagNetworkSurface, tagWrite}.} =
   ## s: connected socket to write.
   ## d: line payload written with one CRLF terminator.
   result = await writeAsync(s, d & "\r\n")
 
 proc copyAsyncStream*(s, d: AsyncSocket; c: int = 8192): Future[void] {.async,
-    role: orchestrator, tag: {tagTransport, tagNetworkSurface, tagRead,
+    role: orchestrator, metaTags: {tagTransport, tagNetworkSurface, tagRead,
       tagWrite}.} =
   ## s: connected source socket.
   ## d: connected destination socket.
@@ -122,7 +122,7 @@ proc copyAsyncStream*(s, d: AsyncSocket; c: int = 8192): Future[void] {.async,
       break
 
 proc relayAsyncStreams*(a, b: AsyncSocket; c: int = 8192): Future[void] {.async,
-    role: orchestrator, tag: {tagTransport, tagNetworkSurface, tagRead,
+    role: orchestrator, metaTags: {tagTransport, tagNetworkSurface, tagRead,
       tagWrite}.} =
   ## a: first connected socket.
   ## b: second connected socket.

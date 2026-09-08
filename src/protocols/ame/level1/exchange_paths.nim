@@ -31,7 +31,7 @@ proc validAmeKemMask*(A: AmeKemAlgorithms): uint8 {.role: helper.} =
     i = i + 1
 
 proc initAmeKemAlgorithms*(A: openArray[AmeKemAlgorithm]): AmeKemAlgorithms {.
-    role: wrapper.} =
+    role: configurator.} =
   ## A: immutable ordered KEM slots. Repeated entries remain independent.
   ## A slot whose family this build left out is refused here, so a session is
   ## never configured with a KEM the binary cannot execute.
@@ -45,7 +45,7 @@ proc initAmeKemAlgorithms*(A: openArray[AmeKemAlgorithm]): AmeKemAlgorithms {.
     i = i + 1
 
 converter toAmeKemAlgorithms*[N: static[int]](
-    A: array[N, AmeKemAlgorithm]): AmeKemAlgorithms {.role: wrapper.} =
+    A: array[N, AmeKemAlgorithm]): AmeKemAlgorithms {.role: helper.} =
   ## A: compile-time-friendly immutable KEM layout.
   result = initAmeKemAlgorithms(A)
 
@@ -87,7 +87,7 @@ proc ameAuthTagLenFromId*(id: uint8): AmeAuthTagLen {.role: parser.} =
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
     exchangeMask: uint8,
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
-    AmeExchangeRequest {.role: wrapper.} =
+    AmeExchangeRequest {.role: configurator.} =
   ## A/targetTier: immutable KEM layout and complete next-epoch selection.
   ## exchangeMask: target KEM slots receiving fresh secrets; zero is permitted.
   ## params: tunables the next epoch should adopt on both sides.
@@ -103,7 +103,7 @@ proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
   result.params = params
 
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
-    I: openArray[int]): AmeExchangeRequest {.role: wrapper.} =
+    I: openArray[int]): AmeExchangeRequest {.role: configurator.} =
   ## A/targetTier/I: layout, next tier, and fresh/rekeyed slot indices.
   var
     i: int = 0
@@ -135,7 +135,7 @@ proc algorithmFromId*(id: uint8): AmeKemAlgorithm {.role: parser.} =
   result = AmeKemAlgorithm(id)
 
 proc encodeAmeKemAlgorithms*(A: AmeKemAlgorithms): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## A: immutable KEM layout encoded as length and stable one-byte ids.
   var i: int = 0
   if A.length == 0 or A.length > ameMaxAlgorithmSlots:
@@ -165,7 +165,7 @@ proc decodeAmeKemAlgorithms*(A: openArray[uint8]): AmeKemAlgorithms {.
     i = i + 1
 
 proc appendExchangeTier(A: var ByteSeq, t: AmeMaskTier) {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## A/t: destination and compact stable target-tier fields.
   requireExchangeTierShape(t)
   appendAmeU32(A, t.tierId)
@@ -177,7 +177,7 @@ proc appendExchangeTier(A: var ByteSeq, t: AmeMaskTier) {.
   A.add(t.masks.kdf)
 
 proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## r: target tier and independent fresh-KEM mask.
   if (r.exchangeMask and not r.targetTier.masks.kem) != 0'u8:
     raise newException(ValueError, "AME exchange request mask is invalid")
@@ -262,14 +262,14 @@ proc openAmeExchange*(A: AmeKemAlgorithms, r: AmeExchangeRequest,
     i = i + 1
 
 proc initAmeExchangeState*(A: AmeKemAlgorithms): AmeExchangeState {.
-    role: wrapper.} =
+    role: configurator.} =
   ## A: immutable exact KEM layout for this state.
   if A.length == 0 or A.length > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME exchange state layout is invalid")
   result.algorithms = A
 
 proc applyAmeExchange*(S: var AmeExchangeState, r: AmeExchangeRequest,
-    sharedSecrets: openArray[ByteSeq]) {.role: stateController.} =
+    sharedSecrets: openArray[ByteSeq]) {.role: actor.} =
   ## S/r/sharedSecrets: selected slots added or rekeyed; other secrets remain.
   var
     i: int = 0
@@ -320,7 +320,7 @@ proc readPathU32(A: openArray[uint8], cursor: var int,
   cursor = cursor + 4
 
 proc appendPathBytes(A: var ByteSeq, B: openArray[uint8]) {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## A/B: destination and length-framed bytes.
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
@@ -337,7 +337,7 @@ proc readPathBytes(A: openArray[uint8], cursor: var int,
 
 proc initAmeExchangeOffer*(requestId, baseEpochId: uint32,
     r: AmeExchangeRequest, publicKeys: openArray[ByteSeq]): AmeExchangeOffer {.
-    role: wrapper.} =
+    role: configurator.} =
   ## requestId/baseEpochId/r/publicKeys: replay-bound receiver exchange offer.
   if requestId == 0'u32 or publicKeys.len != selectedAlgorithmCount(r):
     raise newException(ValueError, "AME exchange offer is invalid")
@@ -405,7 +405,7 @@ proc openAmeExchangeReply*(A: AmeKemAlgorithms, o: AmeExchangeOffer,
   result = openAmeExchange(A, r.request, r.envelopes, secretKeys)
 
 proc encodeAmeExchangeOffer*(o: AmeExchangeOffer): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## o: canonical offer bytes authenticated by handshake or current epoch.
   result = encodeAmeExchangeOfferCore(o)
   appendAmeU32(result, uint32(o.signatures.len))
@@ -444,7 +444,7 @@ proc decodeAmeExchangeOffer*(A: AmeKemAlgorithms,
   result.signatures = signatures
 
 proc encodeAmeExchangeReply*(r: AmeExchangeReply): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## r: canonical exchange reply bytes carrying the exact target tier again.
   appendAmeU32(result, r.requestId)
   appendAmeU32(result, r.baseEpochId)

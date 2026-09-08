@@ -16,7 +16,7 @@ proc requireEd25519Slot(a: AmeSignatureAlgorithm) {.role: parser.} =
       "AME signature slot is not Ed25519: " & ameSigName(a))
 
 proc ed25519AmeKeypair*(a: AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: the Ed25519 slot, and optional fixed randomness.
   requireEd25519Slot(a)
   if seed.len == 0:

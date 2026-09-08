@@ -18,7 +18,7 @@ type
     tekClosed,
     tekError
 
-  Tls13Event* {.role: truthState, tag: {tagTls, tagPacket}.} = object
+  Tls13Event* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
     kind*: Tls13EventKind
     handshake*: Tls13Handshake
     data*: ByteSeq
@@ -26,12 +26,12 @@ type
     alertDescription*: byte
     err*: string
 
-  Tls13FeedStep* {.role: truthState, tag: {tagTls, tagParsing}.} = object
+  Tls13FeedStep* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
     events*: seq[Tls13Event]
     progressed*: bool
     needMore*: bool
 
-  Tls13Connection* {.role: memory, tag: {tagTls, tagTransport}.} = object
+  Tls13Connection* {.role: memory, metaTags: {tagTls, tagTransport}.} = object
     recordBuffer: ByteSeq
     handshakeBuffer: ByteSeq
     readKeys: Tls13TrafficKeys
@@ -50,7 +50,7 @@ type
 
 proc initTls13Connection*(maxRecordBuffer: int = tls13DefaultRecordBufferLimit,
     maxHandshakeBuffer: int = tls13DefaultHandshakeLimit): Tls13Connection {.
-    role: truthBuilder, tag: {tagTls, tagTransport}.} =
+    role: truthBuilder, metaTags: {tagTls, tagTransport}.} =
   ## maxRecordBuffer/maxHandshakeBuffer: retained incomplete-input bounds.
   if maxRecordBuffer < tls13CiphertextLimit or maxHandshakeBuffer < 4:
     raise newException(ValueError, "TLS connection buffer limits are invalid")
@@ -58,20 +58,20 @@ proc initTls13Connection*(maxRecordBuffer: int = tls13DefaultRecordBufferLimit,
   result.maxHandshakeBuffer = maxHandshakeBuffer
 
 proc installTls13ReadKeys*(C: var Tls13Connection, K: Tls13TrafficKeys) {.
-    role: stateController, tag: {tagTls, tagCryptoBoundary}.} =
+    role: actor, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C/K: connection and current peer traffic keys.
   C.readKeys = K
   C.readKeysInstalled = true
 
 proc installTls13WriteKeys*(C: var Tls13Connection, K: Tls13TrafficKeys) {.
-    role: stateController, tag: {tagTls, tagCryptoBoundary}.} =
+    role: actor, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C/K: connection and current local traffic keys.
   C.writeKeys = K
   C.writeKeysInstalled = true
 
 proc installTls13ReadTrafficSecret*(C: var Tls13Connection,
-    S: Tls13Secret) {.role: stateController,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    S: Tls13Secret) {.role: actor,
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C/S: connection and peer application traffic secret.
   C.readTrafficSecret = S
   C.readKeys = deriveTls13TrafficKeys(S)
@@ -79,8 +79,8 @@ proc installTls13ReadTrafficSecret*(C: var Tls13Connection,
   C.readKeysInstalled = true
 
 proc installTls13WriteTrafficSecret*(C: var Tls13Connection,
-    S: Tls13Secret) {.role: stateController,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    S: Tls13Secret) {.role: actor,
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C/S: connection and local application traffic secret.
   C.writeTrafficSecret = S
   C.writeKeys = deriveTls13TrafficKeys(S)
@@ -88,8 +88,8 @@ proc installTls13WriteTrafficSecret*(C: var Tls13Connection,
   C.writeKeysInstalled = true
 
 proc applyPeerKeyUpdate(C: var Tls13Connection,
-    H: Tls13Handshake): string {.role: stateController,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    H: Tls13Handshake): string {.role: actor,
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C/H: connection and authenticated post-handshake KeyUpdate.
   if H.body.len != 1 or H.body[0] notin {0'u8, 1'u8}:
     return "TLS KeyUpdate request value is invalid"
@@ -100,7 +100,7 @@ proc applyPeerKeyUpdate(C: var Tls13Connection,
   result = ""
 
 proc clearTls13ConnectionSecrets*(C: var Tls13Connection) {.
-    role: stateController, tag: {tagTls, tagCryptoBoundary}.} =
+    role: actor, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C: connection whose retained plaintext and traffic material is retired.
   secureClearBytes(C.recordBuffer)
   secureClearBytes(C.handshakeBuffer)
@@ -118,27 +118,27 @@ proc clearTls13ConnectionSecrets*(C: var Tls13Connection) {.
   C.writeTrafficSecretInstalled = false
 
 proc tls13ReadSequence*(C: Tls13Connection): uint64 {.role: parser,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C: connection whose read sequence is observed for tests/metrics.
   result = C.readKeys.sequence
 
 proc tls13WriteSequence*(C: Tls13Connection): uint64 {.role: parser,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C: connection whose write sequence is observed for tests/metrics.
   result = C.writeKeys.sequence
 
 proc tls13ReadKeysInstalled*(C: Tls13Connection): bool {.role: parser,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C: connection whose peer traffic-key availability is queried.
   result = C.readKeysInstalled
 
 proc tls13WriteKeysInstalled*(C: Tls13Connection): bool {.role: parser,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## C: connection whose local traffic-key availability is queried.
   result = C.writeKeysInstalled
 
-proc dropPrefix(A: var ByteSeq, n: int) {.role: stateController,
-    tag: {tagTls, tagParsing}.} =
+proc dropPrefix(A: var ByteSeq, n: int) {.role: actor,
+    metaTags: {tagTls, tagParsing}.} =
   ## A/n: retained buffer and consumed prefix length.
   var
     remaining, i: int = 0
@@ -152,14 +152,14 @@ proc dropPrefix(A: var ByteSeq, n: int) {.role: stateController,
   A.setLen(remaining)
 
 proc errorEvent(C: var Tls13Connection, e: string): Tls13Event {.
-    role: truthBuilder, tag: {tagTls, tagValidation}.} =
+    role: truthBuilder, metaTags: {tagTls, tagValidation}.} =
   ## C/e: failed connection and terminal error detail.
   C.failed = true
   result.kind = tekError
   result.err = e
 
 proc parseAlert(C: var Tls13Connection, A: openArray[byte]): Tls13Event {.
-    role: parser, tag: {tagTls, tagValidation}.} =
+    role: parser, metaTags: {tagTls, tagValidation}.} =
   ## C/A: connection and authenticated/plain alert bytes.
   if A.len != 2:
     return C.errorEvent("TLS alert must contain level and description")
@@ -175,7 +175,7 @@ proc parseAlert(C: var Tls13Connection, A: openArray[byte]): Tls13Event {.
 
 proc drainHandshakeEvents(C: var Tls13Connection,
     E: var seq[Tls13Event]) {.role: orchestrator,
-    tag: {tagTls, tagParsing}.} =
+    metaTags: {tagTls, tagParsing}.} =
   ## C/E: connection handshake buffer and emitted complete messages.
   var
     R: Tls13HandshakeResult
@@ -199,7 +199,7 @@ proc drainHandshakeEvents(C: var Tls13Connection,
 
 proc routeContent(C: var Tls13Connection, t: Tls13ContentType,
     A: openArray[byte], E: var seq[Tls13Event]) {.role: orchestrator,
-    tag: {tagTls, tagParsing}.} =
+    metaTags: {tagTls, tagParsing}.} =
   ## C/t/A/E: connection, authenticated content type, bytes, and event output.
   var event: Tls13Event
   case t
@@ -221,7 +221,7 @@ proc routeContent(C: var Tls13Connection, t: Tls13ContentType,
 
 proc routeRecord(C: var Tls13Connection, R: Tls13Record,
     E: var seq[Tls13Event]) {.role: orchestrator,
-    tag: {tagTls, tagParsing, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagParsing, tagCryptoBoundary}.} =
   ## C/R/E: connection, complete record, and emitted events.
   var opened: Tls13OpenResult
   if R.contentType != tctApplicationData:
@@ -238,7 +238,7 @@ proc routeRecord(C: var Tls13Connection, R: Tls13Record,
 
 proc feedTls13One*(C: var Tls13Connection,
     A: openArray[byte]): Tls13FeedStep {.role: orchestrator,
-    tag: {tagTls, tagTransport, tagParsing}.} =
+    metaTags: {tagTls, tagTransport, tagParsing}.} =
   ## C/A: connection and new bytes; process at most one complete record.
   var R: Tls13RecordResult
   if C.failed:
@@ -266,7 +266,7 @@ proc feedTls13One*(C: var Tls13Connection,
   result.progressed = true
 
 proc feedTls13*(C: var Tls13Connection, A: openArray[byte]): seq[Tls13Event] {.
-    role: orchestrator, tag: {tagTls, tagTransport, tagParsing}.} =
+    role: orchestrator, metaTags: {tagTls, tagTransport, tagParsing}.} =
   ## C/A: connection and arbitrary next transport bytes.
   var
     step: Tls13FeedStep = C.feedTls13One(A)
@@ -282,7 +282,7 @@ proc feedTls13*(C: var Tls13Connection, A: openArray[byte]): seq[Tls13Event] {.
       i = i + 1
 
 proc encodeTls13PlainHandshakeRecord*(A: openArray[byte]): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagTransport}.} =
+    role: dataWriter, metaTags: {tagTls, tagTransport}.} =
   ## A: encoded pre-key handshake messages to place in one plaintext record.
   var R: Tls13Record
   if A.len > tls13PlaintextLimit:
@@ -294,7 +294,7 @@ proc encodeTls13PlainHandshakeRecord*(A: openArray[byte]): ByteSeq {.
 
 proc encodeTls13Protected*(C: var Tls13Connection, t: Tls13ContentType,
     A: openArray[byte], paddingLen: int = 0): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## C/t/A/paddingLen: write connection, inner type, bytes, and zero padding.
   var R: Tls13Record
   if C.failed or C.localClosed:
@@ -306,19 +306,19 @@ proc encodeTls13Protected*(C: var Tls13Connection, t: Tls13ContentType,
 
 proc encodeTls13Application*(C: var Tls13Connection, A: openArray[byte],
     paddingLen: int = 0): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## C/A/paddingLen: connection and authenticated application bytes.
   result = C.encodeTls13Protected(tctApplicationData, A, paddingLen)
 
 proc encodeTls13CloseNotify*(C: var Tls13Connection): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    role: dataWriter, metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## C: connection to close cleanly with an encrypted close_notify alert.
   result = C.encodeTls13Protected(tctAlert, [byte 1, 0])
   C.localClosed = true
 
 proc encodeTls13KeyUpdate*(C: var Tls13Connection,
     requestPeerUpdate: bool = false): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
   ## C/requestPeerUpdate: rotate local application keys after encoding KeyUpdate.
   var
     H: Tls13Handshake

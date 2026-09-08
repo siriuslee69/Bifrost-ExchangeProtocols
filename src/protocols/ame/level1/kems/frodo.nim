@@ -18,7 +18,7 @@ proc frodoVariant(a: AmeKemAlgorithm): tyr_frodo.FrodoVariant {.role: parser.} =
   else:
     raise newException(ValueError, "AME KEM slot is not Frodo: " & ameKemName(a))
 
-proc frodoAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc frodoAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: Frodo slot to key independently.
   assignAmeKeypair(tyr_frodo.frodoTyrKeypair(frodoVariant(a)))
 

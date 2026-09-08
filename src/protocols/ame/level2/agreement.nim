@@ -18,7 +18,7 @@ proc readAgreementU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
 
 proc initAmeAgreementProposal*(proposalId: uint32,
     L: AmeSuiteLayout, initialTier: AmeMaskTier): AmeAgreementProposal {.
-    role: wrapper.} =
+    role: configurator.} =
   ## proposalId/L/initialTier: unique id and exact initial selection.
   if proposalId == 0'u32:
     raise newException(ValueError, "AME agreement proposal id must be positive")
@@ -54,7 +54,7 @@ proc verifyAmeAgreementDecision*(p: AmeAgreementProposal,
   result = d.selectionHash == hashAmeTier(p.layout, p.initialTier, encoded, 32)
 
 proc encodeAmeAgreementProposal*(p: AmeAgreementProposal): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## p: canonical proposal bytes.
   var
     layout: ByteSeq = encodeAmeSuiteLayout(p.layout)
@@ -82,7 +82,7 @@ proc decodeAmeAgreementProposal*(A: openArray[uint8]): AmeAgreementProposal {.
     decodeAmeMaskTier(result.layout, A.toOpenArray(8 + n, A.high)))
 
 proc encodeAmeAgreementDecision*(d: AmeAgreementDecision): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## d: canonical layout-and-initial-tier decision bytes.
   if d.proposalId == 0'u32 or d.selectionHash.len != 32:
     raise newException(ValueError, "AME agreement decision is invalid")

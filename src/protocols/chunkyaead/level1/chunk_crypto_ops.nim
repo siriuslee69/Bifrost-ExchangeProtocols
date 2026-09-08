@@ -10,7 +10,7 @@ import ../../../analysis_pragmas
 
 const xchachaBlockLen = 64
 
-type ChunkCryptoState* {.role: memory, tag: {tagChunkyAead,
+type ChunkCryptoState* {.role: memory, metaTags: {tagChunkyAead,
     tagCryptoBoundary}.} = object
   algo: ChunkyAlgo
   keyXs: array[32, uint8]
@@ -23,34 +23,34 @@ type ChunkCryptoState* {.role: memory, tag: {tagChunkyAead,
   streamBufs: seq[uint8]
 
 proc blocksForLen(l, b: int): uint32 {.role: helper,
-    tag: {tagChunkyAead}.} =
+    metaTags: {tagChunkyAead}.} =
   if l > 0: result = uint32((l + b - 1) div b)
 
 proc deriveAesNonce(ns: array[24, uint8]): array[16, uint8] {.
-    role: truthBuilder, tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   var i: int
   while i < result.len:
     result[i] = ns[i]
     i = i + 1
 
 proc initGimliStream(s: var tyr_gimli.GimliSpongeState,
-    ks: array[32, uint8], ns: array[24, uint8]) {.role: stateController,
-    tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    ks: array[32, uint8], ns: array[24, uint8]) {.role: actor,
+    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   tyr_gimli.gimliAbsorbInit(s)
   tyr_gimli.gimliAbsorbUpdate(s, ks)
   tyr_gimli.gimliAbsorbUpdate(s, ns)
   tyr_gimli.gimliAbsorbFinal(s)
 
 proc initGimliTag(s: var tyr_gimli.GimliSpongeState, ks: array[32, uint8],
-    ns: array[24, uint8]) {.role: stateController,
-    tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    ns: array[24, uint8]) {.role: actor,
+    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   tyr_gimli.gimliAbsorbInit(s)
   tyr_gimli.gimliAbsorbUpdate(s, ks)
   tyr_gimli.gimliAbsorbUpdate(s, ns)
 
 proc gimliStreamXorInPlace(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: encryptor,
-    tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   var i: int
   if bs.len == 0: return
   if s.streamBufs.len < bs.len: s.streamBufs.setLen(bs.len)
@@ -60,8 +60,8 @@ proc gimliStreamXorInPlace(s: var ChunkCryptoState,
     i = i + 1
 
 proc initChunkCryptoState*(s: var ChunkCryptoState, a: ChunkyAlgo, kxs, kas,
-    kgs: array[32, uint8], ns: array[24, uint8], b: int) {.role: stateController,
-    tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    kgs: array[32, uint8], ns: array[24, uint8], b: int) {.role: actor,
+    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   ## a/kxs/kas/kgs/ns/b: algorithm, stage keys, nonce, and buffer capacity.
   s.algo = a
   s.keyXs = kxs
@@ -75,7 +75,7 @@ proc initChunkCryptoState*(s: var ChunkCryptoState, a: ChunkyAlgo, kxs, kas,
 
 proc encryptChunkBuffer*(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: encryptor,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
   var blocks: uint32
   if bs.len == 0: return
   if s.xEnabled:
@@ -88,7 +88,7 @@ proc encryptChunkBuffer*(s: var ChunkCryptoState,
 
 proc decryptChunkBuffer*(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: decryptor,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
   var blocks: uint32
   if bs.len == 0: return
   tyr_gimli.gimliAbsorbUpdate(s.gTag, bs)
@@ -101,6 +101,6 @@ proc decryptChunkBuffer*(s: var ChunkCryptoState,
 
 proc finalizeChunkTag*(s: var ChunkCryptoState,
     ts: var openArray[uint8]) {.role: truthBuilder,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary}.} =
   tyr_gimli.gimliAbsorbFinal(s.gTag)
   tyr_gimli.gimliSqueezeInto(s.gTag, ts)

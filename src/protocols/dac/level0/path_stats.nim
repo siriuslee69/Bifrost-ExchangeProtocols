@@ -22,7 +22,7 @@ const
 """
 
 proc initDacPathStats*(lossPpm: uint32, rttMs, jitterMs, reorderDepth,
-    mtuHint, queueMs, creditHint: uint16): DacPathStats {.role: wrapper.} =
+    mtuHint, queueMs, creditHint: uint16): DacPathStats {.role: configurator.} =
   ## lossPpm: packet loss in parts per million.
   ## rttMs/jitterMs/reorderDepth/mtuHint/queueMs/creditHint: path metrics.
   result.lossPpm = lossPpm
@@ -37,7 +37,7 @@ proc dacShouldEnterLossyPath*(s: DacPathStats): bool {.role: parser.} =
   ## s: path stats to inspect.
   result = s.lossPpm > 50000'u32 or s.reorderDepth > 16'u16
 
-proc encodeDacPathStats*(s: DacPathStats): ByteSeq {.role: wrapper.} =
+proc encodeDacPathStats*(s: DacPathStats): ByteSeq {.role: helper.} =
   ## s: path stats body to encode.
   appendDacU32(result, s.lossPpm)
   appendDacU16(result, s.rttMs)

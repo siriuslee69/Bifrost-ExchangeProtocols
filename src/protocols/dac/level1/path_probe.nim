@@ -29,7 +29,7 @@ proc nonceIsZero(n: array[9, uint8]): bool {.role: parser.} =
     i = i + 1
 
 proc initDacPathProbe*(probeId: uint32, p: DacPathLane,
-    udpPort, tcpPort: uint16, nonce: array[9, uint8]): DacPathProbe {.role: wrapper.} =
+    udpPort, tcpPort: uint16, nonce: array[9, uint8]): DacPathProbe {.role: configurator.} =
   ## probeId: sender-selected probe id.
   ## p: path lane being tested.
   ## udpPort/tcpPort: candidate transport ports.
@@ -43,19 +43,19 @@ proc initDacPathProbe*(probeId: uint32, p: DacPathLane,
   result.nonce = nonce
 
 proc initDacPathProbe*(probeId: uint32, p: DacPathLane,
-    udpPort, tcpPort: uint16): DacPathProbe {.role: wrapper.} =
+    udpPort, tcpPort: uint16): DacPathProbe {.role: configurator.} =
   ## probeId/p/udpPort/tcpPort: path probe fields.
   raise newException(ValueError, "DAC path probe nonce must be provided")
 
-proc defaultDacProbeCount*(): uint8 {.role: wrapper.} =
+proc defaultDacProbeCount*(): uint8 {.role: configurator.} =
   ## defaultDacProbeCount: probes sent when a path first appears.
   result = 3'u8
 
-proc defaultDacProbeAcceptCount*(): uint8 {.role: wrapper.} =
+proc defaultDacProbeAcceptCount*(): uint8 {.role: configurator.} =
   ## defaultDacProbeAcceptCount: replies needed before path is accepted.
   result = 2'u8
 
-proc encodeDacPathProbe*(p: DacPathProbe): ByteSeq {.role: wrapper.} =
+proc encodeDacPathProbe*(p: DacPathProbe): ByteSeq {.role: helper.} =
   ## p: path probe body to encode.
   var
     i: int = 0

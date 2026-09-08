@@ -79,7 +79,7 @@ proc initAmeDacRelay*(d: DacScenarioDefaults, seed: uint64,
     idleMs: uint32 = dacLinkIdleSweepMs,
     policy: DacScramblePolicy = initDacScramblePolicy(),
     limits: DacPackageLimits = defaultDacPackageLimits()): AmeDacRelay {.
-    role: wrapper.} =
+    role: configurator.} =
   ## d/seed/capacity/idleMs/policy/limits: passed straight to the link table.
   result.table = initDacLinkTable(d, seed, capacity, idleMs, policy, limits)
   result.sessions = newSeq[AmeSession](result.table.slots.len)
@@ -104,7 +104,7 @@ proc admitAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey, S: AmeSession,
   result.slot = a.slot
 
 proc releaseAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey): bool {.
-    role: stateController.} =
+    role: actor.} =
   ## R/key: relay and the peer whose slot and session are released together.
   var
     i: int = findDacLinkSlot(R.table, key)
@@ -154,7 +154,7 @@ proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
     step.kind = adrProgress
 
 proc dropRelayStep(R: var AmeDacRelay, key: DacLinkKey, why: string,
-    step: var AmeDacRelayStep) {.role: stateController.} =
+    step: var AmeDacRelayStep) {.role: actor.} =
   ## R/key/why: relay, the peer that sent it, and why the datagram is gone.
   ## step: outcome marked as a drop.
   R.dropped = R.dropped + 1'u32

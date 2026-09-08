@@ -20,19 +20,19 @@ proc strToBytes(s: string): ByteSeq {.gcsafe, role: helper.} =
     i.inc
   result = bs
 
-proc writeU16*(bs: var ByteSeq, v: uint16) {.gcsafe, role: stateController.} =
+proc writeU16*(bs: var ByteSeq, v: uint16) {.gcsafe, role: dataWriter.} =
   ## writeU16: write 16.
   bs.add(uint8(v and 0xff))
   bs.add(uint8((v shr 8) and 0xff))
 
-proc writeU32*(bs: var ByteSeq, v: uint32) {.gcsafe, role: stateController.} =
+proc writeU32*(bs: var ByteSeq, v: uint32) {.gcsafe, role: dataWriter.} =
   ## writeU32: write 32.
   bs.add(uint8(v and 0xff))
   bs.add(uint8((v shr 8) and 0xff))
   bs.add(uint8((v shr 16) and 0xff))
   bs.add(uint8((v shr 24) and 0xff))
 
-proc writeU64*(bs: var ByteSeq, v: uint64) {.gcsafe, role: stateController.} =
+proc writeU64*(bs: var ByteSeq, v: uint64) {.gcsafe, role: dataWriter.} =
   ## writeU64: write 64.
   bs.add(uint8(v and 0xff))
   bs.add(uint8((v shr 8) and 0xff))
@@ -69,7 +69,7 @@ proc checkedU32Len(n: int; label: string): uint32 {.gcsafe, role: helper.} =
     raise newException(ValueError, label & " exceeds u32")
   result = uint32(n)
 
-proc encodeValuePacket*(wt: BfxWireType, raw: ByteSeq): ByteSeq {.gcsafe, role: wrapper.} =
+proc encodeValuePacket*(wt: BfxWireType, raw: ByteSeq): ByteSeq {.gcsafe, role: helper.} =
   ## encodeValuePacket: encode value packet.
   var
     rs: ByteSeq = @[]
@@ -168,7 +168,7 @@ proc encodeNodeRaw(n: JsonNode): tuple[wt: BfxWireType, raw: ByteSeq] {.gcsafe, 
     result.wt = bfxWtSeq
     result.raw = encodeSeq(n)
 
-proc encodeJsonNodePacket*(n: JsonNode): ByteSeq {.gcsafe, role: wrapper.} =
+proc encodeJsonNodePacket*(n: JsonNode): ByteSeq {.gcsafe, role: helper.} =
   ## encodeJsonNodePacket: encode JSON node packet.
   var
     t: tuple[wt: BfxWireType, raw: ByteSeq]
@@ -176,7 +176,7 @@ proc encodeJsonNodePacket*(n: JsonNode): ByteSeq {.gcsafe, role: wrapper.} =
   result = encodeValuePacket(t.wt, t.raw)
 
 proc encodeBfxEnvelope*(schemaId: uint16, schemaVersion: uint16,
-    payload: ByteSeq, flags: uint16 = 0'u16): ByteSeq {.gcsafe, role: wrapper.} =
+    payload: ByteSeq, flags: uint16 = 0'u16): ByteSeq {.gcsafe, role: helper.} =
   ## encodeBfxEnvelope: encode a current BFX2 envelope. Checksum bytes are
   ## zero when the checksum flag is absent; v2 checks header prefix + payload.
   var

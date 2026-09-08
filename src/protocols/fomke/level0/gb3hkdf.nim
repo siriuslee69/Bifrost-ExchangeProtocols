@@ -13,7 +13,7 @@ import ../../../analysis_pragmas
 proc initGb3KdfConfig*(rounds: uint32 = gb3DefaultRounds,
     blockIndex: uint64 = 0'u64, mode: Gb3KdfMode = gb3Sequential,
     memoryBlocks: uint32 = gb3DefaultMemoryBlocks): Gb3KdfConfig {.
-    role: configurator, tag: {tagAppApi, tagFomke, tagKdf}.} =
+    role: configurator, metaTags: {tagAppApi, tagFomke, tagKdf}.} =
   ## rounds: sequential iterations or memory-mixing passes.
   ## blockIndex: first 32-byte output block selected by the caller.
   ## mode/memoryBlocks: direct expansion or bounded Argon-style memory mixing.
@@ -29,7 +29,7 @@ proc initGb3KdfConfig*(rounds: uint32 = gb3DefaultRounds,
   result.memoryBlocks = memoryBlocks
 
 proc validateGb3Request(c: Gb3KdfConfig, outLen: int) {.role: parser,
-    tag: {tagFomke, tagKdf, tagValidation}.} =
+    metaTags: {tagFomke, tagKdf, tagValidation}.} =
   ## c/outLen: bounded work and output request.
   discard initGb3KdfConfig(c.rounds, c.blockIndex, c.mode, c.memoryBlocks)
   if outLen <= 0 or outLen > gb3MaxOutputBytes:
@@ -44,7 +44,7 @@ proc validateGb3Request(c: Gb3KdfConfig, outLen: int) {.role: parser,
     raise newException(ValueError, "GB3HKDF sequential work exceeds its limit")
 
 proc appendGb3Field(A: var ByteSeq, B: openArray[uint8]) {.
-    role: stateController, tag: {tagFomke, tagKdf}.} =
+    role: dataWriter, metaTags: {tagFomke, tagKdf}.} =
   ## A/B: destination and one length-framed byte field.
   if uint64(B.len) > uint64(high(uint32)):
     raise newException(ValueError, "GB3HKDF input field exceeds u32")
@@ -53,7 +53,7 @@ proc appendGb3Field(A: var ByteSeq, B: openArray[uint8]) {.
 
 proc buildGb3Input(ikm, salt, info: openArray[uint8],
     c: Gb3KdfConfig): ByteSeq {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## ikm/salt/info/c: secret input, salt, purpose, and work policy.
   appendAmeLabel(result, "BIFROST-GB3HKDF-v1")
   result.add(uint8(ord(c.mode)))
@@ -66,7 +66,7 @@ proc buildGb3Input(ikm, salt, info: openArray[uint8],
 
 proc deriveGb3Branch(label: string, key, material: openArray[uint8],
     blockIndex: uint64, round: uint32): ByteSeq {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## label/key/material/blockIndex/round: one domain-separated 32-byte branch.
   var
     seed: ByteSeq = @[]
@@ -88,7 +88,7 @@ proc deriveGb3Branch(label: string, key, material: openArray[uint8],
 
 proc deriveGb3SequentialBlock(base: openArray[uint8], blockIndex: uint64,
     rounds: uint32): ByteSeq {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## base/blockIndex/rounds: framed input, selected block, and iteration count.
   var
     state: ByteSeq = @base
@@ -108,7 +108,7 @@ proc deriveGb3SequentialBlock(base: openArray[uint8], blockIndex: uint64,
   result = state
 
 proc readGb3U64(A: openArray[uint8]): uint64 {.role: parser,
-    tag: {tagFomke, tagKdf}.} =
+    metaTags: {tagFomke, tagKdf}.} =
   ## A: at least eight bytes interpreted as little-endian u64.
   var
     i: int = 0
@@ -119,7 +119,7 @@ proc readGb3U64(A: openArray[uint8]): uint64 {.role: parser,
     i = i + 1
 
 proc gb3MemoryAddress(base: openArray[uint8], pass, position,
-    count: uint32): int {.role: parser, tag: {tagFomke, tagKdf}.} =
+    count: uint32): int {.role: parser, metaTags: {tagFomke, tagKdf}.} =
   ## base/pass/position/count: public-shape address schedule for memory mixing.
   var
     seed: ByteSeq = @[]
@@ -135,7 +135,7 @@ proc gb3MemoryAddress(base: openArray[uint8], pass, position,
   secureClearAmeBytes(digest)
 
 proc fillGb3Memory(base: openArray[uint8], count: uint32): seq[ByteSeq] {.
-    role: truthBuilder, tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    role: truthBuilder, metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## base/count: framed input and bounded 32-byte memory block count.
   var
     i: uint32 = 0'u32
@@ -145,8 +145,8 @@ proc fillGb3Memory(base: openArray[uint8], count: uint32): seq[ByteSeq] {.
     i = i + 1'u32
 
 proc mixGb3MemoryPass(M: var seq[ByteSeq], base: openArray[uint8],
-    pass: uint32) {.role: stateController,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    pass: uint32) {.role: actor,
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## M/base/pass: memory matrix, original input, and current mixing pass.
   var
     i: uint32 = 0'u32
@@ -171,8 +171,8 @@ proc mixGb3MemoryPass(M: var seq[ByteSeq], base: openArray[uint8],
     i = i + 1'u32
   secureClearAmeBytes(material)
 
-proc clearGb3Memory(M: var seq[ByteSeq]) {.role: stateController,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+proc clearGb3Memory(M: var seq[ByteSeq]) {.role: actor,
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## M: secret memory blocks overwritten before release.
   var
     i: int = 0
@@ -182,7 +182,7 @@ proc clearGb3Memory(M: var seq[ByteSeq]) {.role: stateController,
   M.setLen(0)
 
 proc appendGb3Output(resultBytes: var ByteSeq, outputChunk: openArray[uint8],
-    wanted: int) {.role: stateController, tag: {tagFomke, tagKdf}.} =
+    wanted: int) {.role: dataWriter, metaTags: {tagFomke, tagKdf}.} =
   ## resultBytes/outputChunk/wanted: output, source block, and final total length.
   var
     i: int = 0
@@ -194,7 +194,7 @@ proc appendGb3Output(resultBytes: var ByteSeq, outputChunk: openArray[uint8],
 
 proc deriveGb3Sequential(base: openArray[uint8], outLen: int,
     c: Gb3KdfConfig): ByteSeq {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## base/outLen/c: framed input, output length, and sequential policy.
   var
     outputChunk: ByteSeq = @[]
@@ -210,7 +210,7 @@ proc deriveGb3Sequential(base: openArray[uint8], outLen: int,
 
 proc deriveGb3Memory(base: openArray[uint8], outLen: int,
     c: Gb3KdfConfig): ByteSeq {.role: truthBuilder,
-    tag: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## base/outLen/c: framed input, output length, and memory-mixed policy.
   var
     M: seq[ByteSeq] = @[]
@@ -245,7 +245,7 @@ proc deriveGb3Memory(base: openArray[uint8], outLen: int,
 
 proc deriveGb3Hkdf*(ikm, salt, info: openArray[uint8], outLen: int,
     c: Gb3KdfConfig = initGb3KdfConfig()): ByteSeq {.role: truthBuilder,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## ikm/salt/info: secret input, optional salt, and domain context.
   ## outLen/c: requested bytes and bounded block/round/memory policy.
   var
@@ -263,7 +263,7 @@ proc deriveGb3Hkdf*(ikm, salt, info: openArray[uint8], outLen: int,
 proc deriveGb3HkdfInputs*(chainKey: openArray[uint8],
     S: openArray[ByteSeq], info: openArray[uint8], outLen: int,
     c: Gb3KdfConfig = initGb3KdfConfig()): ByteSeq {.role: truthBuilder,
-    tag: {tagAppApi, tagCryptoBoundary, tagFomke, tagKdf}.} =
+    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagKdf}.} =
   ## chainKey: current forward-only root or chain key.
   ## S: additional secrets consumed in caller-defined canonical order.
   ## info/outLen/c: transcript context, requested bytes, and work policy.

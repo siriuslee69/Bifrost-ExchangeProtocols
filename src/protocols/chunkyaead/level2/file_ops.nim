@@ -32,7 +32,7 @@ when compileOption("threads"):
       n: ptr int
 
 proc constantTimeEqual(a, b: openArray[uint8]): bool {.role: helper,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
   if a.len != b.len:
     return false
   var diff: uint8 = 0
@@ -41,12 +41,12 @@ proc constantTimeEqual(a, b: openArray[uint8]): bool {.role: helper,
   diff == 0
 
 proc storeU16Le(v: uint16, bs: var openArray[uint8], o: int) {.role: helper,
-    tag: {tagChunkyAead, tagCodecBoundary}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary}.} =
   bs[o] = uint8(v and 0xff)
   bs[o + 1] = uint8((v shr 8) and 0xff)
 
 proc storeU64Le(v: uint64, bs: var openArray[uint8], o: int) {.role: helper,
-    tag: {tagChunkyAead, tagCodecBoundary}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary}.} =
   bs[o] = uint8(v and 0xff)
   bs[o + 1] = uint8((v shr 8) and 0xff)
   bs[o + 2] = uint8((v shr 16) and 0xff)
@@ -57,11 +57,11 @@ proc storeU64Le(v: uint64, bs: var openArray[uint8], o: int) {.role: helper,
   bs[o + 7] = uint8((v shr 56) and 0xff)
 
 proc loadU16Le(bs: openArray[uint8], o: int): uint16 {.role: parser,
-    tag: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
   result = uint16(bs[o]) or (uint16(bs[o + 1]) shl 8)
 
 proc loadU64Le(bs: openArray[uint8], o: int): uint64 {.role: parser,
-    tag: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
   result =
     (uint64(bs[o]) or
     (uint64(bs[o + 1]) shl 8) or
@@ -73,7 +73,7 @@ proc loadU64Le(bs: openArray[uint8], o: int): uint64 {.role: parser,
     (uint64(bs[o + 7]) shl 56))
 
 proc encodeHeader(h: ChunkHeader): array[chunkHeaderLen, uint8] {.
-    role: dataWriter, tag: {tagChunkyAead, tagCodecBoundary}.} =
+    role: dataWriter, metaTags: {tagChunkyAead, tagCodecBoundary}.} =
   var
     bs: array[chunkHeaderLen, uint8]
     o: int = 0
@@ -101,7 +101,7 @@ proc encodeHeader(h: ChunkHeader): array[chunkHeaderLen, uint8] {.
   result = bs
 
 proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
-    role: parser, tag: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
+    role: parser, metaTags: {tagChunkyAead, tagCodecBoundary, tagParsing}.} =
   var
     h: ChunkHeader
     o: int = 0
@@ -129,7 +129,7 @@ proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
   result = h
 
 proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
-    tag: {tagChunkyAead, tagCodecBoundary, tagWrite}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary, tagWrite}.} =
   var
     bs: array[chunkHeaderLen, uint8]
     wrote: int = 0
@@ -139,7 +139,7 @@ proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
     raise newException(IOError, "failed to write chunk header")
 
 proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
-    tag: {tagChunkyAead, tagCodecBoundary, tagRead}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary, tagRead}.} =
   var
     bs: array[chunkHeaderLen, uint8]
     readBytes: int = 0
@@ -148,24 +148,24 @@ proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
     raise newException(IOError, "failed to read chunk header")
   result = decodeHeader(bs)
 
-proc ensureDir(p: string) {.role: helper, tag: {tagChunkyAead, tagWrite}.} =
+proc ensureDir(p: string) {.role: helper, metaTags: {tagChunkyAead, tagWrite}.} =
   if p.len == 0:
     return
   if not dirExists(p):
     createDir(p)
 
 proc calcChunkCount(sz, cs: int64): int {.role: parser,
-    tag: {tagChunkyAead}.} =
+    metaTags: {tagChunkyAead}.} =
   if sz <= 0:
     return 1
   result = int((sz + cs - 1) div cs)
 
 proc buildChunkName(bs: string, i: int): string {.role: helper,
-    tag: {tagChunkyAead}.} =
+    metaTags: {tagChunkyAead}.} =
   result = bs & ".chunk" & $i & ".bin"
 
 proc resolveOutputDir(i, o: string, opt: ChunkyOptions): string {.
-    role: configurator, tag: {tagChunkyAead}.} =
+    role: configurator, metaTags: {tagChunkyAead}.} =
   if o.len > 0:
     return o
   if opt.outputDir.len > 0:
@@ -174,7 +174,7 @@ proc resolveOutputDir(i, o: string, opt: ChunkyOptions): string {.
   result = joinPath(parts.dir, parts.name & ".chunks")
 
 proc resolveTagLen(opt: ChunkyOptions, s: ChunkyCipherState): uint16 {.
-    role: configurator, tag: {tagChunkyAead}.} =
+    role: configurator, metaTags: {tagChunkyAead}.} =
   if opt.tagLen != 0'u16:
     return opt.tagLen
   if s.tagLen != 0'u16:
@@ -183,22 +183,22 @@ proc resolveTagLen(opt: ChunkyOptions, s: ChunkyCipherState): uint16 {.
 
 proc requireKey32(s: ChunkyCipherState, idx: int,
     name: string): array[32, uint8] {.role: parser,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
   if s.keys.len <= idx:
     raise newException(ValueError, "missing symmetric key for " & name)
   result = s.keys[idx]
 
 proc zeroKey32(): array[32, uint8] {.role: helper,
-    tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   result = default(array[32, uint8])
 
 proc requireNonce24(s: ChunkyCipherState): array[24, uint8] {.role: parser,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagValidation}.} =
   result = s.nonce
 
 proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
     a: ChunkyAlgo, t: uint16): ChunkHeader {.role: truthBuilder,
-    tag: {tagChunkyAead, tagCodecBoundary}.} =
+    metaTags: {tagChunkyAead, tagCodecBoundary}.} =
   var h: ChunkHeader
   h.magic = chunkyMagic
   h.version = chunkyVersion
@@ -210,8 +210,8 @@ proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
   result = h
 
 when compileOption("threads"):
-  proc fetchTaskIndex(l: var Lock, n: var int): int {.role: stateController,
-      tag: {tagChunkyAead}.} =
+  proc fetchTaskIndex(l: var Lock, n: var int): int {.role: actor,
+      metaTags: {tagChunkyAead}.} =
     var idx: int = 0
     acquire(l)
     idx = n
@@ -220,7 +220,7 @@ when compileOption("threads"):
     result = idx
 
 proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagWrite}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagWrite}.} =
   var
     fIn: File
     fOut: File
@@ -280,7 +280,7 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
     close(fOut)
 
 proc decryptChunkTask(t: var ChunkDecryptTask) {.role: orchestrator,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagRead, tagWrite}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagRead, tagWrite}.} =
   var
     fIn: File
     fOut: File
@@ -352,7 +352,7 @@ proc decryptChunkTask(t: var ChunkDecryptTask) {.role: orchestrator,
       removeFile(t.outputPath)
 
 proc hashChunkTask(t: var ChunkHashTask) {.role: orchestrator,
-    tag: {tagChunkyAead, tagCryptoBoundary, tagRead}.} =
+    metaTags: {tagChunkyAead, tagCryptoBoundary, tagRead}.} =
   var
     fIn: File
     okIn: bool = false
@@ -402,7 +402,7 @@ proc hashChunkTask(t: var ChunkHashTask) {.role: orchestrator,
 
 when compileOption("threads"):
   proc encryptWorker(ctx: ptr EncryptCtx) {.thread, role: orchestrator,
-      tag: {tagChunkyAead, tagCryptoBoundary}.} =
+      metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
     var
       idx: int = 0
     while true:
@@ -412,7 +412,7 @@ when compileOption("threads"):
       encryptChunkTask(ctx.ts[][idx])
 
   proc decryptWorker(ctx: ptr DecryptCtx) {.thread, role: orchestrator,
-      tag: {tagChunkyAead, tagCryptoBoundary}.} =
+      metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
     var
       idx: int = 0
     while true:
@@ -422,7 +422,7 @@ when compileOption("threads"):
       decryptChunkTask(ctx.ts[][idx])
 
 proc runEncryptTasks(ts: var seq[ChunkEncryptTask], tc: int) {.
-    role: orchestrator, tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: orchestrator, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   var
     i: int = 0
   if ts.len == 0:
@@ -460,7 +460,7 @@ proc runEncryptTasks(ts: var seq[ChunkEncryptTask], tc: int) {.
       i = i + 1
 
 proc runDecryptTasks(ts: var seq[ChunkDecryptTask], tc: int) {.
-    role: orchestrator, tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: orchestrator, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   var
     i: int = 0
   if ts.len == 0:
@@ -498,7 +498,7 @@ proc runDecryptTasks(ts: var seq[ChunkDecryptTask], tc: int) {.
       i = i + 1
 
 proc runHashTasks(ts: var seq[ChunkHashTask], tc: int) {.role: orchestrator,
-    tag: {tagChunkyAead}.} =
+    metaTags: {tagChunkyAead}.} =
   var
     i: int = 0
   if ts.len == 0:
@@ -512,25 +512,25 @@ proc runHashTasks(ts: var seq[ChunkHashTask], tc: int) {.role: orchestrator,
     i = i + 1
 
 proc ensureTasksOk(ts: seq[ChunkEncryptTask]) {.role: parser,
-    tag: {tagChunkyAead, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagValidation}.} =
   for t in ts:
     if not t.ok:
       raise newException(IOError, t.err)
 
 proc ensureTasksOk(ts: seq[ChunkDecryptTask]) {.role: parser,
-    tag: {tagChunkyAead, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagValidation}.} =
   for t in ts:
     if not t.ok:
       raise newException(IOError, t.err)
 
 proc ensureTasksOk(ts: seq[ChunkHashTask]) {.role: parser,
-    tag: {tagChunkyAead, tagValidation}.} =
+    metaTags: {tagChunkyAead, tagValidation}.} =
   for t in ts:
     if not t.ok:
       raise newException(IOError, t.err)
 
 proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
-    role: dataWriter, tag: {tagChunkyAead, tagWrite}.} =
+    role: dataWriter, metaTags: {tagChunkyAead, tagWrite}.} =
   var
     fOut: File
     okOut: bool = false
@@ -563,7 +563,7 @@ proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
     close(fOut)
 
 proc buildTreeHash(hs: seq[seq[uint8]], a: HashAlgo): seq[uint8] {.
-    role: truthBuilder, tag: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
   var
     current: seq[seq[uint8]] = @[]
     nextLevel: seq[seq[uint8]] = @[]
@@ -599,7 +599,7 @@ proc buildTreeHash(hs: seq[seq[uint8]], a: HashAlgo): seq[uint8] {.
 
 proc encryptFileChunks*(i: string, o: string, s: ChunkyCipherState,
     opt: ChunkyOptions): ChunkyManifest {.role: orchestrator,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagWrite}.} =
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagWrite}.} =
   ## i: input file path.
   ## o: output directory.
   ## s: encryption state (keys + base nonce).
@@ -698,7 +698,7 @@ proc encryptFileChunks*(i: string, o: string, s: ChunkyCipherState,
 
 proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
     s: ChunkyCipherState, opt: ChunkyOptions) {.role: orchestrator,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagRead,
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagRead,
     tagWrite}.} =
   ## m: chunk manifest.
   ## iDir: directory containing chunk files.
@@ -772,7 +772,7 @@ proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
 
 proc hashFileChunks*(i: string, opt: ChunkyOptions,
     a: HashAlgo): seq[uint8] {.role: orchestrator,
-    tag: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagRead}.} =
+    metaTags: {tagAppApi, tagChunkyAead, tagCryptoBoundary, tagRead}.} =
   ## i: input file path.
   ## opt: chunky options.
   ## a: hash algorithm.

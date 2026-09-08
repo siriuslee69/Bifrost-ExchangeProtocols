@@ -47,7 +47,7 @@ template assignAmeSigKeypair*(call: untyped) =
   result.publicKey = k.publicKey
   result.secretKey = k.secretKey
 
-proc ameSigName*(a: AmeSignatureAlgorithm): string {.role: wrapper.} =
+proc ameSigName*(a: AmeSignatureAlgorithm): string {.role: truthBuilder.} =
   ## a: stable AME signature identifier.
   case a
   of asaEd25519: result = "Ed25519"

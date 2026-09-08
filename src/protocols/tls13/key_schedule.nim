@@ -15,21 +15,21 @@ type
   Tls13Secret* = array[tls13SecretLen, byte]
 
   Tls13HandshakeSecrets* {.role: truthState,
-      tag: {tagTls, tagCryptoBoundary}.} = object
+      metaTags: {tagTls, tagCryptoBoundary}.} = object
     earlySecret*: Tls13Secret
     handshakeSecret*: Tls13Secret
     clientHandshakeTraffic*: Tls13Secret
     serverHandshakeTraffic*: Tls13Secret
 
   Tls13ApplicationSecrets* {.role: truthState,
-      tag: {tagTls, tagCryptoBoundary}.} = object
+      metaTags: {tagTls, tagCryptoBoundary}.} = object
     masterSecret*: Tls13Secret
     clientApplicationTraffic*: Tls13Secret
     serverApplicationTraffic*: Tls13Secret
     exporterMaster*: Tls13Secret
 
 proc toTls13Secret(A: openArray[byte]): Tls13Secret {.role: helper,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## A: exact SHA-256-length secret bytes.
   var i: int = 0
   if A.len != tls13SecretLen:
@@ -39,13 +39,13 @@ proc toTls13Secret(A: openArray[byte]): Tls13Secret {.role: helper,
     i = i + 1
 
 proc emptyTranscriptHash*(): Sha256Digest {.role: truthBuilder,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## Return Transcript-Hash of an empty handshake transcript.
   result = sha256Hash([])
 
 proc deriveTls13Secret*(secret: openArray[byte], label: string,
     transcriptHash: openArray[byte]): Tls13Secret {.role: truthBuilder,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## secret/label/transcriptHash: RFC 8446 Derive-Secret inputs.
   if secret.len != tls13SecretLen:
     raise newException(ValueError, "TLS 1.3 base secret must be 32 bytes")
@@ -55,7 +55,7 @@ proc deriveTls13Secret*(secret: openArray[byte], label: string,
     transcriptHash, tls13SecretLen))
 
 proc initTls13EarlySecret*(psk: openArray[byte] = []): Tls13Secret {.
-    role: truthBuilder, tag: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## psk: optional external or resumption PSK; empty selects the no-PSK zeros.
   var
     Z: array[tls13SecretLen, byte]
@@ -71,7 +71,7 @@ proc initTls13EarlySecret*(psk: openArray[byte] = []): Tls13Secret {.
 
 proc buildTls13HandshakeSecrets*(psk, sharedSecret,
     helloTranscriptHash: openArray[byte]): Tls13HandshakeSecrets {.
-    role: truthBuilder, tag: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## psk/sharedSecret/helloTranscriptHash: secrets through ServerHello.
   var
     derived: Tls13Secret
@@ -95,7 +95,7 @@ proc buildTls13HandshakeSecrets*(psk, sharedSecret,
 
 proc buildTls13ApplicationSecrets*(handshakeSecret,
     serverFinishedTranscriptHash: openArray[byte]): Tls13ApplicationSecrets {.
-    role: truthBuilder, tag: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## handshakeSecret/serverFinishedTranscriptHash: application secret inputs.
   var
     derived: Tls13Secret
@@ -121,14 +121,14 @@ proc buildTls13ApplicationSecrets*(handshakeSecret,
     "exp master", serverFinishedTranscriptHash)
 
 proc deriveTls13FinishedKey*(trafficSecret: openArray[byte]): Tls13Secret {.
-    role: truthBuilder, tag: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## trafficSecret: handshake traffic secret for one endpoint.
   result = toTls13Secret(hkdfExpandLabelSha256(trafficSecret, "finished", [],
     tls13SecretLen))
 
 proc deriveTls13TrafficKeys*(trafficSecret: openArray[byte]):
     Tls13TrafficKeys {.role: truthBuilder,
-    tag: {tagTls, tagCryptoBoundary}.} =
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## trafficSecret: client or server traffic secret for one encryption level.
   var
     keyBytes: seq[byte] = @[]
@@ -150,18 +150,18 @@ proc deriveTls13TrafficKeys*(trafficSecret: openArray[byte]):
     i = i + 1
 
 proc nextTls13TrafficSecret*(trafficSecret: openArray[byte]): Tls13Secret {.
-    role: truthBuilder, tag: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## trafficSecret: current application traffic secret for KeyUpdate.
   result = toTls13Secret(hkdfExpandLabelSha256(trafficSecret, "traffic upd", [],
     tls13SecretLen))
 
-proc clearTls13Secret*(S: var Tls13Secret) {.role: stateController,
-    tag: {tagTls, tagCryptoBoundary}.} =
+proc clearTls13Secret*(S: var Tls13Secret) {.role: actor,
+    metaTags: {tagTls, tagCryptoBoundary}.} =
   ## S: secret material to clear after an encryption-level transition.
   secureClearBytes(S)
 
 proc clearTls13HandshakeSecrets*(S: var Tls13HandshakeSecrets) {.
-    role: stateController, tag: {tagTls, tagCryptoBoundary}.} =
+    role: actor, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## S: handshake schedule material that is no longer needed.
   clearTls13Secret(S.earlySecret)
   clearTls13Secret(S.handshakeSecret)
@@ -169,7 +169,7 @@ proc clearTls13HandshakeSecrets*(S: var Tls13HandshakeSecrets) {.
   clearTls13Secret(S.serverHandshakeTraffic)
 
 proc clearTls13ApplicationSecrets*(S: var Tls13ApplicationSecrets) {.
-    role: stateController, tag: {tagTls, tagCryptoBoundary}.} =
+    role: actor, metaTags: {tagTls, tagCryptoBoundary}.} =
   ## S: copied application schedule material after traffic-key installation.
   clearTls13Secret(S.masterSecret)
   clearTls13Secret(S.clientApplicationTraffic)

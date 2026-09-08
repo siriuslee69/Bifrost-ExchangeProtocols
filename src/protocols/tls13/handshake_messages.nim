@@ -14,13 +14,13 @@ type
     requestContext*: ByteSeq
     entries*: seq[Tls13CertificateEntry]
 
-proc addU16(A: var ByteSeq, v: uint16) {.role: stateController,
-    tag: {tagTls, tagWrite}.} =
+proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter,
+    metaTags: {tagTls, tagWrite}.} =
   A.add(byte(v shr 8))
   A.add(byte(v))
 
-proc addU24(A: var ByteSeq, v: int) {.role: stateController,
-    tag: {tagTls, tagWrite}.} =
+proc addU24(A: var ByteSeq, v: int) {.role: dataWriter,
+    metaTags: {tagTls, tagWrite}.} =
   if v < 0 or v > 0x00ff_ffff:
     raise newException(ValueError, "TLS uint24 value is invalid")
   A.add(byte(v shr 16))
@@ -28,21 +28,21 @@ proc addU24(A: var ByteSeq, v: int) {.role: stateController,
   A.add(byte(v))
 
 proc readU16(A: openArray[byte], o: int, v: var int): bool {.role: parser,
-    tag: {tagTls, tagRead}.} =
+    metaTags: {tagTls, tagRead}.} =
   if o < 0 or o > A.len - 2:
     return false
   v = (int(A[o]) shl 8) or int(A[o + 1])
   result = true
 
 proc readU24(A: openArray[byte], o: int, v: var int): bool {.role: parser,
-    tag: {tagTls, tagRead}.} =
+    metaTags: {tagTls, tagRead}.} =
   if o < 0 or o > A.len - 3:
     return false
   v = (int(A[o]) shl 16) or (int(A[o + 1]) shl 8) or int(A[o + 2])
   result = true
 
 proc encodeTls13EncryptedExtensions*(alpn: string = ""): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
   ## alpn: selected protocol or empty when none was negotiated.
   var
     extensions, body, value, list: ByteSeq = @[]
@@ -66,7 +66,7 @@ proc encodeTls13EncryptedExtensions*(alpn: string = ""): ByteSeq {.
 
 proc decodeTls13EncryptedExtensions*(A: openArray[byte]): tuple[
     ok: bool, alpn, err: string] {.role: parser,
-    tag: {tagTls, tagRead, tagValidation}.} =
+    metaTags: {tagTls, tagRead, tagValidation}.} =
   ## A: EncryptedExtensions body without handshake header.
   var
     total, kind, n, listLen, nameLen, o: int = 0
@@ -95,7 +95,7 @@ proc decodeTls13EncryptedExtensions*(A: openArray[byte]): tuple[
   result.ok = true
 
 proc encodeTls13Certificate*(C: Tls13CertificateMessage): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
   ## C: certificate request context and bounded DER chain.
   var
     list, body: ByteSeq = @[]
@@ -119,7 +119,7 @@ proc encodeTls13Certificate*(C: Tls13CertificateMessage): ByteSeq {.
 proc decodeTls13Certificate*(A: openArray[byte], maxChainBytes: int =
     tls13DefaultHandshakeLimit): tuple[ok: bool,
     message: Tls13CertificateMessage, err: string] {.role: parser,
-    tag: {tagTls, tagRead, tagValidation}.} =
+    metaTags: {tagTls, tagRead, tagValidation}.} =
   ## A/maxChainBytes: Certificate body and total DER resource bound.
   var
     contextLen, listLen, certLen, extLen, o, endList, totalDer: int = 0
@@ -164,7 +164,7 @@ proc decodeTls13Certificate*(A: openArray[byte], maxChainBytes: int =
 
 proc encodeTls13CertificateVerify*(signature: openArray[byte],
     scheme: uint16 = tls13SignatureEd25519): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
   ## signature/scheme: CertificateVerify signature and its algorithm code.
   var body: ByteSeq = @[]
   if scheme == tls13SignatureEd25519 and signature.len != 64:
@@ -179,7 +179,7 @@ proc encodeTls13CertificateVerify*(signature: openArray[byte],
 
 proc decodeTls13CertificateVerify*(A: openArray[byte]): tuple[
     ok: bool, signature: ByteSeq, scheme: uint16, err: string] {.role: parser,
-    tag: {tagTls, tagRead, tagValidation}.} =
+    metaTags: {tagTls, tagRead, tagValidation}.} =
   ## A: CertificateVerify body without handshake header.
   ## The scheme is returned so the caller can bind it to the certificate's
   ## key type; accepting a signature without that check would let a peer
@@ -207,7 +207,7 @@ proc decodeTls13CertificateVerify*(A: openArray[byte]): tuple[
   result.ok = true
 
 proc encodeTls13Finished*(verifyData: openArray[byte]): ByteSeq {.
-    role: dataWriter, tag: {tagTls, tagWrite}.} =
+    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
   ## verifyData: SHA-256 Finished verify_data.
   if verifyData.len != 32:
     raise newException(ValueError, "TLS Finished verify_data must be 32 bytes")

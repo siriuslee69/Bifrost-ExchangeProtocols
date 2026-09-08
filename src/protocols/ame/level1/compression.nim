@@ -20,7 +20,7 @@ const
     ## everything else here, so it tells the receiver how to undo the padding
     ## without telling an observer anything.
 
-proc defaultAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
+proc defaultAmeCompressionPolicy*(): AmeCompressionPolicy {.role: configurator.} =
   ## Conservative package-compression limits, with compression OFF.
   ##
   ## Compressing before encrypting leaks. The ciphertext is as long as the
@@ -39,14 +39,14 @@ proc defaultAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
   result.maxEncodedBytes = 16_777_216'u32
   result.maxExpansionRatio = 4096'u16
 
-proc paddedAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
+proc paddedAmeCompressionPolicy*(): AmeCompressionPolicy {.role: configurator.} =
   ## No compression, but every payload rounded up to whole 64-byte blocks.
   ## Worth it on its own when the SIZE of a stored package would say what it
   ## is, even though nothing about it compresses.
   result = defaultAmeCompressionPolicy()
   result.padding = apadBlock64
 
-proc compressedAmeCompressionPolicy*(): AmeCompressionPolicy {.role: wrapper.} =
+proc compressedAmeCompressionPolicy*(): AmeCompressionPolicy {.role: configurator.} =
   ## The same limits with Eir run-length compression switched on, and padding
   ## with it. Read the warning on `defaultAmeCompressionPolicy` first: padding
   ## blunts the length leak, it does not delete it. A payload that compresses

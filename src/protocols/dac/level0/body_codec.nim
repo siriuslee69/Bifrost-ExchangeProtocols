@@ -6,13 +6,13 @@ import ../../types
 import ../types
 import ../../../analysis_pragmas
 
-proc appendDacU16*(dst: var ByteSeq, v: uint16) {.role: stateController.} =
+proc appendDacU16*(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint16 to append.
   dst.add(uint8(v and 0xff'u16))
   dst.add(uint8((v shr 8) and 0xff'u16))
 
-proc appendDacU32*(dst: var ByteSeq, v: uint32) {.role: stateController.} =
+proc appendDacU32*(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint32 to append.
   dst.add(uint8(v and 0xff'u32))
@@ -20,7 +20,7 @@ proc appendDacU32*(dst: var ByteSeq, v: uint32) {.role: stateController.} =
   dst.add(uint8((v shr 16) and 0xff'u32))
   dst.add(uint8((v shr 24) and 0xff'u32))
 
-proc appendDacU64*(dst: var ByteSeq, v: uint64) {.role: stateController.} =
+proc appendDacU64*(dst: var ByteSeq, v: uint64) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint64 to append.
   var
@@ -29,13 +29,13 @@ proc appendDacU64*(dst: var ByteSeq, v: uint64) {.role: stateController.} =
     dst.add(uint8((v shr (8 * i)) and 0xff'u64))
     i = i + 1
 
-proc appendDacBytes*(dst: var ByteSeq, A: openArray[uint8]) {.role: stateController.} =
+proc appendDacBytes*(dst: var ByteSeq, A: openArray[uint8]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## A: byte range to append.
   for b in A:
     dst.add(b)
 
-proc appendDacZeroBytes*(dst: var ByteSeq, count: int) {.role: stateController.} =
+proc appendDacZeroBytes*(dst: var ByteSeq, count: int) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## count: number of zero bytes to append.
   var

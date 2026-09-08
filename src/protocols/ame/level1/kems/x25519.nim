@@ -21,7 +21,7 @@ proc requireX25519Slot(a: AmeKemAlgorithm) {.role: parser.} =
     raise newException(ValueError,
       "AME KEM slot is not X25519: " & ameKemName(a))
 
-proc x25519AmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc x25519AmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: the X25519 slot to key.
   requireX25519Slot(a)
   assignAmeKeypair(tyr_x25519.x25519TyrKeypair())

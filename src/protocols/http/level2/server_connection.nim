@@ -50,14 +50,14 @@ type
     hekError,         ## malformed input; `response` holds what to send
     hekUpgrade        ## request asked to switch protocols
 
-  HttpEvent* {.role: truthState, tag: {tagProtocol, tagNetworkSurface}.} =
+  HttpEvent* {.role: truthState, metaTags: {tagProtocol, tagNetworkSurface}.} =
       object
     kind*: HttpEventKind
     request*: HttpRequest
     response*: HttpResponse
       ## Pre-built reply for `hekError` and `hekContinue`.
 
-  HttpServerLimits* {.role: configurator, tag: {tagProtocol}.} = object
+  HttpServerLimits* {.role: configurator, metaTags: {tagProtocol}.} = object
     maxBodyBytes*: int64
       ## Largest single request body.
     maxRequestsPerConnection*: int
@@ -66,7 +66,7 @@ type
       ## slot forever.
 
   HttpServerConnection* {.role: memory,
-      tag: {tagProtocol, tagNetworkSurface}.} = ref object
+      metaTags: {tagProtocol, tagNetworkSurface}.} = ref object
     ## A reference type on purpose: an async server holds one of these
     ## across every suspension point, and a `var` parameter cannot cross
     ## an `await`.
@@ -80,21 +80,21 @@ type
     headOnly: bool
       ## Current request was a HEAD, so the body must be suppressed.
 
-  HttpFeedOutcome* {.role: truthState, tag: {tagProtocol, tagParsing}.} =
+  HttpFeedOutcome* {.role: truthState, metaTags: {tagProtocol, tagParsing}.} =
       object
     events*: seq[HttpEvent]
     consumed*: int
       ## Input bytes used. Leftovers belong to the next feed.
 
 proc defaultHttpServerLimits*(): HttpServerLimits {.role: configurator,
-    tag: {tagProtocol}.} =
+    metaTags: {tagProtocol}.} =
   ## Conservative limits suitable for a public listener.
   result.maxBodyBytes = httpDefaultMaxBodyBytes
   result.maxRequestsPerConnection = 1000
 
 proc initHttpServerConnection*(L: HttpServerLimits =
     defaultHttpServerLimits()): HttpServerConnection {.role: truthBuilder,
-    tag: {tagProtocol, tagNetworkSurface}.} =
+    metaTags: {tagProtocol, tagNetworkSurface}.} =
   ## L: size and count limits applied to every request on this connection.
   result = HttpServerConnection()
   result.state = hcsReading
@@ -107,7 +107,7 @@ proc initHttpServerConnection*(L: HttpServerLimits =
 
 proc feedHttpConnection*(C: HttpServerConnection;
     A: openArray[byte]): HttpFeedOutcome {.role: metaOrchestrator,
-    tag: {tagProtocol, tagParsing, tagNetworkSurface}.} =
+    metaTags: {tagProtocol, tagParsing, tagNetworkSurface}.} =
   ## C/A: connection state and the next bytes read from the transport.
   ##
   ## Drains as many complete requests out of `A` as it holds. Pipelined
@@ -161,7 +161,7 @@ proc feedHttpConnection*(C: HttpServerConnection;
 
 proc respondHttpConnection*(C: HttpServerConnection;
     R: HttpResponse): ByteSeq {.role: dataWriter,
-    tag: {tagProtocol, tagWrite, tagNetworkSurface}.} =
+    metaTags: {tagProtocol, tagWrite, tagNetworkSurface}.} =
   ## C/R: connection awaiting a reply, and the reply to serialise.
   ##
   ## Returns the complete bytes to write. Afterwards the connection is
@@ -189,7 +189,7 @@ proc respondHttpConnection*(C: HttpServerConnection;
 
 proc respondHttpInterim*(C: HttpServerConnection;
     R: HttpResponse): ByteSeq {.role: dataWriter,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## C/R: connection and an interim 1xx reply such as `100 Continue`.
   ##
   ## Interim replies do not end the message, so the connection stays
@@ -201,7 +201,7 @@ proc respondHttpInterim*(C: HttpServerConnection;
 
 proc beginHttpStreamResponse*(C: HttpServerConnection;
     R: HttpResponse): ByteSeq {.role: dataWriter,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## C/R: connection and the head of a response whose body is streamed.
   ##
   ## Use when the body length is not known up front. The head declares
@@ -213,14 +213,14 @@ proc beginHttpStreamResponse*(C: HttpServerConnection;
 
 proc streamHttpChunk*(C: HttpServerConnection;
     A: openArray[byte]): ByteSeq {.role: dataWriter,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## C/A: connection mid-stream and the next body piece.
   if C.headOnly or A.len == 0:
     return @[]
   result = encodeChunk(A)
 
 proc endHttpStreamResponse*(C: HttpServerConnection): ByteSeq {.
-    role: dataWriter, tag: {tagProtocol, tagWrite}.} =
+    role: dataWriter, metaTags: {tagProtocol, tagWrite}.} =
   ## C: connection whose streamed body is finished.
   result = (if C.headOnly: @[] else: encodeLastChunk())
   C.served = C.served + 1
@@ -232,7 +232,7 @@ proc endHttpStreamResponse*(C: HttpServerConnection): ByteSeq {.
 
 proc beginHttpFixedResponse*(C: HttpServerConnection; R: HttpResponse;
     bodyLen: int64): ByteSeq {.role: dataWriter,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## C/R/bodyLen: connection, response head, and exact body size.
   ##
   ## For a large file whose size is known: the head is written now and
@@ -244,7 +244,7 @@ proc beginHttpFixedResponse*(C: HttpServerConnection; R: HttpResponse;
     C.headOnly)
 
 proc finishHttpFixedResponse*(C: HttpServerConnection) {.role: actor,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## C: connection whose fixed-length body has been fully written.
   C.served = C.served + 1
   if C.keepAlive:
@@ -254,7 +254,7 @@ proc finishHttpFixedResponse*(C: HttpServerConnection) {.role: actor,
     C.state = hcsClosing
 
 proc acceptHttpUpgrade*(C: HttpServerConnection) {.role: actor,
-    tag: {tagProtocol, tagNetworkSurface}.} =
+    metaTags: {tagProtocol, tagNetworkSurface}.} =
   ## C: connection whose upgrade the caller accepted.
   ##
   ## After this the state machine stops interpreting bytes entirely and
@@ -262,7 +262,7 @@ proc acceptHttpUpgrade*(C: HttpServerConnection) {.role: actor,
   C.state = hcsUpgraded
 
 proc httpConnectionAwaitingBody*(C: HttpServerConnection): bool {.
-    role: parser, tag: {tagProtocol, tagRead}.} =
+    role: parser, metaTags: {tagProtocol, tagRead}.} =
   ## C: connection to ask about the message currently being read.
   ##
   ## True once the head is parsed and only body bytes are outstanding.
@@ -271,7 +271,7 @@ proc httpConnectionAwaitingBody*(C: HttpServerConnection): bool {.
   C.state == hcsReading and C.parser.state == hpsBody
 
 proc httpConnectionInMessage*(C: HttpServerConnection): bool {.role: parser,
-    tag: {tagProtocol, tagRead}.} =
+    metaTags: {tagProtocol, tagRead}.} =
   ## C: connection to ask whether a partial message is buffered.
   ##
   ## True when some bytes of a request have arrived but it is not yet
@@ -280,11 +280,11 @@ proc httpConnectionInMessage*(C: HttpServerConnection): bool {.role: parser,
     (httpParserHasPartialHead(C.parser) or C.parser.state == hpsBody)
 
 proc httpConnectionShouldClose*(C: HttpServerConnection): bool {.role: parser,
-    tag: {tagProtocol, tagRead}.} =
+    metaTags: {tagProtocol, tagRead}.} =
   ## C: connection to test after a response was flushed.
   C.state in {hcsClosing, hcsClosed}
 
 proc httpConnectionIsUpgraded*(C: HttpServerConnection): bool {.role: parser,
-    tag: {tagProtocol, tagRead}.} =
+    metaTags: {tagProtocol, tagRead}.} =
   ## C: connection to test for a completed protocol switch.
   C.state == hcsUpgraded

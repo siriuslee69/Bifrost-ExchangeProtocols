@@ -81,7 +81,7 @@ type
     gb3Sequential = 0x00'u8,
     gb3MemoryMixed = 0x01'u8
 
-  Gb3KdfConfig* {.role: configurator, tag: {tagFomke, tagKdf,
+  Gb3KdfConfig* {.role: configurator, metaTags: {tagFomke, tagKdf,
       tagTypes}.} = object
     rounds*: uint32
     blockIndex*: uint64
@@ -98,19 +98,19 @@ type
     flLane1 = 0x01'u8,
     flLane2 = 0x02'u8
 
-  FomkeChainState* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeChainState* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     chainKey*: ByteSeq
     nextIndex*: uint64
 
-  FomkeSkippedKey* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeSkippedKey* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     epoch*: uint32
     index*: uint64
     lane*: FomkeLane
     keyMaterial*: ByteSeq
 
-  FomkeUpgradeCommit* {.role: truthState, tag: {tagExchange, tagFomke,
+  FomkeUpgradeCommit* {.role: truthState, metaTags: {tagExchange, tagFomke,
       tagTypes}.} = object
     requestId*: uint32
     baseEpoch*: uint32
@@ -122,7 +122,7 @@ type
     generations*: array[ameMaxAlgorithmSlots, uint32]
     confirmationTag*: ByteSeq
 
-  FomkePendingUpgrade* {.role: truthState, tag: {tagCryptoBoundary,
+  FomkePendingUpgrade* {.role: truthState, metaTags: {tagCryptoBoundary,
       tagExchange, tagFomke, tagTypes}.} = object
     active*: bool
     commit*: FomkeUpgradeCommit
@@ -132,7 +132,7 @@ type
   ## One message's worth of work done ahead of time. `material` is the whole
   ## derived key block for that message: nonce first, then one key per
   ## switched-on cipher slot, then one per switched-on authenticator slot.
-  FomkePreparedSendEntry* {.role: memory, tag: {tagCryptoBoundary, tagFomke,
+  FomkePreparedSendEntry* {.role: memory, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     epoch*: uint32
     index*: uint64
@@ -140,7 +140,7 @@ type
     material*: ByteSeq
     nextChainKey*: ByteSeq
 
-  FomkeSendCache* {.role: memory, tag: {tagCryptoBoundary, tagFomke,
+  FomkeSendCache* {.role: memory, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     epoch*: uint32
     lane*: FomkeLane
@@ -149,7 +149,7 @@ type
     nextEntry*: int
     entries*: seq[FomkePreparedSendEntry]
 
-  FomkeState* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeState* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     role*: FomkeRole
     epoch*: uint32
@@ -168,7 +168,7 @@ type
     kdf*: Gb3KdfConfig
     pending*: FomkePendingUpgrade
 
-  FomkeMessage* {.role: truthState, tag: {tagFomke, tagPacket,
+  FomkeMessage* {.role: truthState, metaTags: {tagFomke, tagPacket,
       tagTypes}.} = object
     epoch*: uint32
     index*: uint64
@@ -177,26 +177,26 @@ type
     authTag*: ByteSeq
     ciphertext*: ByteSeq
 
-  FomkeOpenResult* {.role: truthState, tag: {tagFomke, tagTypes}.} = object
+  FomkeOpenResult* {.role: truthState, metaTags: {tagFomke, tagTypes}.} = object
     ok*: bool
     payload*: ByteSeq
     err*: string
 
-  FomkeCheckpoint* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeCheckpoint* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     ok*: bool
     state*: FomkeState
     counter*: uint64
     err*: string
 
-  FomkeDurableMessage* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeDurableMessage* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     ok*: bool
     message*: FomkeMessage
     checkpointCounter*: uint64
     err*: string
 
-  FomkeDurableOpen* {.role: truthState, tag: {tagCryptoBoundary, tagFomke,
+  FomkeDurableOpen* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
       tagTypes}.} = object
     ok*: bool
     payload*: ByteSeq

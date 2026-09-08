@@ -41,7 +41,7 @@ proc recvAmeTcp*(sock: Socket, S: var AmeSession, timeoutMs: int = 4000,
 proc wrapAmeTcpClient*(sock: Socket, S: AmeSession,
     remote: transport_types.TcpAddress = default(transport_types.TcpAddress),
     tls: transport_types.TlsConfig = default(transport_types.TlsConfig)):
-    AmeTcpClient {.role: wrapper.} =
+    AmeTcpClient {.role: truthBuilder.} =
   ## sock/S/remote/tls: caller-owned connected socket and validated AME state.
   if sock == nil:
     raise newException(ValueError, "AME TCP client socket is nil")

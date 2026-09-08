@@ -73,7 +73,7 @@ proc frameFlagsValid(flags: uint8): bool {.role: parser.} =
 
 proc initAmeFrameHeader*(kind: AmePacketKind, messageClass: AmeMessageClass,
     flags: uint8, sessionId: uint64, rootLaneId, laneId,
-    sequence: uint32): AmeFrameHeader {.role: wrapper.} =
+    sequence: uint32): AmeFrameHeader {.role: configurator.} =
   ## kind/messageClass/flags: what the frame is, what its payload is for, and
   ## what was done to that payload before it was sealed.
   ## session/lane/sequence: exact frame metadata. There is no payload length
@@ -94,7 +94,7 @@ proc initAmeFrameHeader*(kind: AmePacketKind, messageClass: AmeMessageClass,
   result.sequence = sequence
 
 proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## h: validated AME2 fixed header.
   var i: int = 0
   if h.magic != ameMagic or h.formatVersion != ameFormatVersion:
@@ -144,7 +144,7 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
   result.sequence = readU32(A, 22)
 
 proc encodeAmeFrame*(h: AmeFrameHeader,
-    payload: openArray[uint8]): ByteSeq {.role: stateController.} =
+    payload: openArray[uint8]): ByteSeq {.role: dataWriter.} =
   ## h/payload: header and exact payload bytes.
   requireAmeU32Len(payload.len, "frame payload")
   result = encodeAmeFrameHeader(h)
@@ -153,7 +153,7 @@ proc encodeAmeFrame*(h: AmeFrameHeader,
 proc encodeAmeFrame*(kind: AmePacketKind, messageClass: AmeMessageClass,
     flags: uint8, sessionId: uint64, rootLaneId, laneId,
     sequence: uint32, payload: openArray[uint8]): ByteSeq {.
-    role: stateController.} =
+    role: dataWriter.} =
   ## kind/messageClass/flags/session/lane/sequence/payload: complete frame.
   var h: AmeFrameHeader
   requireAmeU32Len(payload.len, "frame payload")

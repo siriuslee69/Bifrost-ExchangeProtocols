@@ -40,7 +40,7 @@ const
 
 type
   HttpRequestParser* {.role: memory,
-      tag: {tagProtocol, tagParsing, tagNetworkSurface}.} = object
+      metaTags: {tagProtocol, tagParsing, tagNetworkSurface}.} = object
     state*: HttpParseState
     request*: HttpRequest
     err*: HttpParseError
@@ -53,7 +53,7 @@ type
     chunked: ChunkedDecoder
     maxBodyBytes: int64
 
-  HttpFeedResult* {.role: truthState, tag: {tagProtocol, tagParsing}.} = object
+  HttpFeedResult* {.role: truthState, metaTags: {tagProtocol, tagParsing}.} = object
     ok*: bool
     consumed*: int
     complete*: bool
@@ -61,7 +61,7 @@ type
     errMsg*: string
 
 proc initHttpRequestParser*(maxBodyBytes: int64 = httpDefaultMaxBodyBytes):
-    HttpRequestParser {.role: truthBuilder, tag: {tagProtocol, tagParsing}.} =
+    HttpRequestParser {.role: truthBuilder, metaTags: {tagProtocol, tagParsing}.} =
   ## maxBodyBytes: largest request body accepted before a 413.
   result.state = hpsRequestLine
   result.err = hpeNone
@@ -76,7 +76,7 @@ proc initHttpRequestParser*(maxBodyBytes: int64 = httpDefaultMaxBodyBytes):
 
 proc failParse(P: var HttpRequestParser; e: HttpParseError;
     m: string): HttpFeedResult {.role: actor,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## P/e/m: parser to move into the error state, reason code, message.
   P.state = hpsError
   P.err = e
@@ -85,7 +85,7 @@ proc failParse(P: var HttpRequestParser; e: HttpParseError;
     err: e, errMsg: m)
 
 proc parseContentLengthValue(v: string): tuple[ok: bool, n: int64] {.
-    role: parser, tag: {tagProtocol, tagValidation}.} =
+    role: parser, metaTags: {tagProtocol, tagValidation}.} =
   ## v: raw `Content-Length` value to read as a plain decimal count.
   ##
   ## No sign, no whitespace, no hex, at least one digit. `+0` and ` 5`
@@ -105,7 +105,7 @@ proc parseContentLengthValue(v: string): tuple[ok: bool, n: int64] {.
   result = (true, n)
 
 proc splitHeadLines(head: string): seq[string] {.role: parser,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## head: head block without its trailing blank line.
   ##
   ## Splits on CRLF only. A bare LF is left inside the line, where the
@@ -126,7 +126,7 @@ proc splitHeadLines(head: string): seq[string] {.role: parser,
     result.add(head[start .. ^1])
 
 proc parseRequestLine(P: var HttpRequestParser; l: string): HttpParseError {.
-    role: parser, tag: {tagProtocol, tagParsing, tagValidation}.} =
+    role: parser, metaTags: {tagProtocol, tagParsing, tagValidation}.} =
   ## P/l: parser to fill and the first line of the request.
   var
     sp1: int = 0
@@ -167,7 +167,7 @@ proc parseRequestLine(P: var HttpRequestParser; l: string): HttpParseError {.
 
 proc parseHeaderLines(P: var HttpRequestParser;
     L: seq[string]): HttpParseError {.role: parser,
-    tag: {tagProtocol, tagParsing, tagValidation}.} =
+    metaTags: {tagProtocol, tagParsing, tagValidation}.} =
   ## P/L: parser to fill and the header lines after the request line.
   var
     i: int = 1
@@ -199,7 +199,7 @@ proc parseHeaderLines(P: var HttpRequestParser;
   result = hpeNone
 
 proc resolveBodyFraming(P: var HttpRequestParser): HttpParseError {.
-    role: truthBuilder, tag: {tagProtocol, tagValidation}.} =
+    role: truthBuilder, metaTags: {tagProtocol, tagValidation}.} =
   ## P: parser whose headers are loaded and whose body mode is unknown.
   ##
   ## Decides, once and unambiguously, how long the body is.
@@ -245,7 +245,7 @@ proc resolveBodyFraming(P: var HttpRequestParser): HttpParseError {.
   result = hpeNone
 
 proc resolveConnectionPolicy(P: var HttpRequestParser) {.role: truthBuilder,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## P: parser whose headers are loaded.
   ##
   ## HTTP/1.1 keeps the connection open unless told otherwise; HTTP/1.0
@@ -267,7 +267,7 @@ proc resolveConnectionPolicy(P: var HttpRequestParser) {.role: truthBuilder,
     P.request.upgradeProtocol = trimFieldValue(upgrade)
 
 proc validateHost(P: var HttpRequestParser): HttpParseError {.role: sanitizer,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## P: parser whose headers are loaded.
   ##
   ## HTTP/1.1 requires exactly one Host. Zero makes virtual hosting
@@ -296,7 +296,7 @@ proc validateHost(P: var HttpRequestParser): HttpParseError {.role: sanitizer,
   result = hpeNone
 
 proc parseHead(P: var HttpRequestParser): HttpParseError {.
-    role: orchestrator, tag: {tagProtocol, tagParsing, tagValidation}.} =
+    role: orchestrator, metaTags: {tagProtocol, tagParsing, tagValidation}.} =
   ## P: parser holding a complete head block in `P.head`.
   var
     L: seq[string] = @[]
@@ -321,7 +321,7 @@ proc parseHead(P: var HttpRequestParser): HttpParseError {.
 
 proc feedHead(P: var HttpRequestParser; A: openArray[byte];
     i: var int): HttpFeedResult {.role: orchestrator,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## P/A/i: parser, input bytes, and read cursor advanced in place.
   ##
   ## Accumulates until the blank line that ends the head, then parses it.
@@ -368,7 +368,7 @@ proc feedHead(P: var HttpRequestParser; A: openArray[byte];
 
 proc feedBody(P: var HttpRequestParser; A: openArray[byte];
     i: var int): HttpFeedResult {.role: orchestrator,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## P/A/i: parser, input bytes, and read cursor advanced in place.
   var
     take: int = 0
@@ -401,7 +401,7 @@ proc feedBody(P: var HttpRequestParser; A: openArray[byte];
 
 proc feedHttpRequest*(P: var HttpRequestParser;
     A: openArray[byte]): HttpFeedResult {.role: metaOrchestrator,
-    tag: {tagProtocol, tagParsing, tagNetworkSurface}.} =
+    metaTags: {tagProtocol, tagParsing, tagNetworkSurface}.} =
   ## P/A: parser state and the next bytes read from the transport.
   ##
   ## Returns how many bytes were used and whether a whole request is
@@ -435,7 +435,7 @@ proc feedHttpRequest*(P: var HttpRequestParser;
   )
 
 proc httpParserHasPartialHead*(P: HttpRequestParser): bool {.role: parser,
-    tag: {tagProtocol, tagRead}.} =
+    metaTags: {tagProtocol, tagRead}.} =
   ## P: parser to ask whether a half-received head is buffered.
   ##
   ## True when head bytes have arrived but the blank-line terminator has
@@ -444,7 +444,7 @@ proc httpParserHasPartialHead*(P: HttpRequestParser): bool {.role: parser,
   P.head.len > 0 and P.state in {hpsRequestLine, hpsHeaders}
 
 proc resetHttpRequestParser*(P: var HttpRequestParser) {.role: actor,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## P: parser to return to a clean state for the next keep-alive request.
   ##
   ## The body cap is carried over; everything else starts empty so no

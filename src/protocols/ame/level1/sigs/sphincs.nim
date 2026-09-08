@@ -19,7 +19,7 @@ proc sphincsVariant(a: AmeSignatureAlgorithm): tyr_sphincs.SphincsVariant {.
       "AME signature slot is not SPHINCS+: " & ameSigName(a))
 
 proc sphincsAmeKeypair*(a: AmeSignatureAlgorithm,
-    seed: openArray[byte] = []): AmeSigKeypair {.role: wrapper.} =
+    seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: SPHINCS+ slot, and optional fixed randomness.
   assignAmeSigKeypair(tyr_sphincs.sphincsTyrKeypair(sphincsVariant(a), @seed))
 

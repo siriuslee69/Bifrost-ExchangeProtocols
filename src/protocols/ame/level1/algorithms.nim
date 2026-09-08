@@ -129,7 +129,7 @@ proc defaultAmeKemSlots*(): seq[AmeKemAlgorithm] {.role: configurator.} =
 
 ## ╭⟢ keypair
 
-proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: exact KEM slot, named by a value only known while running.
   case ameKemFamily(a)
   of akfX25519:
@@ -151,7 +151,7 @@ proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
     when akfMcEliece in ameKemsBuilt: result = mcelieceAmeKeypair(a)
     else: raiseExcludedKem(a)
 
-proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: wrapper.} =
+proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: exact KEM slot, named by a constant, so the family is settled while
   ## compiling and no branch survives into the binary.
   when not ameKemBuilt(a):

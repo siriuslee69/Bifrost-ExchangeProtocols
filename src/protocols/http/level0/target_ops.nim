@@ -26,7 +26,7 @@ import ../types
 import ../../../analysis_pragmas
 
 proc hexDigitValue(c: char): int {.inline, role: parser,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## c: single hex digit; returns -1 when it is not one.
   case c
   of '0'..'9': ord(c) - ord('0')
@@ -35,7 +35,7 @@ proc hexDigitValue(c: char): int {.inline, role: parser,
   else: -1
 
 proc percentDecode*(s: string): tuple[ok: bool, value: string] {.
-    role: sanitizer, tag: {tagProtocol, tagParsing, tagValidation}.} =
+    role: sanitizer, metaTags: {tagProtocol, tagParsing, tagValidation}.} =
   ## s: percent-encoded text to decode.
   ##
   ## Fails closed on a truncated or non-hex escape rather than passing
@@ -69,7 +69,7 @@ proc percentDecode*(s: string): tuple[ok: bool, value: string] {.
   result = (true, t)
 
 proc percentDecodeForm*(s: string): tuple[ok: bool, value: string] {.
-    role: sanitizer, tag: {tagProtocol, tagParsing}.} =
+    role: sanitizer, metaTags: {tagProtocol, tagParsing}.} =
   ## s: `application/x-www-form-urlencoded` text to decode.
   ##
   ## Same as `percentDecode` except `+` means a space, which is true in
@@ -86,7 +86,7 @@ proc percentDecodeForm*(s: string): tuple[ok: bool, value: string] {.
   result = percentDecode(swapped)
 
 proc splitHttpTarget*(t: string): tuple[path: string, query: string] {.
-    role: parser, tag: {tagProtocol, tagParsing}.} =
+    role: parser, metaTags: {tagProtocol, tagParsing}.} =
   ## t: raw request-target to split at its first `?`.
   ##
   ## A `#fragment` never reaches a server, but a hostile client can send
@@ -111,7 +111,7 @@ proc splitHttpTarget*(t: string): tuple[path: string, query: string] {.
   result = (t[0 ..< cut], t[cut + 1 .. ^1])
 
 proc stripAbsoluteForm*(p: string): string {.role: sanitizer,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## p: target path that may be in absolute form.
   ##
   ## Proxies receive `GET http://host/path HTTP/1.1`. An origin server
@@ -133,7 +133,7 @@ proc stripAbsoluteForm*(p: string): string {.role: sanitizer,
   result = p[slash .. ^1]
 
 proc normalizeHttpPath*(p: string): tuple[ok: bool, path: string] {.
-    role: sanitizer, tag: {tagProtocol, tagValidation}.} =
+    role: sanitizer, metaTags: {tagProtocol, tagValidation}.} =
   ## p: already percent-decoded path to normalise.
   ##
   ## Collapses repeated separators, drops `.`, and pops one segment for
@@ -190,7 +190,7 @@ proc normalizeHttpPath*(p: string): tuple[ok: bool, path: string] {.
   result = (true, seg)
 
 proc parseQueryParams*(q: string): seq[HttpQueryParam] {.role: parser,
-    tag: {tagProtocol, tagParsing}.} =
+    metaTags: {tagProtocol, tagParsing}.} =
   ## q: raw query string, `?` already removed.
   ##
   ## A key with no `=` yields an empty value. Pairs that fail to decode
@@ -224,7 +224,7 @@ proc parseQueryParams*(q: string): seq[HttpQueryParam] {.role: parser,
     i = i + 1
 
 proc getQueryParam*(P: seq[HttpQueryParam]; k: string;
-    d: string = ""): string {.role: parser, tag: {tagProtocol, tagRead}.} =
+    d: string = ""): string {.role: parser, metaTags: {tagProtocol, tagRead}.} =
   ## P/k/d: parsed parameters, key to find, value returned when absent.
   var
     i: int = 0
@@ -236,7 +236,7 @@ proc getQueryParam*(P: seq[HttpQueryParam]; k: string;
 
 proc parseHttpTarget*(t: string): tuple[ok: bool, path: string, query: string,
     params: seq[HttpQueryParam]] {.role: orchestrator,
-    tag: {tagProtocol, tagParsing, tagValidation}.} =
+    metaTags: {tagProtocol, tagParsing, tagValidation}.} =
   ## t: raw request-target from the request line.
   ##
   ## Runs the whole split -> decode -> normalise pipeline and returns the

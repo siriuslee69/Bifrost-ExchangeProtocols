@@ -26,7 +26,7 @@ import ../level0/header_ops
 import ../../../analysis_pragmas
 
 proc httpReasonPhrase*(s: int): string {.role: parser,
-    tag: {tagProtocol, tagFormatting}.} =
+    metaTags: {tagProtocol, tagFormatting}.} =
   ## s: status code to name.
   case s
   of 100: "Continue"
@@ -70,7 +70,7 @@ proc httpReasonPhrase*(s: int): string {.role: parser,
   else: "Unknown"
 
 proc httpStatusAllowsBody*(s: int): bool {.role: parser,
-    tag: {tagProtocol, tagValidation}.} =
+    metaTags: {tagProtocol, tagValidation}.} =
   ## s: status code to test.
   ##
   ## 1xx, 204, and 304 must not carry a body. Sending one anyway makes
@@ -83,19 +83,19 @@ proc httpStatusAllowsBody*(s: int): bool {.role: parser,
   result = true
 
 proc httpDateNow*(): string {.role: dataFetcher,
-    tag: {tagProtocol, tagFormatting}.} =
+    metaTags: {tagProtocol, tagFormatting}.} =
   ## Current time as an RFC 7231 IMF-fixdate in GMT.
   ##
   ##   Sun, 27 Jul 2026 21:51:03 GMT
   result = utc(now()).format("ddd, dd MMM yyyy HH:mm:ss") & " GMT"
 
 proc httpDateFromTime*(t: Time): string {.role: parser,
-    tag: {tagProtocol, tagFormatting}.} =
+    metaTags: {tagProtocol, tagFormatting}.} =
   ## t: instant to render as an IMF-fixdate in GMT.
   result = utc(t).format("ddd, dd MMM yyyy HH:mm:ss") & " GMT"
 
 proc appendStatusLine(B: var ByteSeq; v: HttpVersion; s: int;
-    reason: string) {.role: dataWriter, tag: {tagProtocol, tagWrite}.} =
+    reason: string) {.role: dataWriter, metaTags: {tagProtocol, tagWrite}.} =
   ## B/v/s/reason: output buffer, version, status code, reason phrase.
   var
     t: string = ""
@@ -108,7 +108,7 @@ proc appendStatusLine(B: var ByteSeq; v: HttpVersion; s: int;
   B.add(toHttpBytes(t))
 
 proc appendHeaderLine(B: var ByteSeq; n: string; v: string) {.
-    role: dataWriter, tag: {tagProtocol, tagWrite}.} =
+    role: dataWriter, metaTags: {tagProtocol, tagWrite}.} =
   ## B/n/v: output buffer, field name, field value.
   ##
   ## Silently drops a field that would inject a line break. A caller that
@@ -125,7 +125,7 @@ proc appendHeaderLine(B: var ByteSeq; n: string; v: string) {.
 
 proc encodeResponseHead*(R: HttpResponse; v: HttpVersion; keepAlive: bool;
     bodyLen: int64; chunked: bool; headOnly: bool): ByteSeq {.
-    role: dataWriter, tag: {tagProtocol, tagWrite, tagNetworkSurface}.} =
+    role: dataWriter, metaTags: {tagProtocol, tagWrite, tagNetworkSurface}.} =
   ## R/v/keepAlive/bodyLen/chunked/headOnly: response, negotiated
   ## version, whether the connection survives, body size when known,
   ## whether chunked framing is used, and whether this answers a HEAD.
@@ -162,7 +162,7 @@ proc encodeResponseHead*(R: HttpResponse; v: HttpVersion; keepAlive: bool;
 
 proc newHttpResponse*(status: int; body: ByteSeq = @[];
     contentType: string = ""): HttpResponse {.role: truthBuilder,
-    tag: {tagProtocol, tagWrite}.} =
+    metaTags: {tagProtocol, tagWrite}.} =
   ## status/body/contentType: status code, body bytes, media type.
   result.status = status
   result.body = body
@@ -172,12 +172,12 @@ proc newHttpResponse*(status: int; body: ByteSeq = @[];
 
 proc textResponse*(status: int; s: string;
     contentType: string = "text/plain; charset=utf-8"): HttpResponse {.
-    role: truthBuilder, tag: {tagProtocol, tagWrite}.} =
+    role: truthBuilder, metaTags: {tagProtocol, tagWrite}.} =
   ## status/s/contentType: status code, text body, media type.
   result = newHttpResponse(status, toHttpBytes(s), contentType)
 
 proc errorResponse*(status: int; detail: string = ""): HttpResponse {.
-    role: truthBuilder, tag: {tagProtocol, tagWrite}.} =
+    role: truthBuilder, metaTags: {tagProtocol, tagWrite}.} =
   ## status/detail: status code and an optional short explanation.
   ##
   ## Produces a small plain-text page. `detail` is echoed only when the

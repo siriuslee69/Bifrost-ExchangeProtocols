@@ -24,13 +24,13 @@ const
 +------+----------------------+------------------------------------------------+
 """
 
-proc appendDacU16(dst: var ByteSeq, v: uint16) {.role: stateController.} =
+proc appendDacU16(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint16 to append.
   dst.add(uint8(v and 0xff'u16))
   dst.add(uint8((v shr 8) and 0xff'u16))
 
-proc appendDacU32(dst: var ByteSeq, v: uint32) {.role: stateController.} =
+proc appendDacU32(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint32 to append.
   dst.add(uint8(v and 0xff'u32))
@@ -38,7 +38,7 @@ proc appendDacU32(dst: var ByteSeq, v: uint32) {.role: stateController.} =
   dst.add(uint8((v shr 16) and 0xff'u32))
   dst.add(uint8((v shr 24) and 0xff'u32))
 
-proc appendDacU64(dst: var ByteSeq, v: uint64) {.role: stateController.} =
+proc appendDacU64(dst: var ByteSeq, v: uint64) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## v: little-endian uint64 to append.
   var
@@ -67,7 +67,7 @@ proc readDacU64(A: openArray[uint8], o: int): uint64 {.role: parser.} =
     result = result or (uint64(A[o + i]) shl (8 * i))
     i = i + 1
 
-proc dacBodyLenModeForPath*(p: DacPathLane): DacBodyLenMode {.role: wrapper.} =
+proc dacBodyLenModeForPath*(p: DacPathLane): DacBodyLenMode {.role: truthBuilder.} =
   ## p: path lane used to select body length width.
   case p
   of dplSuperCleanPath:
@@ -75,7 +75,7 @@ proc dacBodyLenModeForPath*(p: DacPathLane): DacBodyLenMode {.role: wrapper.} =
   else:
     result = dblU16
 
-proc dacHeaderLenForMode*(m: DacBodyLenMode): uint8 {.role: wrapper.} =
+proc dacHeaderLenForMode*(m: DacBodyLenMode): uint8 {.role: truthBuilder.} =
   ## m: body length width mode.
   case m
   of dblU32:
@@ -83,7 +83,7 @@ proc dacHeaderLenForMode*(m: DacBodyLenMode): uint8 {.role: wrapper.} =
   else:
     result = uint8(dacBaseHeaderLen)
 
-proc dacMaxBodyLenForMode*(m: DacBodyLenMode): uint32 {.role: wrapper.} =
+proc dacMaxBodyLenForMode*(m: DacBodyLenMode): uint32 {.role: truthBuilder.} =
   ## m: body length width mode.
   case m
   of dblU32:
@@ -121,7 +121,7 @@ proc dacMessageKindFromId*(id: uint8): DacMessageKind {.role: parser.} =
   else:
     result = dmkUnknown
 
-proc dacPathLaneName*(p: DacPathLane): string {.role: wrapper.} =
+proc dacPathLaneName*(p: DacPathLane): string {.role: truthBuilder.} =
   ## p: path lane to render.
   case p
   of dplCleanPath:
@@ -139,7 +139,7 @@ proc dacPathLaneName*(p: DacPathLane): string {.role: wrapper.} =
   of dplSuperCleanPath:
     result = "SuperCleanPath"
 
-proc dacTransferClassName*(c: DacTransferClass): string {.role: wrapper.} =
+proc dacTransferClassName*(c: DacTransferClass): string {.role: truthBuilder.} =
   ## c: transfer class to render.
   case c
   of dtcStatus:
@@ -155,7 +155,7 @@ proc dacTransferClassName*(c: DacTransferClass): string {.role: wrapper.} =
   of dtcRealtime:
     result = "Realtime"
 
-proc packDacFrameFlags*(f: DacFrameFlags): uint16 {.role: wrapper.} =
+proc packDacFrameFlags*(f: DacFrameFlags): uint16 {.role: truthBuilder.} =
   ## f: structured frame flags.
   if f.needsAck:
     result = result or 0x0001'u16
@@ -192,7 +192,7 @@ proc unpackDacFrameFlags*(bits: uint16): DacFrameFlags {.role: parser.} =
 
 proc initDacFrameHeader*(k: DacMessageKind, sessionId: uint64,
     laneId: uint32, epochId: uint16, sequence: uint32, bodyLen: uint32,
-    flags: DacFrameFlags): DacFrameHeader {.role: wrapper.} =
+    flags: DacFrameFlags): DacFrameHeader {.role: configurator.} =
   ## k/sessionId/laneId/epochId/sequence/bodyLen: fixed frame metadata.
   ## flags: structured flags to pack into the header.
   var
@@ -215,7 +215,7 @@ proc initDacFrameHeader*(k: DacMessageKind, sessionId: uint64,
 
 proc initDacSuperCleanFrameHeader*(k: DacMessageKind, sessionId: uint64,
     laneId: uint32, epochId: uint16, sequence: uint32, bodyLen: uint32,
-    flags: DacFrameFlags): DacFrameHeader {.role: wrapper.} =
+    flags: DacFrameFlags): DacFrameHeader {.role: configurator.} =
   ## k/sessionId/laneId/epochId/sequence/bodyLen: extended clean-path metadata.
   ## flags: structured flags to pack with ExtendedBodyLen forced on.
   var
@@ -266,7 +266,7 @@ proc validateDacFrameHeader*(h: DacFrameHeader): bool {.role: parser.} =
   result = true
 
 proc encodeDacFrame*(h: DacFrameHeader,
-    payload: openArray[uint8]): ByteSeq {.role: stateController.} =
+    payload: openArray[uint8]): ByteSeq {.role: dataWriter.} =
   ## h: DAC frame header.
   ## payload: body bytes to carry.
   var

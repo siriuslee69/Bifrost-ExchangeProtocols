@@ -39,7 +39,7 @@ type
 
 proc encodeTls13PlainAlert*(level: Tls13AlertLevel,
     description: Tls13AlertDescription): ByteSeq {.role: dataWriter,
-    tag: {tagTls, tagWrite}.} =
+    metaTags: {tagTls, tagWrite}.} =
   ## level/description: pre-key alert values for one plaintext alert record.
   var R: Tls13Record
   R.contentType = tctAlert
@@ -48,7 +48,7 @@ proc encodeTls13PlainAlert*(level: Tls13AlertLevel,
   result = encodeTls13Record(R)
 
 proc tls13AlertForError*(e: string): Tls13AlertDescription {.role: parser,
-    tag: {tagTls, tagValidation}.} =
+    metaTags: {tagTls, tagValidation}.} =
   ## e: internal validation failure reduced to a non-sensitive wire alert.
   if e.find("version") >= 0:
     return tadProtocolVersion

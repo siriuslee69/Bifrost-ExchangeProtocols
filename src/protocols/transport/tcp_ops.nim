@@ -14,7 +14,7 @@ import ../../analysis_pragmas
 const
   maxTcpFrameBytes* = 16_777_216'u32
 
-proc encodeLen32*(v: uint32): string {.role: wrapper.} =
+proc encodeLen32*(v: uint32): string {.role: helper.} =
   ## encodeLen32: encode len 32.
   result = newString(4)
   result[0] = char(int(v and 0xFF'u32))
@@ -50,7 +50,7 @@ type
     domain: Domain
 
 proc addResolvedTcpTarget(order: var seq[ResolvedTcpTarget], host: string,
-    d: Domain) {.role: stateController.} =
+    d: Domain) {.role: dataWriter.} =
   ## order: unique resolution order collected for one host name.
   ## host/d: newly resolved literal host and matching socket family.
   var
@@ -178,7 +178,7 @@ proc tcpDomainForHost(h: string): Domain {.role: helper.} =
   ## tcpDomainForHost: build TCP domain for host.
   result = resolvedTcpTargets(h)[0].domain
 
-proc formatTcpAddress*(a: TcpAddress): string {.role: wrapper.} =
+proc formatTcpAddress*(a: TcpAddress): string {.role: truthBuilder.} =
   ## formatTcpAddress: format TCP address.
   result = formatHostPort(a.host, a.port)
 

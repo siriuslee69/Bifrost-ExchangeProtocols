@@ -20,7 +20,7 @@ const
 
 proc initDacRepairChunk*(packageId: uint64, groupId: uint32,
     chunkId: uint16, source: DacRepairSource,
-    payload: ByteSeq): DacRepairChunk {.role: wrapper.} =
+    payload: ByteSeq): DacRepairChunk {.role: configurator.} =
   ## packageId/groupId/chunkId: repair identity.
   ## source: repair source/method.
   ## payload: repair bytes.
@@ -30,7 +30,7 @@ proc initDacRepairChunk*(packageId: uint64, groupId: uint32,
   result.source = source
   result.payload = copyDacBytes(payload)
 
-proc encodeDacRepairChunk*(c: DacRepairChunk): ByteSeq {.role: wrapper.} =
+proc encodeDacRepairChunk*(c: DacRepairChunk): ByteSeq {.role: helper.} =
   ## c: repair chunk body to encode.
   appendDacU64(result, c.packageId)
   appendDacU32(result, c.groupId)

@@ -40,7 +40,7 @@ proc initDacDefaults*(p: DacPathLane, c: DacTransferClass,
     parityShards, ackBatchChunks, ackMaxDelayMs, repairWaitMs: uint16,
     repairRounds: uint8,
     bodyLenMode: DacBodyLenMode = dblU16,
-    maxBodyLen: uint32 = uint32(high(uint16))): DacScenarioDefaults {.role: wrapper.} =
+    maxBodyLen: uint32 = uint32(high(uint16))): DacScenarioDefaults {.role: configurator.} =
   ## p/c/repair/ack: path, transfer, repair, and ACK policies.
   ## chunkBytes/dataShards/parityShards: frame and repair-group sizing.
   ## ackBatchChunks/ackMaxDelayMs: starting ACK batch size and time bound.
@@ -79,70 +79,70 @@ proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
     return
   result = d.parityShards > 0'u16 and d.repairRounds > 0'u8
 
-proc superCleanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc superCleanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class for same-room server or same-rack paths.
   result = initDacDefaults(dplSuperCleanPath, c, drmNone, damBatch, 32768'u16,
     64'u16, 0'u16, 256'u16, 25'u16, 25'u16, 1'u8,
     dblU32, dacSuperCleanMaxBodyLen)
 
-proc cleanLanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc cleanLanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplCleanPath, c, drmXor, damBatch, 1200'u16,
     32'u16, 1'u16, 64'u16, 100'u16, 75'u16, 2'u8)
 
-proc mobileDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc mobileDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplMobilePath, c, drmReedSolomon, damBatch,
     900'u16, 24'u16, 2'u16, 32'u16, 400'u16, 250'u16, 2'u8)
 
-proc meteredDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc meteredDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmTcpExact, damNackOnly,
     700'u16, 16'u16, 1'u16, 16'u16, 700'u16, 500'u16, 2'u8)
 
-proc thinDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc thinDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
     12'u16, 1'u16, 12'u16, 1000'u16, 700'u16, 2'u8)
 
-proc badSignalDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc badSignalDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
     768'u16, 16'u16, 4'u16, 16'u16, 500'u16, 350'u16, 3'u8)
 
-proc heavyLossDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc heavyLossDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damExplicit,
     512'u16, 12'u16, 6'u16, 8'u16, 300'u16, 200'u16, 3'u8)
 
-proc jitterDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc jitterDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
     1000'u16, 24'u16, 3'u16, 32'u16, 1200'u16, 900'u16, 3'u8)
 
-proc unstablePathDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc unstablePathDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
     768'u16, 16'u16, 3'u16, 16'u16, 500'u16, 300'u16, 3'u8)
 
-proc overloadedDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc overloadedDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
     8'u16, 1'u16, 8'u16, 1500'u16, 1000'u16, 1'u8)
 
-proc batterySaverDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+proc batterySaverDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
   ## c: vertical transfer class.
   result = initDacDefaults(dplMobilePath, c, drmXor, damBatch, 900'u16,
     16'u16, 1'u16, 64'u16, 2500'u16, 1000'u16, 1'u8)
 
-proc recoveryWeakDacDefaults*(): DacScenarioDefaults {.role: wrapper.} =
+proc recoveryWeakDacDefaults*(): DacScenarioDefaults {.role: configurator.} =
   ## recoveryWeakDacDefaults: initialize weak-network recovery defaults.
   result = initDacDefaults(dplRecoveryPath, dtcRecovery, drmReedSolomon,
     damVerified, 512'u16, 8'u16, 6'u16, 4'u16, 200'u16,
     150'u16, 4'u8)
 
 proc dacDefaultsForPath*(p: DacPathLane,
-    c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: wrapper.} =
+    c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: truthBuilder.} =
   ## p: path lane a policy decision landed on.
   ## c: transfer class to keep across the move.
   ## The path policy recommends a LANE; this is what turns that into the
