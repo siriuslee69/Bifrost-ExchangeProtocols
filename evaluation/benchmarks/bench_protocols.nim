@@ -5,6 +5,7 @@
 import std/[json, monotimes, os, strutils, times]
 
 import bifrost_exchange_protocols
+import ../../src/analysis_pragmas
 
 type
   BenchConfig = object
@@ -152,7 +153,7 @@ proc sampleWireHex(A: openArray[uint8], maxBytes: int = 8): string =
 
 proc initResult(name: string, cfg: BenchConfig, wireBytes: int,
     sampleBytes: openArray[uint8],
-    startedAt, endedAt: MonoTime): BenchResult =
+    startedAt, endedAt: MonoTime): BenchResult {.role: configurator.} =
   var
     elapsed: int64 = 0'i64
   elapsed = (endedAt - startedAt).inNanoseconds
@@ -441,7 +442,7 @@ proc initBenchFomke(a: AmeAuthPackage): FomkeState =
     a.current.tier, frInitiator)
 
 proc benchFomkeSeal(cfg: BenchConfig, layered: bool,
-    prepared: bool, name: string): BenchResult =
+    prepared: bool, name: string): BenchResult {.role: other.} =
   ## cfg/layered/prepared/name: one short-message send-path latency benchmark.
   var
     auth: AmeAuthPackage =
@@ -489,7 +490,7 @@ proc benchFomkeSeal(cfg: BenchConfig, layered: bool,
   clearFomkeState(state)
 
 proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
-    name: string): BenchResult =
+    name: string): BenchResult {.role: other.} =
   ## cfg/layered/name: one eight-message cache-build throughput benchmark.
   var
     auth: AmeAuthPackage =
@@ -562,7 +563,7 @@ proc ensureDir(path: string) =
   createDir(path)
 
 proc writeJsonResults(path: string, cfg: BenchConfig,
-    results: openArray[BenchResult]) =
+    results: openArray[BenchResult]) {.role: dataWriter.} =
   var
     root: JsonNode
     rows: JsonNode = newJArray()

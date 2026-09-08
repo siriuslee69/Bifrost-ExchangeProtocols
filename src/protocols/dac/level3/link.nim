@@ -75,7 +75,7 @@ type
   ## `renderDacFrame` for bare DAC1, or seal them through the AME carrier.
   ## payload: the finished package, set only on dlkPackageComplete.
   DacLinkStep* {.role: truthState.} = object
-    kind*: DacLinkEventKind
+    kind*: DacLinkEventKind   ## otter:latest
     messages*: seq[DacTaggedMessage]
     payload*: ByteSeq
     err*: string

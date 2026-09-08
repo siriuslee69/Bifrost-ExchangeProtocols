@@ -61,7 +61,7 @@ type
   ## send: sealed datagrams the caller must transmit to `peer`, in order.
   ## payload: a finished package, set only on adrPackageComplete.
   AmeDacRelayStep* {.role: truthState.} = object
-    kind*: AmeDacRelayEventKind
+    kind*: AmeDacRelayEventKind   ## otter:latest
     peer*: DacLinkKey
     send*: seq[ByteSeq]
     payload*: ByteSeq

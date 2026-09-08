@@ -20,6 +20,7 @@ import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/framing
+import ../../src/analysis_pragmas
 
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]
@@ -27,7 +28,7 @@ const
 proc exactLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(exactKems)
 
-proc exactTier(L: AmeSuiteLayout, id: uint32, kem: uint8): AmeMaskTier =
+proc exactTier(L: AmeSuiteLayout, id: uint32, kem: uint8): AmeMaskTier {.role: configurator.} =
   result = initAmeMaskTier(L, id, initAmeTierMasks(kem,
     occupiedAmeMask(L.ciphers.length), occupiedAmeMask(L.macs.length),
     occupiedAmeMask(L.hashes.length), occupiedAmeMask(L.signatures.length),
@@ -80,7 +81,7 @@ proc layeredUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
     path: AmeTierPath = initAmeTierPath(layout, [auth.current.tier, target])
   result = initAmeSession(auth, path, peerTrustRequired = false)
 
-proc installSignaturePeers(A, B: var AmeSession) =
+proc installSignaturePeers(A, B: var AmeSession) {.role: actor.} =
   var
     aKeys = generateAmeSigningKeys(A.auth.current.layout,
       fullAmeMaskTier(A.auth.current.layout))
@@ -91,7 +92,7 @@ proc installSignaturePeers(A, B: var AmeSession) =
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
 
-proc installLoopbackSignatures(S: var AmeSession) =
+proc installLoopbackSignatures(S: var AmeSession) {.role: actor.} =
   var
     keys = generateAmeSigningKeys(S.auth.current.layout,
       fullAmeMaskTier(S.auth.current.layout))
@@ -912,3 +913,41 @@ suite "AME payload padding":
     opened = openAmeTcpFrame(server, frame)
     check opened.ok
     check opened.packet.payload == @[byte 2, 3]
+
+suite "the path profile reaches the session":
+  ## `AmeSession.pathLane` used to be written and never read, which made it
+  ## look as though DAC's parameter feedback reached a live session when it
+  ## did not.
+  # {.testKind: tkRegression.}
+  test "a session hands back the parameter set its path profile calls for":
+    var
+      clean: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        pathLane = dplCleanPath)
+      lossy: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        pathLane = dplLossyPath)
+      thin: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        pathLane = dplThinPath)
+    check clean.ameSessionPathDefaults().pathLane == dplCleanPath
+    check lossy.ameSessionPathDefaults().pathLane == dplLossyPath
+    ## A lossy path asks for more repair than a clean one, and a thin path
+    ## asks for smaller chunks. That is the whole point of the feedback.
+    check lossy.ameSessionPathDefaults().parityShards >
+      clean.ameSessionPathDefaults().parityShards
+    check thin.ameSessionPathDefaults().chunkBytes <
+      clean.ameSessionPathDefaults().chunkBytes
+
+  # {.testKind: tkRegression.}
+  test "the path profile never moves a protection parameter":
+    var
+      clean: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        pathLane = dplCleanPath)
+      lossy: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        pathLane = dplLossyPath)
+    ## Loss is attacker-induced. If the tier, the tag length or the padding
+    ## followed it, an attacker who can drop packets could weaken the
+    ## protection by dropping them.
+    check clean.auth.current.tier == lossy.auth.current.tier
+    check clean.auth.current.params.authTagLen ==
+      lossy.auth.current.params.authTagLen
+    check clean.auth.current.params.padding ==
+      lossy.auth.current.params.padding

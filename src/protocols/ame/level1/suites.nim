@@ -262,7 +262,7 @@ proc requireSuiteBytes(A: openArray[uint8], cursor, n: int) {.role: parser.} =
     raise newException(ValueError, "AME suite layout is truncated")
 
 template decodeNibbleLayout(A: untyped, cursor: var int, P: untyped,
-    EnumType: typedesc, what: string) =
+    EnumType: typedesc, what: string) {.role: parser.} =
   requireSuiteBytes(A, cursor, 1)
   block:
     var

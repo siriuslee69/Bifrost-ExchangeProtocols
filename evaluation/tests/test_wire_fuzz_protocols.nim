@@ -29,6 +29,7 @@ import ../../src/protocols/tls13/codec
 import ../../src/protocols/tls13/hello
 import ../../src/protocols/tls13/handshake_messages
 import ./fuzz_support
+import ../../src/analysis_pragmas
 
 proc sampleAmeFrame(): ByteSeq =
   ## A well-formed AME frame carrying lane data.
@@ -48,7 +49,7 @@ proc sampleFomkeMessage(): ByteSeq =
   m.ciphertext = rampBytes(128)
   result = encodeFomkeMessage(m)
 
-proc sampleAmeSealedFrame(): ByteSeq =
+proc sampleAmeSealedFrame(): ByteSeq {.role: truthBuilder.} =
   ## An AME frame whose payload is a FOMKE envelope, which is the shape that
   ## actually arrives on the wire.
   var

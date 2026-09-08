@@ -272,3 +272,20 @@ proc openAmeSecurePackageStep*(packageId: uint64, step: AmeDacRelayStep,
     result.err = e.msg
     return
   result.ok = true
+
+proc planAmeSecurePackage*(S: AmeSession, packageId: uint64,
+    plaintext: openArray[uint8],
+    compression: AmeCompressionPolicy = defaultAmeCompressionPolicy(),
+    limits: DacPackageLimits = defaultDacPackageLimits()):
+    AmeSecurePackagePlan {.role: orchestrator,
+    metaTags: {tagAppApi, tagAme, tagProtocol}.} =
+  ## S/packageId/plaintext/compression/limits: same as the overload above,
+  ## except the DAC parameters come from the session's own path profile
+  ## instead of the caller.
+  ##
+  ## Prefer this one. The other takes a `DacScenarioDefaults` the caller has
+  ## to keep in step with the session by hand, and nothing checks that they
+  ## agree; here the chunk size and repair strength are the ones the path this
+  ## session is actually running over calls for.
+  result = planAmeSecurePackage(S.auth, packageId, plaintext,
+    ameSessionPathDefaults(S), compression, limits)

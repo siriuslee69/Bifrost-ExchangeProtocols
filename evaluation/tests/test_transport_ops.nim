@@ -15,6 +15,7 @@ import ../../src/protocols/transport/types
 import ../../src/protocols/transport/stream_framing
 import ../../src/protocols/transport/tcp_ops
 import ../../src/protocols/transport/udp_ops
+import ../../src/analysis_pragmas
 
 type
   TransportServerArgs = object
@@ -43,7 +44,7 @@ proc runTransportServer(a: TransportServerArgs) {.thread.} =
   if recvRes.ok:
     sendTcpFrame(client, recvRes.payload)
 
-proc runUdpServer(a: UdpServerArgs) {.thread.} =
+proc runUdpServer(a: UdpServerArgs) {.thread, role: orchestrator.} =
   var
     server: Socket
     recvRes: UdpDatagramResult
@@ -81,7 +82,7 @@ proc ipv6LoopbackAvailable(): bool =
   except CatchableError:
     result = false
 
-proc nextUnusedTcpAddress(host: string): TcpAddress =
+proc nextUnusedTcpAddress(host: string): TcpAddress {.role: dataFetcher.} =
   ## nextUnusedTcpAddress: best-effort unused TCP endpoint on the requested host.
   var
     sock: Socket
@@ -102,7 +103,7 @@ proc nextUnusedUdpAddress(host: string): UdpAddress =
   result = initUdpAddress(bound.host, uint16(bound.port))
 
 proc reopenDacPeerUntilFd(remote: DacAddress, wantedFd: int,
-    attempts: int = 32): DacSocket =
+    attempts: int = 32): DacSocket {.role: orchestrator.} =
   ## remote: DAC endpoint to connect.
   ## wantedFd: socket fd that should be reused so the stale-registry path is exercised.
   ## attempts: bounded retry count to avoid an unbounded test loop.

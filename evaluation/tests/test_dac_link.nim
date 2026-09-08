@@ -10,6 +10,7 @@ import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level0/framing
 import ../../src/protocols/dac/level2/package_transfer
 import ../../src/protocols/dac/level3/link
+import ../../src/analysis_pragmas
 
 type
   ## Pipe: a deliberately hostile link between two DacLinks.
@@ -55,7 +56,7 @@ proc carry(P: var Pipe, F: seq[ByteSeq]): seq[ByteSeq] =
     i = i - 1
 
 proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
-    maxTicks: int = 40): tuple[ok: bool, got: ByteSeq, ticks: int] =
+    maxTicks: int = 40): tuple[ok: bool, got: ByteSeq, ticks: int] {.role: orchestrator.} =
   ## payload: bytes the sender ships.
   ## d: scenario defaults both ends run on.
   ## P: pipe the frames cross.

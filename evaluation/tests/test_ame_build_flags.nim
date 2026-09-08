@@ -18,6 +18,7 @@ import ../../src/protocols/types
 import ../../src/protocols/ame
 import ../../src/protocols/fomke/types
 import ../../src/protocols/config
+import ../../src/analysis_pragmas
 
 const
   minimalKems: AmeKemAlgorithms = [akaKyber768, akaX25519]
@@ -38,7 +39,7 @@ proc tagLenSession(n: AmeAuthTagLen,
     endpointRole = role, params = AmeRuntimeParams(authTagLen: n)),
     peerTrustRequired = false)
 
-proc minimalLayout(): AmeSuiteLayout =
+proc minimalLayout(): AmeSuiteLayout {.role: configurator.} =
   ## The smallest complete layout the minimal profile can still describe.
   result = initAmeSuiteLayout(minimalKems,
     initAmeCipherAlgorithms([acaXChaCha20]),

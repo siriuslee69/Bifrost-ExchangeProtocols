@@ -30,6 +30,7 @@ import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level2/carriers
 import ../../src/protocols/ame/level3/handshake
+import ../../src/analysis_pragmas
 
 const
   apiKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]
@@ -63,7 +64,7 @@ proc apiUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
       [auth.current.tier, target])
   result = initAmeSession(auth, path, peerTrustRequired = false)
 
-proc installSignaturePeers(A, B: var AmeSession) =
+proc installSignaturePeers(A, B: var AmeSession) {.role: actor.} =
   var
     aKeys = generateAmeSigningKeys(A.auth.current.layout,
       fullAmeMaskTier(A.auth.current.layout))
@@ -74,7 +75,7 @@ proc installSignaturePeers(A, B: var AmeSession) =
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
 
-proc upgradeRequest(S: AmeSession): AmeExchangeRequest =
+proc upgradeRequest(S: AmeSession): AmeExchangeRequest {.role: configurator.} =
   result = initAmeExchangeRequest(apiKems,
     apiTier(S.auth.current.layout, 2'u32, 0b11000000'u8), 0b01000000'u8)
 

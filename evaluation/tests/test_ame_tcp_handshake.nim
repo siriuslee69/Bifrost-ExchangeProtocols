@@ -36,6 +36,7 @@ import ../../src/protocols/ame/level3/handshake
 import ../../src/protocols/ame/level3/handshake_tcp
 import ../../src/protocols/transport/types as transport_types
 import ../../src/protocols/transport/tcp_ops
+import ../../src/analysis_pragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]

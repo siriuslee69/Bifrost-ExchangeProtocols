@@ -13,6 +13,7 @@
 import unittest
 
 import ../../src/protocols/types
+import ../../src/analysis_pragmas
 
 type
   ## Rng: splitmix64. Small, seedable, and identical on every platform, which
@@ -79,7 +80,7 @@ const
     ## past its bounds, low enough that the whole suite stays a few seconds.
 
 template fuzzBody*(name: string, startSeed: uint64, sample: ByteSeq,
-    decodeCall: untyped) =
+    decodeCall: untyped) {.role: orchestrator.} =
   ## name/startSeed/sample: label, reproducible seed, and a valid encoding.
   ## decodeCall: the parser under test, reading the injected `data`.
   ## A value or a CatchableError is a pass. A Defect is a bug and fails the

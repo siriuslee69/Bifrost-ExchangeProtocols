@@ -18,22 +18,21 @@ let
           package = pkgs.hello;
 
           settings = {
-            transport.timeoutMs = 4000;
-            transport.maxTcpFrameBytes = 16777216;
-            aec.inboxCapacity = 64;
-            ame.peerTrustRequired = true;
+            maxTcpFrameBytes = 16777216;
+            defaultTimeoutMs = 4000;
+            defaultAmeInboxCapacity = 64;
+            peerTrustRequired = true;
+            fomke.fomkePregeneration = false;
           };
 
           profiles.server.settings = {
-            role = "server";
-            dac.bind = "0.0.0.0:47655";
+            maxDacFrameBytes = 8388608;
           };
 
           profiles.client = {
             mode = "replace";
             settings = {
-              role = "client";
-              transport.timeoutMs = 2000;
+              defaultTimeoutMs = 2000;
             };
           };
 
@@ -129,34 +128,26 @@ assert invalidProfile.success == false;
 pkgs.runCommand "bifrost-module-check" { } ''
   set -eu
 
-  grep -Fqx '[transport]' ${globalToml}
-  grep -Fqx 'timeoutMs = 4000' ${globalToml}
-  grep -Fqx 'maxTcpFrameBytes = 16777216' ${globalToml}
-  grep -Fqx '[aec]' ${globalToml}
-  grep -Fqx 'inboxCapacity = 64' ${globalToml}
-  grep -Fqx '[ame]' ${globalToml}
-  grep -Fqx 'peerTrustRequired = true' ${globalToml}
+  grep -Fqx "defaultTimeoutMs = 4000" ${globalToml}
+  grep -Fqx "maxTcpFrameBytes = 16777216" ${globalToml}
+  grep -Fqx "defaultAmeInboxCapacity = 64" ${globalToml}
+  grep -Fqx "peerTrustRequired = true" ${globalToml}
+  grep -Fqx "[fomke]" ${globalToml}
+  grep -Fqx "fomkePregeneration = false" ${globalToml}
 
-  grep -Fqx 'role = "server"' ${serverToml}
-  grep -Fqx '[transport]' ${serverToml}
-  grep -Fqx 'timeoutMs = 4000' ${serverToml}
-  grep -Fqx 'maxTcpFrameBytes = 16777216' ${serverToml}
-  grep -Fqx '[aec]' ${serverToml}
-  grep -Fqx 'inboxCapacity = 64' ${serverToml}
-  grep -Fqx '[ame]' ${serverToml}
-  grep -Fqx 'peerTrustRequired = true' ${serverToml}
-  grep -Fqx '[dac]' ${serverToml}
-  grep -Fqx 'bind = "0.0.0.0:47655"' ${serverToml}
+  grep -Fqx "defaultTimeoutMs = 4000" ${serverToml}
+  grep -Fqx "maxTcpFrameBytes = 16777216" ${serverToml}
+  grep -Fqx "defaultAmeInboxCapacity = 64" ${serverToml}
+  grep -Fqx "peerTrustRequired = true" ${serverToml}
+  grep -Fqx "maxDacFrameBytes = 8388608" ${serverToml}
 
-  grep -Fqx 'role = "client"' ${clientToml}
-  grep -Fqx '[transport]' ${clientToml}
-  grep -Fqx 'timeoutMs = 2000' ${clientToml}
+  grep -Fqx "defaultTimeoutMs = 2000" ${clientToml}
   if grep -Fq 'peerTrustRequired = true' ${clientToml}; then
     echo "replace profile unexpectedly inherited global AME settings" >&2
     exit 1
   fi
-  if grep -Fq 'inboxCapacity = 64' ${clientToml}; then
-    echo "replace profile unexpectedly inherited global AEC settings" >&2
+  if grep -Fq "defaultAmeInboxCapacity = 64" ${clientToml}; then
+    echo "replace profile unexpectedly inherited global fomke settings" >&2
     exit 1
   fi
   if grep -Fq 'maxTcpFrameBytes = 16777216' ${clientToml}; then

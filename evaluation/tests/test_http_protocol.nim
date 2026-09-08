@@ -8,6 +8,7 @@
 
 import std/[unittest, strutils]
 import protocols/http
+import ../../src/analysis_pragmas
 
 proc bytesOf(s: string): seq[byte] =
   ## s: text to feed the parser as raw transport bytes.
@@ -19,7 +20,7 @@ proc parseOne(s: string): HttpFeedResult =
     P: HttpRequestParser = initHttpRequestParser()
   result = feedHttpRequest(P, bytesOf(s))
 
-proc parseInto(s: string; P: var HttpRequestParser): HttpFeedResult =
+proc parseInto(s: string; P: var HttpRequestParser): HttpFeedResult {.role: parser.} =
   ## s/P: request text and the parser to drive with it.
   result = feedHttpRequest(P, bytesOf(s))
 

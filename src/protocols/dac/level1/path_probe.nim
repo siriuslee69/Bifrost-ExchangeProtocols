@@ -42,11 +42,6 @@ proc initDacPathProbe*(probeId: uint32, p: DacPathLane,
   result.tcpPort = tcpPort
   result.nonce = nonce
 
-proc initDacPathProbe*(probeId: uint32, p: DacPathLane,
-    udpPort, tcpPort: uint16): DacPathProbe {.role: configurator.} =
-  ## probeId/p/udpPort/tcpPort: path probe fields.
-  raise newException(ValueError, "DAC path probe nonce must be provided")
-
 proc defaultDacProbeCount*(): uint8 {.role: configurator.} =
   ## defaultDacProbeCount: probes sent when a path first appears.
   result = 3'u8

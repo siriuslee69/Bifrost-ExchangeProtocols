@@ -26,6 +26,7 @@ import ../../fomke/level2/wire
 import ../../config
 import ../../dac/types
 import ../../dac/level0/framing
+import ../../dac/level0/defaults as dac_defaults
 import ../../../analysis_pragmas
 
 const
@@ -46,7 +47,7 @@ type
     peerTrustRequired*: bool
     peerTrust*: AmePeerTrustResult
     inbox*: circ_seq.CircSeq[AmePacket]
-    lastTrigger*: AmeTierStep
+    lastTrigger*: AmeTierStep   ## otter:latest
     nextExchangeRequestId*: uint32
     pendingExchange*: AmePendingExchange
     pendingIncoming*: AmePendingIncomingExchange
@@ -640,6 +641,40 @@ proc cancelIncomingAmeSessionExchange*(S: var AmeSession) {.
   S.fomkeCandidateActive = false
   cancelFomkeUpgrade(S.fomke)
   restoreConfiguredAmeFomkeCache(S)
+
+## ╭⟢ what the path profile says this session should send with
+##
+## The session records which DAC path profile it is running over. That byte
+## used to be written and never read, which made it look as though the
+## parameter feedback existed when it did not.
+##
+## What it decides, and what it must never decide:
+##
+##   follows the path   chunk size, repair mode and strength, ACK batching,
+##                      repair timeouts -- how the bytes are shaped
+##   never follows it   which algorithms are switched on, tag length,
+##                      padding policy -- how the bytes are protected
+##
+## The second row is the important one. Loss is something an attacker on the
+## path can cause at will. If padding switched off on a "thin" profile, an
+## attacker would induce loss and get message lengths back -- exactly what
+## the padding is there to hide. So cipher strength, tag length and padding
+## stay where the handshake and the caller put them, whatever the link does.
+
+proc dacTransferClassFor(c: AmeMessageClass): DacTransferClass {.role: parser.} =
+  ## c: what the session says its traffic is, named the way DAC names it.
+  case c
+  of amcStatus, amcTelemetry: result = dtcStatus
+  of amcControl, amcProfile: result = dtcControl
+  else: result = dtcUserData
+
+proc ameSessionPathDefaults*(S: AmeSession): DacScenarioDefaults {.
+    role: parser, metaTags: {tagAppApi, tagProtocol}.} =
+  ## S: session whose recorded path profile becomes a full parameter set.
+  ## One preset per lane, so reading this is a complete validated set rather
+  ## than a handful of fields a caller has to keep consistent by hand.
+  result = dac_defaults.dacDefaultsForPath(S.pathLane,
+    dacTransferClassFor(S.messageClass))
 
 proc ameSessionSkippedMessages*(S: AmeSession): int {.role: parser,
     metaTags: {tagAppApi, tagFomke, tagProtocol}.} =
@@ -1503,7 +1538,7 @@ proc discardAmeSendRollback(S: AmeSession, fomke: var FomkeState,
   clearFomkeState(fomke)
 
 template ameSendTransaction*(S: var AmeSession, payload: openArray[uint8],
-    body: untyped) =
+    body: untyped) {.role: orchestrator.} =
   ## S/payload/body: `body` seals and writes one frame. If it raises, every
   ## send-mutable counter, the tier path, and the FOMKE ratchet are rewound to
   ## their pre-send values, so a failed write leaves no half-advanced state.

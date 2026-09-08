@@ -11,6 +11,7 @@ import ../../src/protocols/dac/level0/framing
 import ../../src/protocols/dac/level1/package_manifest
 import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table
+import ../../src/analysis_pragmas
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.
@@ -26,7 +27,7 @@ proc peerKey(n: int): DacLinkKey =
   result = initDacLinkKey("10.0.0." & $n, uint16(4000 + n), dlcDatagram)
 
 proc manifestFrame(sessionId: uint64, laneId: uint32,
-    packageId: uint64): ByteSeq =
+    packageId: uint64): ByteSeq {.role: truthBuilder.} =
   ## sessionId/laneId/packageId: identity a peer opens a conversation with.
   var
     digest: array[32, uint8]

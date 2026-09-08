@@ -6,6 +6,7 @@
 import std/[strutils, times]
 import protocols/tls13
 import ../../src/protocols/types
+import ../../src/analysis_pragmas
 
 proc rd(p: string): ByteSeq =
   let s = readFile(p)
@@ -26,7 +27,7 @@ proc chk(name: string, cond: bool) =
 
 ## Drive a complete handshake between the two session engines.
 proc handshake(srvCfg: Tls13ServerConfig, cliCfg: Tls13ClientConfig):
-    tuple[ok: bool, err: string, echoed: string] =
+    tuple[ok: bool, err: string, echoed: string] {.role: orchestrator.} =
   var
     srv = initTls13ServerSession(srvCfg)
     cli = initTls13ClientSession(cliCfg)

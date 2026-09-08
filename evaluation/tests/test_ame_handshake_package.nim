@@ -28,6 +28,7 @@ import ../../src/protocols/ame/level3/handshake_transport
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
+import ../../src/analysis_pragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]
@@ -39,7 +40,7 @@ proc handshakeLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(handshakeKems)
 
 proc handshakeTier(L: AmeSuiteLayout,
-    kemMask: uint8 = 0b11000000'u8): AmeMaskTier =
+    kemMask: uint8 = 0b11000000'u8): AmeMaskTier {.role: configurator.} =
   result = initAmeMaskTier(L, 1'u32, initAmeTierMasks(kemMask,
     occupiedAmeMask(L.ciphers.length), occupiedAmeMask(L.macs.length),
     occupiedAmeMask(L.hashes.length), occupiedAmeMask(L.signatures.length),
@@ -70,7 +71,7 @@ type
     layout: AmeSuiteLayout
     tier: AmeMaskTier
 
-proc newPair(name: string): Pair =
+proc newPair(name: string): Pair {.role: configurator.} =
   result.authority = initAmeAuthorityKey(name & "-root")
   result.root = initAmeAuthorityRoot(result.authority)
   result.clientKey = initAmeIdentityKey(name & "-client")
@@ -725,6 +726,7 @@ suite "AME secure package":
       plaintext: ByteSeq = newSeq[byte](20_000)
       plan: AmeSecurePackagePlan
       packageReceiver: DacPackageReceiver
+      repairReport: DacGroupRepairReport
       hint: DacRepairHint
       exactRepairs: seq[DacRepairChunk] = @[]
       packageResult: DacPackageResult
@@ -743,7 +745,12 @@ suite "AME secure package":
     for chunk in plan.package.chunks:
       if chunk.chunkId notin {1'u16, 3'u16}:
         packageReceiver.acceptDacPackageChunk(chunk)
-    check not packageReceiver.repairGroup(plan.package.repairs[0]).ok
+    ## The report says WHY it refused, not just that it did: two chunks are
+    ## gone and one XOR shard rebuilds exactly one.
+    repairReport = packageReceiver.repairGroup(plan.package.repairs[0])
+    check not repairReport.ok
+    check repairReport.err == "DAC xor repair cannot rebuild 2 losses"
+    check repairReport.rebuilt.len == 0
     hint = packageReceiver.buildDacRepairHint()
     exactRepairs = answerDacRepairHint(plan.package, hint)
     for repair in exactRepairs:

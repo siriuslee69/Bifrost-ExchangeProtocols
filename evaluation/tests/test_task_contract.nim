@@ -5,6 +5,7 @@
 import std/[os, strutils, unittest]
 
 import ../../tools/repo_hygiene
+import ../../src/analysis_pragmas
 
 const
   nimblePath = "bifrost_exchange_protocols.nimble"
@@ -78,7 +79,7 @@ proc shouldSkipRepoPath(p: string): bool =
       return true
   result = false
 
-proc countLegacyProjectTermsInRepo(): int =
+proc countLegacyProjectTermsInRepo(): int {.role: parser.} =
   proc scanFile(path: string; hits: var int) =
     var text: string = ""
     if shouldSkipRepoPath(path) or not shouldScanRepoFile(path):

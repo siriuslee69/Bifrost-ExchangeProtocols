@@ -33,6 +33,7 @@ import ../../src/protocols/ame/level3/handshake
 import ../../src/protocols/ame/level3/handshake_dac
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/transport
+import ../../src/analysis_pragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]
@@ -198,7 +199,7 @@ proc rampBytes(n: int): ByteSeq =
 
 ## One complete client run against a responder started with `args`.
 proc runClientAgainst(args: DacServerArgs, payload: ByteSeq):
-    tuple[outcome: AmeHandshakeOutcome, echoed: AmeOpenResult] =
+    tuple[outcome: AmeHandshakeOutcome, echoed: AmeOpenResult] {.role: orchestrator.} =
   var
     th: Thread[DacServerArgs]
     sock: DacSocket

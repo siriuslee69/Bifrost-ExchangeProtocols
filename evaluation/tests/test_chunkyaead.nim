@@ -3,6 +3,7 @@ import std/os
 
 import ../../src/protocols/chunkyaead
 import ../../src/protocols/chunkyaead/level1/nonce_ops
+import ../../src/analysis_pragmas
 
 proc toBytes(s: string): seq[uint8] =
   var
@@ -60,12 +61,12 @@ proc removeTree(p: string) =
     removeDir(p)
 
 proc buildState(keyX, keyA, keyG,
-    nonce: seq[uint8]): ChunkyCipherState =
+    nonce: seq[uint8]): ChunkyCipherState {.role: configurator.} =
   result = initChunkyCipherState(caXChaCha20AesGimli,
     @[keyX, keyA, keyG], nonce, 64'u16)
 
 proc buildAesGimliState(keyA, keyG,
-    nonce: seq[uint8]): ChunkyCipherState =
+    nonce: seq[uint8]): ChunkyCipherState {.role: configurator.} =
   result = initChunkyCipherState(caAesGimli, @[keyA, keyG], nonce, 64'u16)
 
 suite "CHUNKYAEAD":

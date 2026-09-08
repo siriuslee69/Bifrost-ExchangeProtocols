@@ -13,6 +13,7 @@ import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level2/protection
 import ../../src/protocols/ame/level2/agreement
 import ../../src/protocols/ame/level2/trust
+import ../../src/analysis_pragmas
 
 const
   repeatedFireSaber: AmeKemAlgorithms = [
@@ -28,7 +29,7 @@ proc exactLayout(): AmeSuiteLayout =
     initAmeKdfAlgorithms([akfaBlake3, akfaGimliXof]))
 
 proc exactTier(L: AmeSuiteLayout, id: uint32, kem,
-    other: uint8): AmeMaskTier =
+    other: uint8): AmeMaskTier {.role: configurator.} =
   result = initAmeMaskTier(L, id,
     initAmeTierMasks(kem, other, other, other, other, other))
 

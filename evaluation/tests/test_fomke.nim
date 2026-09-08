@@ -23,6 +23,7 @@ import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
 import ../../src/protocols/fomke/level2/state_codec
 import ../../src/protocols/fomke/level2/state_store
+import ../../src/analysis_pragmas
 
 const
   fomkeKems: AmeKemAlgorithms = [akaX25519, akaKyber768, akaFireSaber]
@@ -80,7 +81,7 @@ proc fomkeUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
       [auth.current.tier, target])
   result = initAmeSession(auth, path, peerTrustRequired = false)
 
-proc installSignaturePeers(A, B: var AmeSession) =
+proc installSignaturePeers(A, B: var AmeSession) {.role: actor.} =
   var
     aKeys = generateAmeSigningKeys(A.auth.current.layout,
       fullAmeMaskTier(A.auth.current.layout))

@@ -38,7 +38,7 @@ type
     writeKeys: Tls13TrafficKeys
     readKeysInstalled: bool
     writeKeysInstalled: bool
-    failed*: bool
+    failed*: bool   ## otter:latest
     peerClosed*: bool
     localClosed*: bool
     maxRecordBuffer*: int

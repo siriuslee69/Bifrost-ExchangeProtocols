@@ -58,7 +58,7 @@ type
   ## DacGroupRepairReport: outcome of one repair-group rebuild.
   ## rebuilt: chunk ids restored, in ascending order.
   DacGroupRepairReport* {.role: truthState.} = object
-    ok*: bool
+    ok*: bool   ## otter:latest
     rebuilt*: seq[uint16]
     err*: string
 

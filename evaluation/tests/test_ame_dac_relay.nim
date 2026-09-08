@@ -18,6 +18,7 @@ import ../../src/protocols/dac/level2/package_transfer
 import ../../src/protocols/ame/level1/compression
 import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table
+import ../../src/analysis_pragmas
 
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]

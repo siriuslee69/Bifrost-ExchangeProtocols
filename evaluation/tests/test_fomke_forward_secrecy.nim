@@ -30,6 +30,7 @@ import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level0/gb3hkdf
 import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
+import ../../src/analysis_pragmas
 
 const
   fsKems: AmeKemAlgorithms = [akaX25519, akaKyber768]
@@ -46,12 +47,12 @@ proc fsTier(kemMask: uint8 = 0b11000000'u8): AmeMaskTier =
 
 proc fsExchange(mask: uint8 = 0b11000000'u8,
     secrets: openArray[ByteSeq] = [@[byte 1, 2, 3, 4], @[byte 5, 6, 7, 8]]):
-    AmeExchangeState =
+    AmeExchangeState {.role: configurator.} =
   result = initAmeExchangeState(fsKems)
   applyAmeExchange(result, initAmeExchangeRequest(fsKems, fsTier(mask), mask),
     secrets)
 
-proc fsPair(): tuple[a: FomkeState, b: FomkeState] =
+proc fsPair(): tuple[a: FomkeState, b: FomkeState] {.role: configurator.} =
   var
     state: AmeExchangeState = fsExchange()
   result.a = initFomkeFromAme(state, fsLayout(), fsTier(), frInitiator)

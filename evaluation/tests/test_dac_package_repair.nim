@@ -8,6 +8,7 @@ import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
+import ../../src/analysis_pragmas
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.
@@ -19,7 +20,7 @@ proc rampBytes(n: int): ByteSeq =
     i = i + 1
 
 proc receiverMissing(P: DacPackagePlan,
-    A: openArray[uint16]): DacPackageReceiver =
+    A: openArray[uint16]): DacPackageReceiver {.role: configurator.} =
   ## P: sender plan whose chunks are delivered.
   ## A: chunk ids withheld from the receiver.
   result = initDacPackageReceiver(P.manifest)
@@ -27,7 +28,7 @@ proc receiverMissing(P: DacPackagePlan,
     if chunk.chunkId notin A:
       result.acceptDacPackageChunk(chunk)
 
-proc dropShards(S: var DacPackageGroupRepair, A: openArray[int]) =
+proc dropShards(S: var DacPackageGroupRepair, A: openArray[int]) {.role: helper.} =
   ## S: repair record whose parity slots are emptied.
   ## A: parity shard ids that never arrived.
   var

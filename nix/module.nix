@@ -83,7 +83,7 @@ in
       example = {
         maxTcpFrameBytes = 16777216;
         maxDacFrameBytes = 16777216;
-        defaultAecInboxCapacity = 64;
+        defaultAmeInboxCapacity = 64;
         defaultTimeoutMs = 4000;
         peerTrustRequired = true;
       };
