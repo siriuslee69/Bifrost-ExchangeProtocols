@@ -6,7 +6,7 @@ import std/strutils
 
 import ../types
 import ./[types, codec]
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13AlertLevel* = enum

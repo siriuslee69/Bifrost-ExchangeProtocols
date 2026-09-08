@@ -3,7 +3,7 @@
 ## ----------------------------------------------------------------------
 
 import std/[os, osproc, streams, strutils]
-import ../src/analysis_pragmas
+import bifrostPragmas
 
 const
   interopHost = "127.0.0.1"

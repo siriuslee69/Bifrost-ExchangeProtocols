@@ -6,7 +6,7 @@ import tyr/hashes/sha256
 import tyr/helpers/secure_memory
 
 import ./types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   tls13SecretLen* = sha256DigestBytes

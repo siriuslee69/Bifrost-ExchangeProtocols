@@ -10,7 +10,7 @@ import tyr/kems/mceliece as tyr_mceliece
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc mcelieceVariant(a: AmeKemAlgorithm): tyr_mceliece.McElieceVariant {.
     role: parser.} =

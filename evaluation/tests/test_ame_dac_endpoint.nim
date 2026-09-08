@@ -19,7 +19,7 @@ import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level0/transport
 import ../../src/protocols/dac/level3/link_table
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]

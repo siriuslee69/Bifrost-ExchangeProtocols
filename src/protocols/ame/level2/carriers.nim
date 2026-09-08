@@ -39,7 +39,7 @@ import std/strutils
 import ../../types
 import ../types
 import ./session
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export session
 

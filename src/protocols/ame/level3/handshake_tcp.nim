@@ -36,7 +36,7 @@ import ../level2/session
 import ./handshake
 import ./handshake_wire
 import ./handshake_transport
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export handshake_transport
 

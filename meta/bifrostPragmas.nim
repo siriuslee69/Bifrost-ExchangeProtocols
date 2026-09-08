@@ -1,4 +1,9 @@
 ## This file should be imported across all files inside src.
+## Named for this repository on purpose: every Nim repo in this workspace
+## ships one of these, they all end up on the Nim path together, and the LAST
+## --path entry wins. A shared name means exactly one repo gets its own tags
+## and the rest silently get someone else's. A distinct name means everyone
+## gets theirs, and the import can stay flat.
 ## Only the MetaTag values are meant to be changed. Keep the pragma names as-is.
 ## Use `metaTags(...)`, not `tags(...)`, because `tags` collides with Nim's
 ## built-in pragma.

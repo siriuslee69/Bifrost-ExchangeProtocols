@@ -7,7 +7,7 @@ import tyr/kems/kyber as tyr_kyber
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc kyberVariant(a: AmeKemAlgorithm): tyr_kyber.KyberVariant {.role: parser.} =
   ## a: AME slot resolved to the Tyr variant that executes it.

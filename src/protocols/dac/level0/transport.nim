@@ -8,7 +8,7 @@ import ../../types
 import ../types as dac_types
 import ../../transport/types as transport_types
 import ../../transport/udp_ops as udp_ops
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export DacAddress
 

@@ -6,7 +6,7 @@ import tyr/hashes/sha3 as tyr_sha3
 import tyr/macs/hmac as tyr_hmac
 
 import ../../../types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc sha3AmeHash*(data: openArray[byte], outLen: int): ByteSeq {.
     role: helper.} =

@@ -9,7 +9,7 @@
 import tyr/kdfs/argon2 as tyr_argon2
 
 import ../../../types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc argon2AmeKdf*(seed, salt: openArray[byte], outLen: int): ByteSeq {.
     role: helper.} =

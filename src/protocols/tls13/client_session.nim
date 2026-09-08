@@ -12,7 +12,7 @@ import tyr/signatures/ecdsa_p256
 import ../types
 import ./[types, codec, connection, hello, key_schedule, transcript,
   handshake_messages, alerts]
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13ClientSessionState* = enum

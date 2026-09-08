@@ -16,7 +16,7 @@ import std/[base64, strutils]
 import tyr/certs/rsa
 import tyr/hashes/sha256
 
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   DkimSignResult* {.role: truthState, metaTags: {tagCryptoBoundary}.} = object

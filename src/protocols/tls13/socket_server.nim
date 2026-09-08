@@ -16,7 +16,7 @@ import std/[net, options, times]
 import ../types
 
 import ./server_session
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   tls13SocketReadChunk* = 4096

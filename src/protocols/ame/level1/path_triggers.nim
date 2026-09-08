@@ -5,7 +5,7 @@
 import ../types
 import ./exchange_paths
 import ./suites
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   defaultAmeDataStepMiB* = 200'u64

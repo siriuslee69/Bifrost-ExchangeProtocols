@@ -4,7 +4,7 @@
 
 import std/[asyncdispatch, asyncnet, net, unittest]
 
-import ../../src/analysis_pragmas
+import bifrostPragmas
 import ../../src/protocols/transport/async_stream_ops
 
 proc runAsyncStreamChecks() {.async, role: orchestrator,

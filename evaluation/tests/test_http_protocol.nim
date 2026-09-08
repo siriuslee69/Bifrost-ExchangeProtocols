@@ -8,7 +8,7 @@
 
 import std/[unittest, strutils]
 import protocols/http
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 proc bytesOf(s: string): seq[byte] =
   ## s: text to feed the parser as raw transport bytes.

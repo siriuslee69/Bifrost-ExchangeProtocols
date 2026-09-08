@@ -5,7 +5,7 @@
 import std/[os, strutils, unittest]
 
 import ../../tools/repo_hygiene
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   nimblePath = "bifrost_exchange_protocols.nimble"
@@ -307,3 +307,35 @@ test "repo scan has no stale project-name or alias references":
     check testsDoc.find("nimble testTls") >= 0
     check testsDoc.find("falls back to") >= 0
     check testsDoc.find("`nix-build nix/tls-check.nix --no-out-link`") >= 0
+
+suite "the pragma module cannot be captured by another repository":
+  ## Every Nim repository in this workspace ships a pragma file, they all land
+  ## on the Nim path together, and the LAST --path entry wins. A file here
+  ## importing the shared name would compile against whichever repo happened
+  ## to be last -- and fail on a tag that repo has never heard of, several
+  ## files away from the cause.
+  # {.testKind: tkRegression.}
+  test "no source file imports the shared pragma name":
+    var
+      offenders: seq[string] = @[]
+      text: string = ""
+    for path in walkDirRec("src"):
+      if not path.endsWith(".nim"):
+        continue
+      text = readFile(path)
+      if text.find("import metaPragmas") >= 0 or
+          text.find("/metaPragmas") >= 0:
+        offenders.add(path)
+    check offenders.len == 0
+
+  # {.testKind: tkRegression.}
+  test "the pragma module is named for this repository and sits on the path":
+    var
+      config: string = readFile("config.nims")
+    check fileExists("meta/bifrostPragmas.nim")
+    check not fileExists("meta/metaPragmas.nim")
+    ## `meta` on the path is what lets the import stay flat; it is only safe
+    ## because the module name is ours alone.
+    check config.find("""joinPath(repoRoot, "meta")""") >= 0
+    ## And the old shim is gone rather than lingering beside it.
+    check not fileExists("src/analysis_pragmas.nim")

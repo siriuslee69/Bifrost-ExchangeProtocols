@@ -39,7 +39,7 @@ import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level1/parity_shard
 import ../../src/protocols/dac/level1/package_chunk
 import ../../src/protocols/dac/level2/package_transfer
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   mitmKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]

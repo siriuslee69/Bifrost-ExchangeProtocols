@@ -31,7 +31,7 @@
 import ../../types
 import ../types
 import ../level1/[request_parser, response_ops, chunked_ops]
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 type
   HttpConnectionState* = enum

@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------------
 
 import ../types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacMagic* = [uint8('D'), uint8('A'), uint8('C')]

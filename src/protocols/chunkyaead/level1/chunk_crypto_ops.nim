@@ -6,7 +6,7 @@ import tyr/ciphers/xchacha20 as tyr_xchacha
 import tyr/ciphers/aes_ctr as tyr_aes
 import tyr/ciphers/gimli_sponge as tyr_gimli
 import ../level0/types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const xchachaBlockLen = 64
 

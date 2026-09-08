@@ -8,7 +8,7 @@ import tyr/helpers/secure_memory
 
 import ../types
 import ./types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13AeadSeal = object

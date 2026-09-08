@@ -7,7 +7,7 @@ import std/[algorithm, json]
 import ../types
 import ./types
 import ./checksum
-import ../../analysis_pragmas
+import bifrostPragmas
 
 proc strToBytes(s: string): ByteSeq {.gcsafe, role: helper.} =
   ## strToBytes: build str to bytes.

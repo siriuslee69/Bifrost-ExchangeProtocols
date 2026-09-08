@@ -12,7 +12,7 @@ import ../types
 import ../level0/bytes
 import ./exchange_paths
 import ./suites
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc deriveKdfLayer(a: AmeKdfAlgorithm, seed: openArray[byte],
     outLen: int): ByteSeq {.role: helper.} =

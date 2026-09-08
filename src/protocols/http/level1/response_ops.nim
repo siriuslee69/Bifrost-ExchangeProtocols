@@ -23,7 +23,7 @@ import std/times
 import ../../types
 import ../types
 import ../level0/header_ops
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc httpReasonPhrase*(s: int): string {.role: parser,
     metaTags: {tagProtocol, tagFormatting}.} =

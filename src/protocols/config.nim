@@ -9,7 +9,7 @@ import ./ame/level1/algorithms
 import ./ame/level1/exchange_paths
 import ./ame/level1/suites
 import ./fomke/types
-import ../analysis_pragmas
+import bifrostPragmas
 
 type
   BifrostConfig* {.role: configurator.} = object

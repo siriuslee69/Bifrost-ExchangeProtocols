@@ -4,7 +4,7 @@
 
 import ../../types
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacKnownFrameFlagMask* = 0x01FF'u16

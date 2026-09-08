@@ -52,7 +52,7 @@ import ../level1/padding
 import ../level1/path_triggers
 import ../level2/session
 import ../../fomke/level0/gb3hkdf
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   ameCookieSecretLen* = 32

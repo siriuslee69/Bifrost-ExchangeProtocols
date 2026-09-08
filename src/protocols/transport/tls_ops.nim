@@ -5,7 +5,7 @@
 import std/net
 
 import ./types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 when defined(ssl):
   import std/openssl

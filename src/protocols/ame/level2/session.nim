@@ -27,7 +27,7 @@ import ../../config
 import ../../dac/types
 import ../../dac/level0/framing
 import ../../dac/level0/defaults as dac_defaults
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   ameRetiringGraceFrames* = 100

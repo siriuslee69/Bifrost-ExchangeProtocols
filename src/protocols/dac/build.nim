@@ -2,7 +2,7 @@
 ## DAC Build <- one flag decides whether the adaptive layer exists at all
 ## ----------------------------------------------------------------------
 
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacBuildAscii* = """

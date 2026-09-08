@@ -6,7 +6,7 @@
 import std/[strutils, times]
 import protocols/tls13
 import ../../src/protocols/types
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 proc rd(p: string): ByteSeq =
   let s = readFile(p)

@@ -10,7 +10,7 @@ import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level0/framing
 import ../../src/protocols/dac/level2/package_transfer
 import ../../src/protocols/dac/level3/link
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 type
   ## Pipe: a deliberately hostile link between two DacLinks.

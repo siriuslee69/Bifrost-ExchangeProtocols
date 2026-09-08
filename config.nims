@@ -11,9 +11,10 @@ proc addPathIfExists(pathArg: string) =
     switch("path", pathArg.replace('\\', '/'))
 
 addPathIfExists(joinPath(repoRoot, "src"))
-## `meta` is deliberately NOT on the path: Tyr ships a module of the same
-## name, and whichever landed first would win. `src/analysis_pragmas.nim`
-## reaches ours by relative path instead.
+## Our pragma module is named for this repository, not `metaPragmas`, so it
+## cannot collide with the one Tyr and every other Nim repo here also ships.
+## That is what lets `meta` sit on the path and every file import it flat.
+addPathIfExists(joinPath(repoRoot, "meta"))
 if dirExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src"))
 else:

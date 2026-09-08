@@ -4,7 +4,7 @@
 
 import ../types
 import ./[types, codec, hello]
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13CertificateEntry* = object

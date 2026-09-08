@@ -23,7 +23,7 @@
 
 import std/strutils
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc hexDigitValue(c: char): int {.inline, role: parser,
     metaTags: {tagProtocol, tagParsing}.} =

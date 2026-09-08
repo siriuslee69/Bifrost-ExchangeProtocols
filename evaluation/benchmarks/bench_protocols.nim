@@ -5,7 +5,7 @@
 import std/[json, monotimes, os, strutils, times]
 
 import bifrost_exchange_protocols
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 type
   BenchConfig = object

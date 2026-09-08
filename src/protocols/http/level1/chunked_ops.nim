@@ -22,7 +22,7 @@
 
 import ../../types
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 type
   ChunkedDecodeState* = enum

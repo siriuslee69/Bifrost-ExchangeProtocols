@@ -32,7 +32,7 @@
 import ../../types
 import ../types
 import ./sigs/types as sig_types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export sig_types
 

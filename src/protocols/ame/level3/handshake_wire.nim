@@ -50,7 +50,7 @@ import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/padding
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   ameHandshakeWireVersion = 1'u8

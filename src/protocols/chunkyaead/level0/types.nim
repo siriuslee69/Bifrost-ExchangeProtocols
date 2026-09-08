@@ -2,7 +2,7 @@
 ## CHUNKYAEAD Types <- chunked file format and owned cipher configuration
 ## -----------------------------------------------------------------------
 
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   chunkyMagic* = [byte('C'), byte('H'), byte('U'), byte('N'), byte('K'),

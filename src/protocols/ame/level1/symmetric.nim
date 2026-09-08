@@ -28,7 +28,7 @@
 import ../../types
 import ../types
 import ./symmetric/types as sym_types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export sym_types
 

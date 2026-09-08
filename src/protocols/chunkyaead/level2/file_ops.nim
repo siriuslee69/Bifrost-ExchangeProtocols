@@ -12,7 +12,7 @@ import ../level1/nonce_ops
 import ../level1/chunk_crypto_ops
 import tyr/hashes/blake3
 import tyr/ciphers/gimli_sponge
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   chunkHeaderLen = 52

@@ -5,7 +5,7 @@
 import tyr/helpers/secure_memory as tyr_secure_memory
 
 import ../../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc appendAmeBytes*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.

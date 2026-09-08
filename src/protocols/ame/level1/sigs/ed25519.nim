@@ -7,7 +7,7 @@ import tyr/signatures/ed25519 as tyr_ed25519
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc requireEd25519Slot(a: AmeSignatureAlgorithm) {.role: parser.} =
   ## a: slot rejected unless it is the Ed25519 slot.

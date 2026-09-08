@@ -36,7 +36,7 @@ import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   fomkeUpgradeMagic = [uint8('F'), uint8('K'), uint8('U')]

@@ -5,7 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacPackageChunkHeaderLen* = 18

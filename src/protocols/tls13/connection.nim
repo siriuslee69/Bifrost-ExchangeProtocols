@@ -4,7 +4,7 @@
 
 import ../types
 import ./[types, codec, records, key_schedule]
-import ../../analysis_pragmas
+import bifrostPragmas
 import tyr/helpers/secure_memory
 
 const

@@ -14,7 +14,7 @@ import ../../ame/level1/tier_aead
 import ../../ame/level2/protection
 import ../level1/chain
 import ./state_codec
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   fomkeCheckpointMagic = [uint8('F'), uint8('S'), uint8('T'), uint8('1')]

@@ -3,7 +3,7 @@
 ## ---------------------------------------------------------
 
 import ../types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   bfxMagic* = [uint8('B'), uint8('F'), uint8('X'), uint8('2')]

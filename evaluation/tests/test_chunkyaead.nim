@@ -3,7 +3,7 @@ import std/os
 
 import ../../src/protocols/chunkyaead
 import ../../src/protocols/chunkyaead/level1/nonce_ops
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 proc toBytes(s: string): seq[uint8] =
   var

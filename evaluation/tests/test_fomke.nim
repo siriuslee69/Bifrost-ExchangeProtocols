@@ -23,7 +23,7 @@ import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
 import ../../src/protocols/fomke/level2/state_codec
 import ../../src/protocols/fomke/level2/state_store
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   fomkeKems: AmeKemAlgorithms = [akaX25519, akaKyber768, akaFireSaber]

@@ -20,7 +20,7 @@ import ../level1/package_chunk
 import ../level1/repair_hint
 import ../level1/repair_chunk
 import ../level1/parity_shard
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   defaultDacPackageMaxBytes* = 16_777_216'u32

@@ -28,7 +28,7 @@ import ../../src/protocols/ame/level3/handshake_transport
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]

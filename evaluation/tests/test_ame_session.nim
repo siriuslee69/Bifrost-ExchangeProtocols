@@ -20,7 +20,7 @@ import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/framing
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   exactKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]

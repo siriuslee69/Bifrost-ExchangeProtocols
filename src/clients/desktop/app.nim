@@ -6,7 +6,7 @@ import std/[json, net, nativesockets, os, strutils]
 
 import webui
 
-import ../../analysis_pragmas
+import bifrostPragmas
 import ../shared/lan_message
 import ../../protocols/transport/[tcp_ops, types]
 

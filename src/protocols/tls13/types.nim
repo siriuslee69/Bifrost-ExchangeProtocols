@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------
 
 import ../types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   tls13LegacyRecordVersion* = 0x0303'u16

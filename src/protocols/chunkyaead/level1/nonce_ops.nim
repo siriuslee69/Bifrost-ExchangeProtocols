@@ -2,7 +2,7 @@
 ## CHUNKYAEAD Nonce Ops <- deterministic per-chunk derivation
 ## ----------------------------------------------------------
 
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc storeU64LE(v: uint64, bs: var openArray[uint8], o: int) {.role: helper,
     metaTags: {tagChunkyAead}.} =

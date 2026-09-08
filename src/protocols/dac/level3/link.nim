@@ -23,7 +23,7 @@ import ../level1/ack_policy
 import ../level1/path_policy
 import ../level1/scramble
 import ../level2/package_transfer
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacLinkAscii* = """

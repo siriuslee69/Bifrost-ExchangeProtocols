@@ -5,7 +5,7 @@
 import std/strutils
 
 import ../types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   ## TransportAddress: plain host + port endpoint for generic transport usage.

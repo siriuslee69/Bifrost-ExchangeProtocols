@@ -55,7 +55,7 @@
 import ../../types
 import ../types
 import ./kems/types as kem_types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export kem_types
 

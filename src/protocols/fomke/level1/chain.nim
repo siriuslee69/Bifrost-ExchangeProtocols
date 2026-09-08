@@ -39,7 +39,7 @@ import ../../ame/level1/suites
 import ../../ame/level1/tier_aead
 import ../types
 import ../level0/gb3hkdf
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 type
   FomkeChainBlock = object

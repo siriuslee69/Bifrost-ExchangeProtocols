@@ -13,7 +13,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./exchange_paths
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 template requirePathLength(n: int, what: string) =
   if n <= 0 or n > ameMaxAlgorithmSlots:

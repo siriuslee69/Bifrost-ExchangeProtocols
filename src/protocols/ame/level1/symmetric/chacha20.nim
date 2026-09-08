@@ -10,7 +10,7 @@ import tyr/ciphers/xchacha20 as tyr_xchacha
 
 import ../../../types
 import ../../types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc chachaAmeXor*(a: AmeCipherAlgorithm,
     key, nonce, msg: openArray[byte]): ByteSeq {.role: encryptor.} =

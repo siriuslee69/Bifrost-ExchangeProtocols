@@ -8,7 +8,7 @@ when not defined(windows):
 
 import ../types
 import ./types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
   ## formatUdpAddress: format UDP address.

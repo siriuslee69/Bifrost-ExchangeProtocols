@@ -4,7 +4,7 @@
 
 import ../types
 import ./types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   defaultStreamFrameBytes* = 16_777_216'u32

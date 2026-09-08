@@ -7,7 +7,7 @@ import tyr/kems/frodo as tyr_frodo
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc frodoVariant(a: AmeKemAlgorithm): tyr_frodo.FrodoVariant {.role: parser.} =
   ## a: AME slot resolved to the Tyr variant that executes it.

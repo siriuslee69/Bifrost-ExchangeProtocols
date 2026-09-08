@@ -38,7 +38,7 @@ import ../level2/wire
 import ../level2/session
 import ./handshake
 import ./handshake_wire
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   ameHandshakeStepHello* = 0'u32

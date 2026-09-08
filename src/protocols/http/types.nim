@@ -14,7 +14,7 @@
 ## case-insensitive matching.
 
 import ../types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   httpMaxRequestLineLen* = 8_192

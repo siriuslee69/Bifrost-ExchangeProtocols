@@ -16,7 +16,7 @@
 
 import std/strutils
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc lowerAscii(c: char): char {.inline, role: helper,
     metaTags: {tagProtocol, tagFormatting}.} =

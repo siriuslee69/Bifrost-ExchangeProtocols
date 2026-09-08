@@ -8,7 +8,7 @@ import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
 
 import ../src/protocols/types
 import ../src/protocols/tls13
-import ../src/analysis_pragmas
+import bifrostPragmas
 
 type
   HarnessConfig = object

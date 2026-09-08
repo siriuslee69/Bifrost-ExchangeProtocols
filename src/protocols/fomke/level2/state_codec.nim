@@ -11,7 +11,7 @@ import ../types
 import ../level0/gb3hkdf
 import ../level1/chain
 import ./wire
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]

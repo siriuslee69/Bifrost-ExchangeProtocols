@@ -33,7 +33,7 @@ import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/derivation
 import ../level1/tier_aead
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 export ameTierNonceLen, ameCipherNonceLen
 

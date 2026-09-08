@@ -8,7 +8,7 @@ import tyr/ciphers/gimli_sponge as tyr_gimli
 import ../../types
 import ../../ame/level0/bytes
 import ../types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc initGb3KdfConfig*(rounds: uint32 = gb3DefaultRounds,
     blockIndex: uint64 = 0'u64, mode: Gb3KdfMode = gb3Sequential,

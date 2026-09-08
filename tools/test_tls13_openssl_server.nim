@@ -9,7 +9,7 @@ import tyr/signatures/ed25519
 
 import ../src/protocols/types
 import ../src/protocols/tls13
-import ../src/analysis_pragmas
+import bifrostPragmas
 
 type
   HarnessConfig = object

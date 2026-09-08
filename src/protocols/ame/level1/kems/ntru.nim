@@ -7,7 +7,7 @@ import tyr/kems/ntru as tyr_ntru
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc ntruVariant(a: AmeKemAlgorithm): tyr_ntru.NtruVariant {.role: parser.} =
   ## a: AME slot resolved to the Tyr variant that executes it.

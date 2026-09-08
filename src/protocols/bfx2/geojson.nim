@@ -8,7 +8,7 @@ import ../types
 import ./types
 import ./writer
 import ./reader
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   bfxGeoJsonErrRootNotObject* = "bfx2/geojson: root must be an object"

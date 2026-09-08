@@ -7,7 +7,7 @@ import tyr/signatures/dilithium as tyr_dilithium
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc dilithiumVariant(a: AmeSignatureAlgorithm):
     tyr_dilithium.DilithiumVariant {.role: parser.} =

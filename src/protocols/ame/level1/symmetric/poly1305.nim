@@ -9,7 +9,7 @@
 import tyr/macs/poly1305 as tyr_poly1305
 
 import ../../../types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc poly1305AmeMac*(key, data: openArray[byte]): ByteSeq {.role: helper.} =
   ## key/data: the per-message key and the authenticated bytes. The tag is

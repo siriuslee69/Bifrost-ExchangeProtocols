@@ -50,7 +50,7 @@ import ./exchange_paths
 import ../../types
 import ../types
 import ../level0/bytes
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 proc ameCipherNonceLen*(a: AmeCipherAlgorithm): int {.role: helper,
     metaTags: {tagCryptoBoundary}.} =

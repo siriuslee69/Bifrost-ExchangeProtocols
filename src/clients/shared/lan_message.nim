@@ -4,7 +4,7 @@
 
 import std/[times, unicode]
 
-import ../../analysis_pragmas
+import bifrostPragmas
 import ../../protocols/types
 
 type

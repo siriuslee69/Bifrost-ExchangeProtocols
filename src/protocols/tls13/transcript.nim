@@ -10,7 +10,7 @@ import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./key_schedule
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13Transcript* {.role: memory, metaTags: {tagTls, tagCryptoBoundary}.} = object

@@ -6,7 +6,7 @@ import std/strutils
 
 import ../types
 import ./codec
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   tls13Version* = 0x0304'u16

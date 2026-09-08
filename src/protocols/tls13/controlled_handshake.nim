@@ -8,7 +8,7 @@ import tyr/kems/x25519
 
 import ../types
 import ./[types, codec, hello, key_schedule, transcript, handshake_messages]
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   Tls13HandshakeState* = enum

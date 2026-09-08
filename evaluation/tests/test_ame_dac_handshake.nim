@@ -33,7 +33,7 @@ import ../../src/protocols/ame/level3/handshake
 import ../../src/protocols/ame/level3/handshake_dac
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/transport
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]

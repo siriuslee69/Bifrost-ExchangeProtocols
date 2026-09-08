@@ -5,7 +5,7 @@
 import ../../types
 import ../types
 import ./body_codec
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   dacPathStatsLen* = 24

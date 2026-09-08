@@ -22,7 +22,7 @@
 
 import ../types
 import ../ame/types
-import ../../analysis_pragmas
+import bifrostPragmas
 
 const
   gb3BlockBytes* = 32

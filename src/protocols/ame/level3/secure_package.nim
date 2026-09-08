@@ -13,7 +13,7 @@ import ../../dac/types
 import ../../dac/level2/package_transfer
 import ../../dac/level3/link_table
 import ./dac_relay
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   ameSecurePackageMagic* = [uint8('A'), uint8('S'), uint8('P')]

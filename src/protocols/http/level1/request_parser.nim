@@ -32,7 +32,7 @@ import std/strutils
 import ../types
 import ../level0/[header_ops, target_ops]
 import ./chunked_ops
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 const
   httpDefaultMaxBodyBytes*: int64 = 8'i64 * 1024 * 1024

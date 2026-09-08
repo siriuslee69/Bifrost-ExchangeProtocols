@@ -4,7 +4,7 @@
 
 import std/[asyncdispatch, asyncnet]
 
-import ../../analysis_pragmas
+import bifrostPragmas
 
 type
   AsyncStreamRead* {.role: truthState, metaTags: {tagTransport, tagNetworkSurface,

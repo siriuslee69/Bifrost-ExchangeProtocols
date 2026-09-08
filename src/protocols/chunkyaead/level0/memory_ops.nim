@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------
 
 import ./types
-import ../../../analysis_pragmas
+import bifrostPragmas
 
 when defined(windows):
   import std/winlean

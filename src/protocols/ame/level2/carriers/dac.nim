@@ -9,7 +9,7 @@
 import ../../types
 import ../../../dac/level0/transport as dac_transport
 import ../session
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 type
   AmeDacClient* {.role: truthState.} = object

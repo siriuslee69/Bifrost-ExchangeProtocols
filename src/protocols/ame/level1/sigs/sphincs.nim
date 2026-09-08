@@ -7,7 +7,7 @@ import tyr/signatures/sphincs as tyr_sphincs
 import ../../../types
 import ../../types
 import ./types
-import ../../../../analysis_pragmas
+import bifrostPragmas
 
 proc sphincsVariant(a: AmeSignatureAlgorithm): tyr_sphincs.SphincsVariant {.
     role: parser.} =

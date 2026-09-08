@@ -30,7 +30,7 @@ import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level0/gb3hkdf
 import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   fsKems: AmeKemAlgorithms = [akaX25519, akaKyber768]

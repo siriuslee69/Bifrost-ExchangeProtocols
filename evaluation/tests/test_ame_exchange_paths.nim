@@ -13,7 +13,7 @@ import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level2/protection
 import ../../src/protocols/ame/level2/agreement
 import ../../src/protocols/ame/level2/trust
-import ../../src/analysis_pragmas
+import bifrostPragmas
 
 const
   repeatedFireSaber: AmeKemAlgorithms = [

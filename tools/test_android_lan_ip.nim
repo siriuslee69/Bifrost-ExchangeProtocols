@@ -4,7 +4,7 @@
 
 import std/[monotimes, net, nativesockets, os, osproc, strutils, times]
 
-import ../src/analysis_pragmas
+import bifrostPragmas
 import ../src/clients/shared/lan_message
 import ../src/protocols/transport/[tcp_ops, types]
 
