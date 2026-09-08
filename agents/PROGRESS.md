@@ -1,56 +1,67 @@
 # Progress
 
-Commit Message: Finish the unified authentication path and give FOMKE a way out of a stuck skip cache
+Commit Message: Collapse the DAC scenario presets, and declare every test's kind
 
 Features (Planned):
-- Repo-wide convention debt: 17 placeholders without the `ph_` prefix, 78
-  routines with no role pragma, 112 triple-nesting sites, 67 unused public
-  routines. All in TLS 1.3 / HTTP / BFX2 / DAC, none in the AME or FOMKE
-  paths reworked here.
-- Move `tests/` under `evaluation/tests/` and `tools/bench_protocols.nim`
-  under `evaluation/benchmarks/`, as CONVENTIONS.md requires.
-- Only 8 of 483 evaluation routines declare a `testKind`.
+- 112 triple-nesting and 26 deeper sites, all in TLS 1.3, HTTP, CHUNKYAEAD and
+  BFX2. None in AME, FOMKE or DAC.
+- 33 remaining routine families Otter reads as one routine with a knob:
+  `initAme*Algorithms` (5), the `carriers` frame wrappers (5), the
+  `requireAme*Built` guards (4), the three hash entry points.
+- 5 oversized files: `http/level1/request_parser.nim`, `bfx2/reader.nim`,
+  `tls13/server_session.nim`, `http/level0/target_ops.nim`,
+  `http/level1/chunked_ops.nim`.
+- 47 unused public routines. Bifrost is a library and most exports exist for a
+  consumer, so this needs deciding per symbol rather than in bulk. Geist is the
+  only intended consumer; it currently imports the umbrella and calls nothing
+  from this list.
 
 Features (Done):
-- AM1M (shared-secret) handshake works end to end, on both endpoints, over
-  the core API and over the real TCP driver.
-- One `AmeAuthentication` object now drives every step in all three modes.
-  The old `trustMode` / `root` / `expectedPeer` triple is gone from the
-  policies and the drivers.
-- AM1M mixes a binder derived from the provisioned secret into the handshake
-  key schedule, so breaking every KEM slot is not enough to open a block.
-- AM1M sessions rotate epochs using a session-derived MAC key, because they
-  hold no signature keys to sign an offer or a reply with.
-- `AmePeerTrustResult.mode` and `AmeAuthPackage.authenticationMode` are set
-  from the mode that actually ran, instead of always reading `am1c`.
-- Responders refuse a hello naming a mode they do not run, before key work.
-- Both drivers put the configured mode into the hello they build.
-- `discardFomkeSkipped` / `discardAmeSessionSkipped` let a caller give up on
-  messages that will never arrive, which is the only way out of a session
+- AM1M works end to end, on both endpoints, over the core API and the real TCP
+  driver. One `AmeAuthentication` drives all three modes; the old
+  `trustMode`/`root`/`expectedPeer` triple is gone.
+- AM1M mixes a binder from the provisioned secret into the handshake key
+  schedule, and rotates epochs with a session-derived MAC key.
+- `discardFomkeSkipped` / `discardAmeSessionSkipped`: the way out of a session
   that can neither receive across a gap nor rekey.
-- `config.nims` points at Tyr's `meta/`, so a plain `nim c` builds again.
+- Pragmas back on the shared contract: `meta/metaPragmas.nim` is the template
+  verbatim with only the `MetaTag` list changed, `tag:` renamed to `metaTags:`
+  at 605 sites, the two invented roles mapped onto template roles, `.iron/`
+  deleted.
+- 487 of 487 evaluation routines declare a `testKind`, up from 12. They could
+  not before: the pragma did not exist in the file this repo was using.
+- Every routine in `src/` declares a role.
+- The twelve `*DacDefaults` presets are one enum plus one data table that
+  mirrors the ASCII table documenting them.
+- `AmeSession.pathLane` is read: `ameSessionPathDefaults` turns it into the
+  full parameter set, and `planAmeSecurePackage` takes a session so chunking
+  and parity come from the path the session is on.
+- The NixOS module documented `defaultAecInboxCapacity`, a key the parser
+  refuses; a test now pins the module's keys to what the parser accepts.
+- Tests and benchmarks moved under `evaluation/`.
 - Android client renamed off the retired AEC layer; its dead `AEC1` reference
-  wire and that wire's tests are gone.
-- Root `audit.md` and `findings.md` removed; both described the retired AEC
-  layer and neither was linked from anywhere.
+  wire deleted.
 
 Features (In Progress):
-- Nothing. The work above is complete and the full suite passes.
+- Nothing. Everything above is complete and the full suite passes.
 
 Notes:
-- Last big problem: the AM1M client read the server's identity block before
-  it had been opened (`finishAmeHandshakeCore` used `identityBlock` about 17
-  lines above the line that assigned it). Every AM1M handshake therefore
-  failed with "PSK transcript proof is invalid", and no test caught it
-  because the only AM1M tests exercised the proof helper on its own. Two
-  further holes sat behind it: the responder never produced a shared-secret
-  proof at all, and there was no responder-side accept path for the mode.
-- How it was fixed: the block is opened first and judged second, the two
-  sealed-block shapes are built and read by one function each per side, and
-  three new tests run a complete AM1M handshake — one over the core API, one
-  checking wrong-secret / wrong-name / mode-mismatch all fail closed, and one
-  over a real TCP socket. It worked; the whole suite is green.
-- The Android instrumented tests cannot be compiled here: gradle needs
-  `androidx.tracing:tracing:1.1.0`, which is not in the offline cache. The
-  JVM unit tests do run and pass. Set `ANDROID_HOME` to the repo's
-  `.android-sdk` before calling any gradle task.
+- Last big change: the pragma migration. The definitions lived in
+  `.iron/meta/metaPragmas.nim` and had drifted from the template, which is why
+  475 tests could not declare a kind and why 605 `metaTags` uses were invisible
+  to Otter's charts. Moving them made Otter read the tree properly for the
+  first time, which is where the FAMILIES, STATE and EMBEDDED CODE findings
+  came from — they were always true, just unreadable.
+- The one thing that bit during it: `src/analysis_pragmas.nim` looks like a
+  pointless facade and is not. Tyr ships a module called `metaPragmas` too, and
+  Bifrost compiles Tyr's sources, so both `meta` directories are on the Nim
+  path at once. Flattening the imports made files pick up Tyr's `MetaTag` list
+  and fail on `tagCryptoBoundary`. The shim names a path instead of a module.
+  It now says so at the top.
+- Second lesson worth keeping: Otter's "written and never read" list does not
+  scan `evaluation/`. `AmeSession.lastErr` is on that list and a test asserts
+  on it. Check before deleting.
+- The Android instrumented tests cannot be compiled here: gradle wants
+  `androidx.tracing:tracing:1.1.0` and it is not in the offline cache. The JVM
+  unit tests run and pass. Set `ANDROID_HOME` to the repo's `.android-sdk`
+  before any gradle task.

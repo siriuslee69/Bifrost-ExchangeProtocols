@@ -531,7 +531,7 @@ a stored package whose size alone would say what it is.
 
 ```nim
 var plan = planAmeSecurePackage(senderAuth, packageId, plaintext,
-  cleanLanDacDefaults(), compressedAmeCompressionPolicy())
+  dacDefaultsFor(dscCleanLan), compressedAmeCompressionPolicy())
 var incoming = initDacPackageReceiver(plan.package.manifest)
 
 for chunk in plan.package.chunks:
@@ -598,6 +598,82 @@ the slots named by the exchange mask:
 
 Pass `rekeyMask` to `requestAmeTier` to force fresh key agreement on slots that
 are already active.
+
+
+## What DAC actually decides ꒰ঌ ໒꒱
+
+DAC is two things wearing one name, and it is worth keeping them apart.
+
+**Def. — the parameter setter.** Given what the link looks like, it says what
+to send with. Pure arithmetic; no socket touches it:
+
+```text
+  DacPathStats          loss ppm, rtt, jitter, reorder depth,
+                        mtu hint, queue ms, credit hint
+        |
+  recommendDacPathFromStats     moves ONE step toward a target, never jumps
+        |
+  DacPathLane           clean · superClean · mobile · thin ·
+                        lossy · blockedUdp · recovery
+        |
+  dacDefaultsFor(scenario)
+        |
+  DacScenarioDefaults   chunkBytes      how big a payload piece is
+                        dataShards      how many pieces per repair group
+                        parityShards    how much repair rides along
+                        repairMode      none | xor | reedSolomon | tcpExact
+                        ackBatchChunks  how many before an answer
+                        ackMaxDelayMs   how long before one anyway
+                        repairWaitMs    how long before rebuilding
+                        repairRounds    how many attempts
+```
+
+**Def. — the transport.** The link loop, the chunking, the ACK bookkeeping and
+the repair maths that act on those numbers. It has a socket and state.
+
+### The scenario table
+
+Twelve rows, one enum, one table. Several scenarios share a lane on purpose:
+bad signal, heavy loss, jitter and an unstable path are all `dplLossyPath` and
+want different amounts of parity.
+
+```nim
+var d = dacDefaultsFor(dscCleanLan)          # 1200-byte chunks, 32D + 1P
+var e = dacDefaultsFor(dscHeavyLoss)         # 512-byte chunks, 12D + 6P
+var f = dacDefaultsFor(dscWeakRecovery)      # fixes its own transfer class
+```
+
+Notice that heavy loss gets the **small** ACK batch, not the large one: every
+un-acknowledged frame is retransmit state the sender cannot free yet. Long
+deadlines are for battery radios, where what is being saved is a wake-up
+rather than bandwidth.
+
+### How AME reaches it ʚ♡ɞ
+
+A session records which path profile it is running over, and hands back the
+whole parameter set for it:
+
+```nim
+var d = ameSessionPathDefaults(connection)
+var plan = planAmeSecurePackage(connection, packageId, payload)
+```
+
+The second call is the one to prefer. The older overload takes a
+`DacScenarioDefaults` the caller has to keep in step with the session by hand,
+and nothing checks that the two agree.
+
+### The line this must not cross ₊˚⊹♡
+
+> Chunk size, repair strength, ACK batching and timeouts follow the link.
+> **Which algorithms are on, the tag length, and the padding policy do not.**
+
+Loss is something an attacker on the path can cause at will. If padding
+switched off on a "thin" profile, an attacker would induce loss and get
+message lengths back — which is the exact thing padding exists to hide. The
+same argument rules out stepping down a tier or shortening a tag.
+
+So AME tier transitions fire on elapsed time, transferred MiB, or an explicit
+call, and never on measured link conditions. There is a test that says so.
 
 ## FOMKE
 
@@ -1137,6 +1213,32 @@ The default `nimble build` command is not a supported artifact path here; use
 
 `nix flake check path:$PWD` validates the package build, reproducible TLS
 transport checks, and NixOS module rules.
+
+
+### Findings the evaluation tools raise that are meant to be there ⌜guide⌟
+
+`otter-gate.sh` reports a few things in this repository every time. They have
+been looked at; they are the tool being careful rather than the code being
+wrong. Written down so the next person does not chase them twice.
+
+| What it says | Why it is fine |
+|---|---|
+| PLACEHOLDERS: `raiseExcludedKem` / `raiseExcludedSig` / `raiseExcludedSym` | "The body only refuses to work" is the whole job. These exist so a build without a KEM family refuses a layout naming it, loudly, at the point the layout is built. |
+| PLACEHOLDERS: `buildTlsContext` | Only the `when not defined(ssl)` half is flagged. Raising is what a build without TLS should do. |
+| PLACEHOLDERS: `defaultDacProbeCount`, `defaultAmeCompressionPolicy`, `initChunkedDecoder`, `initTls13SocketSession` | "Hands back the same answer whatever comes in" is what a default provider and a zero-argument constructor are for. |
+| STATE: `AmeSession.lastErr`, `Tls13ClientOutput.connected` | Read by tests under `evaluation/`, which the tool does not scan for reads. Check a field there before believing it is dead — one of these was nearly deleted on the tool's word. |
+| STATE: `DacGroupRepairReport.err` | Public API. `repairGroup` is documented as saying *why* it refused, and a consumer reads it even though nothing inside this repository does. |
+| DEAD CODE: unused public | Bifrost is a library. Most of its exports exist for a consumer, and the tool can only see callers inside this tree. |
+| SECRETS in `evaluation/` and `.android-sdk/` | Test vectors and a vendored NDK. Neither is a key of ours. |
+| EMBEDDED CODE | Almost all of it is the vendored Android NDK's own Python. |
+
+Two of these have a real lesson rather than a shrug:
+
+- **Check `evaluation/` before deleting a "never read" field.** The tool does
+  not look there, so its list is a list of candidates, not a verdict.
+- **`stage: stDone` does not silence a placeholder finding.** It suppresses
+  the other stage values only; a routine that legitimately just raises or just
+  returns a constant will keep being listed.
 
 ### Standing risks
 
