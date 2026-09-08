@@ -36,7 +36,7 @@ proc manifestFrame(sessionId: uint64, laneId: uint32,
     h: DacFrameHeader
   digest[0] = 0x7E'u8
   body = encodeDacPackageManifest(initDacPackageManifest(packageId,
-    dtcUserData, badSignalDacDefaults(), 4_000'u64, digest))
+    dtcUserData, dacDefaultsFor(dscBadSignal), 4_000'u64, digest))
   flags.needsAck = true
   h = initDacFrameHeader(dmkPackageManifest, sessionId, laneId, 0'u16, 0'u32,
     uint32(body.len), flags)
@@ -52,6 +52,7 @@ proc ackFrame(sessionId: uint64, laneId: uint32): ByteSeq =
   result = encodeDacFrame(h, @[])
 
 suite "DAC frame identity peek":
+  # {.testKind: tkUnit.}
   test "a well-formed frame yields its routing fields":
     var
       f: ByteSeq = manifestFrame(9'u64, 3'u32, 21'u64)
@@ -62,6 +63,7 @@ suite "DAC frame identity peek":
     check id.messageKind == dmkPackageManifest
     check id.headerLen + int(id.bodyLen) == f.len
 
+  # {.testKind: tkEdgeCase.}
   test "rubbish is refused without raising and leaves every field zero":
     var
       id: DacFrameIdentity
@@ -80,6 +82,7 @@ suite "DAC frame identity peek":
       check id.messageKind == dmkUnknown
       i = i + 1
 
+  # {.testKind: tkEdgeCase.}
   test "a truncated or padded frame is refused":
     var
       f: ByteSeq = manifestFrame(9'u64, 3'u32, 21'u64)
@@ -90,6 +93,7 @@ suite "DAC frame identity peek":
     check not peekDacFrameIdentity(shortF).ok
     check not peekDacFrameIdentity(longF).ok
 
+  # {.testKind: tkUnit.}
   test "the peek agrees with the full decoder on a valid frame":
     var
       f: ByteSeq = manifestFrame(12'u64, 4'u32, 8'u64)
@@ -103,9 +107,10 @@ suite "DAC frame identity peek":
     check id.messageKind == d.header.messageKind
 
 suite "DAC link table routing":
+  # {.testKind: tkUnit.}
   test "two peers get two links and neither sees the other's package":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64)
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64)
       a: DacLinkRoute = routeDacFrame(T, peerKey(1), manifestFrame(5'u64,
         1'u32, 100'u64), 0'u32)
       b: DacLinkRoute = routeDacFrame(T, peerKey(2), manifestFrame(6'u64,
@@ -117,9 +122,10 @@ suite "DAC link table routing":
     check a.step.kind == dlkManifestAccepted
     check b.step.kind == dlkManifestAccepted
 
+  # {.testKind: tkUnit.}
   test "the same peer is routed back to the link it already had":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64)
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64)
       a: DacLinkRoute = routeDacFrame(T, peerKey(1), manifestFrame(5'u64,
         1'u32, 100'u64), 0'u32)
       b: DacLinkRoute = routeDacFrame(T, peerKey(1), ackFrame(5'u64, 1'u32),
@@ -129,9 +135,10 @@ suite "DAC link table routing":
     check a.slot == b.slot
     check dacLinkTableLive(T) == 1
 
+  # {.testKind: tkUnit.}
   test "one address on two carriers is two links":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64)
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64)
       k1: DacLinkKey = initDacLinkKey("10.0.0.9", 5000'u16, dlcDatagram)
       k2: DacLinkKey = initDacLinkKey("10.0.0.9", 5000'u16, dlcStream)
     discard routeDacFrame(T, k1, manifestFrame(5'u64, 1'u32, 1'u64), 0'u32)
@@ -139,9 +146,10 @@ suite "DAC link table routing":
     check dacLinkTableLive(T) == 2
     check findDacLinkSlot(T, k1) != findDacLinkSlot(T, k2)
 
+  # {.testKind: tkEdgeCase.}
   test "rubbish from an unknown address consumes no slot":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64)
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64)
       r: DacLinkRoute
       i: int = 0
     while i < 500:
@@ -151,9 +159,10 @@ suite "DAC link table routing":
       i = i + 1
     check dacLinkTableLive(T) == 0
 
+  # {.testKind: tkUnit.}
   test "a valid frame that opens nothing consumes no slot":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64)
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64)
       r: DacLinkRoute
       i: int = 0
     while i < 500:
@@ -164,9 +173,10 @@ suite "DAC link table routing":
     check dacLinkTableLive(T) == 0
 
 suite "DAC link table bounds":
+  # {.testKind: tkEdgeCase.}
   test "capacity is a hard number and the surplus is refused":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 8)
       r: DacLinkRoute
       admitted: int = 0
@@ -186,9 +196,10 @@ suite "DAC link table bounds":
     check dacLinkTableFull(T)
     check T.refusals == 56'u32
 
+  # {.testKind: tkEdgeCase.}
   test "a flood cannot displace a peer that is mid-transfer":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 4, idleMs = 10'u32)
       keep: DacLinkKey = initDacLinkKey("192.168.1.5", 9000'u16, dlcDatagram)
       r: DacLinkRoute
@@ -204,9 +215,10 @@ suite "DAC link table bounds":
     check findDacLinkSlot(T, keep) >= 0
     check not dacLinkIdle(T.slots[findDacLinkSlot(T, keep)].link)
 
+  # {.testKind: tkUnit.}
   test "an idle link's slot is reused once its quiet window passes":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 1, idleMs = 50'u32)
       first: DacLinkKey = peerKey(1)
       second: DacLinkKey = peerKey(2)
@@ -221,9 +233,10 @@ suite "DAC link table bounds":
     check findDacLinkSlot(T, first) < 0
     check findDacLinkSlot(T, second) >= 0
 
+  # {.testKind: tkUnit.}
   test "sweeping releases quiet links and leaves busy ones":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 8, idleMs = 50'u32)
       busy: DacLinkKey = peerKey(99)
       i: int = 0
@@ -237,9 +250,10 @@ suite "DAC link table bounds":
     check dacLinkTableLive(T) == 1
     check findDacLinkSlot(T, busy) >= 0
 
+  # {.testKind: tkUnit.}
   test "closing a link frees its slot immediately":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 2)
       k: DacLinkKey = peerKey(3)
     discard routeDacFrame(T, k, manifestFrame(5'u64, 1'u32, 1'u64), 0'u32)
@@ -248,15 +262,17 @@ suite "DAC link table bounds":
     check dacLinkTableLive(T) == 0
     check not closeDacLink(T, k)
 
+  # {.testKind: tkEdgeCase.}
   test "a zero or negative capacity is refused at construction":
     expect ValueError:
-      discard initDacLinkTable(badSignalDacDefaults(), 1'u64, capacity = 0)
+      discard initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64, capacity = 0)
 
 suite "DAC link table transfer":
+  # {.testKind: tkUnit.}
   test "two tables carry a whole package between two peers":
     var
-      A: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 11'u64)
-      B: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 22'u64)
+      A: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 11'u64)
+      B: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 22'u64)
       ka: DacLinkKey = initDacLinkKey("10.1.1.1", 7000'u16, dlcDatagram)
       kb: DacLinkKey = initDacLinkKey("10.2.2.2", 8000'u16, dlcDatagram)
       payload: ByteSeq = rampBytes(7_000)
@@ -277,9 +293,10 @@ suite "DAC link table transfer":
     check done
     check dacLinkTableLive(B) == 1
 
+  # {.testKind: tkUnit.}
   test "each peer draws its own scramble stream from one table seed":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 5'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 4)
       payload: ByteSeq = rampBytes(6_000)
       one: seq[ByteSeq]
@@ -299,9 +316,10 @@ suite "DAC link table transfer":
       i = i + 1
     check differ
 
+  # {.testKind: tkEdgeCase.}
   test "an unknown peer flooding a busy table never raises":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 1'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 1'u64,
         capacity = 4, idleMs = 5'u32)
       steps: seq[DacLinkRoute]
       i: int = 0

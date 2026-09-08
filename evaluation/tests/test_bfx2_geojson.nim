@@ -7,6 +7,7 @@ import std/[json, unittest]
 import bifrost_exchange_protocols
 
 suite "BFX2 GeoJSON":
+  # {.testKind: tkIntegration.}
   test "feature collection packet roundtrip":
     var
       g0: JsonNode
@@ -44,6 +45,7 @@ suite "BFX2 GeoJSON":
     check dec.geoJson["features"].len == 2
     check dec.geoJson["features"][0]["geometry"]["type"].getStr() == "Point"
 
+  # {.testKind: tkUnit.}
   test "feature with null geometry is valid":
     var
       g0: JsonNode
@@ -56,6 +58,7 @@ suite "BFX2 GeoJSON":
     v = validateGeoJsonNode(g0)
     check v.ok
 
+  # {.testKind: tkIntegration.}
   test "geojson envelope roundtrip":
     var
       g0: JsonNode
@@ -72,6 +75,7 @@ suite "BFX2 GeoJSON":
     check dec.header.schemaId == 450'u16
     check dec.geoJson["type"].getStr() == "Point"
 
+  # {.testKind: tkUnit.}
   test "feature collection must provide features array":
     var
       bad: JsonNode
@@ -84,6 +88,7 @@ suite "BFX2 GeoJSON":
     check not v.ok
     check v.err == bfxGeoJsonErrFeaturesInvalid
 
+  # {.testKind: tkUnit.}
   test "point geometry requires coordinates":
     var
       bad: JsonNode
@@ -95,6 +100,7 @@ suite "BFX2 GeoJSON":
     check not v.ok
     check v.err == bfxGeoJsonErrCoordinatesMissing
 
+  # {.testKind: tkEdgeCase.}
   test "feature collection rejects bare geometry entries":
     var
       bad: JsonNode
@@ -112,6 +118,7 @@ suite "BFX2 GeoJSON":
     check not v.ok
     check v.err == bfxGeoJsonErrFeaturesInvalid
 
+  # {.testKind: tkEdgeCase.}
   test "decode rejects non-geojson packet":
     var
       bs: ByteSeq

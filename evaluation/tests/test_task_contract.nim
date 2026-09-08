@@ -113,6 +113,7 @@ proc taskContractFixtureDir(name: string): string =
   result = root
 
 suite "Bifrost task contract":
+  # {.testKind: tkUnit.}
   test "buildLib writes the shared library under build lib":
     var
       content: string = ""
@@ -137,6 +138,7 @@ suite "Bifrost task contract":
     check content.find("""normalizePath(cacheDirFor(root, mode, filePath, extraKey))""") >= 0
     check content.find("""args.add(normalizePath(filePath))""") >= 0
 
+  # {.testKind: tkUnit.}
   test "runnable helper tasks keep binaries under build output roots":
     var
       content: string = ""
@@ -152,6 +154,7 @@ suite "Bifrost task contract":
     check examplesDoc.find("nim c -r examples/ame_exact_path.nim") < 0
     check examplesDoc.find("Avoid raw `nim c -r examples/...` here.") >= 0
 
+  # {.testKind: tkUnit.}
   test "release hygiene tasks and ignore rules stay wired":
     var
       content: string = ""
@@ -181,6 +184,7 @@ suite "Bifrost task contract":
     check ignoreText.find("result-*") >= 0
     check ignoreText.find("tmp_bifrost") >= 0
 
+  # {.testKind: tkUnit.}
   test "repo hygiene finds root helpers and nested source build trees":
     var
       root: string = ""
@@ -221,6 +225,7 @@ suite "Bifrost task contract":
     check sawTestExe
     check sawAndroidBuild
 
+  # {.testKind: tkUnit.}
   test "nix package installs the shared library from build lib":
     var
       content: string = ""
@@ -229,6 +234,7 @@ suite "Bifrost task contract":
     check content.find("""cp build/lib/libbifrost_exchange_protocols.* "$out/lib/"""") >= 0
     check content.find("""cp src/libbifrost_exchange_protocols.* "$out/lib/"""") < 0
 
+  # {.testKind: tkUnit.}
   test "flake check wires TLS verification through Nix":
     var
       flakeText: string = ""
@@ -242,6 +248,7 @@ suite "Bifrost task contract":
     check tlsCheckText.find("""-d:ssl""") >= 0
     check tlsCheckText.find("""evaluation/tests/test_transport_ops.nim""") >= 0
 
+  # {.testKind: tkUnit.}
   test "benchmark harness stays committed and wired":
     var
       content: string = ""
@@ -268,9 +275,11 @@ suite "Bifrost task contract":
     check testsDoc.find("`nix-build nix/module-check.nix --no-out-link`") >= 0
     check testsDoc.find("package build plus flake-wired TLS transport/AME TCP check and module contract check") >= 0
 
+# {.testKind: tkUnit.}
 test "repo scan has no stale project-name or alias references":
   check countLegacyProjectTermsInRepo() == 0
 
+  # {.testKind: tkUnit.}
   test "release docs describe closed readiness gaps as closed":
     var
       readinessDoc: string = ""

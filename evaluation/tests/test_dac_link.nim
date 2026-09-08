@@ -98,18 +98,20 @@ proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
   result = (false, @[], tick)
 
 suite "DAC link on a clean pipe":
+  # {.testKind: tkUnit.}
   test "a package crosses and is committed":
     var
       payload: ByteSeq = rampBytes(20_000)
       P: Pipe
-      outcome = runLink(payload, badSignalDacDefaults(), P)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P)
     check outcome.ok
     check outcome.got == payload
     check P.dropped == 0
 
+  # {.testKind: tkUnit.}
   test "the sender learns the package was committed":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(4'u64, 2'u32, d, 1'u64)
       receiver: DacLink = initDacLink(4'u64, 2'u32, d, 2'u64)
       payload: ByteSeq = rampBytes(6_000)
@@ -130,70 +132,78 @@ suite "DAC link on a clean pipe":
     check dacLinkIdle(sender)
     check dacLinkIdle(receiver)
 
+  # {.testKind: tkEdgeCase.}
   test "a second package cannot start while one is in flight":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(4'u64, 2'u32, d, 1'u64)
     discard beginDacPackage(sender, 1'u64, rampBytes(4_000), 0'u32)
     expect ValueError:
       discard beginDacPackage(sender, 2'u64, rampBytes(4_000), 0'u32)
 
 suite "DAC link under loss":
+  # {.testKind: tkIntegration.}
   test "loss inside the parity budget is repaired without a round trip":
     var
       payload: ByteSeq = rampBytes(20_000)
       P: Pipe = Pipe(dropEvery: 9)
-      outcome = runLink(payload, badSignalDacDefaults(), P)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P)
     check outcome.ok
     check outcome.got == payload
     check P.dropped > 0
 
+  # {.testKind: tkUnit.}
   test "loss past the parity budget still completes through exact repair":
     var
       payload: ByteSeq = rampBytes(30_000)
       P: Pipe = Pipe(dropEvery: 3)
-      outcome = runLink(payload, badSignalDacDefaults(), P, 60)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P, 60)
     check outcome.ok
     check outcome.got == payload
     check P.dropped > 10
 
+  # {.testKind: tkUnit.}
   test "heavy loss on a thin profile still completes":
     var
       payload: ByteSeq = rampBytes(9_000)
       P: Pipe = Pipe(dropEvery: 4)
-      outcome = runLink(payload, heavyLossDacDefaults(), P, 60)
+      outcome = runLink(payload, dacDefaultsFor(dscHeavyLoss), P, 60)
     check outcome.ok
     check outcome.got == payload
 
 suite "DAC link under reordering and duplication":
+  # {.testKind: tkUnit.}
   test "reversed delivery order changes nothing":
     var
       payload: ByteSeq = rampBytes(20_000)
       P: Pipe = Pipe(reorder: true)
-      outcome = runLink(payload, badSignalDacDefaults(), P)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P)
     check outcome.ok
     check outcome.got == payload
 
+  # {.testKind: tkUnit.}
   test "duplicated frames are absorbed":
     var
       payload: ByteSeq = rampBytes(12_000)
       P: Pipe = Pipe(duplicate: true)
-      outcome = runLink(payload, badSignalDacDefaults(), P)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P)
     check outcome.ok
     check outcome.got == payload
 
+  # {.testKind: tkUnit.}
   test "loss plus reordering plus duplication together still complete":
     var
       payload: ByteSeq = rampBytes(20_000)
       P: Pipe = Pipe(dropEvery: 5, reorder: true, duplicate: true)
-      outcome = runLink(payload, badSignalDacDefaults(), P, 60)
+      outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P, 60)
     check outcome.ok
     check outcome.got == payload
 
 suite "DAC link gives up cleanly":
+  # {.testKind: tkEdgeCase.}
   test "a link that can never complete reports failure instead of hanging":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[ByteSeq] = renderDacFrames(sender,
@@ -218,9 +228,10 @@ suite "DAC link gives up cleanly":
     check not dacRepairRoundsLeft(receiver)
     check dacLinkIdle(receiver)
 
+  # {.testKind: tkUnit.}
   test "the round budget is spent, not looped forever":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[ByteSeq] = renderDacFrames(sender,
@@ -242,9 +253,10 @@ suite "DAC link gives up cleanly":
     check hints == int(defaultDacPackageLimits().maxRepairRounds)
 
 suite "DAC link refuses rubbish":
+  # {.testKind: tkEdgeCase.}
   test "a malformed frame is reported, never raised":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       S: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       step: DacLinkStep
     step = feedDacFrame(S, @[byte 0, 1, 2, 3], 0'u32)
@@ -253,9 +265,10 @@ suite "DAC link refuses rubbish":
     step = feedDacFrame(S, @[], 0'u32)
     check step.kind == dlkIgnored
 
+  # {.testKind: tkUnit.}
   test "a frame for another session or lane is dropped":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       mine: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       other: DacLink = initDacLink(2'u64, 1'u32, d, 1'u64)
       frames: seq[ByteSeq] = renderDacFrames(other,
@@ -264,9 +277,10 @@ suite "DAC link refuses rubbish":
     check step.kind == dlkIgnored
     check step.err.len > 0
 
+  # {.testKind: tkUnit.}
   test "a truncated body is reported without ending the loop":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[ByteSeq] = renderDacFrames(sender,
@@ -279,9 +293,10 @@ suite "DAC link refuses rubbish":
     step = feedDacFrame(receiver, frames[0], 0'u32)
     check step.kind == dlkManifestAccepted
 
+  # {.testKind: tkUnit.}
   test "chunks arriving before their manifest are ignored, not misfiled":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[ByteSeq] = renderDacFrames(sender,
@@ -290,9 +305,10 @@ suite "DAC link refuses rubbish":
     check step.kind == dlkIgnored
     check dacLinkMissingCount(receiver) == 0
 
+  # {.testKind: tkUnit.}
   test "a repeated manifest does not restart a live receive":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[ByteSeq] = renderDacFrames(sender,

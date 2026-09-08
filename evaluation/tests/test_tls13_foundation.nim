@@ -27,6 +27,7 @@ MC4CAQAwBQYDK2VwBCIEIAjtEwCECqbot5RZxSmiNDWcPp+Xc9Y9WJcUhti3JgSP
 -----END PRIVATE KEY-----"""
 
 suite "TLS 1.3 foundation":
+  # {.testKind: tkIntegration.}
   test "record codec supports partial input and one complete record":
     var
       r: Tls13Record
@@ -43,6 +44,7 @@ suite "TLS 1.3 foundation":
     check d.consumed == A.len
     check d.record.fragment == r.fragment
 
+  # {.testKind: tkIntegration.}
   test "handshake codec preserves exact transcript bytes":
     var
       h: Tls13Handshake
@@ -56,11 +58,13 @@ suite "TLS 1.3 foundation":
     check d.message.body == h.body
     check d.message.encoded == A
 
+  # {.testKind: tkEdgeCase.}
   test "legacy compression accepts null and rejects non-null-only offers":
     check validateTls13LegacyCompression([byte 0])
     check not validateTls13LegacyCompression([byte 1, 0])
     check not validateTls13LegacyCompression([byte 1, 2])
 
+  # {.testKind: tkIntegration.}
   test "encrypted record roundtrip authenticates header content and padding":
     var
       W, R: Tls13TrafficKeys
@@ -88,6 +92,7 @@ suite "TLS 1.3 foundation":
     check not opened.ok
     check R.sequence == 1'u64
 
+  # {.testKind: tkIntegration.}
   test "key schedule separates endpoints and derives record keys":
     var
       shared: seq[byte] = newSeq[byte](32)
@@ -116,6 +121,7 @@ suite "TLS 1.3 foundation":
     updated = nextTls13TrafficSecret(A.clientApplicationTraffic)
     check updated != A.clientApplicationTraffic
 
+  # {.testKind: tkIntegration.}
   test "narrow client and server hello codecs preserve required profile":
     var
       C: Tls13ClientHello
@@ -147,6 +153,7 @@ suite "TLS 1.3 foundation":
     check serverParsed.ok
     check serverParsed.hello.x25519PublicKey == S.x25519PublicKey
 
+  # {.testKind: tkIntegration.}
   test "transcript Finished and CertificateVerify are role bound":
     var
       T: Tls13Transcript = initTls13Transcript()
@@ -165,6 +172,7 @@ suite "TLS 1.3 foundation":
     check verifyTls13CertificateVerify(kp.publicKey, sig, true, H)
     check not verifyTls13CertificateVerify(kp.publicKey, sig, false, H)
 
+  # {.testKind: tkIntegration.}
   test "controlled pinned Ed25519 handshake promotes matching application keys":
     if fixtureCertificate.len > 0:
       var
@@ -207,6 +215,7 @@ suite "TLS 1.3 foundation":
       check opened.ok
       check opened.content == @[byte 9, 8, 7]
 
+  # {.testKind: tkIntegration.}
   test "server session emits a verifiable flight and accepts client Finished":
     if fixtureCertificate.len > 0:
       var
@@ -335,6 +344,7 @@ suite "TLS 1.3 foundation":
       check opened.content.len == 2
       check opened.content[0] == byte(ord(talFatal))
 
+  # {.testKind: tkEdgeCase.}
   test "server session rejects mismatched keys and invalid X25519 shares":
     if fixtureCertificate.len > 0:
       var
@@ -370,6 +380,7 @@ suite "TLS 1.3 foundation":
       check recordResult.record.fragment.len == 2
       check recordResult.record.fragment[0] == byte(ord(talFatal))
 
+  # {.testKind: tkIntegration.}
   test "client and server sessions complete from coalesced server records":
     var
       certPem: PemReadResult = readPemBlock(fixtureCertificate, "CERTIFICATE")
@@ -439,6 +450,7 @@ suite "TLS 1.3 foundation":
     check serverOutput.closed
     check server.state == tssConnected
 
+  # {.testKind: tkIntegration.}
   test "connection buffers fragmented records and handshake messages":
     var
       C: Tls13Connection = initTls13Connection()
@@ -456,6 +468,7 @@ suite "TLS 1.3 foundation":
     check E[0].handshake.messageType == thtClientHello
     check E[1].handshake.messageType == thtFinished
 
+  # {.testKind: tkIntegration.}
   test "connection decrypts application data and detects clean shutdown":
     var
       sender, receiver: Tls13Connection
@@ -486,6 +499,7 @@ suite "TLS 1.3 foundation":
     check receiver.peerClosed
     check sender.localClosed
 
+  # {.testKind: tkIntegration.}
   test "connection decrypts and reassembles protected handshake fragments":
     var
       sender, receiver: Tls13Connection
@@ -518,6 +532,7 @@ suite "TLS 1.3 foundation":
     check E[0].handshake.messageType == thtEncryptedExtensions
     check E[0].handshake.body == @[byte 0, 0]
 
+  # {.testKind: tkIntegration.}
   test "post-handshake KeyUpdate rotates both traffic directions":
     var
       sender, receiver: Tls13Connection
@@ -543,6 +558,7 @@ suite "TLS 1.3 foundation":
     check E[0].kind == tekApplicationData
     check E[0].data == @[byte 7, 7, 7]
 
+  # {.testKind: tkIntegration.}
   test "alert helpers preserve close and hide internal failure details":
     var
       wire = encodeTls13PlainAlert(talWarning, tadCloseNotify)

@@ -93,6 +93,7 @@ proc swapFirstTwoObjectFields(packet: var ByteSeq): bool =
   result = true
 
 suite "BFX2 Wire":
+  # {.testKind: tkIntegration.}
   test "json node packet roundtrip":
     var
       n0: JsonNode
@@ -112,6 +113,7 @@ suite "BFX2 Wire":
     check d.node["tags"].len == 3
     check d.node["meta"]["version"].getInt() == 1
 
+  # {.testKind: tkIntegration.}
   test "option null roundtrip":
     var
       d: tuple[ok: bool, node: JsonNode, err: string]
@@ -119,6 +121,7 @@ suite "BFX2 Wire":
     check d.ok
     check d.node.kind == JNull
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects non-canonical bool payload bytes":
     var
       packet: ByteSeq
@@ -128,6 +131,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidBoolField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects non-canonical option presence bytes":
     var
       child: ByteSeq
@@ -142,6 +146,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidOptionField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects u64 values that exceed host JSON int range":
     var
       raw: ByteSeq = @[]
@@ -153,6 +158,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrIntegerOutOfRange
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects oversized u16 scalar payloads":
     var
       raw: ByteSeq = @[]
@@ -165,6 +171,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrTruncated
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects oversized f64 scalar payloads":
     var
       raw: ByteSeq = @[]
@@ -177,6 +184,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrTruncated
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects trailing bytes inside object payload":
     var
       n0: JsonNode
@@ -190,6 +198,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidObjectField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects trailing bytes inside sequence payload":
     var
       n0: JsonNode
@@ -203,6 +212,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidSequenceField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects mismatched object field ids":
     var
       n0: JsonNode
@@ -215,6 +225,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidObjectField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects non-canonical object field order":
     var
       n0: JsonNode
@@ -227,6 +238,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidObjectField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects trailing bytes after null option payload":
     var
       packet: ByteSeq
@@ -238,6 +250,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrInvalidOptionField
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects object keys that exceed u16 wire length":
     var
       n0: JsonNode
@@ -248,6 +261,7 @@ suite "BFX2 Wire":
     expect ValueError:
       discard encodeJsonNodePacket(n0)
 
+  # {.testKind: tkEdgeCase.}
   test "json node packet rejects object field counts that exceed u16 wire length":
     var
       n0: JsonNode
@@ -259,6 +273,7 @@ suite "BFX2 Wire":
     expect ValueError:
       discard encodeJsonNodePacket(n0)
 
+  # {.testKind: tkIntegration.}
   test "envelope roundtrip":
     var
       payload: ByteSeq = @[1'u8, 2'u8, 3'u8, 4'u8]
@@ -270,6 +285,7 @@ suite "BFX2 Wire":
     check d.header.schemaId == 410'u16
     check d.payload == payload
 
+  # {.testKind: tkEdgeCase.}
   test "checksum envelope accepts an empty payload":
     var
       d: tuple[ok: bool, header: BfxHeader, payload: ByteSeq, err: string]
@@ -278,6 +294,7 @@ suite "BFX2 Wire":
     check d.ok
     check d.payload.len == 0
 
+  # {.testKind: tkUnit.}
   test "generic vector is stable":
     let hexPath = joinPath(getCurrentDir(), "evaluation", "tests", "vectors", "bfx2", "hello_payload_v2.hex")
     let jsonPath = joinPath(getCurrentDir(), "evaluation", "tests", "vectors", "bfx2", "hello_payload_v2.json")
@@ -296,6 +313,7 @@ suite "BFX2 Wire":
     check dec.header.schemaId == uint16(meta["schemaId"].getInt())
     check dec.payload == payload
 
+  # {.testKind: tkEdgeCase.}
   test "envelope checksum rejects checksum and payload changes":
     var
       payload: ByteSeq = @[7'u8, 8'u8, 9'u8]
@@ -312,6 +330,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrChecksumMismatch
 
+  # {.testKind: tkUnit.}
   test "checksum mode and old version handling are explicit":
     var
       payload: ByteSeq = @[7'u8, 8'u8, 9'u8]
@@ -330,6 +349,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrUnsupportedFormatVersion
 
+  # {.testKind: tkEdgeCase.}
   test "decoder rejects hostile dimensions and nesting":
     var
       raw: ByteSeq = @[]
@@ -352,6 +372,7 @@ suite "BFX2 Wire":
     check not d.ok
     check d.err == bfxErrResourceLimit
 
+  # {.testKind: tkEdgeCase.}
   test "truncated payload fails":
     var
       payload: ByteSeq = @[11'u8, 12'u8, 13'u8]

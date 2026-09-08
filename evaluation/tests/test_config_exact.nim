@@ -10,6 +10,7 @@ import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/fomke/types
 
 suite "exact Bifrost config":
+  # {.testKind: tkUnit.}
   test "committed layout and tier equal the programmatic default":
     var
       expected: BifrostConfig = defaultBifrostConfig()
@@ -24,12 +25,14 @@ suite "exact Bifrost config":
     check loaded.fomkePregenerationMessages == 8
     check not fomkePregenerationEnabled(loaded)
 
+  # {.testKind: tkEdgeCase.}
   test "invalid layout and tier hex are rejected":
     expect ValueError:
       discard parseBifrostConfigText("ameLayoutHex = \"01ff\"")
     expect ValueError:
       discard parseBifrostConfigText("ameInitialTierHex = \"01ff\"")
 
+  # {.testKind: tkUnit.}
   test "validated configuration becomes the active process default":
     var
       configured: BifrostConfig = defaultBifrostConfig()
@@ -39,6 +42,7 @@ suite "exact Bifrost config":
     active = currentBifrostConfig()
     check active.defaultTimeoutMs == 1234
 
+  # {.testKind: tkUnit.}
   test "send-cache policy and size parse independently":
     var
       parsed: BifrostConfig = parseBifrostConfigText("""

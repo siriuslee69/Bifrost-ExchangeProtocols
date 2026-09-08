@@ -45,6 +45,7 @@ proc roundTrip(a: DacAckRange): DacAckRange =
   result = decodeDacAckRange(encodeDacAckRange(a))
 
 suite "DAC ACK encoding":
+  # {.testKind: tkUnit.}
   test "a clean batch stays in run mode and is tiny":
     var
       A: seq[bool] = cleanRun(256)
@@ -56,6 +57,7 @@ suite "DAC ACK encoding":
     check encodeDacAckRange(a).len == dacAckRangeHeaderLen + dacAckRangeEntryLen
     check roundTrip(a) == a
 
+  # {.testKind: tkUnit.}
   test "scattered loss flips the encoder to the bitmap":
     var
       A: seq[bool] = scattered(256, 8)
@@ -65,6 +67,7 @@ suite "DAC ACK encoding":
     check encodeDacAckRange(a).len == dacAckRangeHeaderLen + 32
     check roundTrip(a) == a
 
+  # {.testKind: tkUnit.}
   test "the encoder always picks the shorter of the two":
     var
       n: int = 0
@@ -82,6 +85,7 @@ suite "DAC ACK encoding":
       check roundTrip(a) == a
       n = n + 1
 
+  # {.testKind: tkUnit.}
   test "both shapes answer the same question about every sequence":
     var
       A: seq[bool] = scattered(64, 3)
@@ -98,6 +102,7 @@ suite "DAC ACK encoding":
     check not dacAckIncludesSeq(bitmap, 500'u32 + 64'u32)
     check runs == bitmap
 
+  # {.testKind: tkEdgeCase.}
   test "malformed receipts are refused":
     var
       A: seq[bool] = scattered(64, 3)
@@ -113,6 +118,7 @@ suite "DAC ACK encoding":
     expect ValueError:
       discard decodeDacAckRange(body)
 
+  # {.testKind: tkEdgeCase.}
   test "a receipt cannot claim both shapes at once":
     var
       a: DacAckRange = initDacAckGapMap(1'u32, 0'u8, @[byte 0xFF])
@@ -121,9 +127,10 @@ suite "DAC ACK encoding":
       discard encodeDacAckRange(a)
 
 suite "DAC ACK pacing":
+  # {.testKind: tkUnit.}
   test "a full batch closes on count alone":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
       i: int = 0
       a: DacAckRange
     check S.batchChunks == 64'u16
@@ -139,17 +146,19 @@ suite "DAC ACK pacing":
     check S.pending == 0'u16
     check S.base == 64'u32
 
+  # {.testKind: tkUnit.}
   test "a trickle closes on the deadline, not the count":
     var
-      S: DacAckPolicy = initDacAckPolicy(batterySaverDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscBatterySaver))
     check S.deadlineMs == 2500'u16
     check observeDacArrival(S, 0'u32, 1_000'u32)
     check not dacAckDue(S, 3_000'u32)
     check dacAckDue(S, 3_500'u32)
 
+  # {.testKind: tkUnit.}
   test "a gap closes the batch immediately":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
       a: DacAckRange
     check observeDacArrival(S, 10'u32, 0'u32)
     check observeDacArrival(S, 11'u32, 0'u32)
@@ -162,9 +171,10 @@ suite "DAC ACK pacing":
     check not dacAckIncludesSeq(a, 12'u32)
     check dacAckIncludesSeq(a, 13'u32)
 
+  # {.testKind: tkUnit.}
   test "loss halves the levers and a clean streak walks them back":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
       i: int = 0
     adaptDacAckPolicy(S, 3'u16)
     check S.batchChunks == 32'u16
@@ -178,9 +188,10 @@ suite "DAC ACK pacing":
     check S.batchChunks == S.ceilingChunks
     check S.deadlineMs == S.ceilingMs
 
+  # {.testKind: tkEdgeCase.}
   test "the levers never fall below the floor or climb past the profile":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
       i: int = 0
     while i < 40:
       adaptDacAckPolicy(S, 1'u16)
@@ -194,31 +205,35 @@ suite "DAC ACK pacing":
     check S.batchChunks == S.ceilingChunks
     check S.deadlineMs == S.ceilingMs
 
+  # {.testKind: tkEdgeCase.}
   test "a sequence outside the open window is refused, not mis-filed":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
     check observeDacArrival(S, 100'u32, 0'u32)
     check not observeDacArrival(S, 99'u32, 0'u32)
     check not observeDacArrival(S, 100'u32 + 5000'u32, 0'u32)
     check S.pending == 1'u16
 
+  # {.testKind: tkUnit.}
   test "a duplicate arrival is counted once":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
     check observeDacArrival(S, 7'u32, 0'u32)
     check observeDacArrival(S, 7'u32, 0'u32)
     check S.pending == 1'u16
     check S.span == 1'u16
 
+  # {.testKind: tkEdgeCase.}
   test "closing an empty batch is refused":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
     expect ValueError:
       discard closeDacAckBatch(S, 0'u8, 0'u32)
 
+  # {.testKind: tkUnit.}
   test "a gap straddling two batches is still reported":
     var
-      S: DacAckPolicy = initDacAckPolicy(cleanLanDacDefaults())
+      S: DacAckPolicy = initDacAckPolicy(dacDefaultsFor(dscCleanLan))
       i: int = 0
       a: DacAckRange
     while i < 64:
@@ -233,16 +248,18 @@ suite "DAC ACK pacing":
     check dacAckIncludesSeq(a, 65'u32)
 
 suite "DAC repair timing":
+  # {.testKind: tkUnit.}
   test "with no observations the profile floor governs":
     var
       S: DacRepairTimer = initDacRepairTimer()
-      d: DacScenarioDefaults = cleanLanDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
     check dacRepairWaitMs(S, d) == d.repairWaitMs
 
+  # {.testKind: tkUnit.}
   test "a slow batching receiver pushes the repair wait above the floor":
     var
       S: DacRepairTimer = initDacRepairTimer()
-      d: DacScenarioDefaults = cleanLanDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
       i: int = 0
     while i < 20:
       observeDacAckLatency(S, 400'u16)
@@ -251,6 +268,7 @@ suite "DAC repair timing":
     check dacRepairWaitMs(S, d) >= 600'u16
     check dacRepairWaitMs(S, d) > d.repairWaitMs
 
+  # {.testKind: tkUnit.}
   test "one slow receipt raises the peak and it decays back afterwards":
     var
       S: DacRepairTimer = initDacRepairTimer()
@@ -266,10 +284,11 @@ suite "DAC repair timing":
     check S.peakMs < spike
     check S.peakMs >= S.delayMs
 
+  # {.testKind: tkEdgeCase.}
   test "a fast receiver never pulls the wait below the profile floor":
     var
       S: DacRepairTimer = initDacRepairTimer()
-      d: DacScenarioDefaults = cleanLanDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
       i: int = 0
     while i < 20:
       observeDacAckLatency(S, 1'u16)

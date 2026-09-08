@@ -245,6 +245,7 @@ proc rampBytes(n: int): ByteSeq =
     i = i + 1
 
 suite "AME handshake over a real TCP socket":
+  # {.testKind: tkIntegration.}
   test "a certified handshake survives the cookie retry and carries data":
     var
       th: Thread[AmeTcpServerArgs]
@@ -320,6 +321,7 @@ suite "AME handshake over a real TCP socket":
     check echoed.packet.payload == payload
     clearAmeSession(outcome.connection)
     sock.close()
+  # {.testKind: tkIntegration.}
   test "reciprocal pins authenticate the same driver":
     var
       th: Thread[AmeTcpServerArgs]
@@ -353,6 +355,7 @@ suite "AME handshake over a real TCP socket":
     clearAmeSession(outcome.connection)
     sock.close()
 
+  # {.testKind: tkEdgeCase.}
   test "a client trusting the wrong authority is refused on the wire":
     var
       th: Thread[AmeTcpServerArgs]
@@ -438,6 +441,7 @@ proc runCarrierServer(a: AmeTcpServerArgs) {.thread.} =
   clearAmeSession(session)
 
 suite "AME TCP carrier over a real socket":
+  # {.testKind: tkIntegration.}
   test "connectAmeTcpClient carries a pre-negotiated session both ways":
     var
       th: Thread[AmeTcpServerArgs]
@@ -464,6 +468,7 @@ suite "AME TCP carrier over a real socket":
     client.close()
     check client.socket == nil
 
+  # {.testKind: tkEdgeCase.}
   test "the carrier refuses a carrier this build does not have":
     ## Both are compiled here, so both must answer. The point is that the
     ## runtime `case` reaches a real implementation for each.

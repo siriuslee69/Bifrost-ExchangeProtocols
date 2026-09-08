@@ -223,6 +223,7 @@ proc runClientAgainst(args: DacServerArgs, payload: ByteSeq):
   closeDac(sock)
 
 suite "AME handshake over real UDP sockets":
+  # {.testKind: tkIntegration.}
   test "a certified handshake survives the cookie retry and carries data":
     var
       payload: ByteSeq = rampBytes(512)
@@ -239,6 +240,7 @@ suite "AME handshake over real UDP sockets":
     check run.echoed.packet.payload == payload
     clearAmeSession(run.outcome.connection)
 
+  # {.testKind: tkIntegration.}
   test "a responder that wants no cookie answers the first hello":
     var
       payload: ByteSeq = rampBytes(64)
@@ -250,6 +252,7 @@ suite "AME handshake over real UDP sockets":
     check run.echoed.packet.payload == payload
     clearAmeSession(run.outcome.connection)
 
+  # {.testKind: tkIntegration.}
   test "a lost hello is recovered by retransmission":
     var
       payload: ByteSeq = rampBytes(200)
@@ -267,6 +270,7 @@ suite "AME handshake over real UDP sockets":
     clearAmeSession(run.outcome.connection)
 
 suite "records that no datagram can carry":
+  # {.testKind: tkEdgeCase.}
   test "a record over the datagram limit is refused at the sender":
     var
       sock: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))
@@ -283,6 +287,7 @@ suite "records that no datagram can carry":
     check outcome.err.len > 0
     check outcome.err.contains("datagram limit")
 
+  # {.testKind: tkIntegration.}
   test "an unanswered hello gives up instead of retrying forever":
     var
       sock: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))

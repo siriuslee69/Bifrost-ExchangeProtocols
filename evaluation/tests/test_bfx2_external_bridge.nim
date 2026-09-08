@@ -45,6 +45,7 @@ proc bytesToHex(bs: ByteSeq): string =
     i = i + 1
 
 suite "BFX2 External Bridge":
+  # {.testKind: tkUnit.}
   test "external schema classification":
     check isExternalSchemaId(schemaErmineReservedStart)
     check isExternalSchemaId(schemaErmineReservedEnd)
@@ -52,6 +53,7 @@ suite "BFX2 External Bridge":
     check not isErmineSchemaId(schemaExternalReservedEnd)
     check not isExternalSchemaId(399'u16)
 
+  # {.testKind: tkIntegration.}
   test "external envelope roundtrip":
     var
       p0: ByteSeq = @[1'u8, 2'u8, 3'u8, 4'u8]
@@ -65,6 +67,7 @@ suite "BFX2 External Bridge":
     check dec.envelope.schemaVersion == 1'u16
     check dec.envelope.payload == p0
 
+  # {.testKind: tkEdgeCase.}
   test "reject non-external schema in bridge encode/decode":
     var
       p0: ByteSeq = @[9'u8, 8'u8]
@@ -77,6 +80,7 @@ suite "BFX2 External Bridge":
     dec = decodeExternalEnvelope(rawCore)
     check not dec.ok
 
+  # {.testKind: tkUnit.}
   test "external bridge vector is stable":
     var
       hexPath: string

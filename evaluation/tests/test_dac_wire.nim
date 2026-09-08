@@ -20,6 +20,7 @@ import ../../src/protocols/dac/level1/repair_chunk
 import ../../src/protocols/dac/level1/path_switch
 
 suite "DAC wire":
+  # {.testKind: tkIntegration.}
   test "fixed-width bodies roundtrip and validate reserved bytes":
     var
       digest: array[32, uint8]
@@ -76,6 +77,7 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacPathSwitch(body)
 
+  # {.testKind: tkEdgeCase.}
   test "ack ranges roundtrip and reject malformed shapes":
     var
       ack: DacAckRange
@@ -94,6 +96,7 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacAckRange(body)
 
+  # {.testKind: tkUnit.}
   test "manifest codec validates chunk counts and repair semantics":
     var
       defaults: DacScenarioDefaults
@@ -101,7 +104,7 @@ suite "DAC wire":
       manifest: DacPackageManifest
       body: ByteSeq
       decoded: DacPackageManifest
-    defaults = badSignalDacDefaults()
+    defaults = dacDefaultsFor(dscBadSignal)
     digest[0] = 0x11'u8
     manifest = initDacPackageManifest(7001'u64, dtcUserData, defaults,
       2048'u64, digest)
@@ -118,6 +121,7 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacPackageManifest(body)
 
+  # {.testKind: tkIntegration.}
   test "payload-carrying bodies roundtrip":
     var
       chunk: DacPackageChunk
@@ -171,6 +175,7 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacRepairChunk(body)
 
+  # {.testKind: tkUnit.}
   test "parity shards carry a Reed-Solomon payload across the wire":
     var
       shard: DacParityShard
@@ -187,6 +192,7 @@ suite "DAC wire":
     expect ValueError:
       discard decodeDacParityShard(body)
 
+  # {.testKind: tkIntegration.}
   test "manifest body roundtrips through DAC1 framing":
     var
       defaults: DacScenarioDefaults
@@ -198,7 +204,7 @@ suite "DAC wire":
       decodedFrame: DacDecodedFrame
       decodedManifest: DacPackageManifest
       flags: DacFrameFlags
-    defaults = cleanLanDacDefaults()
+    defaults = dacDefaultsFor(dscCleanLan)
     digest[0] = 0x42'u8
     manifest = initDacPackageManifest(9001'u64, dtcArchive, defaults,
       4096'u64, digest)

@@ -79,67 +79,80 @@ proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
     return
   result = d.parityShards > 0'u16 and d.repairRounds > 0'u8
 
-proc superCleanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class for same-room server or same-rack paths.
-  result = initDacDefaults(dplSuperCleanPath, c, drmNone, damBatch, 32768'u16,
-    64'u16, 0'u16, 256'u16, 25'u16, 25'u16, 1'u8,
-    dblU32, dacSuperCleanMaxBodyLen)
+type
+  ## DacScenario: which row of the table above is meant. The lane says what
+  ## the path is like; the scenario says which set of numbers to send with.
+  ## Several scenarios share a lane -- bad signal, heavy loss, jitter and an
+  ## unstable path are all `dplLossyPath` and want different parity.
+  DacScenario* = enum
+    dscSameRoom, dscCleanLan, dscMobile, dscMetered, dscThin,
+    dscBadSignal, dscHeavyLoss, dscJitter, dscUnstablePath,
+    dscOverloaded, dscBatterySaver, dscWeakRecovery
 
-proc cleanLanDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplCleanPath, c, drmXor, damBatch, 1200'u16,
-    32'u16, 1'u16, 64'u16, 100'u16, 75'u16, 2'u8)
+  ## One row of numbers, in the order the table above prints them.
+  DacScenarioPreset = tuple
+    lane: DacPathLane
+    repair: DacRepairMode
+    ack: DacAckMode
+    chunkBytes: uint16
+    dataShards: uint16
+    parityShards: uint16
+    ackBatchChunks: uint16
+    ackMaxDelayMs: uint16
+    repairWaitMs: uint16
+    repairRounds: uint8
+    bodyLenMode: DacBodyLenMode
+    maxBodyLen: uint32
+    forcedClass: bool
 
-proc mobileDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplMobilePath, c, drmReedSolomon, damBatch,
-    900'u16, 24'u16, 2'u16, 32'u16, 400'u16, 250'u16, 2'u8)
+const
+  ## The table at the top of this file, as data. It used to be twelve
+  ## near-identical procs that differed only in these numbers, so the
+  ## documentation and the code could drift apart without anything noticing.
+  dacScenarioPresets: array[DacScenario, DacScenarioPreset] = [
+    (dplSuperCleanPath, drmNone, damBatch, 32768'u16, 64'u16, 0'u16,
+      256'u16, 25'u16, 25'u16, 1'u8, dblU32, dacSuperCleanMaxBodyLen, false),
+    (dplCleanPath, drmXor, damBatch, 1200'u16, 32'u16, 1'u16,
+      64'u16, 100'u16, 75'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+    (dplMobilePath, drmReedSolomon, damBatch, 900'u16, 24'u16, 2'u16,
+      32'u16, 400'u16, 250'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+    (dplThinPath, drmTcpExact, damNackOnly, 700'u16, 16'u16, 1'u16,
+      16'u16, 700'u16, 500'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+    (dplThinPath, drmXor, damBatch, 576'u16, 12'u16, 1'u16,
+      12'u16, 1000'u16, 700'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+    (dplLossyPath, drmReedSolomon, damBatch, 768'u16, 16'u16, 4'u16,
+      16'u16, 500'u16, 350'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+    (dplLossyPath, drmReedSolomon, damExplicit, 512'u16, 12'u16, 6'u16,
+      8'u16, 300'u16, 200'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+    (dplLossyPath, drmReedSolomon, damBatch, 1000'u16, 24'u16, 3'u16,
+      32'u16, 1200'u16, 900'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+    (dplLossyPath, drmReedSolomon, damBatch, 768'u16, 16'u16, 3'u16,
+      16'u16, 500'u16, 300'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+    (dplThinPath, drmXor, damBatch, 576'u16, 8'u16, 1'u16,
+      8'u16, 1500'u16, 1000'u16, 1'u8, dblU16, uint32(high(uint16)), false),
+    (dplMobilePath, drmXor, damBatch, 900'u16, 16'u16, 1'u16,
+      64'u16, 2500'u16, 1000'u16, 1'u8, dblU16, uint32(high(uint16)), false),
+    (dplRecoveryPath, drmReedSolomon, damVerified, 512'u16, 8'u16, 6'u16,
+      4'u16, 200'u16, 150'u16, 4'u8, dblU16, uint32(high(uint16)), true)
+  ]
 
-proc meteredDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplThinPath, c, drmTcpExact, damNackOnly,
-    700'u16, 16'u16, 1'u16, 16'u16, 700'u16, 500'u16, 2'u8)
-
-proc thinDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
-    12'u16, 1'u16, 12'u16, 1000'u16, 700'u16, 2'u8)
-
-proc badSignalDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    768'u16, 16'u16, 4'u16, 16'u16, 500'u16, 350'u16, 3'u8)
-
-proc heavyLossDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damExplicit,
-    512'u16, 12'u16, 6'u16, 8'u16, 300'u16, 200'u16, 3'u8)
-
-proc jitterDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    1000'u16, 24'u16, 3'u16, 32'u16, 1200'u16, 900'u16, 3'u8)
-
-proc unstablePathDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplLossyPath, c, drmReedSolomon, damBatch,
-    768'u16, 16'u16, 3'u16, 16'u16, 500'u16, 300'u16, 3'u8)
-
-proc overloadedDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplThinPath, c, drmXor, damBatch, 576'u16,
-    8'u16, 1'u16, 8'u16, 1500'u16, 1000'u16, 1'u8)
-
-proc batterySaverDacDefaults*(c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: configurator.} =
-  ## c: vertical transfer class.
-  result = initDacDefaults(dplMobilePath, c, drmXor, damBatch, 900'u16,
-    16'u16, 1'u16, 64'u16, 2500'u16, 1000'u16, 1'u8)
-
-proc recoveryWeakDacDefaults*(): DacScenarioDefaults {.role: configurator.} =
-  ## recoveryWeakDacDefaults: initialize weak-network recovery defaults.
-  result = initDacDefaults(dplRecoveryPath, dtcRecovery, drmReedSolomon,
-    damVerified, 512'u16, 8'u16, 6'u16, 4'u16, 200'u16,
-    150'u16, 4'u8)
+proc dacDefaultsFor*(s: DacScenario,
+    c: DacTransferClass = dtcUserData): DacScenarioDefaults {.
+    role: configurator.} =
+  ## s: which row of the scenario table is wanted.
+  ## c: transfer class, ignored by the one scenario that fixes its own.
+  ##
+  ## Weak recovery is that one: it exists to get bytes through a path that is
+  ## barely working, so calling it with `dtcUserData` and getting user-data
+  ## pacing back would defeat the point.
+  var
+    p: DacScenarioPreset = dacScenarioPresets[s]
+    cls: DacTransferClass = c
+  if p.forcedClass:
+    cls = dtcRecovery
+  result = initDacDefaults(p.lane, cls, p.repair, p.ack, p.chunkBytes,
+    p.dataShards, p.parityShards, p.ackBatchChunks, p.ackMaxDelayMs,
+    p.repairWaitMs, p.repairRounds, p.bodyLenMode, p.maxBodyLen)
 
 proc dacDefaultsForPath*(p: DacPathLane,
     c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: truthBuilder.} =
@@ -150,15 +163,15 @@ proc dacDefaultsForPath*(p: DacPathLane,
   ## move is a complete, validated parameter set rather than a field poke.
   case p
   of dplSuperCleanPath:
-    result = superCleanDacDefaults(c)
+    result = dacDefaultsFor(dscSameRoom, c)
   of dplCleanPath:
-    result = cleanLanDacDefaults(c)
+    result = dacDefaultsFor(dscCleanLan, c)
   of dplMobilePath:
-    result = mobileDacDefaults(c)
+    result = dacDefaultsFor(dscMobile, c)
   of dplThinPath:
-    result = thinDacDefaults(c)
+    result = dacDefaultsFor(dscThin, c)
   of dplLossyPath:
-    result = badSignalDacDefaults(c)
+    result = dacDefaultsFor(dscBadSignal, c)
   of dplBlockedUdpPath:
     ## There is no datagram policy for a path that carries no datagrams.
     ## The lane is a signal, not a configuration: a peer reporting it is
@@ -170,4 +183,4 @@ proc dacDefaultsForPath*(p: DacPathLane,
       "DAC has no defaults for a blocked-UDP path; carry the session over " &
       "the TCP carrier (acrTcp) instead")
   of dplRecoveryPath:
-    result = recoveryWeakDacDefaults()
+    result = dacDefaultsFor(dscWeakRecovery)

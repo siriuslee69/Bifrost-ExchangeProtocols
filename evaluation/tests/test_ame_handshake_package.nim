@@ -85,6 +85,7 @@ proc newPair(name: string): Pair {.role: configurator.} =
   result.tier = handshakeTier(result.layout)
 
 suite "AME private handshake":
+  # {.testKind: tkUnit.}
   test "seeded authority and peer identities are reproducible":
     var
       authoritySeeds: seq[ByteSeq] = @[]
@@ -121,6 +122,7 @@ suite "AME private handshake":
     check identity0.signingKeys == identity1.signingKeys
     check authority0.signingKeys.len == int(algorithms.length)
 
+  # {.testKind: tkUnit.}
   test "neither certificate appears anywhere in the clear":
     var
       p: Pair = newPair("private")
@@ -155,6 +157,7 @@ suite "AME private handshake":
         i = i + 1
     check not found
 
+  # {.testKind: tkUnit.}
   test "authority-authenticated handshake creates equal epochs":
     var
       p: Pair = newPair("example")
@@ -199,6 +202,7 @@ suite "AME private handshake":
     expect ValueError:
       discard decodeAmeClientHello(helloWire)
 
+  # {.testKind: tkIntegration.}
   test "both sides start a working ratchet from the finished handshake":
     var
       p: Pair = newPair("ratchet")
@@ -229,6 +233,7 @@ suite "AME private handshake":
     check opened.ok
     check opened.packet.payload == @[byte 4, 5]
 
+  # {.testKind: tkUnit.}
   test "the responder's tunables reach both endpoints and both blocks":
     var
       p: Pair = newPair("tunables")
@@ -281,6 +286,7 @@ suite "AME private handshake":
     check opened.ok
     check opened.packet.payload == @[byte 1, 2, 3]
 
+  # {.testKind: tkRegression.}
   test "one broken authority algorithm is not enough to forge a certificate":
     var
       p: Pair = newPair("hybrid")
@@ -301,6 +307,7 @@ suite "AME private handshake":
     check not trust.ok
     check trust.err == "certificate proof count does not match the pinned root"
 
+  # {.testKind: tkEdgeCase.}
   test "a revoked serial is refused while the same subject can be reissued":
     var
       p: Pair = newPair("revoke")
@@ -319,6 +326,7 @@ suite "AME private handshake":
     check trust.ok
     check trust.subjectKeyId == "revoke-server"
 
+  # {.testKind: tkEdgeCase.}
   test "certificate validity and a wildly wrong clock both fail closed":
     var
       p: Pair = newPair("clock")
@@ -338,6 +346,7 @@ suite "AME private handshake":
     trust = verifyAmeIdentityCertificate(p.serverCert, p.root, 0'i64)
     check not trust.ok
 
+  # {.testKind: tkUnit.}
   test "a pinned identity expires like any other":
     var
       identity: AmeIdentityKey = initAmeIdentityKey("pinned-peer")
@@ -354,6 +363,7 @@ suite "AME private handshake":
     expect ValueError:
       discard pinnedIdentityDescriptor(identity, 500'i64, 100'i64)
 
+  # {.testKind: tkUnit.}
   test "reciprocal public-key pins authenticate the complete handshake":
     var
       clientKey: AmeIdentityKey = initAmeIdentityKey("pin-client")
@@ -385,6 +395,7 @@ suite "AME private handshake":
     check clientDone.auth.current.transcriptSalt ==
       serverDone.auth.current.transcriptSalt
 
+  # {.testKind: tkEdgeCase.}
   test "the wrong pin and a mixed-up trust mode both fail closed":
     var
       clientKey: AmeIdentityKey = initAmeIdentityKey("mix-client")
@@ -416,6 +427,7 @@ suite "AME private handshake":
     check not verifyPinnedPeerIdentity(certified.serverCert,
       pinnedPeerIdentity(certified.serverKey), nowUnix).ok
 
+  # {.testKind: tkRegression.}
   test "tampering anywhere in the server hello fails closed":
     var
       p: Pair = newPair("tamper")
@@ -444,6 +456,7 @@ suite "AME private handshake":
       p.clientKey, nowUnix)
     check not done.ok
 
+  # {.testKind: tkEdgeCase.}
   test "an unsupported layout or tier is refused before any key work":
     var
       p: Pair = newPair("policy")
@@ -454,6 +467,7 @@ suite "AME private handshake":
     check not server.ok
     check server.err == "client exact AME layout and initial tier are not supported"
 
+  # {.testKind: tkEdgeCase.}
   test "a zero session id is refused rather than raising":
     var
       p: Pair = newPair("zero")
@@ -467,6 +481,7 @@ suite "AME private handshake":
     expect ValueError:
       discard beginAmeHandshake(0'u64, p.layout, p.tier)
 
+  # {.testKind: tkUnit.}
   test "the finish erases the handshake secrets it consumed":
     var
       p: Pair = newPair("erase")
@@ -487,6 +502,7 @@ suite "AME private handshake":
     check server.state.sharedSecrets.len == 0
 
 suite "AME anti-flood cookie":
+  # {.testKind: tkUnit.}
   test "a cookie only verifies for the address it was minted for":
     var
       p: Pair = newPair("cookie")
@@ -680,6 +696,7 @@ suite "AME handshake transport":
     decoded.mode = atmPinnedPeerKey
     check clientHelloSubject(decoded) != clientHelloSubject(h.hello)
 
+  # {.testKind: tkEdgeCase.}
   test "records ride ordinary AME frames and refuse to arrive out of order":
     var
       p: Pair = newPair("transport")
@@ -715,6 +732,7 @@ suite "AME handshake transport":
         @[byte 1, 2, 3]))
 
 suite "AME secure package":
+  # {.testKind: tkUnit.}
   test "an authenticated package repairs loss and restores plaintext":
     var
       p: Pair = newPair("package")
@@ -740,7 +758,7 @@ suite "AME secure package":
     receiver = acceptAmeHandshake(server.state, sender.finish, p.auth, nowUnix)
     check sender.ok and receiver.ok
     plan = planAmeSecurePackage(sender.auth, 55'u64, plaintext,
-      cleanLanDacDefaults())
+      dacDefaultsFor(dscCleanLan))
     packageReceiver = initDacPackageReceiver(plan.package.manifest)
     for chunk in plan.package.chunks:
       if chunk.chunkId notin {1'u16, 3'u16}:
@@ -765,6 +783,7 @@ suite "AME secure package":
     check restored.payload == plaintext
     check restored.status == dcsCommittedWithRepair
 
+  # {.testKind: tkUnit.}
   test "compression is off by default and must be asked for by name":
     var
       plaintext: ByteSeq = newSeq[byte](10_000)
@@ -788,6 +807,7 @@ suite "AME secure package":
     decoded = decodeAmeCompressed(encoded, squeezed)
     check decoded == plaintext
 
+  # {.testKind: tkUnit.}
   test "compressing forces padding, whatever the policy asked for":
     var
       plaintext: ByteSeq = newSeq[byte](3000)
@@ -825,6 +845,7 @@ suite "AME secure package":
       discard decodeAmeCompressed(encodeAmeCompressed(@[byte 1, 2], plain),
         padded)
 
+  # {.testKind: tkUnit.}
   test "one missing chunk is recovered from the group XOR shard":
     var
       data: ByteSeq = newSeq[byte](5000)
@@ -835,7 +856,7 @@ suite "AME secure package":
     while i < data.len:
       data[i] = uint8(i mod 251)
       i = i + 1
-    plan = planDacPackage(8'u64, data, cleanLanDacDefaults())
+    plan = planDacPackage(8'u64, data, dacDefaultsFor(dscCleanLan))
     receiver = initDacPackageReceiver(plan.manifest)
     for chunk in plan.chunks:
       if chunk.chunkId != 2'u16:
@@ -845,6 +866,7 @@ suite "AME secure package":
     check outcome.ok
     check outcome.payload == data
 
+  # {.testKind: tkEdgeCase.}
   test "decompression bomb metadata is rejected before Eir decode":
     ## One encoded byte claiming to expand to 65536. The claim is checked
     ## against the policy's expansion limit before Eir is handed anything.
@@ -859,6 +881,7 @@ suite "AME secure package":
       discard decodeAmeCompressed(envelope,
         compressedAmeCompressionPolicy())
 
+  # {.testKind: tkEdgeCase.}
   test "authority root construction rejects incomplete pinning material":
     expect ValueError:
       discard initAmeAuthorityRoot("", [AmeIdentitySigningKey(

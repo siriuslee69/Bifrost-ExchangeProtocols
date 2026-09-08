@@ -34,6 +34,7 @@ proc exactTier(L: AmeSuiteLayout, id: uint32, kem,
     initAmeTierMasks(kem, other, other, other, other, other))
 
 suite "AME immutable layouts and mask tiers":
+  # {.testKind: tkUnit.}
   test "layout and tier have separate canonical encodings":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -45,6 +46,7 @@ suite "AME immutable layouts and mask tiers":
     check tierBytes == @[byte 1, 17, 0, 0, 0, 0b10100000,
       0b11000000, 0b11000000, 0b11000000, 0b11000000, 0b11000000]
 
+  # {.testKind: tkUnit.}
   test "every tier mask must select occupied slots":
     var L: AmeSuiteLayout = exactLayout()
     expect ValueError:
@@ -56,6 +58,7 @@ suite "AME immutable layouts and mask tiers":
         initAmeTierMasks(0b00010000'u8, 0b10000000'u8, 0b10000000'u8,
           0b10000000'u8, 0b10000000'u8, 0b10000000'u8))
 
+  # {.testKind: tkEdgeCase.}
   test "duplicate active hash and KDF overlays are rejected per tier":
     var
       L: AmeSuiteLayout = initAmeSuiteLayout(repeatedFireSaber,
@@ -73,6 +76,7 @@ suite "AME immutable layouts and mask tiers":
         initAmeTierMasks(0b10000000'u8, 0b10000000'u8, 0b10000000'u8,
           0b10000000'u8, 0b10000000'u8, 0b11000000'u8))
 
+  # {.testKind: tkUnit.}
   test "exchange request carries target masks but no algorithm layout":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -86,6 +90,7 @@ suite "AME immutable layouts and mask tiers":
     check decoded.exchangeMask == 0b10100000'u8
     check selectedAlgorithmCount(decoded) == 2
 
+  # {.testKind: tkUnit.}
   test "newly activated KEM slots require exchange while selected slots may rekey":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -103,6 +108,7 @@ suite "AME immutable layouts and mask tiers":
       validateAmeTierTransition(L, target, target, 0b00100000'u8,
         0b11000000'u8)
 
+  # {.testKind: tkUnit.}
   test "rekey preserves every unselected established secret":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -124,6 +130,7 @@ suite "AME immutable layouts and mask tiers":
     check state.sharedSecrets[1] == preserved
     check deriveAmeMasterKey(state, L, t) != before
 
+  # {.testKind: tkUnit.}
   test "repeated KEM slots perform independent exchanges":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -139,6 +146,7 @@ suite "AME immutable layouts and mask tiers":
     check opened == sender.sharedSecrets
     check opened[0] != opened[1]
 
+  # {.testKind: tkUnit.}
   test "Frodo1344 tier exchange derives the same shared secret":
     var
       L: AmeSuiteLayout = defaultAmeLayout(initAmeKemAlgorithms([
@@ -153,6 +161,7 @@ suite "AME immutable layouts and mask tiers":
         sender.envelopes, receiver.secretKeys)
     check opened == sender.sharedSecrets
 
+  # {.testKind: tkUnit.}
   test "ordered tier path emits newly activated KEM masks":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -177,6 +186,7 @@ suite "AME immutable layouts and mask tiers":
     step = path.requestTier(30'u32, 0b10000000'u8)
     check step.exchangeMask == 0b10100000'u8
 
+  # {.testKind: tkUnit.}
   test "protection and hashes bind both layout and tier masks":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -201,6 +211,7 @@ suite "AME immutable layouts and mask tiers":
       @[byte 9])
     check not opened.ok
 
+  # {.testKind: tkUnit.}
   test "agreement accepts exact layouts and binds the proposed initial tier":
     var
       L: AmeSuiteLayout = exactLayout()
@@ -217,6 +228,7 @@ suite "AME immutable layouts and mask tiers":
     check verifyAmeAgreementDecision(proposal, decision)
     check tiersEquivalent(decoded.initialTier, t)
 
+  # {.testKind: tkUnit.}
   test "agreement decisions and trust handoff remain canonical":
     var
       decision: AmeAgreementDecision

@@ -50,6 +50,7 @@ proc rampBytes(n: int): ByteSeq =
     i = i + 1
 
 suite "AME DAC endpoint over loopback":
+  # {.testKind: tkIntegration.}
   test "a package crosses two real sockets and commits":
     var
       senderSock: DacSocket = openDacListener(initDacAddress("127.0.0.1",
@@ -72,9 +73,9 @@ suite "AME DAC endpoint over loopback":
       done: bool = false
       round: int = 0
     sender = initAmeDacEndpoint(senderSock,
-      initAmeDacRelay(cleanLanDacDefaults(), 1'u64))
+      initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64))
     receiver = initAmeDacEndpoint(receiverSock,
-      initAmeDacRelay(cleanLanDacDefaults(), 2'u64))
+      initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64))
     check admitAmeDacPeer(sender.relay, dacKeyFromAddress(receiverAddr), a,
       0'u32).ok
     check admitAmeDacPeer(receiver.relay, dacKeyFromAddress(senderAddr), b,
@@ -98,17 +99,19 @@ suite "AME DAC endpoint over loopback":
     closeAmeDacEndpoint(sender)
     closeAmeDacEndpoint(receiver)
 
+  # {.testKind: tkIntegration.}
   test "a receive timeout is quiet, not an error":
     var
       sock: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))
       E: AmeDacEndpoint = initAmeDacEndpoint(sock,
-        initAmeDacRelay(cleanLanDacDefaults(), 3'u64))
+        initAmeDacRelay(dacDefaultsFor(dscCleanLan), 3'u64))
       step: AmeDacRelayStep = pumpAmeDacEndpoint(E, 0'u32, timeoutMs = 20)
     check step.kind == adrNone
     check step.err.len == 0
     check E.received == 0'u64
     closeAmeDacEndpoint(E)
 
+  # {.testKind: tkEdgeCase.}
   test "a datagram from an unknown address is dropped, not admitted":
     var
       listenSock: DacSocket = openDacListener(initDacAddress("127.0.0.1",
@@ -118,7 +121,7 @@ suite "AME DAC endpoint over loopback":
       listenAddr: DacAddress = initDacAddress("127.0.0.1",
         dacLocalPort(listenSock).port)
       E: AmeDacEndpoint = initAmeDacEndpoint(listenSock,
-        initAmeDacRelay(cleanLanDacDefaults(), 4'u64, capacity = 4))
+        initAmeDacRelay(dacDefaultsFor(dscCleanLan), 4'u64, capacity = 4))
       step: AmeDacRelayStep
     sendDacFrameBytes(strangerSock, listenAddr, rampBytes(200))
     step = pumpAmeDacEndpoint(E, 0'u32, timeoutMs = 500)

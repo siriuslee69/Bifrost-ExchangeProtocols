@@ -44,13 +44,15 @@ proc sampleManifest(): ByteSeq =
     digest: array[32, uint8]
   digest[0] = 0x5A'u8
   result = encodeDacPackageManifest(initDacPackageManifest(7'u64, dtcUserData,
-    badSignalDacDefaults(), 20_000'u64, digest))
+    dacDefaultsFor(dscBadSignal), 20_000'u64, digest))
 
 suite "DAC frame envelope fuzz":
+  # {.testKind: tkFuzz.}
   test "the outer frame decoder never raises a Defect":
     fuzzBody("decodeDacFrame", 1'u64, sampleFrame()):
       discard decodeDacFrame(data)
 
+  # {.testKind: tkFuzz.}
   test "every defined flag pattern round-trips and undefined bits are refused":
     var
       i: int = 0
@@ -68,6 +70,7 @@ suite "DAC frame envelope fuzz":
     check not broke
     check refused == 0x10000 - 0x0200
 
+  # {.testKind: tkFuzz.}
   test "every message-kind byte maps or reports unknown":
     var
       i: int = 0
@@ -79,22 +82,26 @@ suite "DAC frame envelope fuzz":
     check known == 12
 
 suite "DAC body decoder fuzz":
+  # {.testKind: tkFuzz.}
   test "manifest":
     fuzzBody("decodeDacPackageManifest", 2'u64, sampleManifest()):
       discard decodeDacPackageManifest(data)
 
+  # {.testKind: tkFuzz.}
   test "package chunk":
     fuzzBody("decodeDacPackageChunk", 3'u64,
         encodeDacPackageChunk(initDacPackageChunk(7'u64, 1'u32, 2'u16,
         1536'u32, rampBytes(64)))):
       discard decodeDacPackageChunk(data)
 
+  # {.testKind: tkFuzz.}
   test "parity shard":
     fuzzBody("decodeDacParityShard", 4'u64,
         encodeDacParityShard(initDacParityShard(7'u64, 1'u32, 0'u16,
         drmReedSolomon, rampBytes(64)))):
       discard decodeDacParityShard(data)
 
+  # {.testKind: tkFuzz.}
   test "ack range in run mode":
     var
       a: DacAckRange = initDacAckRange(44'u32, 2'u8)
@@ -103,23 +110,27 @@ suite "DAC body decoder fuzz":
     fuzzBody("decodeDacAckRange runs", 5'u64, encodeDacAckRange(a)):
       discard decodeDacAckRange(data)
 
+  # {.testKind: tkFuzz.}
   test "ack range in bitmap mode":
     fuzzBody("decodeDacAckRange bitmap", 6'u64,
         encodeDacAckRange(initDacAckGapMap(44'u32, 1'u8, rampBytes(32)))):
       discard decodeDacAckRange(data)
 
+  # {.testKind: tkFuzz.}
   test "repair hint":
     fuzzBody("decodeDacRepairHint", 7'u64,
         encodeDacRepairHint(initDacRepairHint(7'u64, 1'u32, 2'u16, 0'u16,
         2'u16, @[0b01010000'u8, 0b00000011'u8], drmTcpExact, drrMissing))):
       discard decodeDacRepairHint(data)
 
+  # {.testKind: tkFuzz.}
   test "repair chunk":
     fuzzBody("decodeDacRepairChunk", 8'u64,
         encodeDacRepairChunk(initDacRepairChunk(7'u64, 1'u32, 2'u16,
         drsTcpExactChunk, rampBytes(48)))):
       discard decodeDacRepairChunk(data)
 
+  # {.testKind: tkFuzz.}
   test "package commit":
     var
       digest: array[32, uint8]
@@ -129,12 +140,14 @@ suite "DAC body decoder fuzz":
         1'u16, dcsCommittedWithRepair))):
       discard decodeDacPackageCommit(data)
 
+  # {.testKind: tkFuzz.}
   test "path stats":
     fuzzBody("decodeDacPathStats", 10'u64,
         encodeDacPathStats(initDacPathStats(120'u32, 15'u16, 3'u16, 1'u16,
         1400'u16, 4'u16, 600'u16))):
       discard decodeDacPathStats(data)
 
+  # {.testKind: tkFuzz.}
   test "path probe":
     var
       nonce: array[9, uint8] = [1'u8, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -143,12 +156,14 @@ suite "DAC body decoder fuzz":
         48375'u16, nonce))):
       discard decodeDacPathProbe(data)
 
+  # {.testKind: tkFuzz.}
   test "path switch":
     fuzzBody("decodeDacPathSwitch", 12'u64,
         encodeDacPathSwitch(initDacPathSwitch(2'u16, 3'u16, dplCleanPath,
         dplLossyPath, dpsrLoss))):
       discard decodeDacPathSwitch(data)
 
+  # {.testKind: tkFuzz.}
   test "drift payload":
     var
       p: DacDriftPacket
@@ -159,9 +174,10 @@ suite "DAC body decoder fuzz":
       discard decodeDacDriftPacket(data, got)
 
 suite "DAC link fuzz":
+  # {.testKind: tkFuzz.}
   test "the loop survives arbitrary frames without raising":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       S: DacLink = initDacLink(7'u64, 2'u32, d, 99'u64)
       R: Rng = Rng(seed: 4242'u64)
       sample: ByteSeq = sampleFrame()
@@ -185,6 +201,7 @@ suite "DAC link fuzz":
       round = round + 1
     check not broke
 
+  # {.testKind: tkFuzz.}
   test "the identity peek never raises and never half-fills a result":
     var
       R: Rng = Rng(seed: 8181'u64)
@@ -216,6 +233,7 @@ suite "DAC link fuzz":
       round = round + 1
     check not broke
 
+  # {.testKind: tkFuzz.}
   test "the peek accepts exactly what the full decoder accepts":
     var
       R: Rng = Rng(seed: 9191'u64)
@@ -236,9 +254,10 @@ suite "DAC link fuzz":
       round = round + 1
     check mismatches == 0
 
+  # {.testKind: tkFuzz.}
   test "a hostile peer cannot make the link table raise or overgrow":
     var
-      T: DacLinkTable = initDacLinkTable(badSignalDacDefaults(), 3'u64,
+      T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 3'u64,
         capacity = 8, idleMs = 25'u32)
       R: Rng = Rng(seed: 5150'u64)
       sample: ByteSeq = sampleFrame()
@@ -266,9 +285,10 @@ suite "DAC link fuzz":
     check not broke
     check dacLinkTableLive(T) <= 8
 
+  # {.testKind: tkFuzz.}
   test "a real package interleaved with rubbish still completes":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(7'u64, 2'u32, d, 1'u64)
       receiver: DacLink = initDacLink(7'u64, 2'u32, d, 2'u64)
       R: Rng = Rng(seed: 77'u64)

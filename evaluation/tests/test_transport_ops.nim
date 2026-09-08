@@ -118,6 +118,7 @@ proc reopenDacPeerUntilFd(remote: DacAddress, wantedFd: int,
   raise newException(IOError, "failed to reuse DAC socket fd for localhost stale-registry test")
 
 suite "transport ops":
+  # {.testKind: tkIntegration.}
   test "parse and format tcp address":
     var
       p: tuple[ok: bool, a: TcpAddress]
@@ -127,6 +128,7 @@ suite "transport ops":
     check p.a.port == 49001'u16
     check formatTcpAddress(p.a) == "127.0.0.1:49001"
 
+  # {.testKind: tkIntegration.}
   test "parse and format tcp ipv6 address":
     var
       p: tuple[ok: bool, a: TcpAddress]
@@ -136,6 +138,7 @@ suite "transport ops":
     check p.a.port == 49005'u16
     check formatTcpAddress(p.a) == "[::1]:49005"
 
+  # {.testKind: tkIntegration.}
   test "parse and format udp address":
     var
       p: tuple[ok: bool, a: UdpAddress]
@@ -145,6 +148,7 @@ suite "transport ops":
     check p.a.port == 49003'u16
     check formatUdpAddress(p.a) == "127.0.0.1:49003"
 
+  # {.testKind: tkIntegration.}
   test "parse and format udp ipv6 address":
     var
       p: tuple[ok: bool, a: UdpAddress]
@@ -154,6 +158,7 @@ suite "transport ops":
     check p.a.port == 49006'u16
     check formatUdpAddress(p.a) == "[::1]:49006"
 
+  # {.testKind: tkEdgeCase.}
   test "tcp parser rejects mismatched scheme and ambiguous unbracketed ipv6 forms":
     var
       p: tuple[ok: bool, a: TcpAddress]
@@ -166,6 +171,7 @@ suite "transport ops":
     p = parseTcpAddress("tcp://2001:db8::1:49005")
     check not p.ok
 
+  # {.testKind: tkEdgeCase.}
   test "udp parser rejects mismatched scheme and ambiguous unbracketed ipv6 forms":
     var
       p: tuple[ok: bool, a: UdpAddress]
@@ -178,6 +184,7 @@ suite "transport ops":
     p = parseUdpAddress("udp://2001:db8::1:49006")
     check not p.ok
 
+  # {.testKind: tkEdgeCase.}
   test "dac parser rejects mismatched carrier scheme and unbracketed ipv6 authorities":
     var
       p: tuple[ok: bool, a: DacAddress]
@@ -192,6 +199,7 @@ suite "transport ops":
     check p.a.host == "127.0.0.1"
     check p.a.port == 49007'u16
 
+  # {.testKind: tkEdgeCase.}
   test "separate host constructors reject schemes and embedded ports":
     expect ValueError:
       discard initTcpAddress("tcp://127.0.0.1", 49001'u16)
@@ -202,11 +210,13 @@ suite "transport ops":
     expect ValueError:
       discard initDacAddress("dac://127.0.0.1", 49007'u16)
 
+  # {.testKind: tkIntegration.}
   test "separate host constructors normalize bracketed ipv6":
     check initTcpAddress("[::1]", 49005'u16).host == "::1"
     check initUdpAddress("[::1]", 49006'u16).host == "::1"
     check initDacAddress("[2001:db8::7]", 49007'u16).host == "2001:db8::7"
 
+  # {.testKind: tkEdgeCase.}
   test "string parsers reject userinfo and path-like host junk":
     var
       tcp: tuple[ok: bool, a: TcpAddress]
@@ -225,6 +235,7 @@ suite "transport ops":
     dac = parseDacAddress("dac://127.0.0.1/path:49007")
     check not dac.ok
 
+  # {.testKind: tkIntegration.}
   test "send and receive framed payload":
     var
       th: Thread[TransportServerArgs]
@@ -245,6 +256,7 @@ suite "transport ops":
     check recvRes.ok
     check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "recv tcp frame timeout returns an error instead of throwing":
     var
       listener: Socket
@@ -273,6 +285,7 @@ suite "transport ops":
     check recvRes.ok
     check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "tcp localhost reaches an ipv6-only listener":
     if not ipv6LoopbackAvailable():
       skip()
@@ -296,6 +309,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "tcp ipv6 wildcard listener accepts an ipv4 client":
     if not ipv6LoopbackAvailable():
       skip()
@@ -325,6 +339,7 @@ suite "transport ops":
       check recvRes.payload == payload
 
   when defined(ssl):
+    # {.testKind: tkIntegration.}
     test "tls tcp frame roundtrip succeeds with verified localhost certificate":
       var
         th: Thread[TlsTransportServerArgs]
@@ -350,6 +365,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+    # {.testKind: tkEdgeCase.}
     test "tls tcp peer verification rejects a mismatched server name":
       var
         th: Thread[TlsTransportServerArgs]
@@ -366,6 +382,7 @@ suite "transport ops":
           caFile = certs.certFile)), 4000)
       joinThread(th)
 
+    # {.testKind: tkEdgeCase.}
     test "tls tcp verification-disabled mode ignores hostname mismatch":
       var
         th: Thread[TlsTransportServerArgs]
@@ -391,6 +408,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+  # {.testKind: tkEdgeCase.}
   test "send tcp frame rejects payload above caller maximum before write":
     var
       sock: Socket
@@ -399,6 +417,7 @@ suite "transport ops":
     expect ValueError:
       sendTcpFrame(sock, payload, maxFrameBytes = 3'u32)
 
+  # {.testKind: tkEdgeCase.}
   test "send tcp frame rejects payload above default maximum before write":
     var
       sock: Socket
@@ -407,6 +426,7 @@ suite "transport ops":
     expect ValueError:
       sendTcpFrame(sock, payload)
 
+  # {.testKind: tkIntegration.}
   test "protocol stream frame roundtrips and reports consumed bytes":
     var
       payload: ByteSeq
@@ -424,6 +444,7 @@ suite "transport ops":
     check decoded.consumed == 8
     check decoded.payload == payload
 
+  # {.testKind: tkEdgeCase.}
   test "protocol stream frame rejects oversized declared lengths":
     var
       frame: ByteSeq
@@ -434,6 +455,7 @@ suite "transport ops":
     check not decoded.needMore
     check decoded.err == "stream frame length exceeds maximum"
 
+  # {.testKind: tkIntegration.}
   test "protocol stream batch handles many frames and trailing partial data":
     var
       first: ByteSeq
@@ -457,6 +479,7 @@ suite "transport ops":
     check decoded.frames[0] == @[9'u8, 8'u8]
     check decoded.frames[1] == @[7'u8]
 
+  # {.testKind: tkIntegration.}
   test "send and receive udp datagram":
     var
       th: Thread[UdpServerArgs]
@@ -477,6 +500,7 @@ suite "transport ops":
     check recvRes.ok
     check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "udp localhost reaches an ipv6-only listener":
     if not ipv6LoopbackAvailable():
       skip()
@@ -500,6 +524,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "udp explicit localhost sendTo reaches an ipv6-only listener":
     if not ipv6LoopbackAvailable():
       skip()
@@ -523,6 +548,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "udp ipv6 wildcard listener accepts an ipv4 client":
     if not ipv6LoopbackAvailable():
       skip()
@@ -546,6 +572,7 @@ suite "transport ops":
       check recvRes.ok
       check recvRes.payload == payload
 
+  # {.testKind: tkIntegration.}
   test "raw close on localhost DAC peer does not poison a later reused fd":
     var
       staleListener: DacSocket

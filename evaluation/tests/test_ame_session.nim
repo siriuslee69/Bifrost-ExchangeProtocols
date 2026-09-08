@@ -100,6 +100,7 @@ proc installLoopbackSignatures(S: var AmeSession) {.role: actor.} =
   S.auth.peerSignaturePublicKeys = keys.publicKeys
 
 suite "AME mask-tier sessions":
+  # {.testKind: tkIntegration.}
   test "TCP frame roundtrips under exact agreement":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -115,6 +116,7 @@ suite "AME mask-tier sessions":
     check opened.packet.payload == payload
     check receiver.pending == 1
 
+  # {.testKind: tkRegression.}
   test "directional keys reject reflected TCP and DAC frames":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -137,6 +139,7 @@ suite "AME mask-tier sessions":
     opened = openAmeDacFrame(receiver, dacFrame)
     check opened.ok
 
+  # {.testKind: tkUnit.}
   test "transcript salt and direction separate traffic keys":
     var
       auth0: AmeAuthPackage = exactAuth()
@@ -162,6 +165,7 @@ suite "AME mask-tier sessions":
       auth0.current.tier, context = context1)
     check key0 != key1
 
+  # {.testKind: tkIntegration.}
   test "DAC frame roundtrips and binds carrier metadata":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -180,6 +184,7 @@ suite "AME mask-tier sessions":
     opened = openAmeDacFrame(receiver, frame)
     check not opened.ok
 
+  # {.testKind: tkUnit.}
   test "a DAC datagram is exactly one AME frame, with no outer header":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -199,6 +204,7 @@ suite "AME mask-tier sessions":
     check opened.ok
     check opened.packet.payload == @[byte 5, 6, 7]
 
+  # {.testKind: tkRegression.}
   test "the epoch lives in the FOMKE envelope and tampering is caught":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -221,6 +227,7 @@ suite "AME mask-tier sessions":
     opened = openAmeDacFrame(receiver, frame)
     check not opened.ok
 
+  # {.testKind: tkEdgeCase.}
   test "an epoch past 65535 now rides DAC, which the old u16 field refused":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -236,6 +243,7 @@ suite "AME mask-tier sessions":
     check opened.ok
     check opened.packet.payload == @[byte 5]
 
+  # {.testKind: tkUnit.}
   test "a payload past 65535 needs no widened framing on any path lane":
     var
       lanes: seq[DacPathLane] = @[dplSuperCleanPath, dplCleanPath, dplThinPath]
@@ -260,6 +268,7 @@ suite "AME mask-tier sessions":
       check opened.packet.payload == payload
       i = i + 1
 
+  # {.testKind: tkUnit.}
   test "a DAC control message round-trips with its kind authenticated":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -275,6 +284,7 @@ suite "AME mask-tier sessions":
     check got.kind == dmkAckRange
     check got.body == body
 
+  # {.testKind: tkUnit.}
   test "the DAC kind is inside the ciphertext, not readable on the wire":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -288,6 +298,7 @@ suite "AME mask-tier sessions":
     check decodeAmeFrame(ack).header.packetKind == ampkDacControl
     check decodeAmeFrame(hint).header.packetKind == ampkDacControl
 
+  # {.testKind: tkRegression.}
   test "a forged or altered DAC control message is refused":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -306,6 +317,7 @@ suite "AME mask-tier sessions":
       check not got.ok
       i = i + 1
 
+  # {.testKind: tkEdgeCase.}
   test "an unknown DAC kind is refused after authentication, not dispatched":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -313,6 +325,7 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard sealAmeDacControl(sender, dmkUnknown, @[byte 1])
 
+  # {.testKind: tkRegression.}
   test "a replayed DAC control message is refused":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -324,6 +337,7 @@ suite "AME mask-tier sessions":
     check openAmeDacControl(receiver, frame).ok
     check not openAmeDacControl(receiver, frame).ok
 
+  # {.testKind: tkUnit.}
   test "authenticated progress expires the retiring epoch":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -341,6 +355,7 @@ suite "AME mask-tier sessions":
     check receiver.auth.retiring.epochId == 0'u32
     check receiver.auth.retiringFramesLeft == 0
 
+  # {.testKind: tkUnit.}
   test "only successful transfer accounting emits data trigger":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
@@ -358,6 +373,7 @@ suite "AME mask-tier sessions":
     step = connection.recordTransferredBytes(1'u64 * ameBytesPerMiB)
     check step.exchangeMask == 0b01000000'u8
 
+  # {.testKind: tkUnit.}
   test "authenticated TCP exchange commits only after epoch-ready":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
@@ -387,6 +403,7 @@ suite "AME mask-tier sessions":
       server.auth.current.exchange.sharedSecrets[1]
     check client.auth.current.transcriptSalt == server.auth.current.transcriptSalt
 
+  # {.testKind: tkUnit.}
   test "the ratchet direction follows the endpoint role, with no way to differ":
     var
       initiator: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -401,6 +418,7 @@ suite "AME mask-tier sessions":
     check outboundFomkeLane(initiator.fomke.role) == flLane1
     check outboundFomkeLane(responder.fomke.role) == flLane2
 
+  # {.testKind: tkFuzz.}
   test "candidate rekey does not mutate the current epoch":
     var
       client: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -420,6 +438,7 @@ suite "AME mask-tier sessions":
     check server.pendingIncoming.candidate.exchange.sharedSecrets[0] != before
     discard finishAmeTcpExchangeFrame(client, replyFrame)
 
+  # {.testKind: tkFuzz.}
   test "receiver rejects either KEM offer signature before candidate mutation":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
@@ -440,6 +459,7 @@ suite "AME mask-tier sessions":
     check server.auth.current.epochId == 1'u32
     check server.auth.current.exchange.sharedSecrets[0] == before
 
+  # {.testKind: tkEdgeCase.}
   test "initiator rejects KEM reply signature before epoch rotation":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
@@ -460,6 +480,7 @@ suite "AME mask-tier sessions":
     check client.auth.current.epochId == 1'u32
     check client.pendingExchange.active
 
+  # {.testKind: tkEdgeCase.}
   test "tier paths reject backward transitions":
     var
       connection: AmeSession = exactUpgradeSession()
@@ -471,6 +492,7 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard requestAmeTier(connection, first.tierId)
 
+  # {.testKind: tkUnit.}
   test "transition authorization retains current signature slots":
     var
       layout: AmeSuiteLayout = layeredAuth().current.layout
@@ -485,6 +507,7 @@ suite "AME mask-tier sessions":
     check authorization.tierId == target.tierId
     check authorization.masks.signature == 0b11000000'u8
 
+  # {.testKind: tkEdgeCase.}
   test "session rejects valid masks outside its configured tier path":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
@@ -497,6 +520,7 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard beginAmeSessionExchange(connection, request)
 
+  # {.testKind: tkUnit.}
   test "non-KEM masks rotate atomically without replacing KEM secrets":
     var
       client: AmeSession = layeredUpgradeSession(aerInitiator)
@@ -526,6 +550,7 @@ suite "AME mask-tier sessions":
     check client.fomke.epoch == 2'u32
     check server.fomke.epoch == 2'u32
 
+  # {.testKind: tkRegression.}
   test "authenticated DAC exchange rejects tampering and replay":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
@@ -551,6 +576,7 @@ suite "AME mask-tier sessions":
     confirmAmeDacExchangeFrame(server, readyFrame)
     check client.auth.current.epochId == server.auth.current.epochId
 
+  # {.testKind: tkUnit.}
   test "DAC exchange control frames bind the embedded epoch":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
@@ -566,6 +592,7 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard answerAmeDacExchangeFrame(server, offerFrame)
 
+  # {.testKind: tkUnit.}
   test "cancelled trigger exchange returns its mask to due":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
@@ -587,6 +614,7 @@ suite "AME mask-tier sessions":
     check connection.path.dueMask == 0b01000000'u8
     check not connection.pendingExchange.active
 
+  # {.testKind: tkEdgeCase.}
   test "DAC accepts bounded out-of-order frames and rejects duplicates":
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -609,6 +637,7 @@ suite "AME mask-tier sessions":
     ## frame was first opened, so there is nothing left to open it with.
     check opened.err.startsWith("AME authentication failed")
 
+  # {.testKind: tkEdgeCase.}
   test "envelope and sequence limits fail closed":
     var
       connection: AmeSession = initAmeSession(exactAuth(),
@@ -636,12 +665,14 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard sealAmeTcpFrame(connection, @[byte 1])
 
+  # {.testKind: tkEdgeCase.}
   test "trigger threshold multiplication rejects overflow":
     var
       path: AmeTierPath = exactKems.ameInitTierPath()
     expect ValueError:
       path.setTrigger(1, high(uint64))
 
+  # {.testKind: tkUnit.}
   test "simultaneous rekey converges instead of splitting the epoch":
     var
       A: AmeSession = exactUpgradeSession(aerInitiator)
@@ -681,6 +712,7 @@ suite "AME mask-tier sessions":
     check A.auth.current.exchange.sharedSecrets[1] ==
       B.auth.current.exchange.sharedSecrets[1]
 
+  # {.testKind: tkEdgeCase.}
   test "outgoing exchange is refused while a candidate epoch is pending":
     var
       A: AmeSession = exactUpgradeSession(aerInitiator)
@@ -698,6 +730,7 @@ suite "AME mask-tier sessions":
     expect ValueError:
       discard beginAmeSessionExchange(B, request)
 
+  # {.testKind: tkEdgeCase.}
   test "truncated authentication tags are rejected outright":
     var
       auth: AmeAuthPackage = exactAuth()
@@ -734,6 +767,7 @@ proc paddedAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
     params = AmeRuntimeParams(authTagLen: aatl32, padding: apadBlock64))
 
 suite "AME payload padding":
+  # {.testKind: tkUnit.}
   test "padding rounds up to whole blocks and always adds filler":
     check amePaddedLen(0, apadBlock64) == 64
     check amePaddedLen(1, apadBlock64) == 64
@@ -745,6 +779,7 @@ suite "AME payload padding":
     check amePaddedLen(4096, apadBlock64) == 4160
     check amePaddedLen(17, apadNone) == 17
 
+  # {.testKind: tkIntegration.}
   test "every plaintext length survives the round trip":
     var
       lengths: array[8, int] = [0, 1, 2, 63, 64, 65, 127, 300]
@@ -765,12 +800,14 @@ suite "AME payload padding":
       check unpadAmeMessage(padded, apadBlock64) == plaintext
       i = i + 1
 
+  # {.testKind: tkUnit.}
   test "different lengths in one block become the same length":
     ## This is the whole point. Five bytes and fifty bytes are the same size
     ## on the wire, so the size stops saying which one went past.
     check padAmeMessage(newSeq[byte](5), apadBlock64).len ==
       padAmeMessage(newSeq[byte](50), apadBlock64).len
 
+  # {.testKind: tkEdgeCase.}
   test "malformed padding is refused rather than trimmed":
     var
       body: ByteSeq = padAmeMessage(@[byte 1, 2, 3], apadBlock64)
@@ -797,6 +834,7 @@ suite "AME payload padding":
     expect ValueError:
       discard unpadAmeMessage(broken, apadBlock64)
 
+  # {.testKind: tkUnit.}
   test "only the two defined policy bytes decode":
     check amePaddingPolicyFromId(0'u8) == apadNone
     check amePaddingPolicyFromId(64'u8) == apadBlock64
@@ -805,6 +843,7 @@ suite "AME payload padding":
     expect ValueError:
       discard amePaddingPolicyFromId(255'u8)
 
+  # {.testKind: tkUnit.}
   test "a padded session hides the payload length in the frame":
     var
       sender: AmeSession = initAmeSession(paddedAuth(aerInitiator),
@@ -825,6 +864,7 @@ suite "AME payload padding":
     check opened.ok
     check opened.packet.payload == newSeq[byte](40)
 
+  # {.testKind: tkUnit.}
   test "the header says a frame is padded and the tag covers that":
     var
       sender: AmeSession = initAmeSession(paddedAuth(aerInitiator),
@@ -843,6 +883,7 @@ suite "AME payload padding":
     opened = openAmeTcpFrame(receiver, padded)
     check not opened.ok
 
+  # {.testKind: tkEdgeCase.}
   test "an unknown frame flag is refused, not ignored":
     var
       plain: AmeSession = initAmeSession(exactAuth(aerInitiator),
@@ -854,6 +895,7 @@ suite "AME payload padding":
     expect ValueError:
       discard decodeAmeFrameHeader(frame)
 
+  # {.testKind: tkUnit.}
   test "the padding policy travels with the exchange request":
     var
       layout: AmeSuiteLayout = exactLayout()
@@ -872,6 +914,7 @@ suite "AME payload padding":
     expect ValueError:
       discard decodeAmeExchangeRequest(exactKems, encoded)
 
+  # {.testKind: tkIntegration.}
   test "padding can be switched on at a rotation and both sides follow":
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)

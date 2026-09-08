@@ -59,6 +59,7 @@ proc fsPair(): tuple[a: FomkeState, b: FomkeState] {.role: configurator.} =
   result.b = initFomkeFromAme(state, fsLayout(), fsTier(), frResponder)
 
 suite "FOMKE forward secrecy":
+  # {.testKind: tkEdgeCase.}
   test "the state that sent a message cannot open it again afterwards":
     var
       p = fsPair()
@@ -78,6 +79,7 @@ suite "FOMKE forward secrecy":
     check opened.err == "FOMKE message key is unavailable or replayed"
     clearFomkeState(replay)
 
+  # {.testKind: tkUnit.}
   test "a captured chain key opens nothing that came before it":
     var
       p = fsPair()
@@ -101,6 +103,7 @@ suite "FOMKE forward secrecy":
     check not opened.ok
     clearFomkeState(seized)
 
+  # {.testKind: tkUnit.}
   test "the chain key is replaced, not extended, on every step":
     var
       p = fsPair()
@@ -113,6 +116,7 @@ suite "FOMKE forward secrecy":
     check before != after
     check p.a.lane1.nextIndex == 1'u64
 
+  # {.testKind: tkUnit.}
   test "an epoch change destroys every key from the epoch before it":
     var
       p = fsPair()
@@ -140,6 +144,7 @@ suite "FOMKE forward secrecy":
     check not opened.ok
     check opened.err == "FOMKE epoch or sender lane mismatch"
 
+  # {.testKind: tkUnit.}
   test "a failed open leaves the ratchet exactly where it was":
     var
       p = fsPair()
@@ -165,6 +170,7 @@ suite "FOMKE forward secrecy":
     check opened.ok
     check opened.payload == @[byte 3, 3, 3]
 
+  # {.testKind: tkEdgeCase.}
   test "a gap larger than the skip budget is refused, not absorbed":
     var
       p = fsPair()
@@ -183,6 +189,7 @@ suite "FOMKE forward secrecy":
     check p.b.lane1.nextIndex == 0'u64
     check p.b.skipped.len == 0
 
+  # {.testKind: tkUnit.}
   test "every switched-on KEM slot feeds the root, not just the first":
     var
       bothSlots: AmeExchangeState = fsExchange(0b11000000'u8,
@@ -199,6 +206,7 @@ suite "FOMKE forward secrecy":
     check a.lane1.chainKey != b.lane1.chainKey
     check a.lane2.chainKey != b.lane2.chainKey
 
+  # {.testKind: tkEdgeCase.}
   test "a tier that names a KEM slot with no secret is refused":
     var
       partial: AmeExchangeState = fsExchange(0b10000000'u8,
@@ -207,6 +215,7 @@ suite "FOMKE forward secrecy":
       discard initFomkeFromAme(partial, fsLayout(), fsTier(0b11000000'u8),
         frInitiator)
 
+  # {.testKind: tkEdgeCase.}
   test "preparing ahead is bounded and its cost is visible":
     var
       p = fsPair()
@@ -224,6 +233,7 @@ suite "FOMKE forward secrecy":
     expect ValueError:
       discard prepareFomkeSendCache(p.a, fomkeMaxPreparedMessages + 1)
 
+  # {.testKind: tkEdgeCase.}
   test "the nonce never repeats and never travels":
     var
       p = fsPair()

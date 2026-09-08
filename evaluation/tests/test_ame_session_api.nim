@@ -80,6 +80,7 @@ proc upgradeRequest(S: AmeSession): AmeExchangeRequest {.role: configurator.} =
     apiTier(S.auth.current.layout, 2'u32, 0b11000000'u8), 0b01000000'u8)
 
 suite "AME certificate codec":
+  # {.testKind: tkIntegration.}
   test "an authority certificate survives a round trip and still verifies":
     var
       authority: AmeAuthorityKey = initAmeAuthorityKey("codec-root")
@@ -107,6 +108,7 @@ suite "AME certificate codec":
     check trust.ok
     check encodeAmeIdentityCertificate(decoded) == encoded
 
+  # {.testKind: tkIntegration.}
   test "a pinned descriptor round trips through the same codec":
     var
       identity: AmeIdentityKey = initAmeIdentityKey("codec-pinned")
@@ -123,6 +125,7 @@ suite "AME certificate codec":
     check decoded.subject == "codec-pinned"
     check verifyPinnedPeerIdentity(decoded, pin, nowUnix).ok
 
+  # {.testKind: tkEdgeCase.}
   test "the decoder refuses truncated, extended, and altered bytes":
     var
       authority: AmeAuthorityKey = initAmeAuthorityKey("codec-bad")
@@ -147,6 +150,7 @@ suite "AME certificate codec":
     expect ValueError:
       discard decodeAmeIdentityCertificate(mutated)
 
+  # {.testKind: tkEdgeCase.}
   test "an incomplete certificate never encodes":
     var
       certificate: AmeIdentityCertificate
@@ -154,6 +158,7 @@ suite "AME certificate codec":
       discard encodeAmeIdentityCertificate(certificate)
 
 suite "carrier chosen while running":
+  # {.testKind: tkUnit.}
   test "sealAmeFrame and openAmeFrame agree with the typed calls":
     var
       sender: AmeSession = initAmeSession(apiAuth(aerInitiator),
@@ -169,6 +174,7 @@ suite "carrier chosen while running":
     check opened.packet.payload == payload
     check opened.packet.carrier == acrTcp
 
+  # {.testKind: tkUnit.}
   test "the DAC carrier answers the same runtime call":
     var
       sender: AmeSession = initAmeSession(apiAuth(aerInitiator),
@@ -183,6 +189,7 @@ suite "carrier chosen while running":
     check opened.packet.payload == payload
     check opened.packet.carrier == acrDac
 
+  # {.testKind: tkUnit.}
   test "a whole rotation runs through the carrier-agnostic calls":
     var
       client: AmeSession = apiUpgradeSession(aerInitiator)
@@ -202,6 +209,7 @@ suite "carrier chosen while running":
     check server.auth.current.tier.masks.kem == 0b11000000'u8
     check client.auth.current.transcriptSalt == server.auth.current.transcriptSalt
 
+  # {.testKind: tkUnit.}
   test "a rotation over DAC reaches the same epoch":
     var
       client: AmeSession = apiUpgradeSession(aerInitiator)
@@ -217,6 +225,7 @@ suite "carrier chosen while running":
       server.auth.current.exchange.sharedSecrets[1]
 
 suite "rotation triggers driven by the clock":
+  # {.testKind: tkUnit.}
   test "an elapsed-time trigger becomes due exactly at its threshold":
     var
       connection: AmeSession = apiUpgradeSession()
@@ -233,6 +242,7 @@ suite "rotation triggers driven by the clock":
     check step.exchangeMask == 0b01000000'u8
     check connection.lastTrigger.available
 
+  # {.testKind: tkEdgeCase.}
   test "the offer stands until it is claimed, and the clock never runs back":
     var
       connection: AmeSession = apiUpgradeSession()
@@ -251,6 +261,7 @@ suite "rotation triggers driven by the clock":
     step = connection.feedAmeElapsedMs(0'u64)
     check step.available
 
+  # {.testKind: tkUnit.}
   test "the clock and the byte counter drive the same path independently":
     var
       connection: AmeSession = apiUpgradeSession()
@@ -262,6 +273,7 @@ suite "rotation triggers driven by the clock":
     step = connection.recordTransferredBytes(4'u64 * ameBytesPerMiB)
     check step.available
 
+  # {.testKind: tkEdgeCase.}
   test "a manual tier waits for a request, and a disabled one never comes":
     var
       connection: AmeSession = apiUpgradeSession()
@@ -281,6 +293,7 @@ suite "rotation triggers driven by the clock":
     ## Disabled stops the automatic offer, not the deliberate one.
     check connection.requestAmeTier(2'u32).available
 
+  # {.testKind: tkEdgeCase.}
   test "a trigger outside the tier path is refused rather than ignored":
     var
       connection: AmeSession = apiUpgradeSession()
@@ -292,6 +305,7 @@ suite "rotation triggers driven by the clock":
       connection.path.disableTrigger(2)
 
 suite "abandoning a rotation midway":
+  # {.testKind: tkUnit.}
   test "a cancelled candidate leaves the responder on its old epoch":
     var
       client: AmeSession = apiUpgradeSession(aerInitiator)
@@ -319,6 +333,7 @@ suite "abandoning a rotation midway":
       confirmAmeExchangeFrame(server, acrTcp, readyFrame)
     check server.auth.current.epochId == 1'u32
 
+  # {.testKind: tkUnit.}
   test "the old epoch still carries traffic after an abort":
     var
       client: AmeSession = apiUpgradeSession(aerInitiator)
@@ -339,6 +354,7 @@ suite "abandoning a rotation midway":
     check opened.ok
     check opened.packet.payload == payload
 
+  # {.testKind: tkUnit.}
   test "cancelling when nothing is pending changes nothing":
     var
       server: AmeSession = apiUpgradeSession(aerResponder)

@@ -93,6 +93,7 @@ proc installSignaturePeers(A, B: var AmeSession) {.role: actor.} =
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
 
 suite "GB3HKDF":
+  # {.testKind: tkUnit.}
   test "sequential derivation is deterministic and block selectable":
     var
       input: ByteSeq = @[byte 1, 2, 3, 4, 5]
@@ -114,6 +115,7 @@ suite "GB3HKDF":
     check base != later
     check base != moreRounds
 
+  # {.testKind: tkUnit.}
   test "memory-mixed mode is deterministic and distinct":
     var
       config: Gb3KdfConfig
@@ -129,6 +131,7 @@ suite "GB3HKDF":
     check first == second
     check first != sequential
 
+  # {.testKind: tkUnit.}
   test "multiple secret order and work bounds are enforced":
     var
       first: ByteSeq = @[]
@@ -151,6 +154,7 @@ suite "AEAD presets":
   ## code. They are now two slot selections over the one construction in
   ## tier_aead, and these tests are what "the same suite" means: the same
   ## primitives, in the same order, all of them mattering.
+  # {.testKind: tkUnit.}
   test "the TMEAEAD preset selects three ciphers and two authenticators":
     var
       L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
@@ -170,6 +174,7 @@ suite "AEAD presets":
     check ameTierNonceLen(L, t) == 64
     check ameTierKeyMaterialLen(L, t) == 64 + 5 * 32
 
+  # {.testKind: tkUnit.}
   test "the GGAEAD preset selects one cipher and one authenticator":
     var
       L: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
@@ -181,6 +186,7 @@ suite "AEAD presets":
     check ameTierNonceLen(L, t) == 24
     check ameTierKeyMaterialLen(L, t) == 24 + 2 * 32
 
+  # {.testKind: tkEdgeCase.}
   test "a preset roundtrips and refuses a changed AAD":
     var
       L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
@@ -202,6 +208,7 @@ suite "AEAD presets":
       @[byte 12], aatl32)
     check not opened.ok
 
+  # {.testKind: tkUnit.}
   test "every cipher slot in the preset changes the ciphertext":
     var
       L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
@@ -228,6 +235,7 @@ suite "AEAD presets":
       check partial != whole
       i = i + 1
 
+  # {.testKind: tkEdgeCase.}
   test "one preset cannot open what the other sealed":
     var
       wide: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
@@ -245,6 +253,7 @@ suite "AEAD presets":
       sealed.authTag, @[], aatl32)
     check not opened.ok
 
+  # {.testKind: tkUnit.}
   test "a preset keys an at-rest blob straight from a storage key":
     var
       L: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
@@ -269,6 +278,7 @@ suite "AEAD presets":
         @[byte 6], @[], aatl32)
 
 suite "FOMKE":
+  # {.testKind: tkUnit.}
   test "initial AME secret becomes independent directional chains":
     var
       secrets: seq[ByteSeq] = @[@[byte 1, 2, 3, 4]]
@@ -283,6 +293,7 @@ suite "FOMKE":
     check outboundFomkeLane(alice.role) == flLane1
     check inboundFomkeLane(alice.role) == flLane2
 
+  # {.testKind: tkUnit.}
   test "asynchronous directions progress without a shared counter race":
     var
       state: AmeExchangeState = initialExchangeState()
@@ -318,6 +329,7 @@ suite "FOMKE":
     check bob.lane1.nextIndex == 3'u64
     check bob.lane2.nextIndex == 1'u64
 
+  # {.testKind: tkUnit.}
   test "failed authentication does not consume receive state":
     var
       state: AmeExchangeState = initialExchangeState()
@@ -334,6 +346,7 @@ suite "FOMKE":
     check opened.ok
     check bob.lane1.nextIndex == 1'u64
 
+  # {.testKind: tkUnit.}
   test "prepared slots preserve exact wire output and ratchet state":
     var
       exchange: AmeExchangeState = initialExchangeState()
@@ -371,6 +384,7 @@ suite "FOMKE":
     check preparedState.lane1.nextIndex == normalState.lane1.nextIndex
     check preparedState.lane1.chainKey == normalState.lane1.chainKey
 
+  # {.testKind: tkUnit.}
   test "prepared slots fall back safely after live state changes":
     var
       exchange: AmeExchangeState = initialExchangeState()
@@ -393,6 +407,7 @@ suite "FOMKE":
     check prepared.authTag == normal.authTag
     check fomkePreparedMessages(stale) == 0
 
+  # {.testKind: tkIntegration.}
   test "the ratchet keeps one-time keys compact and survives a checkpoint":
     var
       state: AmeExchangeState = initialExchangeState()
@@ -415,6 +430,7 @@ suite "FOMKE":
     check restored.tagLen == bob.tagLen
     check restored.tier == bob.tier
 
+  # {.testKind: tkUnit.}
   test "AME bitmask upgrade is exact ordered and atomic":
     var
       initial: AmeExchangeState = initialExchangeState()
@@ -453,6 +469,7 @@ suite "FOMKE":
     check opened.ok
     check opened.payload == @[byte 9, 9]
 
+  # {.testKind: tkEdgeCase.}
   test "secret order and lane-counter races reject upgrade confirmation":
     var
       initial: AmeExchangeState = initialExchangeState()
@@ -471,6 +488,7 @@ suite "FOMKE":
     expect ValueError:
       confirmFomkeUpgrade(alice, bobCommit)
 
+  # {.testKind: tkEdgeCase.}
   test "KEM upgrade rejects unresolved skipped messages":
     var
       initial: AmeExchangeState = initialExchangeState()
@@ -566,6 +584,7 @@ suite "FOMKE":
     check opened.ok
     check opened.payload == @[byte 11]
 
+  # {.testKind: tkUnit.}
   test "message wire and descriptor are strict":
     var
       state: AmeExchangeState = initialExchangeState()
@@ -610,6 +629,7 @@ suite "FOMKE":
     check decodeFomkeMessage(encoded, aatl16).ciphertext !=
       message.ciphertext
 
+  # {.testKind: tkUnit.}
   test "state codec preserves directional and skipped ratchet state":
     var
       exchange: AmeExchangeState = initialExchangeState()
@@ -637,6 +657,7 @@ suite "FOMKE":
     expect ValueError:
       discard decodeFomkeState(encoded)
 
+  # {.testKind: tkEdgeCase.}
   test "a checkpoint from another format version is refused":
     var
       exchange: AmeExchangeState = initialExchangeState()
@@ -651,6 +672,7 @@ suite "FOMKE":
     expect ValueError:
       discard decodeFomkeState(wrongVersion)
 
+  # {.testKind: tkEdgeCase.}
   test "durable checkpoints advance before publish and reject rollback":
     var
       exchange: AmeExchangeState = initialExchangeState()
@@ -708,6 +730,7 @@ suite "FOMKE":
     check rejected.err == "FOMKE checkpoint rollback detected"
 
 suite "AME with FOMKE":
+  # {.testKind: tkUnit.}
   test "TCP and DAC data use the forward-only inner message layer":
     var
       tcpSender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
@@ -733,6 +756,7 @@ suite "AME with FOMKE":
     check opened.ok
     check opened.packet.payload == @[byte 10, 11]
 
+  # {.testKind: tkEdgeCase.}
   test "DAC preserves bounded FOMKE out-of-order delivery":
     var
       sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
@@ -756,6 +780,7 @@ suite "AME with FOMKE":
     opened = openAmeDacFrame(receiver, first)
     check not opened.ok
 
+  # {.testKind: tkUnit.}
   test "AME prepares future send slots and can turn them off":
     var
       sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
@@ -779,6 +804,7 @@ suite "AME with FOMKE":
     check not sender.fomkePregenerationEnabled
     check fomkePreparedMessages(sender.fomkeSendCache) == 0
 
+  # {.testKind: tkEdgeCase.}
   test "AME installs prepared slots and rejects an asynchronously stale cache":
     var
       sender: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),
@@ -802,6 +828,7 @@ suite "AME with FOMKE":
     check not installAmeFomkeSendCache(sender, stale)
     check fomkePreparedMessages(stale) == 0
 
+  # {.testKind: tkUnit.}
   test "authenticated AME exchange automatically commits the FOMKE epoch":
     var
       client: AmeSession = fomkeUpgradeSession(aerInitiator)
@@ -839,6 +866,7 @@ suite "AME with FOMKE":
     check opened.ok
     check opened.packet.payload == @[byte 9, 9]
 
+  # {.testKind: tkEdgeCase.}
   test "unsynchronized lane counters reject automatic AME upgrade":
     var
       client: AmeSession = fomkeUpgradeSession(aerInitiator)
@@ -861,6 +889,7 @@ suite "AME with FOMKE":
         server.pendingIncoming.candidate.epochId, request.targetTier,
         clientCommit)
 
+  # {.testKind: tkUnit.}
   test "runtime config decides whether new sessions prepare ahead":
     var
       previous: BifrostConfig = currentBifrostConfig()
@@ -884,6 +913,7 @@ suite "AME with FOMKE":
     clearAmeSession(lazy)
     applyBifrostConfig(previous)
 
+  # {.testKind: tkUnit.}
   test "connection teardown erases FOMKE and AME secret state":
     var
       connection: AmeSession = initAmeSession(fomkeAmeAuth(aerInitiator),

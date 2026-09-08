@@ -50,5 +50,6 @@ proc runAsyncStreamChecks() {.async, role: orchestrator,
   closeAsyncSocket(listener)
 
 suite "async stream ops":
+  # {.testKind: tkEdgeCase.}
   test "bounded async helpers exchange lines and bytes":
     waitFor runAsyncStreamChecks()

@@ -7,6 +7,7 @@ import unittest
 import bifrost_exchange_protocols
 
 suite "DAC Drift Payload":
+  # {.testKind: tkUnit.}
   test "encode and decode snapshot body":
     var
       pose: DacDriftPose
@@ -49,6 +50,7 @@ suite "DAC Drift Payload":
     check p1.pose.rotation.y == pose.rotation.y
     check p1.pose.rotation.z == pose.rotation.z
 
+  # {.testKind: tkUnit.}
   test "encode and decode delta body":
     var
       pose: DacDriftPose
@@ -71,6 +73,7 @@ suite "DAC Drift Payload":
     check p1.pose.position.z == pose.position.z
     check p1.pose.rotation.z == pose.rotation.z
 
+  # {.testKind: tkEdgeCase.}
   test "reject wrong length and unknown kind":
     var
       p: DacDriftPacket

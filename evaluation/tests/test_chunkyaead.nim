@@ -70,6 +70,7 @@ proc buildAesGimliState(keyA, keyG,
   result = initChunkyCipherState(caAesGimli, @[keyA, keyG], nonce, 64'u16)
 
 suite "CHUNKYAEAD":
+  # {.testKind: tkIntegration.}
   test "encrypt/decrypt roundtrip":
     let tmpDir = joinPath(getTempDir(), "bifrost_chunkyaead_" & $getCurrentProcessId())
     if dirExists(tmpDir):
@@ -100,6 +101,7 @@ suite "CHUNKYAEAD":
     let outBytes = readBytes(outputPath)
     check outBytes == data
 
+  # {.testKind: tkEdgeCase.}
   test "tag mismatch rejects":
     let tmpDir = joinPath(getTempDir(), "bifrost_chunkyaead_tag_" & $getCurrentProcessId())
     if dirExists(tmpDir):
@@ -136,6 +138,7 @@ suite "CHUNKYAEAD":
     expect IOError:
       decryptFileChunks(manifest, chunkDir, outputPath, state, opt)
 
+  # {.testKind: tkIntegration.}
   test "aes gimli chunk mode roundtrip":
     let tmpDir = joinPath(getTempDir(), "bifrost_chunkyaead_aes_gimli_" & $getCurrentProcessId())
     if dirExists(tmpDir):
@@ -165,6 +168,7 @@ suite "CHUNKYAEAD":
     let outBytes = readBytes(outputPath)
     check outBytes == data
 
+  # {.testKind: tkUnit.}
   test "nonce derivation differs":
     let base = hexToBytes("000102030405060708090a0b0c0d0e0f1011121314151617")
     var bArr: array[24, uint8]
@@ -174,6 +178,7 @@ suite "CHUNKYAEAD":
     let n1 = deriveChunkNonce(bArr, 1'u64)
     check n0 != n1
 
+  # {.testKind: tkUnit.}
   test "chunk hash deterministic":
     let tmpDir = joinPath(getTempDir(), "bifrost_chunkyaead_hash_" & $getCurrentProcessId())
     if dirExists(tmpDir):

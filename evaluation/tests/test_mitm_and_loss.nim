@@ -108,6 +108,7 @@ proc frameRejects(S: var AmeSession, frame: openArray[uint8]): bool =
     result = true
 
 suite "MITM on a live session":
+  # {.testKind: tkRegression.}
   test "no run of the plaintext survives into the frame":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -132,6 +133,7 @@ suite "MITM on a live session":
     ## A few coincidences are expected -- one byte in 256 -- but not many.
     check lined < body.len div 8 + 4
 
+  # {.testKind: tkRegression.}
   test "an observer may read the header, and only the header":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -162,6 +164,7 @@ suite "MITM on a live session":
     check not windowFound(frame[ameFrameHeaderLen ..< frame.len],
       plaintext, 4)
 
+  # {.testKind: tkRegression.}
   test "the same secret sent twice gives two unrelated blobs":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -185,6 +188,7 @@ suite "MITM on a live session":
     ## in 256 if the two are unrelated.
     check shared < 8
 
+  # {.testKind: tkRegression.}
   test "the captured frame does not open for anyone else":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -204,6 +208,7 @@ suite "MITM on a live session":
     check opened.ok
     check opened.packet.payload == secretBytes()
 
+  # {.testKind: tkRegression.}
   test "changing any single byte of the frame breaks it":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -230,6 +235,7 @@ suite "MITM on a live session":
     check opened.ok
     check opened.packet.payload == secretBytes()
 
+  # {.testKind: tkRegression.}
   test "a captured frame cannot be replayed or reflected":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -243,6 +249,7 @@ suite "MITM on a live session":
     ## Reflection: bounced back at the sender, who sends on the other lane.
     check frameRejects(sender, frame)
 
+  # {.testKind: tkRegression.}
   test "a forged frame with an honest header is refused":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -261,6 +268,7 @@ suite "MITM on a live session":
     check frameRejects(receiver, forged)
 
 suite "MITM against padded traffic":
+  # {.testKind: tkRegression.}
   test "the blob is longer than the secret and its length says nothing":
     var
       padded: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32,
@@ -287,6 +295,7 @@ suite "MITM against padded traffic":
     check opened.packet.payload == plaintext
     check opened.packet.payload.len == 64
 
+  # {.testKind: tkRegression.}
   test "a range of message sizes all look identical on the wire":
     var
       padded: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32,
@@ -308,6 +317,7 @@ suite "MITM against padded traffic":
     check sealAmeTcpFrame(sender, newSeq[byte](64)).len > widths[0]
 
 suite "MITM against the handshake":
+  # {.testKind: tkRegression.}
   test "no key material appears in any of the four records":
     var
       authority: AmeAuthorityKey = initAmeAuthorityKey("mitm-root")
@@ -352,6 +362,7 @@ suite "MITM against the handshake":
     check not windowFound(captured, clientKey.secretKeys[0], 8)
     check not windowFound(captured, serverKey.secretKeys[0], 8)
 
+  # {.testKind: tkRegression.}
   test "a MITM cannot swap in his own identity":
     var
       authority: AmeAuthorityKey = initAmeAuthorityKey("honest-root")
@@ -384,6 +395,7 @@ suite "MITM against the handshake":
     check clientDone.err.len > 0
 
 suite "MITM against a sealed package":
+  # {.testKind: tkRegression.}
   test "nothing of the file is readable in the chunks that carry it":
     var
       auth: AmeAuthPackage = mitmAuth(aerInitiator)
@@ -398,7 +410,7 @@ suite "MITM against a sealed package":
         plaintext.add(b)
       i = i + 1
     plan = planAmeSecurePackage(auth, 55'u64, plaintext,
-      cleanLanDacDefaults())
+      dacDefaultsFor(dscCleanLan))
     for chunk in plan.package.chunks:
       for b in encodeDacPackageChunk(chunk):
         onTheWire.add(b)
@@ -414,6 +426,7 @@ suite "MITM against a sealed package":
     check not windowFound(parity, secretBytes(), 4)
 
 suite "loss, drops, and real repair":
+  # {.testKind: tkRegression.}
   test "a relay with no key rebuilds a lost chunk from XOR parity":
     var
       sender: AmeAuthPackage = mitmAuth(aerInitiator)
@@ -427,7 +440,7 @@ suite "loss, drops, and real repair":
       plaintext[i] = uint8((i * 31 + 7) mod 251)
       i = i + 1
     plan = planAmeSecurePackage(sender, 61'u64, plaintext,
-      cleanLanDacDefaults())
+      dacDefaultsFor(dscCleanLan))
     ## The relay holds the manifest and the chunks. It holds no key of any
     ## kind: `receiver` is never handed to it.
     relay = initDacPackageReceiver(plan.package.manifest)
@@ -443,11 +456,12 @@ suite "loss, drops, and real repair":
     check restored.ok
     check restored.payload == plaintext
 
+  # {.testKind: tkRegression.}
   test "Reed-Solomon rebuilds a full parity budget of losses":
     var
       sender: AmeAuthPackage = mitmAuth(aerInitiator)
       receiver: AmeAuthPackage = mitmAuth(aerResponder)
-      defaults: DacScenarioDefaults = heavyLossDacDefaults()
+      defaults: DacScenarioDefaults = dacDefaultsFor(dscHeavyLoss)
       plaintext: ByteSeq = newSeq[byte](12_000)
       plan: AmeSecurePackagePlan
       relay: DacPackageReceiver
@@ -488,10 +502,11 @@ suite "loss, drops, and real repair":
     check restored.ok
     check restored.payload == plaintext
 
+  # {.testKind: tkRegression.}
   test "one loss past the budget is refused, not guessed at":
     var
       sender: AmeAuthPackage = mitmAuth(aerInitiator)
-      defaults: DacScenarioDefaults = heavyLossDacDefaults()
+      defaults: DacScenarioDefaults = dacDefaultsFor(dscHeavyLoss)
       plaintext: ByteSeq = newSeq[byte](12_000)
       plan: AmeSecurePackagePlan
       relay: DacPackageReceiver
@@ -516,6 +531,7 @@ suite "loss, drops, and real repair":
     ## missing, and nothing invented to fill them.
     check relay.missingChunkCount == 7
 
+  # {.testKind: tkRegression.}
   test "a damaged chunk is caught by the package digest":
     var
       sender: AmeAuthPackage = mitmAuth(aerInitiator)
@@ -531,7 +547,7 @@ suite "loss, drops, and real repair":
       plaintext[i] = uint8(i mod 251)
       i = i + 1
     plan = planAmeSecurePackage(sender, 64'u64, plaintext,
-      cleanLanDacDefaults())
+      dacDefaultsFor(dscCleanLan))
     relay = initDacPackageReceiver(plan.package.manifest)
     for chunk in plan.package.chunks:
       damaged = chunk
@@ -547,6 +563,7 @@ suite "loss, drops, and real repair":
     restored = finishAmeSecurePackage(receiver, relay, plan.compression)
     check not restored.ok
 
+  # {.testKind: tkRegression.}
   test "a dropped datagram does not stop the ones behind it":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -574,6 +591,7 @@ suite "loss, drops, and real repair":
     opened = openAmeDacFrame(receiver, second)
     check not opened.ok
 
+  # {.testKind: tkRegression.}
   test "the stream carrier refuses a gap instead of papering over it":
     var
       sender: AmeSession = initAmeSession(mitmAuth(aerInitiator),
@@ -592,6 +610,7 @@ suite "loss, drops, and real repair":
     check frameRejects(receiver, third)
     check receiver.lastErr == "AME receive sequence mismatch"
 
+  # {.testKind: tkRegression.}
   test "dropping the last rotation frame leaves the old epoch working":
     var
       layout: AmeSuiteLayout = mitmLayout()

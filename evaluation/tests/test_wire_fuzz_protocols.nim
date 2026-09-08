@@ -58,22 +58,27 @@ proc sampleAmeSealedFrame(): ByteSeq {.role: truthBuilder.} =
     1'u32, 9'u32, body)
 
 suite "AME frame fuzz":
+  # {.testKind: tkFuzz.}
   test "the frame header decoder never raises a Defect":
     fuzzBody("decodeAmeFrameHeader", 101'u64, sampleAmeFrame()):
       discard decodeAmeFrameHeader(data)
 
+  # {.testKind: tkFuzz.}
   test "the frame decoder never raises a Defect":
     fuzzBody("decodeAmeFrame", 102'u64, sampleAmeFrame()):
       discard decodeAmeFrame(data)
 
+  # {.testKind: tkFuzz.}
   test "the FOMKE envelope decoder never raises a Defect":
     fuzzBody("decodeFomkeMessage", 103'u64, sampleFomkeMessage()):
       discard decodeFomkeMessage(data, aatl32)
 
+  # {.testKind: tkFuzz.}
   test "a nested frame plus envelope survives mutation at either depth":
     fuzzBody("decodeAmeFrame + envelope", 104'u64, sampleAmeSealedFrame()):
       discard decodeFomkeMessage(decodeAmeFrame(data).payload, aatl32)
 
+  # {.testKind: tkFuzz.}
   test "no length on the wire can disagree with the bytes that arrived":
     var
       f: ByteSeq = sampleAmeFrame()
@@ -104,40 +109,47 @@ suite "AME frame fuzz":
       body.setLen(body.len - 1)
 
 suite "BFX2 fuzz":
+  # {.testKind: tkFuzz.}
   test "the envelope decoder never raises a Defect":
     fuzzBody("decodeBfxEnvelope", 201'u64,
         encodeBfxEnvelope(7'u16, 2'u16, rampBytes(200))):
       discard decodeBfxEnvelope(data)
 
+  # {.testKind: tkFuzz.}
   test "a checksummed envelope never raises a Defect":
     fuzzBody("decodeBfxEnvelope checksummed", 202'u64,
         encodeBfxEnvelope(7'u16, 2'u16, rampBytes(200), bfxFlagChecksum)):
       discard decodeBfxEnvelope(data)
 
+  # {.testKind: tkFuzz.}
   test "the value packet decoder never raises a Defect":
     fuzzBody("decodeJsonNodePacket", 203'u64,
         encodeValuePacket(bfxWtBytes, rampBytes(64))):
       discard decodeJsonNodePacket(data)
 
 suite "TLS 1.3 record fuzz":
+  # {.testKind: tkFuzz.}
   test "the record decoder never raises a Defect":
     fuzzBody("decodeTls13Record", 301'u64,
         encodeTls13Record(Tls13Record(contentType: tctHandshake,
         legacyVersion: 0x0303'u16, fragment: rampBytes(300)))):
       discard decodeTls13Record(data)
 
+  # {.testKind: tkFuzz.}
   test "an application-data record never raises a Defect":
     fuzzBody("decodeTls13Record appdata", 302'u64,
         encodeTls13Record(Tls13Record(contentType: tctApplicationData,
         legacyVersion: 0x0303'u16, fragment: rampBytes(1200)))):
       discard decodeTls13Record(data)
 
+  # {.testKind: tkFuzz.}
   test "the handshake decoder never raises a Defect":
     fuzzBody("decodeTls13Handshake", 303'u64,
         encodeTls13Handshake(Tls13Handshake(messageType: thtClientHello,
         body: rampBytes(400)))):
       discard decodeTls13Handshake(data)
 
+  # {.testKind: tkFuzz.}
   test "a record wrapping a handshake survives mutation at either depth":
     fuzzBody("record + handshake", 304'u64,
         encodeTls13Record(Tls13Record(contentType: tctHandshake,
@@ -147,6 +159,7 @@ suite "TLS 1.3 record fuzz":
       discard decodeTls13Handshake(decodeTls13Record(data).record.fragment)
 
 suite "TLS 1.3 handshake message fuzz":
+  # {.testKind: tkFuzz.}
   test "the ClientHello decoder never raises a Defect":
     var
       H: Tls13ClientHello
@@ -162,6 +175,7 @@ suite "TLS 1.3 handshake message fuzz":
     fuzzBody("decodeTls13ClientHello", 401'u64, encodeTls13ClientHello(H)):
       discard decodeTls13ClientHello(data)
 
+  # {.testKind: tkFuzz.}
   test "the ServerHello decoder never raises a Defect":
     var
       H: Tls13ServerHello
@@ -174,11 +188,13 @@ suite "TLS 1.3 handshake message fuzz":
     fuzzBody("decodeTls13ServerHello", 402'u64, encodeTls13ServerHello(H)):
       discard decodeTls13ServerHello(data)
 
+  # {.testKind: tkFuzz.}
   test "the EncryptedExtensions decoder never raises a Defect":
     fuzzBody("decodeTls13EncryptedExtensions", 403'u64,
         decodeTls13Handshake(encodeTls13EncryptedExtensions("h2")).message.body):
       discard decodeTls13EncryptedExtensions(data)
 
+  # {.testKind: tkFuzz.}
   test "the Certificate decoder never raises a Defect":
     var
       C: Tls13CertificateMessage
@@ -189,12 +205,14 @@ suite "TLS 1.3 handshake message fuzz":
         decodeTls13Handshake(encodeTls13Certificate(C)).message.body):
       discard decodeTls13Certificate(data)
 
+  # {.testKind: tkFuzz.}
   test "the CertificateVerify decoder never raises a Defect":
     fuzzBody("decodeTls13CertificateVerify", 405'u64,
         decodeTls13Handshake(encodeTls13CertificateVerify(rampBytes(256),
         0x0804'u16)).message.body):
       discard decodeTls13CertificateVerify(data)
 
+  # {.testKind: tkFuzz.}
   test "a certificate chain past the caller's bound is refused, not truncated":
     var
       C: Tls13CertificateMessage

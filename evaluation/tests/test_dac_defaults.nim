@@ -20,6 +20,7 @@ import ../../src/protocols/dac/level1/path_policy
 import ../../src/protocols/dac/level0/protocols
 
 suite "DAC defaults":
+  # {.testKind: tkUnit.}
   test "descriptor exposes Data Adaptive Connection":
     var
       d = initDacDescriptor()
@@ -30,14 +31,15 @@ suite "DAC defaults":
     check d.capabilities.supportsReliability
     check d.capabilities.supportsAck
 
+  # {.testKind: tkUnit.}
   test "super clean, clean, and recovery defaults expose expected budgets":
     var
       superClean: DacScenarioDefaults
       clean: DacScenarioDefaults
       recovery: DacScenarioDefaults
-    superClean = superCleanDacDefaults()
-    clean = cleanLanDacDefaults()
-    recovery = recoveryWeakDacDefaults()
+    superClean = dacDefaultsFor(dscSameRoom)
+    clean = dacDefaultsFor(dscCleanLan)
+    recovery = dacDefaultsFor(dscWeakRecovery)
     check superClean.pathLane == dplSuperCleanPath
     check superClean.bodyLenMode == dblU32
     check superClean.maxBodyLen == dacSuperCleanMaxBodyLen
@@ -57,6 +59,7 @@ suite "DAC defaults":
     check validateDacDefaults(clean)
     check validateDacDefaults(recovery)
 
+  # {.testKind: tkEdgeCase.}
   test "every lane has one validated preset, except the one that cannot":
     var
       lane: DacPathLane
@@ -74,6 +77,7 @@ suite "DAC defaults":
     expect ValueError:
       discard dacDefaultsForPath(dplBlockedUdpPath)
 
+  # {.testKind: tkUnit.}
   test "frame headers pack flags and keep DAC magic/version byte":
     var
       flags: DacFrameFlags
@@ -129,6 +133,7 @@ suite "DAC defaults":
     check dacBaseFrameAscii.contains("3-byte magic DAC + 1-byte format version")
     check dacBaseFrameAscii.contains("DAC   | u8")
 
+  # {.testKind: tkUnit.}
   test "message schemas initialize with defaults":
     var
       p: DacPathProbe
@@ -142,7 +147,7 @@ suite "DAC defaults":
       digest: array[32, uint8]
       gapMap: ByteSeq
       nonce: array[9, uint8]
-    defaults = badSignalDacDefaults()
+    defaults = dacDefaultsFor(dscBadSignal)
     digest[0] = 1'u8
     gapMap = @[0b00010000'u8]
     nonce = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
@@ -193,6 +198,7 @@ suite "DAC defaults":
       discard initDacPathSwitch(2'u16, 2'u16, dplMobilePath, dplLossyPath,
         dpsrLoss)
 
+  # {.testKind: tkUnit.}
   test "path policy recommends one-step switches from stats and failures":
     var
       stats: DacPathStats

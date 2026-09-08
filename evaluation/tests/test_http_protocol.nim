@@ -25,6 +25,7 @@ proc parseInto(s: string; P: var HttpRequestParser): HttpFeedResult {.role: pars
   result = feedHttpRequest(P, bytesOf(s))
 
 suite "http header ops":
+  # {.testKind: tkUnit.}
   test "field name lookup ignores case but values do not":
     var
       H: HttpHeaders = @[]
@@ -33,6 +34,7 @@ suite "http header ops":
     check H.getHeader("CONTENT-TYPE") == "TEXT/HTML"
     check H.getHeader("missing", "fallback") == "fallback"
 
+  # {.testKind: tkUnit.}
   test "setHeader collapses duplicates to a single field":
     var
       H: HttpHeaders = @[]
@@ -44,6 +46,7 @@ suite "http header ops":
     check H.getHeader("X-A") == "3"
     check H.getHeader("X-B") == "keep"
 
+  # {.testKind: tkEdgeCase.}
   test "header names and values reject injection bytes":
     check isValidHeaderName("X-Fine")
     check not isValidHeaderName("X Bad")
@@ -53,6 +56,7 @@ suite "http header ops":
     check not isValidHeaderValue("a\r\nX-Admin: yes")
     check not isValidHeaderValue("a\nb")
 
+  # {.testKind: tkUnit.}
   test "comma lists match whole tokens only":
     var
       H: HttpHeaders = @[]
@@ -62,12 +66,14 @@ suite "http header ops":
     check not H.headerHasToken("connection", "grade")
 
 suite "http target ops":
+  # {.testKind: tkEdgeCase.}
   test "percent decoding fails closed on bad escapes":
     check percentDecode("/a%20b").value == "/a b"
     check not percentDecode("/a%2").ok
     check not percentDecode("/a%zz").ok
     check not percentDecode("/a%00b").ok
 
+  # {.testKind: tkEdgeCase.}
   test "traversal is rejected after decoding, not before":
     # The encoded form is what a naive filter misses.
     var
@@ -76,19 +82,23 @@ suite "http target ops":
     check not parseHttpTarget("/../secret").ok
     check not parseHttpTarget("/a/../../b").ok
 
+  # {.testKind: tkEdgeCase.}
   test "backslashes are refused so windows cannot be traversed":
     check not parseHttpTarget("/a\\..\\b").ok
 
+  # {.testKind: tkUnit.}
   test "normalisation collapses separators and dot segments":
     check normalizeHttpPath("/a//b/./c").path == "/a/b/c"
     check normalizeHttpPath("/a/b/../c").path == "/a/c"
     check normalizeHttpPath("/").path == "/"
     check normalizeHttpPath("/a/").path == "/a/"
 
+  # {.testKind: tkUnit.}
   test "absolute-form targets keep only the path":
     check parseHttpTarget("http://host.example/a/b").path == "/a/b"
     check parseHttpTarget("http://host.example").path == "/"
 
+  # {.testKind: tkUnit.}
   test "query parameters decode independently of the path":
     var
       r = parseHttpTarget("/s?q=hello+world&lang=en")
@@ -99,6 +109,7 @@ suite "http target ops":
     check r.params.getQueryParam("absent", "none") == "none"
 
 suite "http request parsing":
+  # {.testKind: tkUnit.}
   test "a plain GET parses into its parts":
     var
       r = parseOne("GET /index.html HTTP/1.1\r\nHost: a.example\r\n\r\n")
@@ -111,6 +122,7 @@ suite "http request parsing":
     check P.request.version == hv11
     check P.request.keepAlive
 
+  # {.testKind: tkUnit.}
   test "a body arriving in pieces is reassembled":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -123,6 +135,7 @@ suite "http request parsing":
     check b.complete
     check fromHttpBytes(P.request.body) == "hello world"
 
+  # {.testKind: tkUnit.}
   test "chunked bodies decode across feed boundaries":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -134,6 +147,7 @@ suite "http request parsing":
     check b.complete
     check fromHttpBytes(P.request.body) == "hello world"
 
+  # {.testKind: tkEdgeCase.}
   test "HTTP/1.1 without Host is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -141,6 +155,7 @@ suite "http request parsing":
     check not r.ok
     check P.err == hpeMissingHost
 
+  # {.testKind: tkEdgeCase.}
   test "two Host headers are refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -149,6 +164,7 @@ suite "http request parsing":
     check P.err == hpeInvalidHost
 
 suite "http request smuggling defences":
+  # {.testKind: tkEdgeCase.}
   test "Content-Length together with Transfer-Encoding is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -158,6 +174,7 @@ suite "http request smuggling defences":
     check P.err == hpeConflictingFraming
     check httpStatusForParseError(P.err) == 400
 
+  # {.testKind: tkEdgeCase.}
   test "two Content-Length headers are refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -166,6 +183,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeDuplicateContentLength
 
+  # {.testKind: tkEdgeCase.}
   test "a signed or padded Content-Length is refused":
     var
       P1: HttpRequestParser = initHttpRequestParser()
@@ -175,6 +193,7 @@ suite "http request smuggling defences":
     check not parseInto("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0x6" &
       "\r\n\r\nabcdef", P2).ok
 
+  # {.testKind: tkEdgeCase.}
   test "an encoding list ending in chunked is refused, not guessed":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -183,6 +202,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeConflictingFraming
 
+  # {.testKind: tkEdgeCase.}
   test "obsolete line folding is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -190,6 +210,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeMalformedHeader
 
+  # {.testKind: tkEdgeCase.}
   test "whitespace before the colon is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -197,6 +218,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeMalformedHeader
 
+  # {.testKind: tkEdgeCase.}
   test "a body on a verb that should not carry one is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -205,6 +227,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeConflictingFraming
 
+  # {.testKind: tkEdgeCase.}
   test "a malformed chunk size is refused":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -213,6 +236,7 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeInvalidChunk
 
+  # {.testKind: tkEdgeCase.}
   test "an oversized body is refused with 413":
     var
       P: HttpRequestParser = initHttpRequestParser(8)
@@ -222,6 +246,7 @@ suite "http request smuggling defences":
     check P.err == hpeBodyTooLarge
     check httpStatusForParseError(P.err) == 413
 
+  # {.testKind: tkEdgeCase.}
   test "an oversized head is refused with 431":
     var
       P: HttpRequestParser = initHttpRequestParser()
@@ -234,6 +259,7 @@ suite "http request smuggling defences":
     check httpStatusForParseError(P.err) == 431
 
 suite "http chunked codec":
+  # {.testKind: tkUnit.}
   test "encode and decode round-trip":
     var
       D: ChunkedDecoder = initChunkedDecoder()
@@ -247,6 +273,7 @@ suite "http chunked codec":
     check r.done
     check fromHttpBytes(r.data) == "hello world"
 
+  # {.testKind: tkUnit.}
   test "the decoder enforces the size cap mid-stream":
     var
       D: ChunkedDecoder = initChunkedDecoder()
@@ -254,6 +281,7 @@ suite "http chunked codec":
     check not r.ok
 
 suite "http response writing":
+  # {.testKind: tkUnit.}
   test "framing headers are written by the writer, not the handler":
     var
       R: HttpResponse = textResponse(200, "hi")
@@ -265,6 +293,7 @@ suite "http response writing":
     check not head.contains("999")
     check not head.contains("Transfer-Encoding")
 
+  # {.testKind: tkUnit.}
   test "statuses that forbid a body get no Content-Length":
     var
       head = fromHttpBytes(encodeResponseHead(newHttpResponse(204), hv11,
@@ -272,6 +301,7 @@ suite "http response writing":
     check not head.contains("Content-Length")
     check head.startsWith("HTTP/1.1 204 No Content\r\n")
 
+  # {.testKind: tkUnit.}
   test "a header value carrying a line break is dropped":
     var
       R: HttpResponse = textResponse(200, "hi")
@@ -281,6 +311,7 @@ suite "http response writing":
     check not head.contains("X-Admin")
 
 suite "http connection state machine":
+  # {.testKind: tkUnit.}
   test "each pipelined request is parsed on its own":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -301,6 +332,7 @@ suite "http connection state machine":
     check second.events[0].request.path == "/b"
     check second.events[0].request.headers.getHeader("host") == "y"
 
+  # {.testKind: tkUnit.}
   test "Connection: close retires the connection after one reply":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -312,6 +344,7 @@ suite "http connection state machine":
     check wire.contains("Connection: close")
     check C.httpConnectionShouldClose()
 
+  # {.testKind: tkUnit.}
   test "HTTP/1.0 closes unless keep-alive is asked for":
     var
       C1: HttpServerConnection = initHttpServerConnection()
@@ -324,6 +357,7 @@ suite "http connection state machine":
     discard respondHttpConnection(C2, textResponse(200, "x"))
     check not C2.httpConnectionShouldClose()
 
+  # {.testKind: tkUnit.}
   test "an upgrade request surfaces as its own event":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -336,6 +370,7 @@ suite "http connection state machine":
     C.acceptHttpUpgrade()
     check C.httpConnectionIsUpgraded()
 
+  # {.testKind: tkUnit.}
   test "HEAD gets the head but no body bytes":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -345,6 +380,7 @@ suite "http connection state machine":
     check wire.contains("Content-Length: 4")
     check not wire.contains("body")
 
+  # {.testKind: tkUnit.}
   test "Expect: 100-continue produces an interim reply first":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -357,6 +393,7 @@ suite "http connection state machine":
     check fromHttpBytes(respondHttpInterim(C, o.events[0].response)) ==
       "HTTP/1.1 100 Continue\r\n\r\n"
 
+  # {.testKind: tkEdgeCase.}
   test "a malformed request yields a ready-made error response":
     var
       C: HttpServerConnection = initHttpServerConnection()
@@ -368,6 +405,7 @@ suite "http connection state machine":
     check o.events[0].response.status == 400
     check C.httpConnectionShouldClose()
 
+  # {.testKind: tkUnit.}
   test "the per-connection request budget retires the connection":
     var
       L: HttpServerLimits = defaultHttpServerLimits()
@@ -378,6 +416,7 @@ suite "http connection state machine":
     discard respondHttpConnection(C, textResponse(200, "x"))
     check C.httpConnectionShouldClose()
 
+  # {.testKind: tkIntegration.}
   test "a streamed response uses chunked framing end to end":
     var
       C: HttpServerConnection = initHttpServerConnection()

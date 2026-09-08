@@ -38,9 +38,10 @@ proc dropShards(S: var DacPackageGroupRepair, A: openArray[int]) {.role: helper.
     i = i + 1
 
 suite "DAC repair-group geometry":
+  # {.testKind: tkUnit.}
   test "group spans follow the manifest and the last group is short":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       plan: DacPackagePlan = planDacPackage(41'u64, rampBytes(20_000), d)
       m: DacPackageManifest = plan.manifest
       width: uint16 = dacGroupDataWidth(m)
@@ -55,10 +56,11 @@ suite "DAC repair-group geometry":
     expect ValueError:
       discard dacGroupFirstChunk(m, uint32(plan.repairs.len))
 
+  # {.testKind: tkUnit.}
   test "every planned group matches its manifest span":
     var
       plan: DacPackagePlan = planDacPackage(42'u64, rampBytes(9_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       i: int = 0
     while i < plan.repairs.len:
       check plan.repairs[i].firstChunk ==
@@ -69,10 +71,11 @@ suite "DAC repair-group geometry":
       i = i + 1
 
 suite "DAC XOR repair":
+  # {.testKind: tkEdgeCase.}
   test "one loss rebuilds, two losses are refused with a reason":
     var
       plan: DacPackagePlan = planDacPackage(7'u64, rampBytes(5_000),
-        cleanLanDacDefaults())
+        dacDefaultsFor(dscCleanLan))
       one: DacPackageReceiver = receiverMissing(plan, [2'u16])
       two: DacPackageReceiver = receiverMissing(plan, [2'u16, 4'u16])
       report: DacGroupRepairReport
@@ -87,10 +90,11 @@ suite "DAC XOR repair":
     check report.err.len > 0
     check not finishDacPackage(two).ok
 
+  # {.testKind: tkEdgeCase.}
   test "a lost XOR shard is refused rather than guessed":
     var
       plan: DacPackagePlan = planDacPackage(8'u64, rampBytes(5_000),
-        cleanLanDacDefaults())
+        dacDefaultsFor(dscCleanLan))
       S: DacPackageReceiver = receiverMissing(plan, [3'u16])
       r: DacPackageGroupRepair = plan.repairs[0]
       report: DacGroupRepairReport
@@ -100,9 +104,10 @@ suite "DAC XOR repair":
     check S.received[3] == false
 
 suite "DAC Reed-Solomon repair":
+  # {.testKind: tkUnit.}
   test "the full parity budget rebuilds and one more loss does not":
     var
-      d: DacScenarioDefaults = badSignalDacDefaults()
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       plan: DacPackagePlan = planDacPackage(9'u64, rampBytes(20_000), d)
       budget: DacPackageReceiver = receiverMissing(plan,
         [1'u16, 4'u16, 9'u16, 14'u16])
@@ -121,10 +126,11 @@ suite "DAC Reed-Solomon repair":
     check not report.ok
     check overBudget.received[1] == false
 
+  # {.testKind: tkUnit.}
   test "losing parity shards spends the budget the same way":
     var
       plan: DacPackagePlan = planDacPackage(10'u64, rampBytes(20_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       S: DacPackageReceiver = receiverMissing(plan, [0'u16, 7'u16])
       r: DacPackageGroupRepair = plan.repairs[0]
       report: DacGroupRepairReport
@@ -134,10 +140,11 @@ suite "DAC Reed-Solomon repair":
     check report.rebuilt == @[0'u16, 7'u16]
     check finishDacPackage(S).ok
 
+  # {.testKind: tkUnit.}
   test "a short final group rebuilds on its own width":
     var
       plan: DacPackagePlan = planDacPackage(11'u64, rampBytes(13_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       last: int = plan.repairs.len - 1
       dropped: uint16 = plan.repairs[last].firstChunk
       S: DacPackageReceiver = receiverMissing(plan, [dropped])
@@ -148,10 +155,11 @@ suite "DAC Reed-Solomon repair":
     check report.rebuilt == @[dropped]
     check finishDacPackage(S).ok
 
+  # {.testKind: tkUnit.}
   test "nothing missing rebuilds nothing":
     var
       plan: DacPackagePlan = planDacPackage(12'u64, rampBytes(20_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       S: DacPackageReceiver = initDacPackageReceiver(plan.manifest)
       report: DacGroupRepairReport
     for chunk in plan.chunks:
@@ -162,10 +170,11 @@ suite "DAC Reed-Solomon repair":
     check finishDacPackage(S).commit.status == dcsCommitted
 
 suite "DAC parity shards on the wire":
+  # {.testKind: tkUnit.}
   test "shards survive the trip out and back into a repair record":
     var
       plan: DacPackagePlan = planDacPackage(13'u64, rampBytes(20_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       shards: seq[DacParityShard] = groupParityShards(plan, 0'u32)
       rebuilt: DacPackageGroupRepair
       S: DacPackageReceiver = receiverMissing(plan, [2'u16, 3'u16])
@@ -184,10 +193,11 @@ suite "DAC parity shards on the wire":
     check report.ok
     check finishDacPackage(S).ok
 
+  # {.testKind: tkEdgeCase.}
   test "a shard from the wrong group or package is refused":
     var
       plan: DacPackagePlan = planDacPackage(14'u64, rampBytes(20_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       shards: seq[DacParityShard] = groupParityShards(plan, 0'u32)
       strayGroup: seq[DacParityShard] = shards
       strayPackage: seq[DacParityShard] = shards
@@ -200,10 +210,11 @@ suite "DAC parity shards on the wire":
     expect ValueError:
       discard groupParityShards(plan, uint32(plan.repairs.len))
 
+  # {.testKind: tkEdgeCase.}
   test "a partial parity set leaves the missing slots empty":
     var
       plan: DacPackagePlan = planDacPackage(15'u64, rampBytes(20_000),
-        badSignalDacDefaults())
+        dacDefaultsFor(dscBadSignal))
       shards: seq[DacParityShard] = groupParityShards(plan, 0'u32)
       rebuilt: DacPackageGroupRepair
       S: DacPackageReceiver = receiverMissing(plan, [6'u16])
@@ -217,10 +228,11 @@ suite "DAC parity shards on the wire":
     check finishDacPackage(S).ok
 
 suite "DAC repair modes without parity":
+  # {.testKind: tkUnit.}
   test "exact-repair and no-repair modes say so instead of failing silently":
     var
       plan: DacPackagePlan = planDacPackage(16'u64, rampBytes(4_000),
-        meteredDacDefaults())
+        dacDefaultsFor(dscMetered))
       S: DacPackageReceiver = receiverMissing(plan, [1'u16])
       report: DacGroupRepairReport
     check plan.manifest.repairMode == drmTcpExact
@@ -229,10 +241,11 @@ suite "DAC repair modes without parity":
     check not report.ok
     check report.err.len > 0
 
+  # {.testKind: tkEdgeCase.}
   test "a group outside the package is refused":
     var
       plan: DacPackagePlan = planDacPackage(17'u64, rampBytes(4_000),
-        cleanLanDacDefaults())
+        dacDefaultsFor(dscCleanLan))
       S: DacPackageReceiver = initDacPackageReceiver(plan.manifest)
       r: DacPackageGroupRepair = plan.repairs[0]
       report: DacGroupRepairReport

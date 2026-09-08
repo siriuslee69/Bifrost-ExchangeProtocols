@@ -7,6 +7,7 @@ import std/unittest
 import ../../src/clients/shared/lan_message
 
 suite "LAN BMSG codec":
+  # {.testKind: tkUnit.}
   test "matches the Android BMSG v1 byte layout":
     var
       m: LanMessage = initLanMessage(lpTcp, "host-1", "Desktop", "hello phone",
@@ -23,6 +24,7 @@ suite "LAN BMSG codec":
     check A == expected
     check decodeLanMessage(A) == m
 
+  # {.testKind: tkIntegration.}
   test "ack and unicode text roundtrip":
     var
       m: LanMessage = initLanMessage(lpTcp, "phone", "Motorola", "frost signal", 9)
@@ -30,6 +32,7 @@ suite "LAN BMSG codec":
     check decodeLanMessage(encodeLanMessage(ack)) == ack
     check ack.isAck
 
+  # {.testKind: tkEdgeCase.}
   test "malformed lengths and flags fail closed":
     var
       A: seq[byte] = encodeLanMessage(initLanMessage(lpTcp, "a", "b", "c", 1))

@@ -33,10 +33,12 @@ proc identityOrder(n: int): seq[uint16] =
     i = i + 1
 
 suite "DAC scramble policy":
+  # {.testKind: tkEdgeCase.}
   test "an inverted delay range is refused":
     expect ValueError:
       discard initDacScramblePolicy(20'u16, 5'u16)
 
+  # {.testKind: tkUnit.}
   test "the quiet policy does nothing and says so":
     var
       p: DacScramblePolicy = quietDacScramblePolicy()
@@ -45,11 +47,13 @@ suite "DAC scramble policy":
     check dacScrambleDelayMs(S, p) == 0'u16
     check dacChunkSendOrder(S, p, 16) == identityOrder(16)
 
+  # {.testKind: tkUnit.}
   test "shuffling alone counts as active":
     check dacScrambleActive(initDacScramblePolicy(0'u16, 0'u16, true))
     check dacScrambleActive(initDacScramblePolicy(1'u16, 4'u16, false))
 
 suite "DAC scramble delay":
+  # {.testKind: tkUnit.}
   test "every draw lands inside the configured range":
     var
       p: DacScramblePolicy = initDacScramblePolicy(3'u16, 11'u16)
@@ -62,6 +66,7 @@ suite "DAC scramble delay":
       check d <= 11'u16
       i = i + 1
 
+  # {.testKind: tkUnit.}
   test "the draws actually vary and cover both ends":
     var
       p: DacScramblePolicy = initDacScramblePolicy(3'u16, 11'u16)
@@ -75,6 +80,7 @@ suite "DAC scramble delay":
     check 11'u8 in seen
     check card(seen) == 9
 
+  # {.testKind: tkUnit.}
   test "an equal range gives a fixed delay":
     var
       p: DacScramblePolicy = initDacScramblePolicy(7'u16, 7'u16)
@@ -84,6 +90,7 @@ suite "DAC scramble delay":
       check dacScrambleDelayMs(S, p) == 7'u16
       i = i + 1
 
+  # {.testKind: tkUnit.}
   test "different seeds diverge, the same seed repeats":
     var
       p: DacScramblePolicy = initDacScramblePolicy(0'u16, 1000'u16)
@@ -107,6 +114,7 @@ suite "DAC scramble delay":
     check differs
 
 suite "DAC chunk order":
+  # {.testKind: tkUnit.}
   test "a shuffled order is still every chunk exactly once":
     var
       p: DacScramblePolicy = initDacScramblePolicy()
@@ -119,6 +127,7 @@ suite "DAC chunk order":
       check sortedOrder(order) == identityOrder(n)
       n = n + 1
 
+  # {.testKind: tkUnit.}
   test "a large package does get reordered":
     var
       p: DacScramblePolicy = initDacScramblePolicy()
@@ -127,12 +136,14 @@ suite "DAC chunk order":
     check order != identityOrder(256)
     check sortedOrder(order) == identityOrder(256)
 
+  # {.testKind: tkUnit.}
   test "shuffling off leaves the order alone":
     var
       p: DacScramblePolicy = initDacScramblePolicy(3'u16, 11'u16, false)
       S: DacScrambleState = initDacScrambleState(5'u64)
     check dacChunkSendOrder(S, p, 200) == identityOrder(200)
 
+  # {.testKind: tkEdgeCase.}
   test "empty and single-chunk packages are handled":
     var
       p: DacScramblePolicy = initDacScramblePolicy()
@@ -140,6 +151,7 @@ suite "DAC chunk order":
     check dacChunkSendOrder(S, p, 0).len == 0
     check dacChunkSendOrder(S, p, 1) == @[0'u16]
 
+  # {.testKind: tkEdgeCase.}
   test "a chunk count past the id width is refused":
     var
       p: DacScramblePolicy = initDacScramblePolicy()

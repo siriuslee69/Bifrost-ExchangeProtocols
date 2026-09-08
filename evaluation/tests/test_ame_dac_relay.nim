@@ -75,10 +75,11 @@ proc feedLossReport(R: var AmeDacRelay, slot: int) =
     encodeDacPathStats(stats), 0'u32)
 
 suite "AME DAC relay admission":
+  # {.testKind: tkIntegration.}
   test "a peer with a session gets a slot; one without gets nothing":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 5'u64,
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 4)
       admitted = admitAmeDacPeer(R, keyA(), P.a, 0'u32)
       step: AmeDacRelayStep
@@ -90,10 +91,11 @@ suite "AME DAC relay admission":
     check step.err == "DAC datagram from a peer with no session"
     check R.dropped == 1'u32
 
+  # {.testKind: tkIntegration.}
   test "releasing a peer erases its session with its slot":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 5'u64,
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 4)
       slot: int = 0
     discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
@@ -105,9 +107,10 @@ suite "AME DAC relay admission":
     check R.sessions[slot].sessionId == 0'u64
     check not releaseAmeDacPeer(R, keyA())
 
+  # {.testKind: tkEdgeCase.}
   test "a full relay refuses a new peer rather than evicting a live one":
     var
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 5'u64,
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 2)
       P = peerSessions()
       first = admitAmeDacPeer(R, keyA(), P.a, 0'u32)
@@ -121,11 +124,12 @@ suite "AME DAC relay admission":
     check ameDacRelayLive(R) == 2
 
 suite "AME DAC relay transfer":
+  # {.testKind: tkIntegration.}
   test "a whole package crosses the relay, sealed the entire way":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 1'u64)
-      receiver: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 2'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 2'u64)
       payload: ByteSeq = rampBytes(12_000)
       out1: AmeDacRelayStep
       step: AmeDacRelayStep
@@ -144,11 +148,12 @@ suite "AME DAC relay transfer":
       i = i + 1
     check done
 
+  # {.testKind: tkIntegration.}
   test "every datagram on the wire is an authenticated AME frame":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 1'u64)
-      receiver: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 2'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 2'u64)
       out1: AmeDacRelayStep
       tampered: ByteSeq
       step: AmeDacRelayStep
@@ -167,10 +172,11 @@ suite "AME DAC relay transfer":
     check refused == out1.send.len
     check receiver.dropped == uint32(out1.send.len)
 
+  # {.testKind: tkEdgeCase.}
   test "rubbish from an admitted peer is dropped, never raised":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 3'u64)
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 3'u64)
       step: AmeDacRelayStep
       i: int = 0
       broke: bool = false
@@ -191,11 +197,12 @@ suite "AME DAC relay transfer":
     check not broke
     check ameDacRelayLive(R) == 1
 
+  # {.testKind: tkIntegration.}
   test "a package survives loss, repairing over the sealed lane":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 1'u64)
-      receiver: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 2'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 2'u64)
       payload: ByteSeq = rampBytes(14_000)
       toReceiver: seq[ByteSeq] = @[]
       toSender: seq[ByteSeq] = @[]
@@ -245,10 +252,11 @@ suite "AME DAC relay transfer":
     check done
 
 suite "AME DAC relay bounds":
+  # {.testKind: tkIntegration.}
   test "a swept peer releases its session as well as its slot":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 5'u64,
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 4, idleMs = 50'u32)
       slot: int = 0
     discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
@@ -258,15 +266,17 @@ suite "AME DAC relay bounds":
     check ameDacRelayLive(R) == 0
     check R.sessions[slot].sessionId == 0'u64
 
+  # {.testKind: tkEdgeCase.}
   test "sending to a peer with no session is refused, not attempted":
     var
-      R: AmeDacRelay = initAmeDacRelay(badSignalDacDefaults(), 5'u64)
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64)
       step: AmeDacRelayStep = sendAmeDacPackage(R, keyA(), 1'u64,
         rampBytes(100), 0'u32)
     check step.kind == adrDropped
     check step.err == "DAC relay has no session for that peer"
 
 suite "DAC admission and dispatch agree":
+  # {.testKind: tkIntegration.}
   test "every kind that opens a link is a kind the loop acts on":
     var
       k: DacMessageKind
@@ -274,16 +284,18 @@ suite "DAC admission and dispatch agree":
       if dacFrameOpensLink(k):
         check dacLinkHandlesKind(k)
 
+  # {.testKind: tkEdgeCase.}
   test "a path probe no longer takes a slot the loop cannot use":
     check not dacFrameOpensLink(dmkPathProbe)
     check not dacLinkHandlesKind(dmkPathProbe)
 
 suite "secure package over the relay":
+  # {.testKind: tkIntegration.}
   test "a secure package crosses the relay and restores its plaintext":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 1'u64)
-      receiver: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 2'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64)
       plaintext: ByteSeq = rampBytes(9_000)
       out1: AmeDacRelayStep
       step: AmeDacRelayStep
@@ -304,10 +316,11 @@ suite "secure package over the relay":
       i = i + 1
     check done
 
+  # {.testKind: tkIntegration.}
   test "the relay path carries no package seal, because it needs none":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 1'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
       plaintext: ByteSeq = rampBytes(4_000)
       relayed: AmeDacRelayStep
       stored: AmeSecurePackagePlan
@@ -316,7 +329,7 @@ suite "secure package over the relay":
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
     relayed = sendAmeSecurePackage(sender, keyB(), 5'u64, plaintext, 0'u32)
     stored = planAmeSecurePackage(P.a.auth, 5'u64, plaintext,
-      cleanLanDacDefaults())
+      dacDefaultsFor(dscCleanLan))
     while i < relayed.send.len:
       relayedBytes = relayedBytes + relayed.send[i].len
       i = i + 1
@@ -327,12 +340,13 @@ suite "secure package over the relay":
       uint64(len(encodeAmeCompressed(plaintext,
         defaultAmeCompressionPolicy())))
 
+  # {.testKind: tkIntegration.}
   test "a package that leaves through a file still carries its own seal":
     var
       P = peerSessions()
       plaintext: ByteSeq = rampBytes(4_000)
       stored: AmeSecurePackagePlan = planAmeSecurePackage(P.a.auth, 5'u64,
-        plaintext, cleanLanDacDefaults())
+        plaintext, dacDefaultsFor(dscCleanLan))
       incoming: DacPackageReceiver = initDacPackageReceiver(
         stored.package.manifest)
       restored: AmeSecurePackageResult
@@ -350,6 +364,7 @@ suite "secure package over the relay":
     check not wrong.ok
     check wrong.err == "AME secure-package authentication failed"
 
+  # {.testKind: tkEdgeCase.}
   test "an incomplete relay step cannot be opened as a package":
     var
       P = peerSessions()
@@ -361,11 +376,12 @@ suite "secure package over the relay":
     check got.err == "AME secure package needs a completed relay step"
 
 suite "DAC path reports move a lane without being asked to":
+  # {.testKind: tkIntegration.}
   test "a completed package reports what this side measured":
     var
       P = peerSessions()
-      sender: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 1'u64)
-      receiver: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 2'u64)
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64)
       payload: ByteSeq = rampBytes(9_000)
       out1: AmeDacRelayStep
       step: AmeDacRelayStep
@@ -383,10 +399,11 @@ suite "DAC path reports move a lane without being asked to":
       i = i + 1
     check replied == 2
 
+  # {.testKind: tkIntegration.}
   test "a peer's report moves this side's lane, one step at a time":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(superCleanDacDefaults(), 7'u64)
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscSameRoom), 7'u64)
       slot: int = 0
       before: DacPathLane
     discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
@@ -399,10 +416,11 @@ suite "DAC path reports move a lane without being asked to":
     check R.table.slots[slot].link.defaults.pathLane != before
     check R.table.slots[slot].link.defaults.pathLane == dplCleanPath
 
+  # {.testKind: tkEdgeCase.}
   test "a report cannot move a lane out from under a package in flight":
     var
       P = peerSessions()
-      R: AmeDacRelay = initAmeDacRelay(superCleanDacDefaults(), 7'u64)
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscSameRoom), 7'u64)
       slot: int = 0
     discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
     slot = ameDacPeerSlot(R, keyA())

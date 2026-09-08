@@ -22,8 +22,8 @@ var
   sender: AmeHandshakeResult
   receiver: AmeHandshakeResult
   plaintext: ByteSeq = newSeq[byte](8000)
-  senderRelay: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 11'u64)
-  receiverRelay: AmeDacRelay = initAmeDacRelay(cleanLanDacDefaults(), 22'u64)
+  senderRelay: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 11'u64)
+  receiverRelay: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 22'u64)
   senderPeer: DacLinkKey = initDacLinkKey("10.0.0.2", 7001'u16)
   receiverPeer: DacLinkKey = initDacLinkKey("10.0.0.1", 7000'u16)
   outgoing: AmeDacRelayStep
