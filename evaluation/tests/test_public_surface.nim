@@ -11,7 +11,7 @@
 ## delete it. It is to say what it should do and check that it does, so the
 ## next reader knows the routine works rather than merely compiling.
 
-import std/[times, unittest]
+import std/[strutils, times, unittest]
 
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
@@ -25,6 +25,9 @@ import ../../src/protocols/http/types
 import ../../src/protocols/http/level0/header_ops
 import ../../src/protocols/http/level1/response_ops
 import ../../src/protocols/transport/protocols as transport_protocols
+import ../../src/protocols/mail/dkim_crypto
+import ../../src/protocols/dac/level1/path_probe
+import ../../src/protocols/tls13/connection
 import runePragmas
 
 suite "protocol descriptors name themselves":
@@ -134,3 +137,52 @@ suite "transport descriptors":
       check D[i].protocolId notin seen
       seen.add(D[i].protocolId)
       i = i + 1
+
+suite "DKIM signing and verifying":
+  ## A complete RSA-SHA256 signer and verifier with no caller in this tree.
+  ## Signing needs a private key, so the check that costs nothing is the
+  ## digest and the shape of a refusal; a full round trip needs a key pair
+  ## the fixtures do not carry in PEM form.
+  # {.testKind: tkUnit.}
+  test "the body hash is a real SHA-256 digest":
+    var
+      d: string = dkimSha256("")
+      e: string = dkimSha256("abc")
+    ## Raw octets for the `bh=` tag, not hex and not base64.
+    check d.len == 32
+    check e.len == 32
+    check d != e
+    ## The empty-string digest is a fixed, published value.
+    check toHex(d).toLowerAscii ==
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+  # {.testKind: tkEdgeCase.}
+  test "a malformed key or signature is refused rather than trusted":
+    var
+      signed: DkimSignResult = dkimSignRsaSha256("data", "not a PEM key")
+    check not signed.ok
+    check signed.err.len > 0
+    ## Verification of nonsense must be false, never an exception that a
+    ## caller might catch and treat as "probably fine".
+    check not dkimVerifyRsaSha256("data", "!!!not base64!!!", "alsonot")
+    check not dkimVerifyRsaSha256("", "", "")
+
+suite "DAC probe and repair defaults":
+  # {.testKind: tkUnit.}
+  test "a path is probed more often than it needs replies to be accepted":
+    ## Otherwise a single lost probe would keep a working path out.
+    check defaultDacProbeCount() > defaultDacProbeAcceptCount()
+    check defaultDacProbeAcceptCount() > 0'u8
+
+suite "TLS connection counters":
+  ## A `Tls13Connection` is public and constructible on its own, for a caller
+  ## driving records over a transport this library does not own. The session
+  ## types keep theirs private, so these three accessors are only reachable
+  ## on a connection the caller built -- which is why nothing here read them.
+  # {.testKind: tkUnit.}
+  test "a fresh connection has installed no keys and counted nothing":
+    var
+      C: Tls13Connection = initTls13Connection()
+    check not tls13ReadKeysInstalled(C)
+    check tls13ReadSequence(C) == 0'u64
+    check tls13WriteSequence(C) == 0'u64

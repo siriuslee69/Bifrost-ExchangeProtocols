@@ -429,3 +429,42 @@ suite "http connection state machine":
     check wire == "3\r\nabc\r\n"
     check fromHttpBytes(endHttpStreamResponse(C)) == "0\r\n\r\n"
     check not C.httpConnectionShouldClose()
+
+suite "streaming a body whose size is already known":
+  ## `beginHttpFixedResponse` writes the head and hands the socket back to
+  ## the caller, which is what serving a large file wants: the body never
+  ## passes through this library at all. Nothing here called it.
+  # {.testKind: tkUnit.}
+  test "the head declares the length, and finishing readies the next request":
+    var
+      C: HttpServerConnection = initHttpServerConnection()
+      fed = feedHttpConnection(C, bytesOf(
+        "GET /big HTTP/1.1\r\nHost: x\r\n\r\n"))
+      head: string = ""
+    check fed.events.len == 1
+    head = fromHttpBytes(beginHttpFixedResponse(C, newHttpResponse(200),
+      1048576'i64))
+    check head.contains("HTTP/1.1 200")
+    check head.contains("Content-Length: 1048576")
+    ## No body was written by us; the caller streams it.
+    check not head.contains("\r\n\r\nx")
+    finishHttpFixedResponse(C)
+    ## A keep-alive connection is ready to read the next request head.
+    check httpConnectionInMessage(C) == false
+
+  # {.testKind: tkUnit.}
+  test "a connection says whether it is mid-head or mid-body":
+    ## A server reads these to pick a deadline: a slow upload is normal, a
+    ## slow head is not, so the two windows want different timeouts.
+    var
+      C: HttpServerConnection = initHttpServerConnection()
+    check not httpConnectionInMessage(C)
+    check not httpConnectionAwaitingBody(C)
+    ## Half a head has arrived: in a message, but not yet at the body.
+    discard feedHttpConnection(C, bytesOf("POST /u HTTP/1.1\r\nHost: x\r\n"))
+    check httpConnectionInMessage(C)
+    check not httpConnectionAwaitingBody(C)
+    ## Head complete, body outstanding.
+    discard feedHttpConnection(C, bytesOf("Content-Length: 4\r\n\r\n"))
+    check httpConnectionAwaitingBody(C)
+    check httpConnectionInMessage(C)
