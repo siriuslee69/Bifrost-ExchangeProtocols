@@ -994,3 +994,45 @@ suite "the path profile reaches the session":
       lossy.auth.current.params.authTagLen
     check clean.auth.current.params.padding ==
       lossy.auth.current.params.padding
+
+suite "the session-level skip and cache controls":
+  ## `discardAmeSessionSkipped` is the documented way out of a session that
+  ## can neither receive across a gap nor rekey. It was reachable only
+  ## through its FOMKE-level half until now, so the session wrapper -- which
+  ## also has to rebuild the send cache -- went unexercised.
+  # {.testKind: tkRegression.}
+  test "giving up on skipped messages clears them and says how many":
+    var
+      a: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      b: AmeSession = initAmeSession(exactAuth(aerResponder),
+        peerTrustRequired = false)
+      lost: ByteSeq = @[]
+      arrived: ByteSeq = @[]
+      opened: AmeOpenResult
+    ## The datagram carrier is where this arises: the TCP carrier requires
+    ## an exact sequence, so a gap there is refused outright, while DAC uses
+    ## a replay window and lets a later frame through.
+    lost = sealAmeDacFrame(a, @[byte 1])
+    arrived = sealAmeDacFrame(a, @[byte 2])
+    discard lost
+    opened = openAmeDacFrame(b, arrived)
+    check opened.ok
+    check ameSessionSkippedMessages(b) == 1
+    check discardAmeSessionSkipped(b) == 1
+    check ameSessionSkippedMessages(b) == 0
+    ## The message given up on stays shut even if it does turn up.
+    opened = openAmeDacFrame(b, lost)
+    check not opened.ok
+
+  # {.testKind: tkUnit.}
+  test "the send cache asks to be refilled only once it is configured":
+    var
+      a: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+    ## Off by default, so nothing to refill and nothing held in memory.
+    check not ameFomkeSendCacheNeedsRefill(a)
+    setAmeFomkePregeneration(a, enabled = true, messageCount = 4)
+    check not ameFomkeSendCacheNeedsRefill(a)
+    ## Half of it spent is the point at which a refill is worth doing.
+    check fomkePreparedMessages(a.fomkeSendCache) == 4

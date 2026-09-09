@@ -87,14 +87,6 @@ proc ameSigFamilySetName*(F: set[AmeSigFamily]): string {.role: parser.} =
       result.add(",")
     result.add(ameSigFamilyName(f))
 
-proc defaultAmeSigSlot*(f: AmeSigFamily): AmeSignatureAlgorithm {.
-    role: parser.} =
-  ## f: family mapped to the slot AME picks when it must choose for itself.
-  case f
-  of asfEd25519: result = asaEd25519
-  of asfDilithium: result = asaDilithium87
-  of asfFalcon: result = asaFalcon1024
-  of asfSphincs: result = asaSphincsShake128f
 
 proc parseAmeSigFamilies*(s: string): set[AmeSigFamily] {.role: parser.} =
   ## s: comma-separated family names from `-d:bifrostSigs=`. An empty string

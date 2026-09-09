@@ -503,6 +503,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_task_contract.nim", @["-r"])
     runNim("c", "evaluation/tests/test_http_protocol.nim", @["-r"])
     runNim("c", "evaluation/tests/test_config_exact.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_public_surface.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_exchange_paths.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_build_flags.nim", @["-r"])
     runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])

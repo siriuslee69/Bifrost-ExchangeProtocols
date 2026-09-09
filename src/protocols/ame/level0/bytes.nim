@@ -42,15 +42,6 @@ proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: dataWriter.} =
   for ch in label:
     dst.add(uint8(ord(ch)))
 
-proc copyAmeBytes*(src: openArray[byte]): ByteSeq {.role: helper.} =
-  ## src: bytes to copy.
-  var
-    i: int = 0
-  result = newSeq[byte](src.len)
-  while i < src.len:
-    result[i] = src[i]
-    i = i + 1
-
 proc xorAmeOverlay*(a, b: openArray[byte]): ByteSeq {.role: helper.} =
   ## a: first byte sequence.
   ## b: second byte sequence with the same length.
