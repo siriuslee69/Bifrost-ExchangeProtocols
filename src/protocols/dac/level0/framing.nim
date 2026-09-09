@@ -4,7 +4,7 @@
 
 import ../../types
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   dacKnownFrameFlagMask* = 0x01FF'u16

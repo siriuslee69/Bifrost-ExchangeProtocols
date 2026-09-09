@@ -50,10 +50,10 @@ import ./exchange_paths
 import ../../types
 import ../types
 import ../level0/bytes
-import bifrostPragmas
+import runePragmas
 
 proc ameCipherNonceLen*(a: AmeCipherAlgorithm): int {.role: helper,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## a: cipher slot whose native nonce size in bytes is returned.
   case a
   of acaXChaCha20, acaGimli: result = 24
@@ -61,7 +61,7 @@ proc ameCipherNonceLen*(a: AmeCipherAlgorithm): int {.role: helper,
   of acaChaCha20: result = 12
 
 proc ameTierNonceLen*(L: AmeSuiteLayout, t: AmeMaskTier): int {.role: parser,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/t: layout and tier whose switched-on cipher nonce sizes are summed.
   ## Two switched-on ciphers need two nonces, laid end to end.
   var
@@ -92,7 +92,7 @@ proc ameTierMacSlots*(L: AmeSuiteLayout, t: AmeMaskTier): int {.role: parser.} =
     i = i + 1
 
 proc ameTierKeyMaterialLen*(L: AmeSuiteLayout, t: AmeMaskTier): int {.
-    role: parser, metaTags: {tagCryptoBoundary}.} =
+    role: parser, tag: "cryptoBoundary".} =
   ## L/t: total bytes one message needs -- nonce first, then one key per
   ## switched-on cipher slot, then one key per switched-on authenticator slot.
   ##
@@ -124,7 +124,7 @@ proc nativeMacLen(a: AmeMacAlgorithm, wanted: int): int {.role: helper.} =
   result = wanted
 
 proc normalizeMac(A: openArray[byte], wanted: int): ByteSeq {.role: helper,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## A/wanted: native tag stretched or squeezed to the agreed tag length, so
   ## authenticators of different natural widths can still be XORed together.
   var
@@ -138,7 +138,7 @@ proc normalizeMac(A: openArray[byte], wanted: int): ByteSeq {.role: helper,
 
 proc ameTierAuthInput*(L: AmeSuiteLayout, t: AmeMaskTier, tagLen: AmeAuthTagLen,
     nonce, aad, cipher: openArray[byte]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/t/tagLen/nonce/aad/cipher: every field the tag commits to.
   ##
   ##   "AME-TIER-AEAD-v1" | layout | tier | tagLen
@@ -163,7 +163,7 @@ proc ameTierAuthInput*(L: AmeSuiteLayout, t: AmeMaskTier, tagLen: AmeAuthTagLen,
 
 proc ameTierCrypt*(L: AmeSuiteLayout, t: AmeMaskTier,
     material, msg: openArray[byte]): ByteSeq {.role: encryptor,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/t/material/msg: tier selection, one message's derived key block, and
   ## the bytes to transform. Running it twice on the same material returns
   ## the original, because every step is an XOR.
@@ -193,7 +193,7 @@ proc ameTierCrypt*(L: AmeSuiteLayout, t: AmeMaskTier,
 
 proc ameTierTag*(L: AmeSuiteLayout, t: AmeMaskTier, material,
     data: openArray[byte], tagLen: AmeAuthTagLen): ByteSeq {.
-    role: orchestrator, metaTags: {tagCryptoBoundary}.} =
+    role: orchestrator, tag: "cryptoBoundary".} =
   ## L/t/material/data/tagLen: tier selection, the same derived key block,
   ## the authenticated input, and the agreed tag length. Every switched-on
   ## authenticator runs over `data`; the results are XORed into one tag.
@@ -224,7 +224,7 @@ proc ameTierTag*(L: AmeSuiteLayout, t: AmeMaskTier, material,
 
 proc ameTierNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
     material: openArray[byte]): ByteSeq {.role: parser,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/t/material: the nonce slice sitting at the front of the key block.
   ## It never travels on the wire -- both sides derive the same block from
   ## the same ratchet step, so both already hold it.
@@ -233,7 +233,7 @@ proc ameTierNonce*(L: AmeSuiteLayout, t: AmeMaskTier,
 proc sealAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier, material,
     msg, aad: openArray[byte], tagLen: AmeAuthTagLen): tuple[
     ciphertext: ByteSeq, authTag: ByteSeq] {.role: encryptor,
-    metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    tag: "appApi|cryptoBoundary".} =
   ## L/t/material/msg/aad/tagLen: encrypt first, then authenticate the
   ## ciphertext together with the header fields the caller passes as `aad`.
   var
@@ -248,7 +248,7 @@ proc sealAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier, material,
 proc openAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier, material,
     ciphertext, authTag, aad: openArray[byte], tagLen: AmeAuthTagLen): tuple[
     ok: bool, payload: ByteSeq] {.role: decryptor,
-    metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    tag: "appApi|cryptoBoundary".} =
   ## L/t/material/ciphertext/authTag/aad/tagLen: check the tag first, and
   ## only decrypt once it matched. `tagLen` is what THIS side agreed, never
   ## what the message claims for itself -- otherwise a sender could shrink

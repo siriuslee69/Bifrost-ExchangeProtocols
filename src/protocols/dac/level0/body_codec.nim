@@ -4,7 +4,7 @@
 
 import ../../types
 import ../types
-import bifrostPragmas
+import runePragmas
 
 proc appendDacU16*(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
   ## dst: destination byte sequence.

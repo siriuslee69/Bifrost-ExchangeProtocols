@@ -27,7 +27,7 @@ import ../../config
 import ../../dac/types
 import ../../dac/level0/framing
 import ../../dac/level0/defaults as dac_defaults
-import bifrostPragmas
+import runePragmas
 
 const
   ameRetiringGraceFrames* = 100
@@ -205,7 +205,7 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
 ## which one it is looking at.
 
 proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## A: the AM1M exchange key, checked before it is used.
   if A.exchangeAuthenticationKey.len < 32:
     raise newException(ValueError, "AME session has no exchange proof key")
@@ -213,7 +213,7 @@ proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
 
 proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
     subject: openArray[uint8]): seq[ByteSeq] {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagExchange}.} =
+    tag: "cryptoBoundary|exchange".} =
   ## S/t/subject: this endpoint's proof over one offer or reply.
   if S.auth.authenticationMode == am1m:
     return @[ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)]
@@ -223,7 +223,7 @@ proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
 
 proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
     subject: openArray[uint8], P: openArray[ByteSeq]): bool {.role: parser,
-    metaTags: {tagCryptoBoundary, tagExchange, tagValidation}.} =
+    tag: "cryptoBoundary|exchange|validation".} =
   ## S/t/subject/P: the peer's proof over one offer or reply.
   var expected: ByteSeq = @[]
   if S.auth.authenticationMode != am1m:
@@ -315,7 +315,7 @@ proc fomkeRoleFor(r: AmeEndpointRole): FomkeRole {.role: parser.} =
 proc buildAmeFomkeSendCache*(S: AmeSession,
     messageCount: int = fomkeDefaultPreparedMessages): FomkeSendCache {.
     role: truthBuilder,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S/messageCount: connection snapshot and future send capacity. Built off
   ## a clone, so it never disturbs the live ratchet.
   var
@@ -330,13 +330,13 @@ proc buildAmeFomkeSendCache*(S: AmeSession,
 
 proc snapshotAmeFomkeSendState*(S: AmeSession): FomkeState {.
     role: helper,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S: connection copied deeply under its caller-owned synchronization lock.
   result = cloneFomkeState(S.fomke)
 
 proc installAmeFomkeSendCache*(S: var AmeSession,
     C: var FomkeSendCache): bool {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S/C: live connection and caller-owned cache built from a prior snapshot.
   ## A cache that no longer lines up with the live chain is destroyed rather
   ## than installed, so a stale cache can never seal under a spent key.
@@ -351,7 +351,7 @@ proc installAmeFomkeSendCache*(S: var AmeSession,
 proc prepareAmeFomkeSendCache*(S: var AmeSession,
     messageCount: int = fomkeDefaultPreparedMessages) {.
     role: orchestrator,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S/messageCount: synchronously build and install future send slots.
   var
     C: FomkeSendCache = default(FomkeSendCache)
@@ -364,7 +364,7 @@ proc prepareAmeFomkeSendCache*(S: var AmeSession,
 proc setAmeFomkePregeneration*(S: var AmeSession, enabled: bool,
     messageCount: int = fomkeDefaultPreparedMessages) {.
     role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S/enabled/messageCount: per-connection policy override.
   ## Preparing ahead costs forward secrecy for messages not yet sent; see
   ## `prepareFomkeSendCache`. Turn it off on a device that can be seized.
@@ -379,7 +379,7 @@ proc setAmeFomkePregeneration*(S: var AmeSession, enabled: bool,
     S.fomkeSendCache = move(C)
 
 proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S: connection whose configured cache has fallen below half capacity.
   var
     remaining: int = fomkePreparedMessages(S.fomkeSendCache)
@@ -391,7 +391,7 @@ proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
 
 proc restoreConfiguredAmeFomkeCache(S: var AmeSession) {.
     role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "cryptoBoundary|fomke|protocol".} =
   ## S: quiescent configured connection whose cache is rebuilt off data paths.
   clearFomkeSendCache(S.fomkeSendCache)
   if S.fomkePregenerationEnabled and not S.fomke.pending.active:
@@ -399,7 +399,7 @@ proc restoreConfiguredAmeFomkeCache(S: var AmeSession) {.
       S.fomkePregenerationMessages)
 
 proc retireAmeFomke(S: var AmeSession, previous: sink FomkeState) {.
-    role: actor, metaTags: {tagCryptoBoundary, tagFomke}.} =
+    role: actor, tag: "cryptoBoundary|fomke".} =
   ## S/previous: ratchet as it stood before the epoch turned, kept alive for a
   ## bounded number of frames so packets already in flight still open.
   clearFomkeState(S.fomkeRetiring)
@@ -407,7 +407,7 @@ proc retireAmeFomke(S: var AmeSession, previous: sink FomkeState) {.
   S.fomkeRetiringFramesLeft = ameRetiringGraceFrames
 
 proc clearAmeSession*(S: var AmeSession) {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|protocol".} =
   ## S: current, retiring, pending AME, and FOMKE secrets to erase.
   clearEpoch(S.auth.current)
   clearEpoch(S.auth.retiring)
@@ -546,7 +546,7 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   ## endpoints stage at the same lane positions and derive the same root.
 
 proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "cryptoBoundary|exchange|fomke".} =
   ## S: responder that has already SENT its reply. Stages the ratchet upgrade
   ## at the lane positions both endpoints now share.
   ##
@@ -669,7 +669,7 @@ proc dacTransferClassFor(c: AmeMessageClass): DacTransferClass {.role: parser.} 
   else: result = dtcUserData
 
 proc ameSessionPathDefaults*(S: AmeSession): DacScenarioDefaults {.
-    role: parser, metaTags: {tagAppApi, tagProtocol}.} =
+    role: parser, tag: "appApi|protocol".} =
   ## S: session whose recorded path profile becomes a full parameter set.
   ## One preset per lane, so reading this is a complete validated set rather
   ## than a handful of fields a caller has to keep consistent by hand.
@@ -677,13 +677,13 @@ proc ameSessionPathDefaults*(S: AmeSession): DacScenarioDefaults {.
     dacTransferClassFor(S.messageClass))
 
 proc ameSessionSkippedMessages*(S: AmeSession): int {.role: parser,
-    metaTags: {tagAppApi, tagFomke, tagProtocol}.} =
+    tag: "appApi|fomke|protocol".} =
   ## S: how many jumped-over messages the ratchet is still holding keys for.
   result = fomkeSkippedMessages(S.fomke)
 
 proc discardAmeSessionSkipped*(S: var AmeSession): int {.
     role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "appApi|cryptoBoundary|fomke|protocol".} =
   ## S: give up on the messages this side jumped over, and say how many.
   ##
   ## A rotation refuses to run while any of them are outstanding, so a link
@@ -938,7 +938,7 @@ proc buildAad(carrier: AmeCarrier,
 
 proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator,
-    metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    tag: "cryptoBoundary|fomke|protocol".} =
   ## S/h/carrier/payload: one ratchet step turned into one frame body.
   var
     aad: ByteSeq = buildAad(carrier, h)
@@ -955,7 +955,7 @@ proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
 
 proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     carrier: AmeCarrier): tuple[ok: bool, payload: ByteSeq, err: string] {.
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagFomke, tagProtocol}.} =
+    role: orchestrator, tag: "cryptoBoundary|fomke|protocol".} =
   ## S/f/carrier: authenticate and open one frame body.
   ##
   ## The current ratchet is tried first. If the epoch just turned, a frame

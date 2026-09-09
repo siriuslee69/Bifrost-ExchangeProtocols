@@ -22,7 +22,7 @@
 
 import ../types
 import ../ame/types
-import bifrostPragmas
+import runePragmas
 
 const
   gb3BlockBytes* = 32
@@ -81,8 +81,7 @@ type
     gb3Sequential = 0x00'u8,
     gb3MemoryMixed = 0x01'u8
 
-  Gb3KdfConfig* {.role: configurator, metaTags: {tagFomke, tagKdf,
-      tagTypes}.} = object
+  Gb3KdfConfig* {.role: configurator, tag: "fomke|kdf|types".} = object
     rounds*: uint32
     blockIndex*: uint64
     mode*: Gb3KdfMode
@@ -98,20 +97,17 @@ type
     flLane1 = 0x01'u8,
     flLane2 = 0x02'u8
 
-  FomkeChainState* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeChainState* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     chainKey*: ByteSeq
     nextIndex*: uint64
 
-  FomkeSkippedKey* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeSkippedKey* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     epoch*: uint32
     index*: uint64
     lane*: FomkeLane
     keyMaterial*: ByteSeq
 
-  FomkeUpgradeCommit* {.role: truthState, metaTags: {tagExchange, tagFomke,
-      tagTypes}.} = object
+  FomkeUpgradeCommit* {.role: truthState, tag: "exchange|fomke|types".} = object
     requestId*: uint32
     baseEpoch*: uint32
     targetEpoch*: uint32
@@ -122,8 +118,7 @@ type
     generations*: array[ameMaxAlgorithmSlots, uint32]
     confirmationTag*: ByteSeq
 
-  FomkePendingUpgrade* {.role: truthState, metaTags: {tagCryptoBoundary,
-      tagExchange, tagFomke, tagTypes}.} = object
+  FomkePendingUpgrade* {.role: truthState, tag: "cryptoBoundary|exchange|fomke|types".} = object
     active*: bool
     commit*: FomkeUpgradeCommit
     candidateLane1*: FomkeChainState
@@ -132,16 +127,14 @@ type
   ## One message's worth of work done ahead of time. `material` is the whole
   ## derived key block for that message: nonce first, then one key per
   ## switched-on cipher slot, then one per switched-on authenticator slot.
-  FomkePreparedSendEntry* {.role: memory, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkePreparedSendEntry* {.role: memory, tag: "cryptoBoundary|fomke|types".} = object
     epoch*: uint32
     index*: uint64
     lane*: FomkeLane
     material*: ByteSeq
     nextChainKey*: ByteSeq
 
-  FomkeSendCache* {.role: memory, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeSendCache* {.role: memory, tag: "cryptoBoundary|fomke|types".} = object
     epoch*: uint32
     lane*: FomkeLane
     nextIndex*: uint64
@@ -149,8 +142,7 @@ type
     nextEntry*: int
     entries*: seq[FomkePreparedSendEntry]
 
-  FomkeState* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeState* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     role*: FomkeRole
     epoch*: uint32
     algorithms*: AmeKemAlgorithms
@@ -168,8 +160,7 @@ type
     kdf*: Gb3KdfConfig
     pending*: FomkePendingUpgrade
 
-  FomkeMessage* {.role: truthState, metaTags: {tagFomke, tagPacket,
-      tagTypes}.} = object
+  FomkeMessage* {.role: truthState, tag: "fomke|packet|types".} = object
     epoch*: uint32
     index*: uint64
     senderLane*: FomkeLane
@@ -177,27 +168,24 @@ type
     authTag*: ByteSeq
     ciphertext*: ByteSeq
 
-  FomkeOpenResult* {.role: truthState, metaTags: {tagFomke, tagTypes}.} = object
+  FomkeOpenResult* {.role: truthState, tag: "fomke|types".} = object
     ok*: bool
     payload*: ByteSeq
     err*: string
 
-  FomkeCheckpoint* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeCheckpoint* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     ok*: bool
     state*: FomkeState
     counter*: uint64
     err*: string
 
-  FomkeDurableMessage* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeDurableMessage* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     ok*: bool
     message*: FomkeMessage
     checkpointCounter*: uint64
     err*: string
 
-  FomkeDurableOpen* {.role: truthState, metaTags: {tagCryptoBoundary, tagFomke,
-      tagTypes}.} = object
+  FomkeDurableOpen* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object
     ok*: bool
     payload*: ByteSeq
     checkpointCounter*: uint64

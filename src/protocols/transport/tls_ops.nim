@@ -5,7 +5,7 @@
 import std/net
 
 import ./types
-import bifrostPragmas
+import runePragmas
 
 when defined(ssl):
   import std/openssl

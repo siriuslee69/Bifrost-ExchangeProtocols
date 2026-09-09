@@ -9,7 +9,7 @@ when not defined(windows):
 import ../types
 import ./types
 import ./tls_ops
-import bifrostPragmas
+import runePragmas
 
 const
   maxTcpFrameBytes* = 16_777_216'u32

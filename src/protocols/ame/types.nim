@@ -5,7 +5,7 @@
 import ../types
 import ../transport/types as transport_types
 import ../dac/types as dac_types
-import bifrostPragmas
+import runePragmas
 
 const
   ameMagic* = [uint8('A'), uint8('M'), uint8('E')]

@@ -7,7 +7,7 @@ import ../types
 import ../level0/bytes
 import ./padding
 import ./algorithms
-import bifrostPragmas
+import runePragmas
 
 const
   ameMaxExchangeComponentLen* = 16_777_216'u32

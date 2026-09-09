@@ -26,7 +26,7 @@ import std/strutils
 
 import ../../../types
 import ../../types
-import bifrostPragmas
+import runePragmas
 
 type
   AmeSigFamily* = enum

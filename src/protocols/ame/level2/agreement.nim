@@ -7,7 +7,7 @@ import ../types
 import ../level0/bytes
 import ../level1/suites
 import ../level1/path_triggers
-import bifrostPragmas
+import runePragmas
 
 proc readAgreementU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
   ## A/o: source bytes and little-endian offset.

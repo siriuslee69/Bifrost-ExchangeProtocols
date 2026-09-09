@@ -5,7 +5,7 @@
 import std/[os, strutils, unittest]
 
 import ../../tools/repo_hygiene
-import bifrostPragmas
+import runePragmas
 
 const
   nimblePath = "bifrost_exchange_protocols.nimble"
@@ -308,34 +308,45 @@ test "repo scan has no stale project-name or alias references":
     check testsDoc.find("falls back to") >= 0
     check testsDoc.find("`nix-build nix/tls-check.nix --no-out-link`") >= 0
 
-suite "the pragma module cannot be captured by another repository":
-  ## Every Nim repository in this workspace ships a pragma file, they all land
-  ## on the Nim path together, and the LAST --path entry wins. A file here
-  ## importing the shared name would compile against whichever repo happened
-  ## to be last -- and fail on a tag that repo has never heard of, several
-  ## files away from the cause.
+suite "the pragma module is the shared one":
+  ## Pragmas used to be copied into every repository with a per-repository
+  ## MetaTag enum inside. The copies drifted -- this one had silently lost
+  ## the testKind and stage pragmas entirely, which is why 475 of 487 tests
+  ## could not declare a kind -- and they collided, because they were all
+  ## called metaPragmas and Nim takes the LAST matching --path entry.
+  ## Tags are strings now, so there is one file and everybody shares it.
   # {.testKind: tkRegression.}
-  test "no source file imports the shared pragma name":
+  test "no local pragma copy exists to drift or collide":
+    check not fileExists("meta/metaPragmas.nim")
+    check not fileExists("meta/bifrostPragmas.nim")
+    check not fileExists("src/analysis_pragmas.nim")
+
+  # {.testKind: tkRegression.}
+  test "every annotated file imports the shared module":
     var
       offenders: seq[string] = @[]
       text: string = ""
+      config: string = readFile("config.nims")
     for path in walkDirRec("src"):
       if not path.endsWith(".nim"):
         continue
       text = readFile(path)
-      if text.find("import metaPragmas") >= 0 or
-          text.find("/metaPragmas") >= 0:
+      if text.find("role: ") < 0:
+        continue
+      if text.find("import runePragmas") < 0:
         offenders.add(path)
     check offenders.len == 0
+    check config.find("Rune-Pragmas") >= 0
 
   # {.testKind: tkRegression.}
-  test "the pragma module is named for this repository and sits on the path":
+  test "tags are strings, with no enum-set form left":
     var
-      config: string = readFile("config.nims")
-    check fileExists("meta/bifrostPragmas.nim")
-    check not fileExists("meta/metaPragmas.nim")
-    ## `meta` on the path is what lets the import stay flat; it is only safe
-    ## because the module name is ours alone.
-    check config.find("""joinPath(repoRoot, "meta")""") >= 0
-    ## And the old shim is gone rather than lingering beside it.
-    check not fileExists("src/analysis_pragmas.nim")
+      text: string = ""
+      enumForm: int = 0
+    for path in walkDirRec("src"):
+      if not path.endsWith(".nim"):
+        continue
+      text = readFile(path)
+      if text.find("metaTags: {") >= 0 or text.find("tag: {") >= 0:
+        enumForm = enumForm + 1
+    check enumForm == 0

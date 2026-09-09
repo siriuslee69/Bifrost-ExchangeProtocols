@@ -4,7 +4,7 @@
 
 import std/[times, unicode]
 
-import bifrostPragmas
+import runePragmas
 import ../../protocols/types
 
 type
@@ -31,12 +31,12 @@ const
   LanMessageFixedBytes = 32
   LanMessageMaxBodyBytes* = 1024 * 1024
 
-proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter, metaTags: {tagInterop}.} =
+proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter, tag: "interop".} =
   ## A: output bytes. v: little-endian unsigned value.
   A.add(byte(v and 0xff'u16))
   A.add(byte(v shr 8))
 
-proc addU32(A: var ByteSeq, v: uint32) {.role: dataWriter, metaTags: {tagInterop}.} =
+proc addU32(A: var ByteSeq, v: uint32) {.role: dataWriter, tag: "interop".} =
   ## A: output bytes. v: little-endian unsigned value.
   var
     i: int = 0
@@ -44,7 +44,7 @@ proc addU32(A: var ByteSeq, v: uint32) {.role: dataWriter, metaTags: {tagInterop
     A.add(byte((v shr (i * 8)) and 0xff'u32))
     i = i + 1
 
-proc addU64(A: var ByteSeq, v: uint64) {.role: dataWriter, metaTags: {tagInterop}.} =
+proc addU64(A: var ByteSeq, v: uint64) {.role: dataWriter, tag: "interop".} =
   ## A: output bytes. v: little-endian unsigned value.
   var
     i: int = 0
@@ -52,11 +52,11 @@ proc addU64(A: var ByteSeq, v: uint64) {.role: dataWriter, metaTags: {tagInterop
     A.add(byte((v shr (i * 8)) and 0xff'u64))
     i = i + 1
 
-proc readU16(A: openArray[byte], i: int): uint16 {.role: parser, metaTags: {tagInterop}.} =
+proc readU16(A: openArray[byte], i: int): uint16 {.role: parser, tag: "interop".} =
   ## A: input bytes. i: first byte offset.
   result = uint16(A[i]) or (uint16(A[i + 1]) shl 8)
 
-proc readU32(A: openArray[byte], i: int): uint32 {.role: parser, metaTags: {tagInterop}.} =
+proc readU32(A: openArray[byte], i: int): uint32 {.role: parser, tag: "interop".} =
   ## A: input bytes. i: first byte offset.
   var
     j: int = 0
@@ -64,7 +64,7 @@ proc readU32(A: openArray[byte], i: int): uint32 {.role: parser, metaTags: {tagI
     result = result or (uint32(A[i + j]) shl (j * 8))
     j = j + 1
 
-proc readU64(A: openArray[byte], i: int): uint64 {.role: parser, metaTags: {tagInterop}.} =
+proc readU64(A: openArray[byte], i: int): uint64 {.role: parser, tag: "interop".} =
   ## A: input bytes. i: first byte offset.
   var
     j: int = 0
@@ -72,12 +72,12 @@ proc readU64(A: openArray[byte], i: int): uint64 {.role: parser, metaTags: {tagI
     result = result or (uint64(A[i + j]) shl (j * 8))
     j = j + 1
 
-proc addText(A: var ByteSeq, s: string) {.role: dataWriter, metaTags: {tagInterop}.} =
+proc addText(A: var ByteSeq, s: string) {.role: dataWriter, tag: "interop".} =
   ## A: output bytes. s: UTF-8 text to append unchanged.
   for c in s:
     A.add(byte(c))
 
-proc readText(A: openArray[byte], i, n: int): string {.role: parser, metaTags: {tagInterop}.} =
+proc readText(A: openArray[byte], i, n: int): string {.role: parser, tag: "interop".} =
   ## A: input bytes. i/n: first byte and byte count.
   result = newString(n)
   for j in 0 ..< n:
@@ -85,7 +85,7 @@ proc readText(A: openArray[byte], i, n: int): string {.role: parser, metaTags: {
   if validateUtf8(result) >= 0:
     raise newException(ValueError, "BMSG text is not valid UTF-8")
 
-proc requireLanText(s, label: string, maxBytes: int) {.role: sanitizer, metaTags: {tagValidation}.} =
+proc requireLanText(s, label: string, maxBytes: int) {.role: sanitizer, tag: "validation".} =
   ## s: UTF-8 text. label/maxBytes: validation context and byte limit.
   if s.len > maxBytes:
     raise newException(ValueError, label & " exceeds byte limit")
@@ -93,7 +93,7 @@ proc requireLanText(s, label: string, maxBytes: int) {.role: sanitizer, metaTags
     raise newException(ValueError, label & " is not valid UTF-8")
 
 proc initLanMessage*(p: LanProtocol, id, name, body: string, sequence: uint64,
-    timestampMillis: uint64 = 0'u64): LanMessage {.role: truthBuilder, metaTags: {tagInterop}.} =
+    timestampMillis: uint64 = 0'u64): LanMessage {.role: truthBuilder, tag: "interop".} =
   ## p: transport. id/name: sender identity. body: user message.
   ## sequence/timestampMillis: ordering and creation time.
   requireLanText(id, "sender id", int(high(uint16)))
@@ -110,13 +110,13 @@ proc initLanMessage*(p: LanProtocol, id, name, body: string, sequence: uint64,
     result.timestampMillis = timestampMillis
 
 proc initLanAck*(source: LanMessage, id, name: string,
-    sequence: uint64): LanMessage {.role: truthBuilder, metaTags: {tagInterop}.} =
+    sequence: uint64): LanMessage {.role: truthBuilder, tag: "interop".} =
   ## source: received message. id/name/sequence: acknowledging sender facts.
   result = initLanMessage(source.protocol, id, name,
     "ack " & $source.protocol & " #" & $source.sequence, sequence)
   result.isAck = true
 
-proc encodeLanMessage*(m: LanMessage): ByteSeq {.role: dataWriter, metaTags: {tagCodecBoundary, tagInterop}.} =
+proc encodeLanMessage*(m: LanMessage): ByteSeq {.role: dataWriter, tag: "codecBoundary|interop".} =
   ## m: validated BMSG message to serialize.
   requireLanText(m.senderId, "sender id", int(high(uint16)))
   requireLanText(m.senderName, "sender name", int(high(uint16)))
@@ -134,7 +134,7 @@ proc encodeLanMessage*(m: LanMessage): ByteSeq {.role: dataWriter, metaTags: {ta
   addText(result, m.senderName)
   addText(result, m.body)
 
-proc decodeLanMessage*(A: openArray[byte]): LanMessage {.role: parser, metaTags: {tagCodecBoundary, tagInterop}.} =
+proc decodeLanMessage*(A: openArray[byte]): LanMessage {.role: parser, tag: "codecBoundary|interop".} =
   ## A: one complete unframed BMSG payload.
   var
     protocolId: int = 0

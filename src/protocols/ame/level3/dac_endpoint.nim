@@ -11,7 +11,7 @@ import ../../dac/types
 import ../../dac/level0/transport as dac_transport
 import ../../dac/level3/link_table
 import ./dac_relay
-import bifrostPragmas
+import runePragmas
 
 const
   ameDacEndpointAscii* = """

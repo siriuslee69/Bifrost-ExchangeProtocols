@@ -8,7 +8,7 @@ import ../types
 import ./types
 import ./errors
 import ./checksum
-import bifrostPragmas
+import runePragmas
 
 proc hashFieldId(k: string): uint16 {.gcsafe, role: helper.} =
   ## hashFieldId: rebuild one canonical object-field id from its key bytes.

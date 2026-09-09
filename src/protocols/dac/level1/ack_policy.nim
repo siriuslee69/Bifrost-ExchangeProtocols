@@ -10,7 +10,7 @@ when not dacAdaptiveBuilt:
 import ../../types
 import ../types
 import ../level0/ack_range
-import bifrostPragmas
+import runePragmas
 
 const
   dacAckMinBatchChunks* = 1'u16

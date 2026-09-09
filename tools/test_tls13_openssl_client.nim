@@ -8,7 +8,7 @@ import tyr/certs/[der, pem, oid, keys, x509, verify, chain]
 
 import ../src/protocols/types
 import ../src/protocols/tls13
-import bifrostPragmas
+import runePragmas
 
 type
   HarnessConfig = object
@@ -17,7 +17,7 @@ type
     serverName: string
     port: Port
 
-proc parsePort(s: string): Port {.role: parser, metaTags: {tagTls, tagInterop}.} =
+proc parsePort(s: string): Port {.role: parser, tag: "tls|interop".} =
   var v: int = 0
   try:
     v = parseInt(s)
@@ -28,7 +28,7 @@ proc parsePort(s: string): Port {.role: parser, metaTags: {tagTls, tagInterop}.}
   result = Port(v)
 
 proc parseHarnessConfig(): HarnessConfig {.role: configurator,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var P: OptParser = initOptParser(commandLineParams())
   result.host = "127.0.0.1"
   result.serverName = "localhost"
@@ -52,7 +52,7 @@ proc parseHarnessConfig(): HarnessConfig {.role: configurator,
     raise newException(ValueError, "TLS harness requires --root")
 
 proc bytesFromString(s: string): ByteSeq {.role: helper,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   result = newSeq[byte](s.len)
   while i < s.len:
@@ -60,7 +60,7 @@ proc bytesFromString(s: string): ByteSeq {.role: helper,
     i = i + 1
 
 proc stringFromBytes(A: openArray[byte]): string {.role: helper,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   result = newString(A.len)
   while i < A.len:
@@ -68,7 +68,7 @@ proc stringFromBytes(A: openArray[byte]): string {.role: helper,
     i = i + 1
 
 proc connectWithRetry(C: HarnessConfig): Socket {.role: dataFetcher,
-    metaTags: {tagTls, tagInterop, tagNetworkSurface}.} =
+    tag: "tls|interop|networkSurface".} =
   var
     i: int = 0
     lastError: string = ""
@@ -85,14 +85,14 @@ proc connectWithRetry(C: HarnessConfig): Socket {.role: dataFetcher,
   raise newException(IOError, "TLS harness connect failed: " & lastError)
 
 proc sendClientOutput(c: Socket, O: Tls13ClientOutput) {.role: dataWriter,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   while i < O.outbound.len:
     c.send(stringFromBytes(O.outbound[i]))
     i = i + 1
 
 proc runHarness(C: HarnessConfig) {.role: metaOrchestrator,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   const request = "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"
   var
     root: PemReadResult = readPemBlock(readFile(C.rootCertificatePath),

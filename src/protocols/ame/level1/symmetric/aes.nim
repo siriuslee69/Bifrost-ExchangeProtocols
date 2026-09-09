@@ -5,7 +5,7 @@
 import tyr/ciphers/aes_ctr as tyr_aes
 
 import ../../../types
-import bifrostPragmas
+import runePragmas
 
 proc aesAmeXor*(key, nonce, msg: openArray[byte]): ByteSeq {.
     role: encryptor.} =

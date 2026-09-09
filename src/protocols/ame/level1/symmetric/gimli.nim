@@ -9,7 +9,7 @@ import tyr/ciphers/gimli_sponge as tyr_gimli
 import tyr/macs/hmac as tyr_hmac
 
 import ../../../types
-import bifrostPragmas
+import runePragmas
 
 proc gimliAmeXor*(key, nonce, msg: openArray[byte]): ByteSeq {.
     role: encryptor.} =

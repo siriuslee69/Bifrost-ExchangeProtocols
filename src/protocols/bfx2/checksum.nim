@@ -3,7 +3,7 @@
 ## -------------------------------------------------
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   crc32Poly = 0xEDB88320'u32

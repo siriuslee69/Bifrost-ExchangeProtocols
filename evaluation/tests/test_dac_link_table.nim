@@ -11,7 +11,7 @@ import ../../src/protocols/dac/level0/framing
 import ../../src/protocols/dac/level1/package_manifest
 import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table
-import bifrostPragmas
+import runePragmas
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.

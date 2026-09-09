@@ -9,7 +9,7 @@ when not dacAdaptiveBuilt:
 
 import ../types
 import ../level0/path_stats
-import bifrostPragmas
+import runePragmas
 
 type
   ## DacPathRecommendation: one caller-facing path-lane suggestion.

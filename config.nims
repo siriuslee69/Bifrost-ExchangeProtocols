@@ -14,7 +14,6 @@ addPathIfExists(joinPath(repoRoot, "src"))
 ## Our pragma module is named for this repository, not `metaPragmas`, so it
 ## cannot collide with the one Tyr and every other Nim repo here also ships.
 ## That is what lets `meta` sit on the path and every file import it flat.
-addPathIfExists(joinPath(repoRoot, "meta"))
 if dirExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src"))
 else:
@@ -80,3 +79,10 @@ proc useLocalNimblePaths(): bool =
 when useLocalNimblePaths():
   include "nimble.paths"
 # end Nimble config
+
+## Shared pragma module: one file for the whole workspace, so there is no
+## per-repository copy to drift or to collide on the Nim path.
+if dirExists(thisDir() & "/../Rune-Pragmas/meta"):
+  switch("path", thisDir() & "/../Rune-Pragmas/meta")
+if dirExists(thisDir() & "/submodules/Rune-Pragmas/meta"):
+  switch("path", thisDir() & "/submodules/Rune-Pragmas/meta")

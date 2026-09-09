@@ -8,7 +8,7 @@ import tyr/helpers/secure_memory
 
 import ../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 type
   Tls13AeadSeal = object
@@ -20,7 +20,7 @@ type
     plaintext: ByteSeq
 
 proc appendLe64(A: var ByteSeq, v: uint64) {.role: dataWriter,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## A/v: Poly1305 input and little-endian RFC 8439 length.
   var i: int = 0
   while i < 8:
@@ -28,7 +28,7 @@ proc appendLe64(A: var ByteSeq, v: uint64) {.role: dataWriter,
     i = i + 1
 
 proc appendPadded16(A: var ByteSeq, B: openArray[byte]) {.
-    role: dataWriter, metaTags: {tagTls, tagCryptoBoundary}.} =
+    role: dataWriter, tag: "tls|cryptoBoundary".} =
   ## A/B: Poly1305 input and one RFC 8439 field.
   var n: int = 0
   A.add(B)
@@ -38,7 +38,7 @@ proc appendPadded16(A: var ByteSeq, B: openArray[byte]) {.
     n = n - 1
 
 proc buildPoly1305Input(aad, ciphertext: openArray[byte]): ByteSeq {.
-    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "tls|cryptoBoundary".} =
   ## aad/ciphertext: authenticated RFC 8439 fields.
   appendPadded16(result, aad)
   appendPadded16(result, ciphertext)
@@ -46,7 +46,7 @@ proc buildPoly1305Input(aad, ciphertext: openArray[byte]): ByteSeq {.
   appendLe64(result, uint64(ciphertext.len))
 
 proc constantTimeTagEqual(A, B: openArray[byte]): bool {.role: helper,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## A/B: fixed-size authentication tags.
   var
     diff: uint = if A.len == B.len: 0'u else: 1'u
@@ -60,7 +60,7 @@ proc constantTimeTagEqual(A, B: openArray[byte]): bool {.role: helper,
 
 proc derivePoly1305Key(key, nonce: openArray[byte]):
     array[poly1305KeyBytes, byte] {.role: truthBuilder,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## key/nonce: ChaCha20 traffic key and per-record nonce.
   var
     keyBlock: array[chacha20BlockSize, byte]
@@ -74,7 +74,7 @@ proc derivePoly1305Key(key, nonce: openArray[byte]):
 
 proc sealTls13Aead(key, nonce, plaintext, aad: openArray[byte]):
     Tls13AeadSeal {.role: encryptor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## key/nonce/plaintext/aad: private TLS RFC 8439 composition inputs.
   var
     oneTimeKey: array[poly1305KeyBytes, byte]
@@ -89,7 +89,7 @@ proc sealTls13Aead(key, nonce, plaintext, aad: openArray[byte]):
 
 proc openTls13Aead(key, nonce, ciphertext, tag,
     aad: openArray[byte]): Tls13AeadOpen {.role: decryptor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## key/nonce/ciphertext/tag/aad: private TLS RFC 8439 composition inputs.
   var
     oneTimeKey: array[poly1305KeyBytes, byte]
@@ -110,7 +110,7 @@ proc openTls13Aead(key, nonce, ciphertext, tag,
   result.ok = true
 
 proc recordNonce(T: Tls13TrafficKeys): array[tls13AeadIvLen, byte] {.
-    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "tls|cryptoBoundary".} =
   ## T: traffic IV and sequence number.
   var i: int = 0
   result = T.iv
@@ -120,7 +120,7 @@ proc recordNonce(T: Tls13TrafficKeys): array[tls13AeadIvLen, byte] {.
     i = i + 1
 
 proc recordAad(n: int): ByteSeq {.role: truthBuilder,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## n: complete TLSCiphertext fragment length.
   if n < tls13AeadTagLen or n > tls13CiphertextLimit:
     raise newException(ValueError, "TLS ciphertext length is invalid")
@@ -128,7 +128,7 @@ proc recordAad(n: int): ByteSeq {.role: truthBuilder,
     byte(n shr 8), byte(n)]
 
 proc parseInnerPlaintext(A: openArray[byte]): Tls13OpenResult {.role: parser,
-    metaTags: {tagTls, tagCryptoBoundary, tagValidation}.} =
+    tag: "tls|cryptoBoundary|validation".} =
   ## A: authenticated TLSInnerPlaintext bytes.
   var
     i: int = A.len - 1
@@ -155,7 +155,7 @@ proc parseInnerPlaintext(A: openArray[byte]): Tls13OpenResult {.role: parser,
 
 proc sealTls13Record*(T: var Tls13TrafficKeys, t: Tls13ContentType,
     content: openArray[byte], paddingLen: int = 0): Tls13Record {.
-    role: encryptor, metaTags: {tagTls, tagCryptoBoundary, tagPacket}.} =
+    role: encryptor, tag: "tls|cryptoBoundary|packet".} =
   ## T/t/content/paddingLen: write keys, inner type, plaintext, and zero padding.
   var
     inner, aad: ByteSeq = @[]
@@ -181,7 +181,7 @@ proc sealTls13Record*(T: var Tls13TrafficKeys, t: Tls13ContentType,
 
 proc openTls13Record*(T: var Tls13TrafficKeys,
     r: Tls13Record): Tls13OpenResult {.role: decryptor,
-    metaTags: {tagTls, tagCryptoBoundary, tagPacket}.} =
+    tag: "tls|cryptoBoundary|packet".} =
   ## T/r: read keys and received TLSCiphertext record.
   var
     nonce: array[tls13AeadIvLen, byte]

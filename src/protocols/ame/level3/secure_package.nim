@@ -13,7 +13,7 @@ import ../../dac/types
 import ../../dac/level2/package_transfer
 import ../../dac/level3/link_table
 import ./dac_relay
-import bifrostPragmas
+import runePragmas
 
 const
   ameSecurePackageMagic* = [uint8('A'), uint8('S'), uint8('P')]
@@ -278,7 +278,7 @@ proc planAmeSecurePackage*(S: AmeSession, packageId: uint64,
     compression: AmeCompressionPolicy = defaultAmeCompressionPolicy(),
     limits: DacPackageLimits = defaultDacPackageLimits()):
     AmeSecurePackagePlan {.role: orchestrator,
-    metaTags: {tagAppApi, tagAme, tagProtocol}.} =
+    tag: "appApi|ame|protocol".} =
   ## S/packageId/plaintext/compression/limits: same as the overload above,
   ## except the DAC parameters come from the session's own path profile
   ## instead of the caller.

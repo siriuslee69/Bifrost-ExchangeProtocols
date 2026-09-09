@@ -7,7 +7,7 @@ import ../build
 when not dacAdaptiveBuilt:
   {.error: "This module is part of the DAC adaptive layer, which -d:bifrostDac=off removed from this build.".}
 
-import bifrostPragmas
+import runePragmas
 
 const
   dacScrambleAscii* = """

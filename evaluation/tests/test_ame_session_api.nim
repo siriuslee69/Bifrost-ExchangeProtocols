@@ -30,7 +30,7 @@ import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level2/carriers
 import ../../src/protocols/ame/level3/handshake
-import bifrostPragmas
+import runePragmas
 
 const
   apiKems: AmeKemAlgorithms = [akaFireSaber, akaX25519, akaFireSaber]

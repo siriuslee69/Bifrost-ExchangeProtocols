@@ -55,7 +55,7 @@
 import ../../types
 import ../types
 import ./kems/types as kem_types
-import bifrostPragmas
+import runePragmas
 
 export kem_types
 

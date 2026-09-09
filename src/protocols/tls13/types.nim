@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   tls13LegacyRecordVersion* = 0x0303'u16
@@ -33,36 +33,36 @@ type
     thtKeyUpdate = 24,
     thtMessageHash = 254
 
-  Tls13Record* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
+  Tls13Record* {.role: truthState, tag: "tls|packet".} = object
     contentType*: Tls13ContentType
     legacyVersion*: uint16
     fragment*: ByteSeq
 
-  Tls13RecordResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
+  Tls13RecordResult* {.role: truthState, tag: "tls|parsing".} = object
     ok*: bool
     needMore*: bool
     consumed*: int
     record*: Tls13Record
     err*: string
 
-  Tls13Handshake* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
+  Tls13Handshake* {.role: truthState, tag: "tls|packet".} = object
     messageType*: Tls13HandshakeType
     body*: ByteSeq
     encoded*: ByteSeq
 
-  Tls13HandshakeResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
+  Tls13HandshakeResult* {.role: truthState, tag: "tls|parsing".} = object
     ok*: bool
     needMore*: bool
     consumed*: int
     message*: Tls13Handshake
     err*: string
 
-  Tls13TrafficKeys* {.role: memory, metaTags: {tagTls, tagCryptoBoundary}.} = object
+  Tls13TrafficKeys* {.role: memory, tag: "tls|cryptoBoundary".} = object
     key*: array[tls13AeadKeyLen, byte]
     iv*: array[tls13AeadIvLen, byte]
     sequence*: uint64
 
-  Tls13OpenResult* {.role: truthState, metaTags: {tagTls, tagCryptoBoundary}.} = object
+  Tls13OpenResult* {.role: truthState, tag: "tls|cryptoBoundary".} = object
     ok*: bool
     contentType*: Tls13ContentType
     content*: ByteSeq

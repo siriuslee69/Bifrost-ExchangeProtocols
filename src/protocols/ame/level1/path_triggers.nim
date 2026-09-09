@@ -5,7 +5,7 @@
 import ../types
 import ./exchange_paths
 import ./suites
-import bifrostPragmas
+import runePragmas
 
 const
   defaultAmeDataStepMiB* = 200'u64

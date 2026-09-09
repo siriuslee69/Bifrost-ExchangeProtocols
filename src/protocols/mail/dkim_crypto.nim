@@ -16,39 +16,39 @@ import std/[base64, strutils]
 import tyr/certs/rsa
 import tyr/hashes/sha256
 
-import bifrostPragmas
+import runePragmas
 
 type
-  DkimSignResult* {.role: truthState, metaTags: {tagCryptoBoundary}.} = object
+  DkimSignResult* {.role: truthState, tag: "cryptoBoundary".} = object
     ok*: bool
     signature*: string ## raw signature octets, not base64
     err*: string
 
-  DkimKeyResult* {.role: truthState, metaTags: {tagCryptoBoundary}.} = object
+  DkimKeyResult* {.role: truthState, tag: "cryptoBoundary".} = object
     ok*: bool
     key*: RsaPublicKey
     err*: string
 
-proc toBytes(s: string): seq[byte] {.role: helper, metaTags: {tagCryptoBoundary}.} =
+proc toBytes(s: string): seq[byte] {.role: helper, tag: "cryptoBoundary".} =
   ## s: text or octet string to view as bytes.
   result = newSeq[byte](s.len)
   for i, c in s:
     result[i] = byte(c)
 
 proc toStr(b: openArray[byte]): string {.role: helper,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## b: octets to view as a string.
   result = newString(b.len)
   for i, v in b:
     result[i] = char(v)
 
-proc dkimSha256*(s: string): string {.role: math, metaTags: {tagCryptoBoundary}.} =
+proc dkimSha256*(s: string): string {.role: math, tag: "cryptoBoundary".} =
   ## s: data to hash.
   ## Returns the raw 32-byte SHA-256 digest, used for the DKIM `bh=` tag.
   result = toStr(sha256Hash(toBytes(s)))
 
 proc dkimLoadPublicKey*(p: string): DkimKeyResult {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagValidation}.} =
+    tag: "cryptoBoundary|validation".} =
   ## p: base64 SubjectPublicKeyInfo from the DNS `p=` tag, whitespace allowed.
   var
     clean: string = ""
@@ -73,7 +73,7 @@ proc dkimLoadPublicKey*(p: string): DkimKeyResult {.role: truthBuilder,
   result.ok = true
 
 proc dkimVerifyRsaSha256*(data, signatureB64, publicKeyB64: string): bool {.
-    role: actor, metaTags: {tagCryptoBoundary, tagValidation}.} =
+    role: actor, tag: "cryptoBoundary|validation".} =
   ## data: canonicalized header set that was signed.
   ## signatureB64: the DKIM `b=` tag value.
   ## publicKeyB64: the DNS `p=` tag value.
@@ -94,7 +94,7 @@ proc dkimVerifyRsaSha256*(data, signatureB64, publicKeyB64: string): bool {.
   result = rsaVerifyPkcs1v15Sha256(key.key, toBytes(data), toBytes(sig))
 
 proc dkimSignRsaSha256*(data, privateKeyPem: string): DkimSignResult {.
-    role: actor, metaTags: {tagCryptoBoundary}.} =
+    role: actor, tag: "cryptoBoundary".} =
   ## data: canonicalized header set to sign.
   ## privateKeyPem: PEM text of the signing key, PKCS#1 or PKCS#8.
   var

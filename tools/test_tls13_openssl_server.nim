@@ -9,7 +9,7 @@ import tyr/signatures/ed25519
 
 import ../src/protocols/types
 import ../src/protocols/tls13
-import bifrostPragmas
+import runePragmas
 
 type
   HarnessConfig = object
@@ -18,7 +18,7 @@ type
     host: string
     port: Port
 
-proc parsePort(s: string): Port {.role: parser, metaTags: {tagTls, tagInterop}.} =
+proc parsePort(s: string): Port {.role: parser, tag: "tls|interop".} =
   var v: int = 0
   try:
     v = parseInt(s)
@@ -29,7 +29,7 @@ proc parsePort(s: string): Port {.role: parser, metaTags: {tagTls, tagInterop}.}
   result = Port(v)
 
 proc parseHarnessConfig(): HarnessConfig {.role: configurator,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var
     P: OptParser = initOptParser(commandLineParams())
   result.host = "127.0.0.1"
@@ -53,7 +53,7 @@ proc parseHarnessConfig(): HarnessConfig {.role: configurator,
     raise newException(ValueError, "TLS harness requires --cert and --key")
 
 proc bytesFromString(s: string): ByteSeq {.role: helper,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   result = newSeq[byte](s.len)
   while i < s.len:
@@ -61,7 +61,7 @@ proc bytesFromString(s: string): ByteSeq {.role: helper,
     i = i + 1
 
 proc stringFromBytes(A: openArray[byte]): string {.role: helper,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   result = newString(A.len)
   while i < A.len:
@@ -69,7 +69,7 @@ proc stringFromBytes(A: openArray[byte]): string {.role: helper,
     i = i + 1
 
 proc loadServerConfig(C: HarnessConfig): Tls13ServerConfig {.
-    role: truthBuilder, metaTags: {tagTls, tagInterop}.} =
+    role: truthBuilder, tag: "tls|interop".} =
   var
     cert: PemReadResult = readPemBlock(readFile(C.certificatePath),
       "CERTIFICATE")
@@ -85,14 +85,14 @@ proc loadServerConfig(C: HarnessConfig): Tls13ServerConfig {.
   result.alpn = @["http/1.1"]
 
 proc sendServerOutput(c: Socket, O: Tls13ServerOutput) {.role: dataWriter,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var i: int = 0
   while i < O.outbound.len:
     c.send(stringFromBytes(O.outbound[i]))
     i = i + 1
 
 proc sendHttpResponse(c: Socket, S: var Tls13ServerSession) {.
-    role: dataWriter, metaTags: {tagTls, tagInterop}.} =
+    role: dataWriter, tag: "tls|interop".} =
   const response = "HTTP/1.1 200 OK\r\nContent-Length: 18\r\nConnection: close\r\n\r\nnative tls13 ok\r\n"
   var
     wire: ByteSeq = S.encodeTls13ServerApplication(bytesFromString(response))
@@ -101,7 +101,7 @@ proc sendHttpResponse(c: Socket, S: var Tls13ServerSession) {.
   c.send(stringFromBytes(wire))
 
 proc runHarness(C: HarnessConfig) {.role: metaOrchestrator,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var
     listener, client: Socket
     S: Tls13ServerSession = initTls13ServerSession(loadServerConfig(C))

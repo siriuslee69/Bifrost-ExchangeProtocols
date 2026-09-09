@@ -12,7 +12,7 @@ import ../../../transport/types as transport_types
 import ../../../transport/tcp_ops
 import ../../types
 import ../session
-import bifrostPragmas
+import runePragmas
 
 type
   AmeTcpClient* {.role: truthState.} = object

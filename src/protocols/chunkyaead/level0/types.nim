@@ -2,7 +2,7 @@
 ## CHUNKYAEAD Types <- chunked file format and owned cipher configuration
 ## -----------------------------------------------------------------------
 
-import bifrostPragmas
+import runePragmas
 
 const
   chunkyMagic* = [byte('C'), byte('H'), byte('U'), byte('N'), byte('K'),
@@ -21,8 +21,7 @@ type
   HashAlgo* = enum
     haBlake3Tree, haGimliTree
 
-  ChunkyCipherState* {.role: truthState, metaTags: {tagChunkyAead,
-      tagCryptoBoundary, tagTypes}.} = object
+  ChunkyCipherState* {.role: truthState, tag: "chunkyAead|cryptoBoundary|types".} = object
     ## algo: composite chunk transform represented by the ordered keys.
     algo*: ChunkyAlgo
     ## keys: ordered, fixed-width encryption keys for the selected suite.
@@ -100,7 +99,7 @@ type
     err*: string
 
 proc chunkyKeyCount(a: ChunkyAlgo): int {.role: parser,
-    metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
+    tag: "chunkyAead|cryptoBoundary".} =
   ## a: selected CHUNKYAEAD transform.
   case a
   of caXChaCha20Gimli, caAesGimli:
@@ -110,7 +109,7 @@ proc chunkyKeyCount(a: ChunkyAlgo): int {.role: parser,
 
 proc initChunkyCipherState*(a: ChunkyAlgo, K: openArray[array[32, uint8]],
     n: array[24, uint8], t: uint16 = defaultTagLen): ChunkyCipherState {.
-    role: truthBuilder, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
   ## a/K/n/t: transform, ordered fixed-width keys, base nonce, and tag length.
   if K.len != chunkyKeyCount(a):
     raise newException(ValueError, "CHUNKYAEAD key count mismatch")
@@ -123,7 +122,7 @@ proc initChunkyCipherState*(a: ChunkyAlgo, K: openArray[array[32, uint8]],
 
 proc initChunkyCipherState*(a: ChunkyAlgo, K: openArray[seq[uint8]],
     n: openArray[uint8], t: uint16 = defaultTagLen): ChunkyCipherState {.
-    role: truthBuilder, metaTags: {tagChunkyAead, tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
   ## a/K/n/t: transform, byte-sequence keys, base nonce, and tag length.
   var
     keys: seq[array[32, uint8]] = @[]
@@ -150,7 +149,7 @@ proc initChunkyCipherState*(a: ChunkyAlgo, K: openArray[seq[uint8]],
   result = initChunkyCipherState(a, keys, nonce, t)
 
 proc initChunkyOptions*(): ChunkyOptions {.role: configurator,
-    metaTags: {tagChunkyAead}.} =
+    tag: "chunkyAead".} =
   result.chunkBytes = defaultChunkBytes
   result.bufferBytes = defaultBufferBytes
   result.algo = caXChaCha20AesGimli

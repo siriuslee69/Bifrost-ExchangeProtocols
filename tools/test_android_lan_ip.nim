@@ -4,7 +4,7 @@
 
 import std/[monotimes, net, nativesockets, os, osproc, strutils, times]
 
-import bifrostPragmas
+import runePragmas
 import ../src/clients/shared/lan_message
 import ../src/protocols/transport/[tcp_ops, types]
 
@@ -21,7 +21,7 @@ type
     callbackAck: string
     error: string
 
-proc shellJoin(args: openArray[string]): string {.role: helper, metaTags: {tagInterop}.} =
+proc shellJoin(args: openArray[string]): string {.role: helper, tag: "interop".} =
   ## args: executable and arguments to quote for the local shell.
   var
     i: int = 0
@@ -31,7 +31,7 @@ proc shellJoin(args: openArray[string]): string {.role: helper, metaTags: {tagIn
     result.add(quoteShell(args[i]))
     i = i + 1
 
-proc runChecked(args: openArray[string]): string {.role: orchestrator, metaTags: {tagInterop}.} =
+proc runChecked(args: openArray[string]): string {.role: orchestrator, tag: "interop".} =
   ## args: command and arguments that must exit successfully.
   var
     p: tuple[output: string, exitCode: int] = execCmdEx(shellJoin(args))
@@ -39,7 +39,7 @@ proc runChecked(args: openArray[string]): string {.role: orchestrator, metaTags:
     raise newException(OSError, p.output)
   result = p.output
 
-proc localLanIpv4(): string {.role: dataFetcher, metaTags: {tagNetworkSurface}.} =
+proc localLanIpv4(): string {.role: dataFetcher, tag: "networkSurface".} =
   ## Returns the source IPv4 address used for the default route.
   var
     p: tuple[output: string, exitCode: int] = execCmdEx("ip route get 1.1.1.1")
@@ -54,14 +54,14 @@ proc localLanIpv4(): string {.role: dataFetcher, metaTags: {tagNetworkSurface}.}
     i = i + 1
   raise newException(IOError, "default route has no source address")
 
-proc androidApk(root, kind: string): string {.role: helper, metaTags: {tagInterop}.} =
+proc androidApk(root, kind: string): string {.role: helper, tag: "interop".} =
   ## root: repository root. kind: target or test APK selector.
   if kind == "target":
     result = root / "src/clients/android/app/build/outputs/apk/debug/androidApp-debug.apk"
   else:
     result = root / "src/clients/android/app/build/outputs/apk/androidTest/debug/androidApp-debug-androidTest.apk"
 
-proc androidWifiIpv4(serial: string): string {.role: dataFetcher, metaTags: {tagNetworkSurface}.} =
+proc androidWifiIpv4(serial: string): string {.role: dataFetcher, tag: "networkSurface".} =
   ## serial: adb device whose active wlan0 IPv4 address is required.
   var
     output: string = runChecked(["adb", "-s", serial, "shell", "ip", "-4", "-o",
@@ -77,7 +77,7 @@ proc androidWifiIpv4(serial: string): string {.role: dataFetcher, metaTags: {tag
     i = i + 1
   raise newException(IOError, "connected Android device has no wlan0 IPv4 address")
 
-proc serveExchange(S: ptr HostExchangeState) {.thread, role: orchestrator, metaTags: {tagNetworkSurface}.} =
+proc serveExchange(S: ptr HostExchangeState) {.thread, role: orchestrator, tag: "networkSurface".} =
   ## S: cross-thread result state for one phone-to-host and host-to-phone pass.
   var
     server: Socket
@@ -130,7 +130,7 @@ proc serveExchange(S: ptr HostExchangeState) {.thread, role: orchestrator, metaT
   except CatchableError as e:
     S.error = e.msg
 
-proc runLanTest(serial: string) {.role: metaOrchestrator, metaTags: {tagNetworkSurface}.} =
+proc runLanTest(serial: string) {.role: metaOrchestrator, tag: "networkSurface".} =
   ## serial: adb device serial for the physical Android endpoint.
   var
     root: string = parentDir(parentDir(currentSourcePath()))

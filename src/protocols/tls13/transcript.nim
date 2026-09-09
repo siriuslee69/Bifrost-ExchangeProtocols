@@ -10,37 +10,37 @@ import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./key_schedule
-import bifrostPragmas
+import runePragmas
 
 type
-  Tls13Transcript* {.role: memory, metaTags: {tagTls, tagCryptoBoundary}.} = object
+  Tls13Transcript* {.role: memory, tag: "tls|cryptoBoundary".} = object
     hashState: Sha256Context
 
 proc initTls13Transcript*(): Tls13Transcript {.role: truthBuilder,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## Initialize an empty handshake transcript.
   result.hashState = initSha256()
 
 proc appendTls13Transcript*(T: var Tls13Transcript,
     encodedHandshake: openArray[byte]) {.role: dataWriter,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## T/encodedHandshake: transcript and exact type+length+body bytes.
   T.hashState.updateSha256(encodedHandshake)
 
 proc tls13TranscriptHash*(T: Tls13Transcript): Sha256Digest {.
-    role: truthBuilder, metaTags: {tagTls, tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "tls|cryptoBoundary".} =
   ## T: clonable transcript whose current digest is returned.
   result = T.hashState.finishSha256()
 
 proc tls13FinishedVerifyData*(trafficSecret: openArray[byte],
     transcriptHash: openArray[byte]): Tls13Secret {.role: truthBuilder,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## trafficSecret/transcriptHash: endpoint handshake secret and current hash.
   var key: Tls13Secret = deriveTls13FinishedKey(trafficSecret)
   result = hmacSha256(key, transcriptHash)
 
 proc constantTimeFinishedEqual*(A, B: openArray[byte]): bool {.role: helper,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## A/B: received and expected Finished verify_data.
   var
     diff: uint = if A.len == B.len: 0'u else: 1'u
@@ -54,7 +54,7 @@ proc constantTimeFinishedEqual*(A, B: openArray[byte]): bool {.role: helper,
 
 proc tls13CertificateVerifyInput*(server: bool,
     transcriptHash: openArray[byte]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## server/transcriptHash: signer role and transcript hash before CertificateVerify.
   const
     serverContext = "TLS 1.3, server CertificateVerify"
@@ -80,21 +80,21 @@ proc tls13CertificateVerifyInput*(server: bool,
 
 proc signTls13CertificateVerify*(secretKey: openArray[byte], server: bool,
     transcriptHash: openArray[byte]): ByteSeq {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## secretKey/server/transcriptHash: Ed25519 key and TLS signature context.
   result = ed25519TyrSign(tls13CertificateVerifyInput(server, transcriptHash),
     secretKey)
 
 proc verifyTls13CertificateVerify*(publicKey, signature: openArray[byte],
     server: bool, transcriptHash: openArray[byte]): bool {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## publicKey/signature/server/transcriptHash: Ed25519 TLS verification inputs.
   result = ed25519TyrVerify(tls13CertificateVerifyInput(server,
     transcriptHash), signature, publicKey)
 
 proc signTls13CertificateVerifyRsaPss*(key: RsaPrivateKey, server: bool,
     transcriptHash: openArray[byte]): ByteSeq {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## key/server/transcriptHash: RSA private key and TLS signature context.
   ## Produces the `rsa_pss_rsae_sha256` CertificateVerify signature.
   var signed = rsaSignPssSha256(key, tls13CertificateVerifyInput(server,
@@ -107,14 +107,14 @@ proc signTls13CertificateVerifyRsaPss*(key: RsaPrivateKey, server: bool,
 proc verifyTls13CertificateVerifyRsaPss*(key: RsaPublicKey,
     signature: openArray[byte], server: bool,
     transcriptHash: openArray[byte]): bool {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## key/signature/server/transcriptHash: RSA verification inputs.
   result = rsaVerifyPssSha256(key, tls13CertificateVerifyInput(server,
     transcriptHash), signature)
 
 proc signTls13CertificateVerifyEcdsaP256*(scalar: BigInt, server: bool,
     transcriptHash: openArray[byte]): ByteSeq {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## scalar/server/transcriptHash: P-256 private scalar and signature context.
   ## Produces the DER-encoded `ecdsa_secp256r1_sha256` signature.
   var signed = ecdsaSignP256(scalar, tls13CertificateVerifyInput(server,
@@ -127,7 +127,7 @@ proc signTls13CertificateVerifyEcdsaP256*(scalar: BigInt, server: bool,
 proc verifyTls13CertificateVerifyEcdsaP256*(point: P256AffinePoint,
     signature: openArray[byte], server: bool,
     transcriptHash: openArray[byte]): bool {.role: actor,
-    metaTags: {tagTls, tagCryptoBoundary}.} =
+    tag: "tls|cryptoBoundary".} =
   ## point/signature/server/transcriptHash: P-256 verification inputs.
   var parsed = parseEcdsaSignatureDer(signature)
   if not parsed.ok:

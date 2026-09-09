@@ -4,11 +4,11 @@
 
 import std/[asyncdispatch, asyncnet, net, unittest]
 
-import bifrostPragmas
+import runePragmas
 import ../../src/protocols/transport/async_stream_ops
 
 proc runAsyncStreamChecks() {.async, role: orchestrator,
-    metaTags: {tagTransport, tagNetworkSurface}.} =
+    tag: "transport|networkSurface".} =
   ## Runs one localhost exchange through the shared async stream helpers.
   var
     listener: AsyncSocket

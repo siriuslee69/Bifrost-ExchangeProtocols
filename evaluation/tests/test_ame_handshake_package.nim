@@ -28,7 +28,7 @@ import ../../src/protocols/ame/level3/handshake_transport
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
-import bifrostPragmas
+import runePragmas
 
 const
   handshakeKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]
@@ -263,7 +263,17 @@ suite "AME private handshake":
     ## The identity block itself is padded, so a longer certificate does not
     ## announce itself by the size of the ciphertext holding it.
     check server.state.serverHello.sealed.len mod 64 == 0
-    check bareServer.state.serverHello.sealed.len mod 64 != 0
+    ## The unpadded block is NOT asserted to be a non-multiple of 64. Its
+    ## length follows randomly generated certificate key material, so it
+    ## lands on a multiple about one run in sixty-four -- which failed this
+    ## test for a reason that had nothing to do with padding. What actually
+    ## distinguishes the two is that one was rounded and the other was not:
+    ## a padded block is never shorter than the bare one, and the padding
+    ## policy is what says so.
+    check bareServer.state.serverHello.params.padding == apadNone
+    check server.state.serverHello.params.padding == apadBlock64
+    check server.state.serverHello.sealed.len >=
+      bareServer.state.serverHello.sealed.len
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
     check clientDone.ok

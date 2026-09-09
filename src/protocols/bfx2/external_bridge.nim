@@ -7,7 +7,7 @@ import ./types
 import ./schema_ids
 import ./writer
 import ./reader
-import bifrostPragmas
+import runePragmas
 
 proc validateExternalEnvelope*(schemaId: uint16): tuple[ok: bool, err: string] {.role: parser.} =
   ## Validate that schema id is in reserved external range.

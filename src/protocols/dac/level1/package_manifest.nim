@@ -6,7 +6,7 @@ import ../../types
 import ../types
 import ../level0/defaults
 import ../level0/body_codec
-import bifrostPragmas
+import runePragmas
 
 const
   dacPackageManifestLen* = 59

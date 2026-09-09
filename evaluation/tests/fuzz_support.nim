@@ -13,7 +13,7 @@
 import unittest
 
 import ../../src/protocols/types
-import bifrostPragmas
+import runePragmas
 
 type
   ## Rng: splitmix64. Small, seedable, and identical on every platform, which

@@ -8,7 +8,7 @@ import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
-import bifrostPragmas
+import runePragmas
 
 proc rampBytes(n: int): ByteSeq =
   ## n: payload length filled with a deterministic ramp.

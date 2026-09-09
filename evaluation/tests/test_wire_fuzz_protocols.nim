@@ -29,7 +29,7 @@ import ../../src/protocols/tls13/codec
 import ../../src/protocols/tls13/hello
 import ../../src/protocols/tls13/handshake_messages
 import ./fuzz_support
-import bifrostPragmas
+import runePragmas
 
 proc sampleAmeFrame(): ByteSeq =
   ## A well-formed AME frame carrying lane data.

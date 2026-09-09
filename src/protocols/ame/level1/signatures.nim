@@ -32,7 +32,7 @@
 import ../../types
 import ../types
 import ./sigs/types as sig_types
-import bifrostPragmas
+import runePragmas
 
 export sig_types
 

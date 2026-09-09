@@ -3,7 +3,7 @@
 ## ---------------------------------------------------------------------
 
 import ../../types
-import bifrostPragmas
+import runePragmas
 
 const
   dacProtocolId* = "transport.dac"

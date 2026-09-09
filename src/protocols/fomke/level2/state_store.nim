@@ -14,7 +14,7 @@ import ../../ame/level1/tier_aead
 import ../../ame/level2/protection
 import ../level1/chain
 import ./state_codec
-import bifrostPragmas
+import runePragmas
 
 const
   fomkeCheckpointMagic = [uint8('F'), uint8('S'), uint8('T'), uint8('1')]
@@ -28,13 +28,13 @@ const
     fomkeCheckpointHeaderLen + fomkeCheckpointMaxOverheadBytes
 
 proc checkpointSlotPath(basePath: string, slot: int): string {.role: helper,
-    metaTags: {tagFomke, tagWrite}.} =
+    tag: "fomke|write".} =
   ## basePath/slot: stable alternating checkpoint file name.
   result = basePath & "." & $slot
 
 proc requireCheckpointInputs(basePath: string, storageKey,
     context: openArray[uint8]) {.role: parser,
-    metaTags: {tagCryptoBoundary, tagFomke, tagValidation}.} =
+    tag: "cryptoBoundary|fomke|validation".} =
   ## basePath/storageKey/context: persistence boundary inputs.
   if basePath.len == 0:
     raise newException(ValueError, "FOMKE checkpoint path is empty")
@@ -45,7 +45,7 @@ proc requireCheckpointInputs(basePath: string, storageKey,
     raise newException(ValueError, "FOMKE checkpoint context is empty")
 
 proc appendCheckpointField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: dataWriter, metaTags: {tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "fomke|write".} =
   ## A/B: append one bounded checkpoint field.
   if uint64(B.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE checkpoint field exceeds its limit")
@@ -53,21 +53,21 @@ proc appendCheckpointField(A: var ByteSeq, B: openArray[uint8]) {.
   appendAmeBytes(A, B)
 
 proc buildCheckpointKeyInfo(context: openArray[uint8]): ByteSeq {.
-    role: truthBuilder, metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    role: truthBuilder, tag: "cryptoBoundary|fomke|kdf".} =
   ## context: caller-owned session identity bound to the storage key.
   appendAmeLabel(result, "FOMKE-CHECKPOINT-KEY-v1")
   appendCheckpointField(result, context)
 
 proc buildCheckpointAad(counter: uint64,
     context: openArray[uint8]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## counter/context: authenticated monotonic version and session identity.
   appendAmeLabel(result, "FOMKE-CHECKPOINT-AAD-v1")
   appendAmeU64(result, counter)
   appendCheckpointField(result, context)
 
 proc checkpointStringToBytes(s: string): ByteSeq {.role: helper,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## s: exact binary file contents converted without text encoding.
   var
     i: int = 0
@@ -77,7 +77,7 @@ proc checkpointStringToBytes(s: string): ByteSeq {.role: helper,
     i = i + 1
 
 proc flushCheckpointFile(path: string, A: openArray[uint8]) {.
-    role: dataWriter, metaTags: {tagCryptoBoundary, tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## path/A: write, flush, and close one temporary checkpoint file.
   var
     f: File
@@ -97,7 +97,7 @@ proc flushCheckpointFile(path: string, A: openArray[uint8]) {.
     close(f)
 
 proc replaceCheckpointSlot(path: string, A: openArray[uint8]) {.
-    role: dataWriter, metaTags: {tagCryptoBoundary, tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## path/A: replace the older slot while the other valid slot remains intact.
   var
     parent: string = parentDir(path)
@@ -112,14 +112,14 @@ proc replaceCheckpointSlot(path: string, A: openArray[uint8]) {.
   moveFile(temporary, path)
 
 proc readCheckpointU16(A: openArray[uint8], offset: int): uint16 {.
-    role: parser, metaTags: {tagFomke, tagParsing}.} =
+    role: parser, tag: "fomke|parsing".} =
   ## A/offset: little-endian u16 inside the fixed envelope header.
   if offset < 0 or offset > A.len - 2:
     raise newException(ValueError, "FOMKE checkpoint u16 is truncated")
   result = uint16(A[offset]) or (uint16(A[offset + 1]) shl 8)
 
 proc readCheckpointU32(A: openArray[uint8], offset: int): uint32 {.
-    role: parser, metaTags: {tagFomke, tagParsing}.} =
+    role: parser, tag: "fomke|parsing".} =
   ## A/offset: little-endian u32 inside the fixed envelope header.
   if offset < 0 or offset > A.len - 4:
     raise newException(ValueError, "FOMKE checkpoint u32 is truncated")
@@ -127,7 +127,7 @@ proc readCheckpointU32(A: openArray[uint8], offset: int): uint32 {.
     (uint32(A[offset + 2]) shl 16) or (uint32(A[offset + 3]) shl 24)
 
 proc readCheckpointU64(A: openArray[uint8], offset: int): uint64 {.
-    role: parser, metaTags: {tagFomke, tagParsing}.} =
+    role: parser, tag: "fomke|parsing".} =
   ## A/offset: little-endian u64 inside the fixed envelope header.
   var
     i: int = 0
@@ -139,7 +139,7 @@ proc readCheckpointU64(A: openArray[uint8], offset: int): uint64 {.
 
 proc encodeCheckpointEnvelope(counter: uint64, nonce: openArray[uint8],
     sealed: AmeProtectedMessage): ByteSeq {.role: dataWriter,
-    metaTags: {tagCodecBoundary, tagCryptoBoundary, tagFomke, tagWrite}.} =
+    tag: "codecBoundary|cryptoBoundary|fomke|write".} =
   ## counter/nonce/sealed: complete encrypted checkpoint envelope.
   ##
   ##   "FST1" | ver u16 | counter u64 | ctLen u32 | nonce | tag | ciphertext
@@ -162,7 +162,7 @@ proc encodeCheckpointEnvelope(counter: uint64, nonce: openArray[uint8],
 proc decodeCheckpointEnvelope(A: openArray[uint8], nonceLen,
     tagLen: int): tuple[counter: uint64, nonce: ByteSeq,
     sealed: AmeProtectedMessage] {.role: parser,
-    metaTags: {tagCodecBoundary, tagCryptoBoundary, tagFomke, tagParsing}.} =
+    tag: "codecBoundary|cryptoBoundary|fomke|parsing".} =
   ## A/nonceLen/tagLen: the file, and the sizes the caller's suite demands.
   var
     cipherLen: int = 0
@@ -190,8 +190,7 @@ proc decodeCheckpointEnvelope(A: openArray[uint8], nonceLen,
 proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     storageKey: openArray[uint8], counter: uint64,
     context: openArray[uint8]): tuple[ok: bool, err: string] {.
-    role: orchestrator, metaTags: {tagAppApi, tagCryptoBoundary, tagFomke,
-    tagWrite}.} =
+    role: orchestrator, tag: "appApi|cryptoBoundary|fomke|write".} =
   ## basePath/S/storageKey/counter/context: atomically seal one newer slot.
   ##
   ## The file is sealed with the SAME slot selection the ratchet inside it
@@ -233,7 +232,7 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
 proc openCheckpointSlot(path: string, storageKey, context: openArray[uint8],
     L: AmeSuiteLayout, t: AmeMaskTier,
     tagLen: AmeAuthTagLen): FomkeCheckpoint {.role: orchestrator,
-    metaTags: {tagCryptoBoundary, tagFomke, tagParsing}.} =
+    tag: "cryptoBoundary|fomke|parsing".} =
   ## path/storageKey/context: authenticate and decode one candidate slot.
   ## L/t/tagLen: the slot selection the file was sealed with.
   var
@@ -273,8 +272,7 @@ proc openCheckpointSlot(path: string, storageKey, context: openArray[uint8],
 proc loadFomkeCheckpoint*(basePath: string, storageKey: openArray[uint8],
     minimumCounter: uint64, context: openArray[uint8], L: AmeSuiteLayout,
     t: AmeMaskTier, tagLen: AmeAuthTagLen = aatl32): FomkeCheckpoint {.
-    role: orchestrator, metaTags: {tagAppApi, tagCryptoBoundary, tagFomke,
-    tagParsing}.} =
+    role: orchestrator, tag: "appApi|cryptoBoundary|fomke|parsing".} =
   ## minimumCounter: trusted external floor; lower valid files are rollbacks.
   ## L/t/tagLen: the slot selection the checkpoint was sealed with, which is
   ## the one the saved ratchet itself runs on. The caller knows it because it
@@ -312,7 +310,7 @@ proc sealFomkeMessageDurable*(S: var FomkeState, basePath: string,
     storageKey: openArray[uint8], checkpointCounter: var uint64,
     plaintext, context: openArray[uint8],
     aad: openArray[uint8] = []): FomkeDurableMessage {.role: orchestrator,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagWrite}.} =
+    tag: "appApi|cryptoBoundary|fomke|write".} =
   ## S/checkpointCounter: advance only after the new state reaches disk.
   var
     pending: FomkeState
@@ -344,7 +342,7 @@ proc openFomkeMessageDurable*(S: var FomkeState, basePath: string,
     storageKey: openArray[uint8], checkpointCounter: var uint64,
     message: FomkeMessage, context: openArray[uint8],
     aad: openArray[uint8] = []): FomkeDurableOpen {.role: orchestrator,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke, tagWrite}.} =
+    tag: "appApi|cryptoBoundary|fomke|write".} =
   ## S/checkpointCounter: accept only after the authenticated state reaches disk.
   var
     pending: FomkeState

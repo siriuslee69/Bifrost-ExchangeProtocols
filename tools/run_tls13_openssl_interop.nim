@@ -3,7 +3,7 @@
 ## ----------------------------------------------------------------------
 
 import std/[os, osproc, streams, strutils]
-import bifrostPragmas
+import runePragmas
 
 const
   interopHost = "127.0.0.1"
@@ -11,7 +11,7 @@ const
   expectedBody = "native tls13 ok"
 
 proc runChecked(command: string, args: openArray[string]): string {.
-    role: orchestrator, metaTags: {tagTls, tagInterop}.} =
+    role: orchestrator, tag: "tls|interop".} =
   var
     P: Process = startProcess(command, args = @args,
       options = {poUsePath, poStdErrToStdOut})
@@ -23,14 +23,14 @@ proc runChecked(command: string, args: openArray[string]): string {.
     raise newException(IOError, command & " failed:\n" & result)
 
 proc writeClientRequest(P: Process) {.role: dataWriter,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   P.inputStream.write(
     "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
   P.inputStream.flush()
   P.inputStream.close()
 
 proc runClient(certPath: string): string {.role: orchestrator,
-    metaTags: {tagTls, tagInterop}.} =
+    tag: "tls|interop".} =
   var
     P: Process = startProcess("openssl", args = @[
       "s_client",
@@ -55,7 +55,7 @@ proc runClient(certPath: string): string {.role: orchestrator,
   if code != 0:
     raise newException(IOError, "OpenSSL TLS client failed:\n" & result)
 
-proc runInterop() {.role: metaOrchestrator, metaTags: {tagTls, tagInterop}.} =
+proc runInterop() {.role: metaOrchestrator, tag: "tls|interop".} =
   var
     root: string = joinPath(getTempDir(), "bifrost_tls13_openssl_interop")
     certPath: string = joinPath(root, "certificate.pem")

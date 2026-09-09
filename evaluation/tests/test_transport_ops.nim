@@ -15,7 +15,7 @@ import ../../src/protocols/transport/types
 import ../../src/protocols/transport/stream_framing
 import ../../src/protocols/transport/tcp_ops
 import ../../src/protocols/transport/udp_ops
-import bifrostPragmas
+import runePragmas
 
 type
   TransportServerArgs = object

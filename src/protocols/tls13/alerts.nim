@@ -6,7 +6,7 @@ import std/strutils
 
 import ../types
 import ./[types, codec]
-import bifrostPragmas
+import runePragmas
 
 type
   Tls13AlertLevel* = enum
@@ -39,7 +39,7 @@ type
 
 proc encodeTls13PlainAlert*(level: Tls13AlertLevel,
     description: Tls13AlertDescription): ByteSeq {.role: dataWriter,
-    metaTags: {tagTls, tagWrite}.} =
+    tag: "tls|write".} =
   ## level/description: pre-key alert values for one plaintext alert record.
   var R: Tls13Record
   R.contentType = tctAlert
@@ -48,7 +48,7 @@ proc encodeTls13PlainAlert*(level: Tls13AlertLevel,
   result = encodeTls13Record(R)
 
 proc tls13AlertForError*(e: string): Tls13AlertDescription {.role: parser,
-    metaTags: {tagTls, tagValidation}.} =
+    tag: "tls|validation".} =
   ## e: internal validation failure reduced to a non-sensitive wire alert.
   if e.find("version") >= 0:
     return tadProtocolVersion

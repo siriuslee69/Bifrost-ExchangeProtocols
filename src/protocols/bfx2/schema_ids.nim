@@ -2,7 +2,7 @@
 ## BFX2 Schema Ids <- shared reserved schema identifiers
 ## -----------------------------------------------------
 
-import bifrostPragmas
+import runePragmas
 const
   schemaExternalReservedStart* = 400'u16
   schemaExternalReservedEnd* = 899'u16

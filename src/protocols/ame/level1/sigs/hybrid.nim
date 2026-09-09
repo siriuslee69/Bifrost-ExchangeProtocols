@@ -22,7 +22,7 @@ import ../../types
 import ./types
 import ./ed25519 as ame_ed25519
 import ./falcon as ame_falcon
-import bifrostPragmas
+import runePragmas
 
 proc appendPart(A: var ByteSeq, part: openArray[byte]) {.role: helper.} =
   ## A/part: destination and one length-prefixed half.

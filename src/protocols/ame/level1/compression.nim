@@ -8,7 +8,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./padding
-import bifrostPragmas
+import runePragmas
 
 const
   ameCompressionMagic* = [uint8('E'), uint8('I'), uint8('R'), uint8('1')]

@@ -11,27 +11,27 @@ import ../types
 import ../level0/gb3hkdf
 import ../level1/chain
 import ./wire
-import bifrostPragmas
+import runePragmas
 
 const
   fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]
   fomkeStateVersion = 1'u8
 
 proc requireStateBytes(A: openArray[uint8], cursor, count: int) {.role: parser,
-    metaTags: {tagFomke, tagParsing, tagValidation}.} =
+    tag: "fomke|parsing|validation".} =
   ## A/cursor/count: bounded source window required by the state decoder.
   if cursor < 0 or count < 0 or cursor > A.len - count:
     raise newException(ValueError, "FOMKE state is truncated")
 
 proc readStateU8(A: openArray[uint8], cursor: var int): uint8 {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/cursor: consume one byte.
   requireStateBytes(A, cursor, 1)
   result = A[cursor]
   cursor = cursor + 1
 
 proc readStateU32(A: openArray[uint8], cursor: var int): uint32 {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/cursor: consume one little-endian u32.
   requireStateBytes(A, cursor, 4)
   result = uint32(A[cursor]) or (uint32(A[cursor + 1]) shl 8) or
@@ -39,7 +39,7 @@ proc readStateU32(A: openArray[uint8], cursor: var int): uint32 {.role: parser,
   cursor = cursor + 4
 
 proc readStateU64(A: openArray[uint8], cursor: var int): uint64 {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/cursor: consume one little-endian u64.
   var
     i: int = 0
@@ -50,7 +50,7 @@ proc readStateU64(A: openArray[uint8], cursor: var int): uint64 {.role: parser,
   cursor = cursor + 8
 
 proc appendStateField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: dataWriter, metaTags: {tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "fomke|write".} =
   ## A/B: append one bounded length-prefixed byte field.
   if uint64(B.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE state field exceeds its limit")
@@ -59,7 +59,7 @@ proc appendStateField(A: var ByteSeq, B: openArray[uint8]) {.
 
 proc readStateField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = fomkeMaxStateBytes): ByteSeq {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/cursor/maximum: consume one bounded length-prefixed byte field.
   var
     count: int = 0
@@ -71,7 +71,7 @@ proc readStateField(A: openArray[uint8], cursor: var int,
   cursor = cursor + count
 
 proc decodeStateRole(v: uint8): FomkeRole {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## v: stable local FOMKE endpoint role.
   if v == uint8(ord(frInitiator)):
     return frInitiator
@@ -80,7 +80,7 @@ proc decodeStateRole(v: uint8): FomkeRole {.role: parser,
   raise newException(ValueError, "FOMKE state role is invalid")
 
 proc decodeStateLane(v: uint8): FomkeLane {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## v: stable FOMKE lane identifier.
   if v == uint8(ord(flLane1)):
     return flLane1
@@ -89,7 +89,7 @@ proc decodeStateLane(v: uint8): FomkeLane {.role: parser,
   raise newException(ValueError, "FOMKE state lane is invalid")
 
 proc decodeStateKdfMode(v: uint8): Gb3KdfMode {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## v: stable GB3HKDF mode identifier.
   if v == uint8(ord(gb3Sequential)):
     return gb3Sequential
@@ -98,18 +98,18 @@ proc decodeStateKdfMode(v: uint8): Gb3KdfMode {.role: parser,
   raise newException(ValueError, "FOMKE state KDF mode is invalid")
 
 proc decodeStateTagLen(v: uint8): AmeAuthTagLen {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## v: stable agreed authentication-tag length.
   result = ameAuthTagLenFromId(v)
 
 proc appendStateChain(A: var ByteSeq, C: FomkeChainState) {.
-    role: dataWriter, metaTags: {tagCryptoBoundary, tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## A/C: append one directional chain key and next index.
   appendStateField(A, C.chainKey)
   appendAmeU64(A, C.nextIndex)
 
 proc readStateChain(A: openArray[uint8], cursor: var int): FomkeChainState {.
-    role: parser, metaTags: {tagCryptoBoundary, tagFomke, tagParsing}.} =
+    role: parser, tag: "cryptoBoundary|fomke|parsing".} =
   ## A/cursor: consume one directional chain.
   result.chainKey = readStateField(A, cursor, fomkeChainKeyBytes.uint32)
   result.nextIndex = readStateU64(A, cursor)
@@ -117,7 +117,7 @@ proc readStateChain(A: openArray[uint8], cursor: var int): FomkeChainState {.
     raise newException(ValueError, "FOMKE state chain key length is invalid")
 
 proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
-    role: dataWriter, metaTags: {tagCryptoBoundary, tagFomke, tagWrite}.} =
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## A/K: append one skipped message key record.
   appendAmeU32(A, K.epoch)
   appendAmeU64(A, K.index)
@@ -127,7 +127,7 @@ proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
 proc readStateSkipped(A: openArray[uint8], cursor: var int,
     epoch: uint32): FomkeSkippedKey {.
     role: parser,
-    metaTags: {tagCryptoBoundary, tagFomke, tagParsing}.} =
+    tag: "cryptoBoundary|fomke|parsing".} =
   ## A/cursor/epoch: consume one skipped key belonging to this state.
   result.epoch = readStateU32(A, cursor)
   result.index = readStateU64(A, cursor)
@@ -139,7 +139,7 @@ proc readStateSkipped(A: openArray[uint8], cursor: var int,
     raise newException(ValueError, "FOMKE skipped state is invalid")
 
 proc validateDecodedPending(S: FomkeState) {.role: parser,
-    metaTags: {tagExchange, tagFomke, tagValidation}.} =
+    tag: "exchange|fomke|validation".} =
   ## S: decoded pending transition checked against current state.
   if not S.pending.active:
     return
@@ -151,8 +151,7 @@ proc validateDecodedPending(S: FomkeState) {.role: parser,
     raise newException(ValueError, "FOMKE pending chain is invalid")
 
 proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
-    metaTags: {tagAppApi, tagCodecBoundary, tagCryptoBoundary, tagFomke,
-    tagWrite}.} =
+    tag: "appApi|codecBoundary|cryptoBoundary|fomke|write".} =
   ## S: complete secret ratchet state for encrypted checkpoint storage only.
   var
     algorithms: ByteSeq = @[]
@@ -190,8 +189,7 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
     raise newException(ValueError, "FOMKE encoded state exceeds its limit")
 
 proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
-    metaTags: {tagAppApi, tagCodecBoundary, tagCryptoBoundary, tagFomke,
-    tagParsing}.} =
+    tag: "appApi|codecBoundary|cryptoBoundary|fomke|parsing".} =
   ## A: strict bounded plaintext state from an authenticated checkpoint.
   var
     algorithms: ByteSeq = @[]

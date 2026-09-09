@@ -2,7 +2,7 @@
 # | Bifrost Types <- shared protocol metadata types |
 # ==================================================
 
-import bifrostPragmas
+import runePragmas
 type
   ## ByteSeq: generic byte sequence payload.
   ByteSeq* = seq[uint8]

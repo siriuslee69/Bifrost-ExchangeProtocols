@@ -16,7 +16,7 @@ import std/[net, options, times]
 import ../types
 
 import ./server_session
-import bifrostPragmas
+import runePragmas
 
 const
   tls13SocketReadChunk* = 4096
@@ -24,42 +24,42 @@ const
 
 type
   Tls13SocketSession* {.role: memory,
-      metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} = object
+      tag: "tls|transport|cryptoBoundary".} = object
     session*: Tls13ServerSession
     plaintext: string   ## decrypted application bytes not yet consumed
     active*: bool
     closed*: bool
 
-  Tls13SocketResult* {.role: truthState, metaTags: {tagTls, tagTransport}.} = object
+  Tls13SocketResult* {.role: truthState, tag: "tls|transport".} = object
     ok*: bool
     err*: string
 
 proc initTls13SocketSession*(): Tls13SocketSession {.role: truthBuilder,
-    metaTags: {tagTls, tagTransport}.} =
+    tag: "tls|transport".} =
   ## Return an inactive socket session.
   result.plaintext = ""
   result.active = false
   result.closed = false
 
 proc tls13SocketActive*(S: Tls13SocketSession): bool {.role: helper,
-    metaTags: {tagTls}.} =
+    tag: "tls".} =
   ## S: socket session to test.
   result = S.active and not S.closed
 
-proc toStr(b: openArray[byte]): string {.role: helper, metaTags: {tagTls}.} =
+proc toStr(b: openArray[byte]): string {.role: helper, tag: "tls".} =
   ## b: bytes to view as a string.
   result = newString(b.len)
   for i, v in b:
     result[i] = char(v)
 
-proc toBytes(s: string): ByteSeq {.role: helper, metaTags: {tagTls}.} =
+proc toBytes(s: string): ByteSeq {.role: helper, tag: "tls".} =
   ## s: string to view as bytes.
   result = newSeq[byte](s.len)
   for i, c in s:
     result[i] = byte(c)
 
 proc sendAll(sock: var Socket, data: openArray[byte]): bool {.role: dataWriter,
-    metaTags: {tagTls, tagTransport, tagWrite}.} =
+    tag: "tls|transport|write".} =
   ## sock/data: connected socket and record bytes to write.
   if data.len == 0:
     return true
@@ -70,7 +70,7 @@ proc sendAll(sock: var Socket, data: openArray[byte]): bool {.role: dataWriter,
     result = false
 
 proc flushOutbound(sock: var Socket, O: Tls13ServerOutput): bool {.
-    role: dataWriter, metaTags: {tagTls, tagTransport, tagWrite}.} =
+    role: dataWriter, tag: "tls|transport|write".} =
   ## sock/O: socket and the records the session produced.
   var i: int = 0
   while i < O.outbound.len:
@@ -80,7 +80,7 @@ proc flushOutbound(sock: var Socket, O: Tls13ServerOutput): bool {.
   result = true
 
 proc readChunk(sock: var Socket, timeoutMs: int): tuple[ok: bool, data: string] {.
-    role: dataFetcher, metaTags: {tagTls, tagTransport, tagRead}.} =
+    role: dataFetcher, tag: "tls|transport|read".} =
   ## sock/timeoutMs: socket and per-read timeout; zero blocks indefinitely.
   var buf: string = newString(tls13SocketReadChunk)
   try:
@@ -99,7 +99,7 @@ proc readChunk(sock: var Socket, timeoutMs: int): tuple[ok: bool, data: string] 
 proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
     cfg: Tls13ServerConfig,
     timeoutMs: int = tls13SocketHandshakeTimeoutMs): Tls13SocketResult {.
-    role: orchestrator, metaTags: {tagTls, tagTransport, tagCryptoBoundary}.} =
+    role: orchestrator, tag: "tls|transport|cryptoBoundary".} =
   ## sock: connected plaintext socket to upgrade in place.
   ## S: socket session receiving the established TLS state.
   ## cfg: server certificate chain and matching private key.
@@ -147,7 +147,7 @@ proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
 
 proc pumpPlaintext(sock: var Socket, S: var Tls13SocketSession,
     timeoutMs: int): bool {.role: dataFetcher,
-    metaTags: {tagTls, tagTransport, tagRead}.} =
+    tag: "tls|transport|read".} =
   ## sock/S/timeoutMs: socket, session, and read timeout.
   ## Reads one ciphertext chunk and appends whatever plaintext it yields.
   var
@@ -168,7 +168,7 @@ proc pumpPlaintext(sock: var Socket, S: var Tls13SocketSession,
   result = true
 
 proc takeLine(S: var Tls13SocketSession): Option[string] {.role: parser,
-    metaTags: {tagTls, tagRead}.} =
+    tag: "tls|read".} =
   ## S: session whose buffered plaintext is scanned for one complete line.
   var idx: int = S.plaintext.find('\l')
   if idx < 0:
@@ -181,7 +181,7 @@ proc takeLine(S: var Tls13SocketSession): Option[string] {.role: parser,
 
 proc tls13SocketReadLine*(sock: var Socket, S: var Tls13SocketSession,
     timeoutMs: int = 0; maxLineLength: int = 0): Option[string] {.
-    role: dataFetcher, metaTags: {tagTls, tagTransport, tagRead}.} =
+    role: dataFetcher, tag: "tls|transport|read".} =
   ## sock/S: socket and established TLS session.
   ## timeoutMs: per-read timeout; zero blocks indefinitely.
   ## maxLineLength: refuse a line longer than this; zero disables the bound.
@@ -205,7 +205,7 @@ proc tls13SocketReadLine*(sock: var Socket, S: var Tls13SocketSession,
 
 proc tls13SocketWriteLine*(sock: var Socket, S: var Tls13SocketSession,
     line: string): bool {.role: dataWriter,
-    metaTags: {tagTls, tagTransport, tagWrite}.} =
+    tag: "tls|transport|write".} =
   ## sock/S/line: socket, established session, and payload without CRLF.
   if not tls13SocketActive(S):
     return false
@@ -216,7 +216,7 @@ proc tls13SocketWriteLine*(sock: var Socket, S: var Tls13SocketSession,
     result = false
 
 proc tls13SocketClose*(sock: var Socket, S: var Tls13SocketSession) {.
-    role: orchestrator, metaTags: {tagTls, tagTransport}.} =
+    role: orchestrator, tag: "tls|transport".} =
   ## sock/S: socket and session to shut down cleanly.
   if S.active and not S.closed:
     try:

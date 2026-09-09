@@ -27,7 +27,7 @@
 import std/strutils
 
 import ../../types
-import bifrostPragmas
+import runePragmas
 
 type
   AmeSymPrimitive* = enum

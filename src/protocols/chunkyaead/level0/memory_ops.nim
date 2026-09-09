@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------
 
 import ./types
-import bifrostPragmas
+import runePragmas
 
 when defined(windows):
   import std/winlean
@@ -48,7 +48,7 @@ proc resolveBufferBytes*(o: ChunkyOptions): int {.role: configurator.} =
 
 proc resolveThreadCount*(o: ChunkyOptions, perThreadBytes: int64,
     chunkCount: int): int {.role: configurator,
-    metaTags: {tagAppApi, tagChunkyAead}.} =
+    tag: "appApi|chunkyAead".} =
   var byMem, byOpt: int
   if chunkCount <= 0: return
   if availableRamBytes() > 0 and perThreadBytes > 0:

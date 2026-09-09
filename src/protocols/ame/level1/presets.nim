@@ -43,7 +43,7 @@ import ./symmetric
 import ./signatures
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 proc tmeAeadAmeCiphers*(): AmeCipherAlgorithms {.role: configurator.} =
   ## The three-cipher chain TMEAEAD ran, in TMEAEAD's order. A build that

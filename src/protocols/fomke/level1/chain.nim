@@ -39,7 +39,7 @@ import ../../ame/level1/suites
 import ../../ame/level1/tier_aead
 import ../types
 import ../level0/gb3hkdf
-import bifrostPragmas
+import runePragmas
 
 type
   FomkeChainBlock = object
@@ -48,12 +48,12 @@ type
     mk2: ByteSeq
 
 proc copyFomkeBytes(A: openArray[uint8]): ByteSeq {.role: helper,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## A: secret bytes copied into independent owned storage.
   result = @A
 
 proc sliceFomkeBytes(A: openArray[uint8], offset, count: int): ByteSeq {.
-    role: parser, metaTags: {tagCryptoBoundary, tagFomke}.} =
+    role: parser, tag: "cryptoBoundary|fomke".} =
   ## A/offset/count: source and bounded slice coordinates.
   var
     i: int = 0
@@ -65,7 +65,7 @@ proc sliceFomkeBytes(A: openArray[uint8], offset, count: int): ByteSeq {.
     i = i + 1
 
 proc appendFomkeField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: dataWriter, metaTags: {tagFomke, tagKdf}.} =
+    role: dataWriter, tag: "fomke|kdf".} =
   ## A/B: destination and one length-framed field.
   if uint64(B.len) > uint64(high(uint32)):
     raise newException(ValueError, "FOMKE field exceeds u32")
@@ -73,27 +73,27 @@ proc appendFomkeField(A: var ByteSeq, B: openArray[uint8]) {.
   appendAmeBytes(A, B)
 
 proc outboundFomkeLane*(r: FomkeRole): FomkeLane {.role: parser,
-    metaTags: {tagAppApi, tagFomke}.} =
+    tag: "appApi|fomke".} =
   ## r: local role mapped to its sender lane.
   if r == frInitiator:
     return flLane1
   result = flLane2
 
 proc inboundFomkeLane*(r: FomkeRole): FomkeLane {.role: parser,
-    metaTags: {tagAppApi, tagFomke}.} =
+    tag: "appApi|fomke".} =
   ## r: local role mapped to the remote sender lane.
   if r == frInitiator:
     return flLane2
   result = flLane1
 
 proc clearFomkeChain(C: var FomkeChainState) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## C: chain key and counter reset after secure erasure.
   secureClearAmeBytes(C.chainKey)
   C = default(FomkeChainState)
 
 proc clearFomkeSkipped(S: var seq[FomkeSkippedKey]) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## S: cached skipped message keys erased before release.
   var
     i: int = 0
@@ -103,7 +103,7 @@ proc clearFomkeSkipped(S: var seq[FomkeSkippedKey]) {.role: actor,
   S.setLen(0)
 
 proc clearFomkePending(P: var FomkePendingUpgrade) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "cryptoBoundary|exchange|fomke".} =
   ## P: candidate chains erased when committed or cancelled.
   clearFomkeChain(P.candidateLane1)
   clearFomkeChain(P.candidateLane2)
@@ -111,7 +111,7 @@ proc clearFomkePending(P: var FomkePendingUpgrade) {.role: actor,
   P = default(FomkePendingUpgrade)
 
 proc clearFomkeState*(S: var FomkeState) {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## S: all current, skipped, and candidate secret material erased.
   clearFomkeChain(S.lane1)
   clearFomkeChain(S.lane2)
@@ -120,13 +120,13 @@ proc clearFomkeState*(S: var FomkeState) {.role: actor,
   S = default(FomkeState)
 
 proc cloneFomkeChain(C: FomkeChainState): FomkeChainState {.role: helper,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## C: chain copied without sharing secret byte storage.
   result.chainKey = copyFomkeBytes(C.chainKey)
   result.nextIndex = C.nextIndex
 
 proc cloneFomkeSkipped(S: openArray[FomkeSkippedKey]): seq[FomkeSkippedKey] {.
-    role: helper, metaTags: {tagCryptoBoundary, tagFomke}.} =
+    role: helper, tag: "cryptoBoundary|fomke".} =
   ## S: skipped-key cache copied without sharing key storage.
   var
     i: int = 0
@@ -138,7 +138,7 @@ proc cloneFomkeSkipped(S: openArray[FomkeSkippedKey]): seq[FomkeSkippedKey] {.
     i = i + 1
 
 proc cloneFomkeState*(S: FomkeState): FomkeState {.role: helper,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## S: complete state copied for transactional authenticated receive.
   result = S
   result.lane1 = cloneFomkeChain(S.lane1)
@@ -150,14 +150,14 @@ proc cloneFomkeState*(S: FomkeState): FomkeState {.role: helper,
     S.pending.commit.confirmationTag)
 
 proc clearFomkePreparedEntry(E: var FomkePreparedSendEntry) {.
-    role: actor, metaTags: {tagCryptoBoundary, tagFomke}.} =
+    role: actor, tag: "cryptoBoundary|fomke".} =
   ## E: one unused future message slot securely erased.
   secureClearAmeBytes(E.material)
   secureClearAmeBytes(E.nextChainKey)
   E = default(FomkePreparedSendEntry)
 
 proc clearFomkeSendCache*(C: var FomkeSendCache) {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## C: caller-owned future-message key blocks erased.
   var
     i: int = 0
@@ -169,7 +169,7 @@ proc clearFomkeSendCache*(C: var FomkeSendCache) {.role: actor,
   C = default(FomkeSendCache)
 
 proc cloneFomkeSendCache*(C: FomkeSendCache): FomkeSendCache {.role: helper,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## C: future-message cache copied without sharing mutable secret storage.
   var
     i: int = 0
@@ -183,14 +183,14 @@ proc cloneFomkeSendCache*(C: FomkeSendCache): FomkeSendCache {.role: helper,
     i = i + 1
 
 proc fomkePreparedMessages*(C: FomkeSendCache): int {.role: parser,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## C: cache whose number of unused sequential send slots is returned.
   if C.nextEntry < 0 or C.nextEntry > C.entries.len:
     return
   result = C.entries.len - C.nextEntry
 
 proc fomkePreparedSecretBytes*(C: FomkeSendCache): int {.role: parser,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## C: currently allocated secret bytes, excluding sequence/object overhead.
   var
     i: int = 0
@@ -201,7 +201,7 @@ proc fomkePreparedSecretBytes*(C: FomkeSendCache): int {.role: parser,
     i = i + 1
 
 proc validateFomkeState*(S: FomkeState) {.role: parser,
-    metaTags: {tagCryptoBoundary, tagFomke, tagValidation}.} =
+    tag: "cryptoBoundary|fomke|validation".} =
   ## S: initialized state checked before key progression.
   var
     i: int = 0
@@ -221,8 +221,7 @@ proc validateFomkeState*(S: FomkeState) {.role: parser,
     i = i + 1
 
 proc fomkeSendCacheMatches*(S: FomkeState, C: FomkeSendCache): bool {.
-    role: parser, metaTags: {tagAppApi, tagCryptoBoundary, tagFomke,
-    tagValidation}.} =
+    role: parser, tag: "appApi|cryptoBoundary|fomke|validation".} =
   ## S/C: live outbound chain and one non-mutating prepared snapshot.
   var
     lane: FomkeLane = flLane1
@@ -240,7 +239,7 @@ proc fomkeSendCacheMatches*(S: FomkeState, C: FomkeSendCache): bool {.
     constantTimeEqualAme(C.chainKey, chain.chainKey)
 
 proc requireFomkeQuiescent(S: FomkeState) {.role: parser,
-    metaTags: {tagExchange, tagFomke, tagValidation}.} =
+    tag: "exchange|fomke|validation".} =
   ## S: message state that must not progress during a KEM upgrade commit.
   validateFomkeState(S)
   if S.pending.active:
@@ -249,7 +248,7 @@ proc requireFomkeQuiescent(S: FomkeState) {.role: parser,
 proc buildFomkeRootInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
     t: AmeMaskTier, epoch: uint32,
     context: openArray[uint8]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## A/L/t/epoch/context: KEM path, slot layout, active slots, root epoch, and
   ## the handshake transcript the caller binds in.
   appendAmeLabel(result, "FOMKE-ROOT-v2")
@@ -261,7 +260,7 @@ proc buildFomkeRootInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
 
 proc deriveFomkeLaneRoot(root: openArray[uint8], lane: FomkeLane,
     epoch: uint32, c: Gb3KdfConfig): FomkeChainState {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## root/lane/epoch/c: ephemeral root and direction-bound chain derivation.
   var
     info: ByteSeq = @[]
@@ -277,7 +276,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     maxSkip: uint32 = fomkeDefaultMaxSkip,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|exchange|fomke".} =
   ## S: EVERY shared secret the exchange produced, in slot order. All of them
   ##    are consumed and erased on return. Mixing all of them is what makes a
   ##    hybrid exchange worth having: an attacker must break every slot, not
@@ -327,7 +326,7 @@ proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
     maxSkip: uint32 = fomkeDefaultMaxSkip,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
-    metaTags: {tagAppApi, tagAme, tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "appApi|ame|cryptoBoundary|exchange|fomke".} =
   ## E/L/t: finished exchange plus the slot layout and active slots.
   ## role/context/c/maxSkip/tagLen: endpoint and derivation policy.
   ##
@@ -359,7 +358,7 @@ proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
 
 proc buildFomkeBlockInfo(lane: FomkeLane, epoch: uint32,
     index: uint64): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## lane/epoch/index: exact directional chain block identity.
   appendAmeLabel(result, "FOMKE-CHAIN-BLOCK-v2")
   result.add(uint8(ord(lane)))
@@ -368,7 +367,7 @@ proc buildFomkeBlockInfo(lane: FomkeLane, epoch: uint32,
 
 proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
     epoch: uint32, c: Gb3KdfConfig): FomkeChainBlock {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## C/lane/epoch/c: chain and exact derivation context. One step yields the
   ## replacement chain key plus one message key per direction; the caller
   ## keeps the one for its own lane and destroys the other immediately.
@@ -390,7 +389,7 @@ proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
 proc advanceFomkeChain(C: var FomkeChainState, lane: FomkeLane,
     epoch: uint32, c: Gb3KdfConfig): tuple[index: uint64,
     keyMaterial: ByteSeq] {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## C/lane/epoch/c: chain advanced by exactly one message key.
   ## The old chain key is erased here, which is the step that makes the
   ## ratchet one-way.
@@ -410,7 +409,7 @@ proc advanceFomkeChain(C: var FomkeChainState, lane: FomkeLane,
 
 proc buildFomkeMessageAad(S: FomkeState, epoch: uint32, index: uint64,
     lane: FomkeLane, aad: openArray[uint8]): ByteSeq {.
-    role: truthBuilder, metaTags: {tagCryptoBoundary, tagFomke}.} =
+    role: truthBuilder, tag: "cryptoBoundary|fomke".} =
   ## S/epoch/index/lane/aad: message identity and the caller's own binding.
   ## The message position is authenticated even though it also travels in
   ## the clear header, so a header field cannot be edited in flight.
@@ -423,7 +422,7 @@ proc buildFomkeMessageAad(S: FomkeState, epoch: uint32, index: uint64,
 
 proc deriveFomkeMessageMaterial(S: FomkeState, mk: openArray[uint8],
     epoch: uint32, index: uint64, lane: FomkeLane): ByteSeq {.
-    role: truthBuilder, metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    role: truthBuilder, tag: "cryptoBoundary|fomke|kdf".} =
   ## S/mk/epoch/index/lane: one ratchet key expanded into the whole block the
   ## slot construction needs -- nonce, then one key per switched-on cipher,
   ## then one per switched-on authenticator. Derived in ONE pass, so the cost
@@ -442,7 +441,7 @@ proc deriveFomkeMessageMaterial(S: FomkeState, mk: openArray[uint8],
 
 proc sealFomkeMessage*(S: var FomkeState, plaintext: openArray[uint8],
     aad: openArray[uint8] = []): FomkeMessage {.role: orchestrator,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## S/plaintext/aad: sender state, one message, and external binding.
   var
     lane: FomkeLane = flLane1
@@ -474,14 +473,14 @@ proc sealFomkeMessage*(S: var FomkeState, plaintext: openArray[uint8],
   secureClearAmeBytes(messageAad)
 
 proc requireFomkeSendCacheBounds(messageCount: int) {.
-    role: parser, metaTags: {tagCryptoBoundary, tagFomke, tagValidation}.} =
+    role: parser, tag: "cryptoBoundary|fomke|validation".} =
   ## messageCount: bounded cache size before any secret work is done.
   if messageCount <= 0 or messageCount > fomkeMaxPreparedMessages:
     raise newException(ValueError, "FOMKE prepared message count is invalid")
 
 proc prepareFomkeSendCache*(S: FomkeState,
     messageCount: int = fomkeDefaultPreparedMessages): FomkeSendCache {.
-    role: truthBuilder, metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    role: truthBuilder, tag: "appApi|cryptoBoundary|fomke".} =
   ## S/messageCount: outbound snapshot and bounded future slots. This does not
   ## advance S, so it can be built off the latency-sensitive path.
   ##
@@ -528,7 +527,7 @@ proc prepareFomkeSendCache*(S: FomkeState,
 
 proc preparedEntryMatches(E: FomkePreparedSendEntry, S: FomkeState,
     C: FomkeSendCache, lane: FomkeLane): bool {.role: parser,
-    metaTags: {tagCryptoBoundary, tagFomke, tagValidation}.} =
+    tag: "cryptoBoundary|fomke|validation".} =
   ## E/S/C/lane: next entry bound to the current epoch and direction.
   result = E.epoch == S.epoch and E.index == C.nextIndex and E.lane == lane and
     E.material.len == ameTierKeyMaterialLen(S.layout, S.tier) and
@@ -536,7 +535,7 @@ proc preparedEntryMatches(E: FomkePreparedSendEntry, S: FomkeState,
 
 proc commitFomkePreparedChain(S: var FomkeState, C: var FomkeSendCache,
     E: FomkePreparedSendEntry, lane: FomkeLane) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## S/C/E/lane: authenticated send slot committed to live and cache cursors.
   var
     nextChainKey: ByteSeq = copyFomkeBytes(E.nextChainKey)
@@ -557,7 +556,7 @@ proc commitFomkePreparedChain(S: var FomkeState, C: var FomkeSendCache,
 
 proc sealFomkeMessagePrepared*(S: var FomkeState, C: var FomkeSendCache,
     plaintext: openArray[uint8], aad: openArray[uint8] = []): FomkeMessage {.
-    role: orchestrator, metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    role: orchestrator, tag: "appApi|cryptoBoundary|fomke".} =
   ## S/C/plaintext/aad: live state, future cache, payload, and external binding.
   ## Falls back to the plain path whenever the cache no longer lines up, so a
   ## stale cache can never seal under a key the live chain has moved past.
@@ -592,7 +591,7 @@ proc sealFomkeMessagePrepared*(S: var FomkeState, C: var FomkeSendCache,
 
 proc takeSkippedFomkeKey(S: var seq[FomkeSkippedKey], epoch: uint32,
     index: uint64, lane: FomkeLane): ByteSeq {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke}.} =
+    tag: "cryptoBoundary|fomke".} =
   ## S/epoch/index/lane: cache and exact previously skipped key identity.
   ## Taking a key removes it, so the same message can never open twice.
   var
@@ -607,7 +606,7 @@ proc takeSkippedFomkeKey(S: var seq[FomkeSkippedKey], epoch: uint32,
 
 proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
     lane: FomkeLane): ByteSeq {.role: actor,
-    metaTags: {tagCryptoBoundary, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|fomke|kdf".} =
   ## S/index/lane: receive chain advanced up to one message, at most `maxSkip`
   ## steps ahead. Keys for the messages that were jumped over are cached, so a
   ## datagram that arrives late still opens; anything further ahead is refused
@@ -650,7 +649,7 @@ proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
 
 proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
     aad: openArray[uint8] = []): FomkeOpenResult {.role: orchestrator,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## S/message/aad: transactional receiver state, envelope, and binding bytes.
   ##
   ## The whole state is copied first and only swapped in once the tag has
@@ -704,7 +703,7 @@ proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
     result.err = exc.msg
 
 proc canonicalFomkeLaneMaterial(S: FomkeState): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagExchange, tagFomke, tagKdf}.} =
+    tag: "cryptoBoundary|exchange|fomke|kdf".} =
   ## S: current lane keys and counters framed in role-independent lane order.
   appendAmeLabel(result, "FOMKE-CURRENT-LANES-v1")
   appendAmeU64(result, S.lane1.nextIndex)
@@ -715,7 +714,7 @@ proc canonicalFomkeLaneMaterial(S: FomkeState): ByteSeq {.role: truthBuilder,
 proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
     A: AmeKemAlgorithms, L: AmeSuiteLayout): ByteSeq {.
     role: truthBuilder,
-    metaTags: {tagExchange, tagFomke, tagKdf}.} =
+    tag: "exchange|fomke|kdf".} =
   ## c/A/L: public commit fields, KEM path, and the slot layout they sit in.
   var
     i: int = 0
@@ -741,8 +740,7 @@ proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
 
 proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
     generations: var array[ameMaxAlgorithmSlots, uint32]): seq[ByteSeq] {.
-    role: truthBuilder, metaTags: {tagAme, tagCryptoBoundary, tagExchange,
-    tagFomke}.} =
+    role: truthBuilder, tag: "ame|cryptoBoundary|exchange|fomke".} =
   ## E/r/generations: candidate AME state, exact mask, and bound slot counters.
   var
     i: int = 0
@@ -763,7 +761,7 @@ proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
     i = i + 1
 
 proc clearFomkeSecretRows(S: var seq[ByteSeq]) {.role: actor,
-    metaTags: {tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "cryptoBoundary|exchange|fomke".} =
   ## S: temporary framed secret rows erased after derivation.
   var
     i: int = 0
@@ -775,7 +773,7 @@ proc clearFomkeSecretRows(S: var seq[ByteSeq]) {.role: actor,
 proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
     targetEpoch: uint32, r: AmeExchangeRequest,
     candidate: AmeExchangeState): FomkeUpgradeCommit {.role: orchestrator,
-    metaTags: {tagAppApi, tagAme, tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "appApi|ame|cryptoBoundary|exchange|fomke".} =
   ## S/requestId/targetEpoch: quiescent chain and authenticated AME transaction.
   ## r/candidate: exact upgrade mask and resulting AME state.
   ##
@@ -828,7 +826,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   secureClearAmeBytes(confirmInfo)
 
 proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
-    role: parser, metaTags: {tagAppApi, tagExchange, tagFomke}.} =
+    role: parser, tag: "appApi|exchange|fomke".} =
   ## a/b: local candidate identity and authenticated peer confirmation.
   var
     i: int = 0
@@ -844,14 +842,13 @@ proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
   result = constantTimeEqualAme(a.confirmationTag, b.confirmationTag)
 
 proc validateFomkeUpgrade*(S: FomkeState, c: FomkeUpgradeCommit) {.
-    role: parser, metaTags: {tagAppApi, tagExchange, tagFomke, tagValidation}.} =
+    role: parser, tag: "appApi|exchange|fomke|validation".} =
   ## S/c: pending local candidate and peer-confirmed commit.
   if not S.pending.active or not fomkeUpgradeCommitsEqual(S.pending.commit, c):
     raise newException(ValueError, "FOMKE upgrade confirmation mismatch")
 
 proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
-    role: actor, metaTags: {tagAppApi, tagCryptoBoundary, tagExchange,
-    tagFomke}.} =
+    role: actor, tag: "appApi|cryptoBoundary|exchange|fomke".} =
   ## S/c: state atomically replaced after exact authenticated confirmation.
   ## The new tier takes effect here and nowhere else, so the slot selection
   ## and the chain keys always change together.
@@ -876,18 +873,18 @@ proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
   validateFomkeState(S)
 
 proc cancelFomkeUpgrade*(S: var FomkeState) {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagExchange, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|exchange|fomke".} =
   ## S: unconfirmed candidate erased while current chains remain unchanged.
   clearFomkePending(S.pending)
 
 proc fomkeSkippedMessages*(S: FomkeState): int {.role: parser,
-    metaTags: {tagAppApi, tagFomke}.} =
+    tag: "appApi|fomke".} =
   ## S: how many jumped-over messages this side is still holding keys for.
   ## A caller watches this to decide when to give up on them.
   result = S.skipped.len
 
 proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagFomke}.} =
+    tag: "appApi|cryptoBoundary|fomke".} =
   ## S: give up on every message that was jumped over, and say how many were
   ## given up on. Their keys are erased, so those messages can never be
   ## opened afterwards, even if they do turn up.

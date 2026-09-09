@@ -16,15 +16,15 @@
 
 import std/strutils
 import ../types
-import bifrostPragmas
+import runePragmas
 
 proc lowerAscii(c: char): char {.inline, role: helper,
-    metaTags: {tagProtocol, tagFormatting}.} =
+    tag: "protocol|formatting".} =
   ## c: single byte to fold to lowercase.
   if c >= 'A' and c <= 'Z': char(ord(c) + 32) else: c
 
 proc httpNamesEqual*(a: string; b: string): bool {.role: parser,
-    metaTags: {tagProtocol, tagValidation}.} =
+    tag: "protocol|validation".} =
   ## a/b: two field names to compare ignoring ASCII case.
   var
     i: int = 0
@@ -37,7 +37,7 @@ proc httpNamesEqual*(a: string; b: string): bool {.role: parser,
   result = true
 
 proc getHeader*(H: HttpHeaders; n: string; d: string = ""): string {.
-    role: parser, metaTags: {tagProtocol, tagRead}.} =
+    role: parser, tag: "protocol|read".} =
   ## H/n/d: header list, field name to find, value returned when absent.
   ##
   ## Returns the first match. Use `getHeaderAll` when a field may
@@ -51,7 +51,7 @@ proc getHeader*(H: HttpHeaders; n: string; d: string = ""): string {.
   result = d
 
 proc getHeaderAll*(H: HttpHeaders; n: string): seq[string] {.role: parser,
-    metaTags: {tagProtocol, tagRead}.} =
+    tag: "protocol|read".} =
   ## H/n: header list and field name to collect every value for.
   var
     i: int = 0
@@ -62,7 +62,7 @@ proc getHeaderAll*(H: HttpHeaders; n: string): seq[string] {.role: parser,
     i = i + 1
 
 proc hasHeader*(H: HttpHeaders; n: string): bool {.role: parser,
-    metaTags: {tagProtocol, tagRead}.} =
+    tag: "protocol|read".} =
   ## H/n: header list and field name to test for presence.
   var
     i: int = 0
@@ -73,7 +73,7 @@ proc hasHeader*(H: HttpHeaders; n: string): bool {.role: parser,
   result = false
 
 proc countHeader*(H: HttpHeaders; n: string): int {.role: parser,
-    metaTags: {tagProtocol, tagRead}.} =
+    tag: "protocol|read".} =
   ## H/n: header list and field name to count occurrences of.
   var
     i: int = 0
@@ -84,14 +84,14 @@ proc countHeader*(H: HttpHeaders; n: string): int {.role: parser,
     i = i + 1
 
 proc addHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
-    metaTags: {tagProtocol, tagWrite}.} =
+    tag: "protocol|write".} =
   ## H/n/v: header list to append to, field name, field value.
   ##
   ## Appends without touching any existing field of the same name.
   H.add(HttpHeader(name: n, value: v))
 
 proc setHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
-    metaTags: {tagProtocol, tagWrite}.} =
+    tag: "protocol|write".} =
   ## H/n/v: header list to update, field name, replacement value.
   ##
   ## Replaces the first match in place and drops any later duplicates,
@@ -113,7 +113,7 @@ proc setHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
   H = keep
 
 proc delHeader*(H: var HttpHeaders; n: string) {.role: dataWriter,
-    metaTags: {tagProtocol, tagWrite}.} =
+    tag: "protocol|write".} =
   ## H/n: header list to prune and field name to remove entirely.
   var
     i: int = 0
@@ -125,7 +125,7 @@ proc delHeader*(H: var HttpHeaders; n: string) {.role: dataWriter,
   H = keep
 
 proc isTokenChar(c: char): bool {.inline, role: parser,
-    metaTags: {tagProtocol, tagValidation}.} =
+    tag: "protocol|validation".} =
   ## c: byte to test against the RFC 9110 `tchar` set.
   case c
   of 'a'..'z', 'A'..'Z', '0'..'9',
@@ -136,7 +136,7 @@ proc isTokenChar(c: char): bool {.inline, role: parser,
     false
 
 proc isValidHeaderName*(n: string): bool {.role: sanitizer,
-    metaTags: {tagProtocol, tagValidation}.} =
+    tag: "protocol|validation".} =
   ## n: candidate field name to validate.
   ##
   ## A name is a non-empty run of token characters. Rejecting anything
@@ -153,7 +153,7 @@ proc isValidHeaderName*(n: string): bool {.role: sanitizer,
   result = true
 
 proc isValidHeaderValue*(v: string): bool {.role: sanitizer,
-    metaTags: {tagProtocol, tagValidation}.} =
+    tag: "protocol|validation".} =
   ## v: candidate field value to validate.
   ##
   ## Printable bytes, horizontal tab, and high-range bytes are allowed.
@@ -171,7 +171,7 @@ proc isValidHeaderValue*(v: string): bool {.role: sanitizer,
   result = true
 
 proc trimFieldValue*(v: string): string {.role: sanitizer,
-    metaTags: {tagProtocol, tagFormatting}.} =
+    tag: "protocol|formatting".} =
   ## v: raw field value to strip of surrounding spaces and tabs.
   var
     a: int = 0
@@ -185,7 +185,7 @@ proc trimFieldValue*(v: string): string {.role: sanitizer,
   result = v[a .. b]
 
 proc headerHasToken*(H: HttpHeaders; n: string; t: string): bool {.
-    role: parser, metaTags: {tagProtocol, tagValidation}.} =
+    role: parser, tag: "protocol|validation".} =
   ## H/n/t: header list, field name, and comma-separated token to find.
   ##
   ## `Connection: keep-alive, Upgrade` holds two tokens; this finds

@@ -4,34 +4,34 @@
 
 import ../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 const
   tls13RecordHeaderLen* = 5
   tls13HandshakeHeaderLen* = 4
 
 proc appendU16Be(A: var ByteSeq, v: uint16) {.role: dataWriter,
-    metaTags: {tagTls, tagWrite}.} =
+    tag: "tls|write".} =
   ## A/v: destination and big-endian integer.
   A.add(byte(v shr 8))
   A.add(byte(v))
 
 proc appendU24Be(A: var ByteSeq, v: uint32) {.role: dataWriter,
-    metaTags: {tagTls, tagWrite}.} =
+    tag: "tls|write".} =
   ## A/v: destination and 24-bit big-endian integer.
   A.add(byte(v shr 16))
   A.add(byte(v shr 8))
   A.add(byte(v))
 
 proc readU16Be(A: openArray[byte], o: int): uint16 {.role: parser,
-    metaTags: {tagTls, tagRead}.} =
+    tag: "tls|read".} =
   ## A/o: source and first integer byte.
   if o < 0 or o > A.len - 2:
     raise newException(ValueError, "TLS uint16 is incomplete")
   result = (uint16(A[o]) shl 8) or uint16(A[o + 1])
 
 proc readU24Be(A: openArray[byte], o: int): uint32 {.role: parser,
-    metaTags: {tagTls, tagRead}.} =
+    tag: "tls|read".} =
   ## A/o: source and first integer byte.
   if o < 0 or o > A.len - 3:
     raise newException(ValueError, "TLS uint24 is incomplete")
@@ -39,7 +39,7 @@ proc readU24Be(A: openArray[byte], o: int): uint32 {.role: parser,
     uint32(A[o + 2])
 
 proc parseContentType(v: byte, t: var Tls13ContentType): bool {.role: parser,
-    metaTags: {tagTls, tagValidation}.} =
+    tag: "tls|validation".} =
   ## v/t: wire value and parsed content type.
   case v
   of 20'u8: t = tctChangeCipherSpec
@@ -50,7 +50,7 @@ proc parseContentType(v: byte, t: var Tls13ContentType): bool {.role: parser,
   result = true
 
 proc parseHandshakeType(v: byte, t: var Tls13HandshakeType): bool {.
-    role: parser, metaTags: {tagTls, tagValidation}.} =
+    role: parser, tag: "tls|validation".} =
   ## v/t: wire value and parsed handshake type.
   case v
   of 1'u8: t = thtClientHello
@@ -67,7 +67,7 @@ proc parseHandshakeType(v: byte, t: var Tls13HandshakeType): bool {.
   result = true
 
 proc copySpan(A: openArray[byte], o, n: int): ByteSeq {.role: helper,
-    metaTags: {tagTls, tagRead}.} =
+    tag: "tls|read".} =
   ## A/o/n: source, offset, and bounded byte count.
   var i: int = 0
   if o < 0 or n < 0 or o > A.len or n > A.len - o:
@@ -78,7 +78,7 @@ proc copySpan(A: openArray[byte], o, n: int): ByteSeq {.role: helper,
     i = i + 1
 
 proc encodeTls13Record*(r: Tls13Record): ByteSeq {.role: dataWriter,
-    metaTags: {tagTls, tagWrite, tagPacket}.} =
+    tag: "tls|write|packet".} =
   ## r: bounded plaintext or ciphertext record.
   var maxLen: int = tls13PlaintextLimit
   if r.contentType == tctApplicationData:
@@ -93,7 +93,7 @@ proc encodeTls13Record*(r: Tls13Record): ByteSeq {.role: dataWriter,
   result.add(r.fragment)
 
 proc decodeTls13Record*(A: openArray[byte]): Tls13RecordResult {.role: parser,
-    metaTags: {tagTls, tagRead, tagValidation}.} =
+    tag: "tls|read|validation".} =
   ## A: stream bytes beginning at a TLS record boundary.
   var
     n, version: uint16 = 0
@@ -128,7 +128,7 @@ proc decodeTls13Record*(A: openArray[byte]): Tls13RecordResult {.role: parser,
 
 proc encodeTls13Handshake*(h: Tls13Handshake,
     maxBytes: int = tls13DefaultHandshakeLimit): ByteSeq {.role: dataWriter,
-    metaTags: {tagTls, tagWrite, tagPacket}.} =
+    tag: "tls|write|packet".} =
   ## h/maxBytes: handshake message and caller resource bound.
   if maxBytes < 0 or h.body.len > maxBytes or h.body.len > 0x00ff_ffff:
     raise newException(ValueError, "TLS handshake body exceeds maximum")
@@ -138,7 +138,7 @@ proc encodeTls13Handshake*(h: Tls13Handshake,
 
 proc decodeTls13Handshake*(A: openArray[byte],
     maxBytes: int = tls13DefaultHandshakeLimit): Tls13HandshakeResult {.
-    role: parser, metaTags: {tagTls, tagRead, tagValidation}.} =
+    role: parser, tag: "tls|read|validation".} =
   ## A/maxBytes: buffered handshake bytes and caller resource bound.
   var
     n: uint32 = 0
@@ -168,6 +168,6 @@ proc decodeTls13Handshake*(A: openArray[byte],
   result.ok = true
 
 proc validateTls13LegacyCompression*(A: openArray[byte]): bool {.role: parser,
-    metaTags: {tagTls, tagValidation}.} =
+    tag: "tls|validation".} =
   ## A: ClientHello legacy compression vector; TLS 1.3 requires exactly null.
   result = A.len == 1 and A[0] == 0'u8

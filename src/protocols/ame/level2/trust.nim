@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------------
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 proc initVerifiedAmePeerTrust*(authority, subjectKeyId: string,
     algorithms: openArray[AmeSignatureAlgorithm]): AmePeerTrustResult {.

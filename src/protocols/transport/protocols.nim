@@ -3,7 +3,7 @@
 ## ----------------------------------------------------------
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   tcpTransportProtocolId* = "transport.tcp"

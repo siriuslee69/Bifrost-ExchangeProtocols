@@ -10,7 +10,7 @@ import tyr/hashes/blake3 as tyr_blake3
 import tyr/macs/hmac as tyr_hmac
 
 import ../../../types
-import bifrostPragmas
+import runePragmas
 
 proc blake3AmeHash*(data: openArray[byte], outLen: int): ByteSeq {.
     role: helper.} =

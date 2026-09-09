@@ -8,7 +8,7 @@ import tyr/kems/x25519
 
 import ../types
 import ./[types, codec, hello, key_schedule, transcript, handshake_messages]
-import bifrostPragmas
+import runePragmas
 
 type
   Tls13HandshakeState* = enum
@@ -43,18 +43,18 @@ type
     err*: string
 
 proc failHandshake(R: var Tls13ControlledResult, e: string) {.
-    role: actor, metaTags: {tagTls, tagValidation}.} =
+    role: actor, tag: "tls|validation".} =
   R.clientState = thsFailed
   R.serverState = thsFailed
   R.err = e
 
 proc wrapHandshake(t: Tls13HandshakeType, body: ByteSeq): ByteSeq {.
-    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
+    role: dataWriter, tag: "tls|write".} =
   result = encodeTls13Handshake(Tls13Handshake(messageType: t, body: body))
 
 proc runControlledTls13Handshake*(C: Tls13ControlledConfig):
     Tls13ControlledResult {.role: metaOrchestrator,
-    metaTags: {tagTls, tagOrchestrator, tagCryptoBoundary}.} =
+    tag: "tls|orchestrator|cryptoBoundary".} =
   ## C: deterministic controlled-profile credentials, identity, and X25519 seeds.
   var
     clientKp, serverKp: X25519TyrKeypair

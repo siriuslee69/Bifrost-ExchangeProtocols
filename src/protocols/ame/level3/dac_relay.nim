@@ -14,7 +14,7 @@ import ../../dac/level2/package_transfer
 import ../../dac/level3/link
 import ../../dac/level3/link_table
 import ../level2/session
-import bifrostPragmas
+import runePragmas
 
 const
   ameDacRelayAscii* = """

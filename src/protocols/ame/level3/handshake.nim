@@ -52,7 +52,7 @@ import ../level1/padding
 import ../level1/path_triggers
 import ../level2/session
 import ../../fomke/level0/gb3hkdf
-import bifrostPragmas
+import runePragmas
 
 const
   ameCookieSecretLen* = 32
@@ -231,7 +231,7 @@ proc initAmePskAuthentication*(identifier: string,
 
 proc amePskTranscriptProof*(a: AmeAuthentication, d: AmePskProofDirection,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## a/d/transcript: which end is proving, and the bytes it is proving over.
   ##
   ## The direction byte is inside the tagged subject, so the two proofs of one
@@ -248,7 +248,7 @@ proc amePskTranscriptProof*(a: AmeAuthentication, d: AmePskProofDirection,
   secureClearAmeBytes(subject)
 
 proc amePskExchangeBinder*(a: AmeAuthentication): ByteSeq {.
-    role: truthBuilder, metaTags: {tagCryptoBoundary, tagKdf}.} =
+    role: truthBuilder, tag: "cryptoBoundary|kdf".} =
   ## a: provisioned shared secret turned into ONE key-schedule input.
   ##
   ## This is what makes AM1M worth having. The proof above only says who is
@@ -270,7 +270,7 @@ proc amePskExchangeBinder*(a: AmeAuthentication): ByteSeq {.
   secureClearAmeBytes(subject)
 
 proc ameHandshakeBinder(a: AmeAuthentication): ByteSeq {.role: helper,
-    metaTags: {tagCryptoBoundary, tagKdf}.} =
+    tag: "cryptoBoundary|kdf".} =
   ## a: the extra secret row this mode contributes, empty for AM1C and AM1S.
   if a.mode != atmPskMac:
     return
@@ -278,7 +278,7 @@ proc ameHandshakeBinder(a: AmeAuthentication): ByteSeq {.role: helper,
 
 proc verifyAmePskTranscript*(a: AmeAuthentication, d: AmePskProofDirection,
     transcript, proof: openArray[uint8]): bool {.role: parser,
-    metaTags: {tagCryptoBoundary, tagValidation}.} =
+    tag: "cryptoBoundary|validation".} =
   ## a/d/transcript/proof: constant-time check of one directional proof.
   var expected: ByteSeq = amePskTranscriptProof(a, d, transcript)
   result = constantTimeEqualAme(expected, proof)
@@ -849,7 +849,7 @@ proc decodeCertificateSubject*(A: openArray[uint8],
   result.validUntilUnix = cast[int64](readCertU64(A, cursor))
 
 proc encodeAmeIdentityCertificate*(c: AmeIdentityCertificate): ByteSeq {.
-    role: dataWriter, metaTags: {tagAppApi, tagCodecBoundary}.} =
+    role: dataWriter, tag: "appApi|codecBoundary".} =
   ## c: authority certificate or unsigned pinned identity descriptor.
   var
     certificateShape: bool = c.authority.len > 0 and
@@ -865,7 +865,7 @@ proc encodeAmeIdentityCertificate*(c: AmeIdentityCertificate): ByteSeq {.
 
 proc decodeAmeIdentityCertificate*(A: openArray[uint8]):
     AmeIdentityCertificate {.role: parser,
-    metaTags: {tagAppApi, tagCodecBoundary, tagParsing}.} =
+    tag: "appApi|codecBoundary|parsing".} =
   ## A: complete bounded certificate or pinned identity descriptor bytes.
   var
     cursor: int = 0
@@ -939,7 +939,7 @@ proc handshakeTranscript*(c: AmeClientHello,
 proc handshakeKeyMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
     S: openArray[ByteSeq], transcript: openArray[uint8],
     label: string): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagKdf}.} =
+    tag: "cryptoBoundary|kdf".} =
   ## L/t/S/transcript/label: slot selection, every KEM secret, the transcript
   ## so far, and which direction this key block is for.
   var
@@ -957,7 +957,7 @@ proc handshakeKeyMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
 
 proc secretRows(A: AmeKemAlgorithms, mask: uint8,
     S: openArray[ByteSeq]): seq[ByteSeq] {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## A/mask/S: shared secrets framed with the slot and algorithm they came
   ## from, so two different slot orders can never hash to the same input.
   var
@@ -988,7 +988,7 @@ proc clearSecretRows(S: var seq[ByteSeq]) {.role: actor.} =
   S.setLen(0)
 
 proc appendBinderRow(R: var seq[ByteSeq], a: AmeAuthentication) {.
-    role: dataWriter, metaTags: {tagCryptoBoundary, tagKdf}.} =
+    role: dataWriter, tag: "cryptoBoundary|kdf".} =
   ## R/a: add this mode's extra secret row, if it has one.
   ##
   ## AM1C and AM1S add nothing, so their key schedule is byte for byte what
@@ -1038,7 +1038,7 @@ proc cookieSubject(peerId: openArray[uint8], issuedAtUnix: int64,
 
 proc issueAmeCookie*(secret: AmeCookieSecret, peerId: openArray[uint8],
     nowUnix: int64, h: AmeClientHello): ByteSeq {.role: truthBuilder,
-    metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    tag: "appApi|cryptoBoundary".} =
   ## secret/peerId/nowUnix/h: mint one cookie. It is a timestamp followed by a
   ## tag over that timestamp and the sender's address, so the server keeps no
   ## per-client state at all -- it recomputes the tag when the cookie returns.
@@ -1053,7 +1053,7 @@ proc issueAmeCookie*(secret: AmeCookieSecret, peerId: openArray[uint8],
 
 proc ameCookieValid*(secret: AmeCookieSecret, peerId: openArray[uint8],
     nowUnix: int64, h: AmeClientHello): bool {.role: parser,
-    metaTags: {tagAppApi, tagCryptoBoundary, tagValidation}.} =
+    tag: "appApi|cryptoBoundary|validation".} =
   ## secret/peerId/nowUnix/h: check the cookie the hello carries.
   var
     issuedAtUnix: int64 = 0'i64
@@ -1080,7 +1080,7 @@ proc ameCookieValid*(secret: AmeCookieSecret, peerId: openArray[uint8],
 proc beginAmeHandshake*(sessionId: uint64, L: AmeSuiteLayout,
     initialTier: AmeMaskTier, requestId: uint32 = 1'u32,
     cookie: openArray[uint8] = [], mode: AmeTrustMode = atmAuthorityCertificate): AmeClientHandshake {.
-    role: orchestrator, metaTags: {tagAppApi, tagExchange}.} =
+    role: orchestrator, tag: "appApi|exchange".} =
   ## sessionId/L/initialTier/requestId/cookie: client inputs. The hello names
   ## no identity at all -- that waits until there is a key to hide it under.
   ##
@@ -1152,7 +1152,7 @@ proc clientHelloPolicyError*(c: AmeClientHello,
 proc serverCertificateBlock(c: AmeClientHello,
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     clear: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## c/descriptor/identity/clear: the certificate shape.
   ##
   ## The certificate body goes in raw because it is the exact byte string the
@@ -1167,7 +1167,7 @@ proc serverCertificateBlock(c: AmeClientHello,
 
 proc serverPskBlock(a: AmeAuthentication,
     clear: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## a/clear: the shared-secret shape. No certificate and no signature key is
   ## touched here -- the whole claim is one tag over what both sides can
   ## rebuild from the two hellos.
@@ -1180,7 +1180,7 @@ proc serverPskBlock(a: AmeAuthentication,
 proc serverIdentityBlockBytes(c: AmeClientHello, a: AmeAuthentication,
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     clear: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## c/a/descriptor/identity/clear: pick the one shape this mode uses.
   if a.mode == atmPskMac:
     return serverPskBlock(a, clear)
@@ -1189,7 +1189,7 @@ proc serverIdentityBlockBytes(c: AmeClientHello, a: AmeAuthentication,
 proc buildServerHello(S: var AmeServerHandshake, a: AmeAuthentication,
     identity: AmeIdentityKey, descriptor: AmeIdentityCertificate,
     params: AmeRuntimeParams): string {.role: orchestrator,
-    metaTags: {tagCryptoBoundary, tagExchange}.} =
+    tag: "cryptoBoundary|exchange".} =
   ## S/a/identity/descriptor/params: encapsulate, derive the temporary key,
   ## and seal what this side is under it. Returns an error string, or "".
   var
@@ -1238,7 +1238,7 @@ proc buildServerHello(S: var AmeServerHandshake, a: AmeAuthentication,
 proc responderIdentityError(c: AmeClientHello, a: AmeAuthentication,
     descriptor: AmeIdentityCertificate,
     identity: AmeIdentityKey): string {.inline, role: parser,
-    metaTags: {tagValidation}.} =
+    tag: "validation".} =
   ## c/a/descriptor/identity: the identity material this mode actually needs.
   ## AM1M needs none of it, so a responder running it is not made to carry a
   ## certificate and a signature key it will never use.
@@ -1261,7 +1261,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
     identity: AmeIdentityKey = default(AmeIdentityKey),
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)): tuple[
     ok: bool, state: AmeServerHandshake, err: string] {.role: orchestrator,
-    metaTags: {tagAppApi, tagExchange}.} =
+    tag: "appApi|exchange".} =
   ## c/supported/a/descriptor/identity/params: responder inputs. `a` decides
   ## whom this side will believe AND what it proves about itself; the
   ## certificate and identity key are needed only by AM1C and AM1S.
@@ -1301,7 +1301,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
 
 proc readServerBlockFields(A: openArray[uint8], a: AmeAuthentication,
     cursor: var int): AmeServerIdentityBlock {.inline, role: parser,
-    metaTags: {tagValidation}.} =
+    tag: "validation".} =
   ## A/a/cursor: read the one shape this mode put in the block.
   if a.mode == atmPskMac:
     result.pskId = readCertString(A, cursor)
@@ -1314,7 +1314,7 @@ proc readServerBlockFields(A: openArray[uint8], a: AmeAuthentication,
 proc openServerIdentity(S: AmeClientHandshake, h: AmeServerHello,
     a: AmeAuthentication, secrets: openArray[ByteSeq]): tuple[ok: bool,
     identityBlock: AmeServerIdentityBlock, err: string] {.role: orchestrator,
-    metaTags: {tagCryptoBoundary, tagExchange}.} =
+    tag: "cryptoBoundary|exchange".} =
   ## S/h/a/secrets: unseal what the server said it is, with the temporary key.
   var
     clear: ByteSeq = serverHelloClearSubject(S.hello, h)
@@ -1363,7 +1363,7 @@ proc ameAuthenticationModeOf*(m: AmeTrustMode): AmeAuthenticationMode {.
 
 proc exchangeAuthenticationKey(a: AmeAuthentication,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary, tagKdf}.} =
+    tag: "cryptoBoundary|kdf".} =
   ## a/transcript: the key later epoch changes are proved with in AM1M.
   ##
   ## AM1M sessions hold no signature keys, so the offers and replies that
@@ -1385,7 +1385,7 @@ proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
     sessionId: uint64, endpointRole: AmeEndpointRole,
     params: AmeRuntimeParams,
     a: AmeAuthentication): AmeAuthPackage {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/tier/request/secrets/transcript/session/role/params/a: the first epoch.
   ## The transcript hash becomes the salt every later key hangs off, so two
   ## handshakes that agreed different things can never share a key.
@@ -1415,7 +1415,7 @@ proc serverHelloPolicyError(S: AmeClientHandshake,
 proc clientCertificateBlock(S: AmeClientHandshake,
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     transcriptHash: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## S/descriptor/identity/transcriptHash: the certificate shape.
   var
     proofs: seq[ByteSeq] = signIdentityStack(S.hello.layout,
@@ -1427,7 +1427,7 @@ proc clientCertificateBlock(S: AmeClientHandshake,
 
 proc clientPskBlock(a: AmeAuthentication,
     transcriptHash: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## a/transcriptHash: the shared-secret shape. The proof is taken over the
   ## transcript hash, which already covers the responder's sealed block, so
   ## this tag says "I saw exactly that exchange" and not merely "I hold the
@@ -1442,7 +1442,7 @@ proc clientPskBlock(a: AmeAuthentication,
 proc clientIdentityBlockBytes(S: AmeClientHandshake, a: AmeAuthentication,
     descriptor: AmeIdentityCertificate, identity: AmeIdentityKey,
     transcriptHash: openArray[uint8]): ByteSeq {.inline, role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## S/a/descriptor/identity/transcriptHash: pick the one shape this mode uses.
   if a.mode == atmPskMac:
     return clientPskBlock(a, transcriptHash)
@@ -1453,7 +1453,7 @@ proc sealClientIdentity(S: AmeClientHandshake, h: AmeServerHello,
     descriptor: AmeIdentityCertificate,
     identity: AmeIdentityKey, transcript: openArray[uint8]): tuple[
     ok: bool, finish: AmeClientFinish, err: string] {.role: orchestrator,
-    metaTags: {tagCryptoBoundary, tagExchange}.} =
+    tag: "cryptoBoundary|exchange".} =
   ## S/h/a/secrets/descriptor/identity/transcript: seal what this side is, and
   ## its proof of the whole exchange, under the client-to-server key.
   var
@@ -1489,7 +1489,7 @@ proc sealClientIdentity(S: AmeClientHandshake, h: AmeServerHello,
 
 proc judgeServerPskBlock(a: AmeAuthentication, B: AmeServerIdentityBlock,
     clear: openArray[uint8]): AmePeerTrustResult {.inline, role: parser,
-    metaTags: {tagCryptoBoundary, tagValidation}.} =
+    tag: "cryptoBoundary|validation".} =
   ## a/B/clear: the AM1M verdict. Exactly one proof, over exactly the bytes
   ## this side rebuilt for itself.
   result = pskPeerTrust(a, B.pskId)
@@ -1503,7 +1503,7 @@ proc judgeServerPskBlock(a: AmeAuthentication, B: AmeServerIdentityBlock,
 proc judgeServerCertificateBlock(S: AmeClientHandshake, a: AmeAuthentication,
     B: AmeServerIdentityBlock, clear: openArray[uint8], nowUnix: int64,
     revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagValidation}.} =
+    role: orchestrator, tag: "cryptoBoundary|validation".} =
   ## S/a/B/clear/nowUnix/revoked: the AM1C and AM1S verdict.
   try:
     requireCertificateLayout(S.hello.layout, B.certificate)
@@ -1531,7 +1531,7 @@ proc judgeServerCertificateBlock(S: AmeClientHandshake, a: AmeAuthentication,
 proc judgeServerBlock(S: AmeClientHandshake, a: AmeAuthentication,
     B: AmeServerIdentityBlock, clear: openArray[uint8], nowUnix: int64,
     revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagValidation}.} =
+    role: orchestrator, tag: "cryptoBoundary|validation".} =
   ## S/a/B/clear/nowUnix/revoked: one verdict, whichever mode produced it.
   if a.mode == atmPskMac:
     return judgeServerPskBlock(a, B, clear)
@@ -1541,7 +1541,7 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
     a: AmeAuthentication, descriptor: AmeIdentityCertificate,
     identity: AmeIdentityKey, nowUnix: int64,
     revokedSerials: openArray[uint64]): AmeHandshakeResult {.
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagExchange}.} =
+    role: orchestrator, tag: "cryptoBoundary|exchange".} =
   ## S/h/a/descriptor/identity/nowUnix/revoked: open what the server said it
   ## is, judge it, then answer with what we are.
   ##
@@ -1600,7 +1600,7 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
 
 proc readClientBlockFields(A: openArray[uint8], a: AmeAuthentication,
     cursor: var int): AmeClientIdentityBlock {.inline, role: parser,
-    metaTags: {tagValidation}.} =
+    tag: "validation".} =
   ## A/a/cursor: read the one shape this mode put in the block.
   if a.mode == atmPskMac:
     result.pskId = readCertString(A, cursor)
@@ -1614,7 +1614,7 @@ proc readClientBlockFields(A: openArray[uint8], a: AmeAuthentication,
 
 proc judgeClientPskBlock(a: AmeAuthentication,
     B: AmeClientIdentityBlock): AmePeerTrustResult {.inline, role: parser,
-    metaTags: {tagCryptoBoundary, tagValidation}.} =
+    tag: "cryptoBoundary|validation".} =
   ## a/B: the AM1M verdict on the client's block. The transcript hash it
   ## carries is compared by the caller first, so proving it also proves the
   ## exchange.
@@ -1630,7 +1630,7 @@ proc judgeClientPskBlock(a: AmeAuthentication,
 proc judgeClientCertificateBlock(S: AmeServerHandshake, a: AmeAuthentication,
     B: AmeClientIdentityBlock, nowUnix: int64,
     revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagValidation}.} =
+    role: orchestrator, tag: "cryptoBoundary|validation".} =
   ## S/a/B/nowUnix/revoked: the AM1C and AM1S verdict on the client's block.
   try:
     requireCertificateLayout(S.clientHello.layout, B.certificate)
@@ -1658,7 +1658,7 @@ proc judgeClientCertificateBlock(S: AmeServerHandshake, a: AmeAuthentication,
 proc judgeClientBlock(S: AmeServerHandshake, a: AmeAuthentication,
     B: AmeClientIdentityBlock, nowUnix: int64,
     revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagValidation}.} =
+    role: orchestrator, tag: "cryptoBoundary|validation".} =
   ## S/a/B/nowUnix/revoked: one verdict, whichever mode produced it.
   if a.mode == atmPskMac:
     return judgeClientPskBlock(a, B)
@@ -1667,7 +1667,7 @@ proc judgeClientBlock(S: AmeServerHandshake, a: AmeAuthentication,
 proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     a: AmeAuthentication, nowUnix: int64,
     revokedSerials: openArray[uint64]): AmeHandshakeResult {.
-    role: orchestrator, metaTags: {tagCryptoBoundary, tagExchange}.} =
+    role: orchestrator, tag: "cryptoBoundary|exchange".} =
   ## S/f/a/nowUnix/revoked: responder state and the client's sealed
   ## confirmation.
   ##
@@ -1782,7 +1782,7 @@ proc clearAmeServerHandshake*(S: var AmeServerHandshake) {.
 ##   a shared secret             initAmePskAuthentication(id, secret)
 
 proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthentication {.
-    role: configurator, metaTags: {tagAppApi}.} =
+    role: configurator, tag: "appApi".} =
   ## peer: public key expected from the remote endpoint (AM1S).
   if peer.subject.len == 0 or peer.signingKeys.len == 0:
     raise newException(ValueError, "AME pinned authentication is incomplete")
@@ -1790,7 +1790,7 @@ proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthenticatio
   result.expectedPeer = peer
 
 proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthentication {.
-    role: configurator, metaTags: {tagAppApi}.} =
+    role: configurator, tag: "appApi".} =
   ## root: authority key stack used to validate certificates (AM1C).
   if root.authority.len == 0 or root.signingKeys.len == 0:
     raise newException(ValueError, "AME certificate authentication is incomplete")
@@ -1798,7 +1798,7 @@ proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthenticatio
   result.root = root
 
 proc clearAmeAuthentication*(A: var AmeAuthentication) {.
-    role: actor, metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    role: actor, tag: "appApi|cryptoBoundary".} =
   ## A: erase provisioned shared-secret material once it is finished with.
   secureClearAmeBytes(A.psk)
   A = default(AmeAuthentication)
@@ -1811,7 +1811,7 @@ proc finishAmeHandshake*(S: var AmeClientHandshake, h: AmeServerHello,
     identity: AmeIdentityKey = default(AmeIdentityKey),
     nowUnix: int64 = 0'i64,
     revokedSerials: openArray[uint64] = []): AmeHandshakeResult {.
-    role: orchestrator, metaTags: {tagAppApi}.} =
+    role: orchestrator, tag: "appApi".} =
   ## S/h/a/descriptor/identity/nowUnix/revoked: the initiator's third step, in
   ## whichever mode `a` names. The certificate and identity key are used by
   ## AM1C and AM1S only; AM1M leaves them at their defaults.
@@ -1826,7 +1826,7 @@ proc finishAmeHandshake*(S: var AmeClientHandshake, h: AmeServerHello,
 proc acceptAmeHandshake*(S: var AmeServerHandshake, f: AmeClientFinish,
     a: AmeAuthentication, nowUnix: int64 = 0'i64,
     revokedSerials: openArray[uint64] = []): AmeHandshakeResult {.
-    role: orchestrator, metaTags: {tagAppApi}.} =
+    role: orchestrator, tag: "appApi".} =
   ## S/f/a/nowUnix/revoked: the responder's fourth step, in whichever mode `a`
   ## names. The responder's own secrets are erased whatever the outcome.
   try:

@@ -47,7 +47,7 @@
 import ../../types
 import ../types
 import ../level0/bytes
-import bifrostPragmas
+import runePragmas
 
 proc readU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
   ## A/o: source bytes and little-endian offset.

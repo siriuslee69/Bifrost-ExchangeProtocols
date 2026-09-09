@@ -3,14 +3,14 @@
 ## ----------------------------------------------------------------------
 
 import std/[os, osproc, streams, strutils]
-import bifrostPragmas
+import runePragmas
 
 const
   interopHost = "127.0.0.1"
   interopPort = "19444"
 
 proc runChecked(command: string, args: openArray[string]): string {.
-    role: orchestrator, metaTags: {tagTls, tagInterop}.} =
+    role: orchestrator, tag: "tls|interop".} =
   var
     P: Process = startProcess(command, args = @args,
       options = {poUsePath, poStdErrToStdOut})
@@ -21,7 +21,7 @@ proc runChecked(command: string, args: openArray[string]): string {.
   if code != 0:
     raise newException(IOError, command & " failed:\n" & result)
 
-proc runInterop() {.role: metaOrchestrator, metaTags: {tagTls, tagInterop}.} =
+proc runInterop() {.role: metaOrchestrator, tag: "tls|interop".} =
   var
     root: string = joinPath(getTempDir(), "bifrost_tls13_client_interop")
     caCert: string = joinPath(root, "ca_certificate.pem")

@@ -33,7 +33,7 @@ import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/derivation
 import ../level1/tier_aead
-import bifrostPragmas
+import runePragmas
 
 export ameTierNonceLen, ameCipherNonceLen
 
@@ -59,7 +59,7 @@ proc requireProtection(L: AmeSuiteLayout, t: AmeMaskTier,
 
 proc buildAtRestMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
     E: AmeExchangeState, nonce, keyContext: openArray[byte]): ByteSeq {.
-    role: truthBuilder, metaTags: {tagCryptoBoundary}.} =
+    role: truthBuilder, tag: "cryptoBoundary".} =
   ## L/t/E/nonce/keyContext: caller's nonce followed by one key per
   ## switched-on slot, derived from the exchange and bound to `keyContext`.
   var
@@ -88,7 +88,7 @@ proc buildAtRestMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
 
 proc buildStoredMaterial(L: AmeSuiteLayout, t: AmeMaskTier,
     rootKey, context, nonce: openArray[byte]): ByteSeq {.role: truthBuilder,
-    metaTags: {tagCryptoBoundary}.} =
+    tag: "cryptoBoundary".} =
   ## L/t/rootKey/context/nonce: the same key block as `buildAtRestMaterial`,
   ## derived from a caller-owned key instead of from a KEM exchange.
   var
@@ -106,7 +106,7 @@ proc sealAmeStored*(L: AmeSuiteLayout, t: AmeMaskTier,
     rootKey, context, nonce, msg: openArray[byte],
     aad: openArray[byte] = [],
     tagLen: AmeAuthTagLen = aatl32): AmeProtectedMessage {.
-    role: orchestrator, metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    role: orchestrator, tag: "appApi|cryptoBoundary".} =
   ## L/t/rootKey/context/nonce/msg/aad/tagLen: seal bytes that have to sit
   ## still under a key the caller already holds -- a checkpoint on disk, a
   ## blob in a store. No exchange state is involved, so this works before a
@@ -125,7 +125,7 @@ proc openAmeStored*(L: AmeSuiteLayout, t: AmeMaskTier,
     rootKey, context, nonce: openArray[byte], message: AmeProtectedMessage,
     aad: openArray[byte] = [],
     tagLen: AmeAuthTagLen = aatl32): tuple[ok: bool, payload: ByteSeq] {.
-    role: orchestrator, metaTags: {tagAppApi, tagCryptoBoundary}.} =
+    role: orchestrator, tag: "appApi|cryptoBoundary".} =
   ## L/t/rootKey/context/nonce/message/aad/tagLen: the exact open. A wrong
   ## nonce length or tag length is a plain "no", not an error, so a caller
   ## trying several stored blobs can move past one that does not fit.

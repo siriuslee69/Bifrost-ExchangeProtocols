@@ -4,14 +4,14 @@
 
 import ../../types
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   fomkeProtocolId* = "bifrost.fomke"
   fomkeProtocolLongName* = "Forward-Only Message Key Extension"
 
 proc initFomkeDescriptor*(): ProtocolDescriptor {.role: configurator,
-    metaTags: {tagAppApi, tagFomke, tagProtocol}.} =
+    tag: "appApi|fomke|protocol".} =
   ## Return the FOM1 protocol descriptor.
   result.protocolId = fomkeProtocolId
   result.name = "FOMKE"

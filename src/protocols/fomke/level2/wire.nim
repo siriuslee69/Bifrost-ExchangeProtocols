@@ -36,7 +36,7 @@ import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   fomkeUpgradeMagic = [uint8('F'), uint8('K'), uint8('U')]
@@ -44,7 +44,7 @@ const
   fomkeUpgradeFixedLen = 108
 
 proc validateFomkeUpgradeShape(c: FomkeUpgradeCommit) {.role: parser,
-    metaTags: {tagExchange, tagFomke, tagValidation}.} =
+    tag: "exchange|fomke|validation".} =
   ## c: public commit shape before wire encoding or after decoding.
   var
     i: int = 0
@@ -68,7 +68,7 @@ proc validateFomkeUpgradeShape(c: FomkeUpgradeCommit) {.role: parser,
     i = i + 1
 
 proc readFomkeU32(A: openArray[uint8], offset: int): uint32 {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/offset: source and little-endian u32 position.
   if offset < 0 or offset > A.len - 4:
     raise newException(ValueError, "FOMKE u32 is truncated")
@@ -76,7 +76,7 @@ proc readFomkeU32(A: openArray[uint8], offset: int): uint32 {.role: parser,
     (uint32(A[offset + 2]) shl 16) or (uint32(A[offset + 3]) shl 24)
 
 proc readFomkeU64(A: openArray[uint8], offset: int): uint64 {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## A/offset: source and little-endian u64 position.
   var
     i: int = 0
@@ -87,7 +87,7 @@ proc readFomkeU64(A: openArray[uint8], offset: int): uint64 {.role: parser,
     i = i + 1
 
 proc fomkeLaneFromByte(v: uint8): FomkeLane {.role: parser,
-    metaTags: {tagFomke, tagParsing}.} =
+    tag: "fomke|parsing".} =
   ## v: stable lane identifier.
   if v == uint8(ord(flLane1)):
     return flLane1
@@ -96,7 +96,7 @@ proc fomkeLaneFromByte(v: uint8): FomkeLane {.role: parser,
   raise newException(ValueError, "FOMKE sender lane is invalid")
 
 proc fomkeWireLen*(plaintextLen: int, tagLen: AmeAuthTagLen): int {.
-    role: helper, metaTags: {tagAppApi, tagFomke, tagPacket}.} =
+    role: helper, tag: "appApi|fomke|packet".} =
   ## plaintextLen/tagLen: envelope size for a payload of this length. The
   ## ciphers are all keystream XOR, so the ciphertext is exactly as long as
   ## the plaintext -- the only growth is the header and the tag.
@@ -105,7 +105,7 @@ proc fomkeWireLen*(plaintextLen: int, tagLen: AmeAuthTagLen): int {.
   result = fomkeHeaderLen + int(ord(tagLen)) + plaintextLen
 
 proc encodeFomkeMessage*(m: FomkeMessage): ByteSeq {.role: dataWriter,
-    metaTags: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket}.} =
+    tag: "appApi|codecBoundary|fomke|packet".} =
   ## m: complete forward-only message envelope.
   if m.epoch == 0'u32 or m.authTag.len != int(ord(m.tagLen)) or
       uint64(m.ciphertext.len) > uint64(fomkeMaxCiphertextBytes):
@@ -118,7 +118,7 @@ proc encodeFomkeMessage*(m: FomkeMessage): ByteSeq {.role: dataWriter,
 
 proc decodeFomkeMessage*(A: openArray[uint8],
     tagLen: AmeAuthTagLen): FomkeMessage {.role: parser,
-    metaTags: {tagAppApi, tagCodecBoundary, tagFomke, tagPacket, tagParsing}.} =
+    tag: "appApi|codecBoundary|fomke|packet|parsing".} =
   ## A/tagLen: the envelope, and the tag length the caller's own epoch
   ## agreed. The length is a parameter rather than a field because it is the
   ## one thing here that must never come from the sender: a message that
@@ -142,7 +142,7 @@ proc decodeFomkeMessage*(A: openArray[uint8],
 
 proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
     role: dataWriter,
-    metaTags: {tagAppApi, tagCodecBoundary, tagExchange, tagFomke}.} =
+    tag: "appApi|codecBoundary|exchange|fomke".} =
   ## c: exact AME/FOMKE epoch transition confirmation.
   var
     i: int = 0
@@ -173,7 +173,7 @@ proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
 
 proc decodeFomkeUpgradeCommit*(A: openArray[uint8]): FomkeUpgradeCommit {.
     role: parser,
-    metaTags: {tagAppApi, tagCodecBoundary, tagExchange, tagFomke, tagParsing}.} =
+    tag: "appApi|codecBoundary|exchange|fomke|parsing".} =
   ## A: complete bounded FKU1 commit bytes.
   var
     i: int = 0

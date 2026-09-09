@@ -22,7 +22,7 @@
 
 import ../../types
 import ../types
-import bifrostPragmas
+import runePragmas
 
 type
   ChunkedDecodeState* = enum
@@ -34,7 +34,7 @@ type
     cdsDone,        ## body complete
     cdsError        ## framing broken; connection must close
 
-  ChunkedDecoder* {.role: memory, metaTags: {tagProtocol, tagParsing}.} = object
+  ChunkedDecoder* {.role: memory, tag: "protocol|parsing".} = object
     state*: ChunkedDecodeState
     remaining*: int64
       ## Payload bytes still owed for the chunk being read.
@@ -44,7 +44,7 @@ type
       ## Decoded payload bytes produced so far, for the size cap.
     err*: string
 
-  ChunkedFeedResult* {.role: truthState, metaTags: {tagProtocol, tagParsing}.} =
+  ChunkedFeedResult* {.role: truthState, tag: "protocol|parsing".} =
       object
     ok*: bool
     consumed*: int
@@ -56,7 +56,7 @@ type
     err*: string
 
 proc initChunkedDecoder*(): ChunkedDecoder {.role: truthBuilder,
-    metaTags: {tagProtocol, tagParsing}.} =
+    tag: "protocol|parsing".} =
   ## Build a decoder sitting at the first chunk-size line.
   result.state = cdsSize
   result.remaining = 0
@@ -65,7 +65,7 @@ proc initChunkedDecoder*(): ChunkedDecoder {.role: truthBuilder,
   result.err = ""
 
 proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
-    metaTags: {tagProtocol, tagParsing, tagValidation}.} =
+    tag: "protocol|parsing|validation".} =
   ## l: one chunk-size line, `\r\n` already removed.
   ##
   ## Anything after a `;` is a chunk extension and is ignored. The size
@@ -107,7 +107,7 @@ proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
 
 proc takeLine(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
     maxLen: int): tuple[have: bool, bad: bool] {.role: parser,
-    metaTags: {tagProtocol, tagParsing}.} =
+    tag: "protocol|parsing".} =
   ## D/A/i/maxLen: decoder, input, read cursor, and line length cap.
   ##
   ## Accumulates bytes into `D.line` until a `\n` is reached. A `\r`
@@ -129,7 +129,7 @@ proc takeLine(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
 
 proc feedChunked*(D: var ChunkedDecoder; A: openArray[byte];
     maxBodyBytes: int64): ChunkedFeedResult {.role: orchestrator,
-    metaTags: {tagProtocol, tagParsing, tagValidation}.} =
+    tag: "protocol|parsing|validation".} =
   ## D/A/maxBodyBytes: decoder state, next input bytes, decoded size cap.
   ##
   ## Consumes as much of `A` as the grammar allows and returns whatever
@@ -221,7 +221,7 @@ proc feedChunked*(D: var ChunkedDecoder; A: openArray[byte];
     result.err = D.err
 
 proc encodeChunk*(A: openArray[byte]): ByteSeq {.role: dataWriter,
-    metaTags: {tagProtocol, tagWrite}.} =
+    tag: "protocol|write".} =
   ## A: payload bytes to wrap as one chunk.
   ##
   ## An empty input would encode as the terminating chunk by accident,
@@ -251,6 +251,6 @@ proc encodeChunk*(A: openArray[byte]): ByteSeq {.role: dataWriter,
   result.add(byte('\n'))
 
 proc encodeLastChunk*(): ByteSeq {.role: dataWriter,
-    metaTags: {tagProtocol, tagWrite}.} =
+    tag: "protocol|write".} =
   ## Terminating zero-length chunk plus the empty trailer line.
   result = @[byte('0'), byte('\r'), byte('\n'), byte('\r'), byte('\n')]

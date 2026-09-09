@@ -9,7 +9,7 @@ when defined(ssl):
 
 import ../../src/protocols/transport/types
 import ../../src/protocols/transport/tcp_ops
-import bifrostPragmas
+import runePragmas
 
 proc nextUnusedTcpAddress*(host: string): TcpAddress {.role: dataFetcher.} =
   ## host: bind host used to reserve a likely-free TCP port for a test thread.

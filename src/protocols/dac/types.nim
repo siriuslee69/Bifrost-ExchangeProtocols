@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------------
 
 import ../types
-import bifrostPragmas
+import runePragmas
 
 const
   dacMagic* = [uint8('D'), uint8('A'), uint8('C')]

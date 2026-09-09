@@ -13,7 +13,7 @@ import tyr/kems/x25519 as tyr_x25519
 import ../../../types
 import ../../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 proc requireX25519Slot(a: AmeKemAlgorithm) {.role: parser.} =
   ## a: slot rejected unless it belongs to the X25519 family.

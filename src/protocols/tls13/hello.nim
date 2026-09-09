@@ -6,7 +6,7 @@ import std/strutils
 
 import ../types
 import ./codec
-import bifrostPragmas
+import runePragmas
 
 const
   tls13Version* = 0x0304'u16
@@ -28,7 +28,7 @@ const
   extKeyShare = 51'u16
 
 type
-  Tls13ClientHello* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
+  Tls13ClientHello* {.role: truthState, tag: "tls|packet".} = object
     random*: array[32, byte]
     legacySessionId*: ByteSeq
     serverName*: string
@@ -36,54 +36,54 @@ type
     x25519PublicKey*: ByteSeq
     signatureSchemes*: seq[uint16] # schemes the client offered, in its order
 
-  Tls13ServerHello* {.role: truthState, metaTags: {tagTls, tagPacket}.} = object
+  Tls13ServerHello* {.role: truthState, tag: "tls|packet".} = object
     random*: array[32, byte]
     legacySessionId*: ByteSeq
     x25519PublicKey*: ByteSeq
 
-  Tls13ClientHelloResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
+  Tls13ClientHelloResult* {.role: truthState, tag: "tls|parsing".} = object
     ok*: bool
     hello*: Tls13ClientHello
     err*: string
 
-  Tls13ServerHelloResult* {.role: truthState, metaTags: {tagTls, tagParsing}.} = object
+  Tls13ServerHelloResult* {.role: truthState, tag: "tls|parsing".} = object
     ok*: bool
     hello*: Tls13ServerHello
     err*: string
 
 proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter,
-    metaTags: {tagTls, tagWrite}.} =
+    tag: "tls|write".} =
   A.add(byte(v shr 8))
   A.add(byte(v))
 
 proc readU16(A: openArray[byte], o: int, v: var uint16): bool {.role: parser,
-    metaTags: {tagTls, tagRead}.} =
+    tag: "tls|read".} =
   if o < 0 or o > A.len - 2:
     return false
   v = (uint16(A[o]) shl 8) or uint16(A[o + 1])
   result = true
 
 proc addVector16(A: var ByteSeq, B: openArray[byte]) {.
-    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
+    role: dataWriter, tag: "tls|write".} =
   if B.len > 65535:
     raise newException(ValueError, "TLS vector exceeds uint16 length")
   addU16(A, uint16(B.len))
   A.add(B)
 
 proc addExtension(A: var ByteSeq, kind: uint16, B: openArray[byte]) {.
-    role: dataWriter, metaTags: {tagTls, tagWrite}.} =
+    role: dataWriter, tag: "tls|write".} =
   addU16(A, kind)
   addVector16(A, B)
 
 proc addAscii(A: var ByteSeq, s: string) {.role: dataWriter,
-    metaTags: {tagTls, tagWrite}.} =
+    tag: "tls|write".} =
   var i: int = 0
   while i < s.len:
     A.add(byte(ord(s[i])))
     i = i + 1
 
 proc validHelloHost(s: string): bool {.role: parser,
-    metaTags: {tagTls, tagValidation}.} =
+    tag: "tls|validation".} =
   var i: int = 0
   if s.len == 0 or s.len > 253:
     return false
@@ -95,7 +95,7 @@ proc validHelloHost(s: string): bool {.role: parser,
   result = true
 
 proc collectVectorU16(A: openArray[byte], start, n: int): seq[uint16] {.
-    role: parser, metaTags: {tagTls, tagRead}.} =
+    role: parser, tag: "tls|read".} =
   ## A/start/n: source bytes, vector body offset, and vector byte length.
   ## Returns the decoded u16 list, or an empty list when the vector is
   ## malformed, so callers fail closed.
@@ -111,7 +111,7 @@ proc collectVectorU16(A: openArray[byte], start, n: int): seq[uint16] {.
     o = o + 2
 
 proc anySupportedScheme(offered: openArray[uint16]): bool {.role: parser,
-    metaTags: {tagTls, tagValidation}.} =
+    tag: "tls|validation".} =
   ## offered: signature schemes advertised by the peer.
   var i, j: int = 0
   while i < offered.len:
@@ -123,7 +123,7 @@ proc anySupportedScheme(offered: openArray[uint16]): bool {.role: parser,
     i = i + 1
 
 proc vectorContainsU16(A: openArray[byte], start, n: int,
-    wanted: uint16): bool {.role: parser, metaTags: {tagTls, tagRead}.} =
+    wanted: uint16): bool {.role: parser, tag: "tls|read".} =
   var
     o: int = start
     v: uint16 = 0
@@ -138,7 +138,7 @@ proc vectorContainsU16(A: openArray[byte], start, n: int,
 
 proc parseClientKeyShares(A: openArray[byte], start, finish: int,
     key: var ByteSeq): string {.role: parser,
-    metaTags: {tagTls, tagRead, tagValidation}.} =
+    tag: "tls|read|validation".} =
   var
     o: int = start
     group, n: uint16 = 0
@@ -158,7 +158,7 @@ proc parseClientKeyShares(A: openArray[byte], start, finish: int,
   result = ""
 
 proc buildClientExtensions(H: Tls13ClientHello): ByteSeq {.
-    role: truthBuilder, metaTags: {tagTls, tagWrite}.} =
+    role: truthBuilder, tag: "tls|write".} =
   var
     E, V, N: ByteSeq = @[]
     i: int = 0
@@ -207,7 +207,7 @@ proc buildClientExtensions(H: Tls13ClientHello): ByteSeq {.
   result = E
 
 proc encodeTls13ClientHello*(H: Tls13ClientHello): ByteSeq {.role: dataWriter,
-    metaTags: {tagTls, tagWrite, tagPacket}.} =
+    tag: "tls|write|packet".} =
   ## H: narrow TLS 1.3 client hello profile.
   var
     E: ByteSeq = buildClientExtensions(H)
@@ -227,7 +227,7 @@ proc encodeTls13ClientHello*(H: Tls13ClientHello): ByteSeq {.role: dataWriter,
   addVector16(result, E)
 
 proc buildServerExtensions(H: Tls13ServerHello): ByteSeq {.
-    role: truthBuilder, metaTags: {tagTls, tagWrite}.} =
+    role: truthBuilder, tag: "tls|write".} =
   var V: ByteSeq = @[byte 0x03, 0x04]
   addExtension(result, extSupportedVersions, V)
   if H.x25519PublicKey.len != 32:
@@ -238,7 +238,7 @@ proc buildServerExtensions(H: Tls13ServerHello): ByteSeq {.
   addExtension(result, extKeyShare, V)
 
 proc encodeTls13ServerHello*(H: Tls13ServerHello): ByteSeq {.role: dataWriter,
-    metaTags: {tagTls, tagWrite, tagPacket}.} =
+    tag: "tls|write|packet".} =
   ## H: narrow TLS 1.3 server hello profile.
   var
     E: ByteSeq = buildServerExtensions(H)
@@ -259,7 +259,7 @@ proc parseExtensions(A: openArray[byte], start, finish: int,
     server: bool, key: var ByteSeq, versionOk: var bool,
     serverName: var string, alpn: var seq[string],
     sigSchemes: var seq[uint16]): string {.role: parser,
-    metaTags: {tagTls, tagRead, tagValidation}.} =
+    tag: "tls|read|validation".} =
   var
     o, dataStart, dataEnd, listEnd, nameLen, p, vectorLen: int = start
     kind, n, x: uint16 = 0
@@ -374,7 +374,7 @@ proc parseExtensions(A: openArray[byte], start, finish: int,
   result = ""
 
 proc decodeTls13ClientHello*(A: openArray[byte]): Tls13ClientHelloResult {.
-    role: parser, metaTags: {tagTls, tagRead, tagValidation}.} =
+    role: parser, tag: "tls|read|validation".} =
   ## A: ClientHello body without handshake header.
   var
     o, sidLen, suitesLen, compLen, extLen, i: int = 0
@@ -427,7 +427,7 @@ proc decodeTls13ClientHello*(A: openArray[byte]): Tls13ClientHelloResult {.
   result.ok = result.err.len == 0
 
 proc decodeTls13ServerHello*(A: openArray[byte]): Tls13ServerHelloResult {.
-    role: parser, metaTags: {tagTls, tagRead, tagValidation}.} =
+    role: parser, tag: "tls|read|validation".} =
   ## A: ServerHello body without handshake header.
   var
     o, sidLen, extLen, i: int = 0

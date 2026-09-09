@@ -7,7 +7,7 @@ import tyr/signatures/falcon as tyr_falcon
 import ../../../types
 import ../../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 proc falconVariant*(a: AmeSignatureAlgorithm): tyr_falcon.FalconVariant {.
     role: parser.} =

@@ -18,7 +18,7 @@ import ../../src/protocols/types
 import ../../src/protocols/ame
 import ../../src/protocols/fomke/types
 import ../../src/protocols/config
-import bifrostPragmas
+import runePragmas
 
 const
   minimalKems: AmeKemAlgorithms = [akaKyber768, akaX25519]

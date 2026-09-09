@@ -4,7 +4,7 @@
 
 import ../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 const
   defaultStreamFrameBytes* = 16_777_216'u32

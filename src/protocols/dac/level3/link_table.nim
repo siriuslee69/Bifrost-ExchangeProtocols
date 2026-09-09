@@ -13,7 +13,7 @@ import ../level0/defaults
 import ../level1/scramble
 import ../level2/package_transfer
 import ./link
-import bifrostPragmas
+import runePragmas
 
 const
   dacLinkTableAscii* = """

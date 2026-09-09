@@ -5,7 +5,7 @@
 import ../../types
 import ../types
 import ./body_codec
-import bifrostPragmas
+import runePragmas
 
 const
   dacPathStatsLen* = 24

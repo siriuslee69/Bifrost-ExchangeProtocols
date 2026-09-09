@@ -51,7 +51,7 @@ import ../level2/session
 import ./handshake
 import ./handshake_wire
 import ./handshake_transport
-import bifrostPragmas
+import runePragmas
 
 export handshake_transport
 
@@ -188,7 +188,7 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     maxDatagramBytes: int = ameDacHandshakeMaxDatagram,
     acceptTimeoutMs: int = ameDacHandshakeAcceptMs):
     tuple[outcome: AmeHandshakeOutcome, remote: DacAddress] {.
-    role: orchestrator, metaTags: {tagAppApi, tagNetworkSurface}.} =
+    role: orchestrator, tag: "appApi|networkSurface".} =
   ## sock/c/nowUnix/timeoutMs/sessionId/maxDatagramBytes/acceptTimeoutMs: run
   ## the responder side to completion and hand back a session plus the address
   ## it belongs to. The address is a return value rather than an argument
@@ -320,7 +320,7 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     timeoutMs: int = 2000,
     maxDatagramBytes: int = ameDacHandshakeMaxDatagram):
     AmeHandshakeOutcome {.role: orchestrator,
-    metaTags: {tagAppApi, tagNetworkSurface}.} =
+    tag: "appApi|networkSurface".} =
   ## sock/remote/c/sessionId/nowUnix/timeoutMs/maxDatagramBytes: run the
   ## initiator side to completion against one known responder address.
   var

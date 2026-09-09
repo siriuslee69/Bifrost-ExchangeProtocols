@@ -7,7 +7,7 @@ import tyr/kems/saber as tyr_saber
 import ../../../types
 import ../../types
 import ./types
-import bifrostPragmas
+import runePragmas
 
 proc saberVariant(a: AmeKemAlgorithm): tyr_saber.SaberVariant {.role: parser.} =
   ## a: AME slot resolved to the Tyr variant that executes it.

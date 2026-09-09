@@ -5,7 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
-import bifrostPragmas
+import runePragmas
 
 const
   dacRepairHintFixedLen* = 24
