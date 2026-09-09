@@ -69,6 +69,26 @@ proc dacSocketHasPeer(sock: DacSocket): bool {.role: helper.} =
   except CatchableError:
     result = false
 
+proc findLocalhostDacPeer(key: int): tuple[node, prev: ptr LocalhostDacPeerEntry] {.
+    inline, role: parser, tag: "udp".} =
+  ## key: socket identity to find in the registry.
+  ##
+  ## Returns the entry and the one before it, because the list is singly
+  ## linked and a caller that wants to unlink needs both. Three callers
+  ## walked this list themselves before, each nesting its own reason for
+  ## walking inside the walk.
+  ##
+  ## The registry lock must already be held.
+  var
+    node: ptr LocalhostDacPeerEntry = dacLocalhostPeerRegistry
+    prev: ptr LocalhostDacPeerEntry = nil
+  while node != nil:
+    if node[].key == key:
+      return (node: node, prev: prev)
+    prev = node
+    node = node[].next
+  result = (node: nil, prev: nil)
+
 proc unlinkLocalhostDacPeer(prev, node: ptr LocalhostDacPeerEntry) {.
     role: actor.} =
   ## prev/node: linked-list cursor for removing a stale remembered peer entry.
@@ -92,13 +112,11 @@ proc rememberLocalhostDacPeer(sock: DacSocket, port: uint16) {.
       "failed to load localhost DAC peer local port")
   acquire(dacPeerRegistryLock)
   try:
-    node = dacLocalhostPeerRegistry
-    while node != nil:
-      if node[].key == key:
-        node[].port = port
-        node[].localPort = localPort.port
-        return
-      node = node[].next
+    node = findLocalhostDacPeer(key).node
+    if node != nil:
+      node[].port = port
+      node[].localPort = localPort.port
+      return
     node = cast[ptr LocalhostDacPeerEntry](
       allocShared0(sizeof(LocalhostDacPeerEntry)))
     if node == nil:
@@ -116,21 +134,12 @@ proc forgetDacPeer(sock: DacSocket) {.role: actor.} =
   ## sock: DAC socket whose remembered logical remote should be cleared.
   var
     key: int = dacPeerSockKey(sock)
-    node: ptr LocalhostDacPeerEntry = nil
-    prev: ptr LocalhostDacPeerEntry = nil
+    found: tuple[node, prev: ptr LocalhostDacPeerEntry] = (node: nil, prev: nil)
   acquire(dacPeerRegistryLock)
   try:
-    node = dacLocalhostPeerRegistry
-    while node != nil:
-      if node[].key == key:
-        if prev == nil:
-          dacLocalhostPeerRegistry = node[].next
-        else:
-          prev[].next = node[].next
-        deallocShared(node)
-        return
-      prev = node
-      node = node[].next
+    found = findLocalhostDacPeer(key)
+    if found.node != nil:
+      unlinkLocalhostDacPeer(found.prev, found.node)
   finally:
     release(dacPeerRegistryLock)
 
@@ -139,25 +148,23 @@ proc lookupLocalhostDacPeer(sock: DacSocket): tuple[ok: bool, port: uint16] {.
   ## sock: DAC socket whose localhost fanout mapping should be loaded.
   var
     key: int = dacPeerSockKey(sock)
-    node: ptr LocalhostDacPeerEntry = nil
-    prev: ptr LocalhostDacPeerEntry = nil
+    found: tuple[node, prev: ptr LocalhostDacPeerEntry] = (node: nil, prev: nil)
     localPort: tuple[ok: bool, port: uint16]
     hasPeer: bool = false
   localPort = dacLocalPort(sock)
   hasPeer = dacSocketHasPeer(sock)
   acquire(dacPeerRegistryLock)
   try:
-    node = dacLocalhostPeerRegistry
-    while node != nil:
-      if node[].key == key:
-        if hasPeer or not localPort.ok or node[].localPort != localPort.port:
-          unlinkLocalhostDacPeer(prev, node)
-          return
-        result.ok = true
-        result.port = node[].port
-        return
-      prev = node
-      node = node[].next
+    found = findLocalhostDacPeer(key)
+    if found.node == nil:
+      return
+    ## A remembered mapping is only good while the socket is still
+    ## unconnected and still on the port it was remembered for.
+    if hasPeer or not localPort.ok or found.node[].localPort != localPort.port:
+      unlinkLocalhostDacPeer(found.prev, found.node)
+      return
+    result.ok = true
+    result.port = found.node[].port
   finally:
     release(dacPeerRegistryLock)
 

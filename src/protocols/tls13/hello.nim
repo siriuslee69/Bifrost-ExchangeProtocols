@@ -255,18 +255,134 @@ proc encodeTls13ServerHello*(H: Tls13ServerHello): ByteSeq {.role: dataWriter,
   result.add(0'u8)
   addVector16(result, E)
 
+## ╭⟢ one extension at a time
+##
+## The extension walk used to hold every extension's parsing inside one
+## `case` inside the loop, which put the innermost checks four and five
+## deep. Each extension is now its own step, returning the error string it
+## would have returned in place -- empty meaning "this one was fine".
+
+proc readHelloText(A: openArray[byte], at, n: int): string {.inline,
+    role: parser, tag: "tls|read".} =
+  ## A/at/n: `n` bytes read out as text. Used for the two extensions that
+  ## carry names rather than numbers.
+  var
+    i: int = 0
+  result = newString(n)
+  while i < n:
+    result[i] = char(A[at + i])
+    i = i + 1
+
+proc parseVersionsExt(A: openArray[byte], dataStart: int, n: uint16,
+    server: bool, versionOk: var bool): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/n/server/versionOk: the one extension that says TLS 1.3.
+  var
+    x: uint16 = 0
+    vectorLen: int = 0
+  if server:
+    versionOk = n == 2 and readU16(A, dataStart, x) and x == tls13Version
+    return
+  vectorLen = if n > 0: int(A[dataStart]) else: -1
+  versionOk = vectorLen >= 2 and vectorLen + 1 == int(n) and
+    vectorContainsU16(A, dataStart + 1, vectorLen, tls13Version)
+
+proc parseKeyShareExt(A: openArray[byte], dataStart, dataEnd: int,
+    server: bool, key: var ByteSeq): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/dataEnd/server/key: the peer's X25519 share.
+  var
+    x, n: uint16 = 0
+  if not server:
+    if not readU16(A, dataStart, x) or dataStart + 2 + int(x) != dataEnd:
+      return "TLS client key_share vector is invalid"
+    return parseClientKeyShares(A, dataStart + 2, dataEnd, key)
+  if not readU16(A, dataStart, x) or x != tls13GroupX25519 or
+      not readU16(A, dataStart + 2, n) or n != 32 or dataStart + 4 + 32 != dataEnd:
+    return "TLS X25519 key_share is invalid"
+  key = @A[dataStart + 4 ..< dataEnd]
+
+proc parseGroupsExt(A: openArray[byte], dataStart: int,
+    n: uint16): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/n: the group list must name the one group this profile has.
+  var
+    x: uint16 = 0
+  if not readU16(A, dataStart, x) or int(x) != int(n) - 2 or
+      not vectorContainsU16(A, dataStart + 2, int(x), tls13GroupX25519):
+    return "TLS supported_groups does not contain the controlled X25519 profile"
+
+proc parseSignaturesExt(A: openArray[byte], dataStart: int, n: uint16,
+    sigSchemes: var seq[uint16]): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/n/sigSchemes: the signature schemes the peer will accept.
+  var
+    x: uint16 = 0
+    schemes: seq[uint16] = @[]
+  if not readU16(A, dataStart, x) or int(x) != int(n) - 2:
+    return "TLS signature_algorithms extension is malformed"
+  schemes = collectVectorU16(A, dataStart + 2, int(x))
+  if schemes.len == 0:
+    return "TLS signature_algorithms list is empty"
+  if not anySupportedScheme(schemes):
+    return "TLS signature_algorithms offers no scheme this profile supports"
+  sigSchemes = schemes
+
+proc parseSniExt(A: openArray[byte], dataStart, dataEnd: int,
+    serverName: var string): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/dataEnd/serverName: exactly one host name, and only the
+  ## host_name type. A second entry or another type is refused rather than
+  ## skipped, so two names can never disagree about who is being asked for.
+  var
+    x, n: uint16 = 0
+    nameLen: int = 0
+    name: string = ""
+  if not readU16(A, dataStart, x):
+    return "TLS SNI list is incomplete"
+  if dataStart + 2 + int(x) != dataEnd or dataStart + 5 > dataEnd or
+      A[dataStart + 2] != 0'u8 or not readU16(A, dataStart + 3, n):
+    return "TLS SNI entry is invalid"
+  nameLen = int(n)
+  if dataStart + 5 + nameLen != dataEnd:
+    return "TLS SNI hostname length is invalid"
+  name = readHelloText(A, dataStart + 5, nameLen)
+  if not validHelloHost(name):
+    return "TLS SNI hostname is invalid"
+  serverName = name.toLowerAscii()
+
+proc parseAlpnExt(A: openArray[byte], dataStart, dataEnd: int,
+    alpn: var seq[string]): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/dataEnd/alpn: the protocol names the peer offers, in order.
+  var
+    x: uint16 = 0
+    p: int = 0
+    nameLen: int = 0
+  if not readU16(A, dataStart, x) or dataStart + 2 + int(x) != dataEnd:
+    return "TLS ALPN list length is invalid"
+  p = dataStart + 2
+  while p < dataEnd:
+    nameLen = int(A[p])
+    p = p + 1
+    if nameLen == 0 or p + nameLen > dataEnd:
+      return "TLS ALPN identifier is invalid"
+    alpn.add(readHelloText(A, p, nameLen))
+    p = p + nameLen
+
 proc parseExtensions(A: openArray[byte], start, finish: int,
     server: bool, key: var ByteSeq, versionOk: var bool,
     serverName: var string, alpn: var seq[string],
     sigSchemes: var seq[uint16]): string {.role: parser,
     tag: "tls|read|validation".} =
+  ## A/start/finish/server: the extension vector and which side sent it.
+  ## key/versionOk/serverName/alpn/sigSchemes: what the walk fills in.
   var
-    o, dataStart, dataEnd, listEnd, nameLen, p, vectorLen: int = start
-    kind, n, x: uint16 = 0
+    o: int = start
+    dataStart, dataEnd: int = 0
+    kind, n: uint16 = 0
     seenVersion, seenKey, seenSni, seenAlpn: bool = false
     seenGroups, seenSignatures: bool = false
-    schemes: seq[uint16] = @[]
-    name: string = ""
     seenKinds: seq[uint16] = @[]
   while o < finish:
     if not readU16(A, o, kind) or not readU16(A, o + 2, n):
@@ -275,98 +391,46 @@ proc parseExtensions(A: openArray[byte], start, finish: int,
     dataEnd = dataStart + int(n)
     if dataEnd > finish:
       return "TLS extension exceeds extension vector"
+    ## Every extension may appear once. A repeat is refused rather than
+    ## letting the last copy win, which is how a peer would otherwise hide
+    ## one value behind another.
     if kind in seenKinds:
       return "TLS extension is duplicated"
     seenKinds.add(kind)
     case kind
     of extSupportedVersions:
-      if seenVersion:
-        return "TLS supported_versions extension is duplicated"
       seenVersion = true
-      if server:
-        versionOk = n == 2 and readU16(A, dataStart, x) and x == tls13Version
-      else:
-        vectorLen = if n > 0: int(A[dataStart]) else: -1
-        versionOk = vectorLen >= 2 and vectorLen + 1 == int(n) and
-          vectorContainsU16(A, dataStart + 1, vectorLen, tls13Version)
+      result = parseVersionsExt(A, dataStart, n, server, versionOk)
     of extKeyShare:
-      if seenKey:
-        return "TLS key_share extension is duplicated"
       seenKey = true
-      p = dataStart
-      if not server:
-        if not readU16(A, p, x) or p + 2 + int(x) != dataEnd:
-          return "TLS client key_share vector is invalid"
-        result = parseClientKeyShares(A, p + 2, dataEnd, key)
-        if result.len > 0:
-          return
-      else:
-        if not readU16(A, p, x) or x != tls13GroupX25519 or
-            not readU16(A, p + 2, n) or n != 32 or p + 4 + 32 != dataEnd:
-          return "TLS X25519 key_share is invalid"
-        key = @A[p + 4 ..< dataEnd]
+      result = parseKeyShareExt(A, dataStart, dataEnd, server, key)
     of extSupportedGroups:
-      if server or seenGroups:
+      if server:
         return "TLS supported_groups extension is invalid or duplicated"
       seenGroups = true
-      if not readU16(A, dataStart, x) or int(x) != int(n) - 2 or
-          not vectorContainsU16(A, dataStart + 2, int(x), tls13GroupX25519):
-        return "TLS supported_groups does not contain the controlled X25519 profile"
+      result = parseGroupsExt(A, dataStart, n)
     of extSignatureAlgorithms:
-      if server or seenSignatures:
+      if server:
         return "TLS signature_algorithms extension is invalid or duplicated"
       seenSignatures = true
-      if not readU16(A, dataStart, x) or int(x) != int(n) - 2:
-        return "TLS signature_algorithms extension is malformed"
-      schemes = collectVectorU16(A, dataStart + 2, int(x))
-      if schemes.len == 0:
-        return "TLS signature_algorithms list is empty"
-      if not anySupportedScheme(schemes):
-        return "TLS signature_algorithms offers no scheme this profile supports"
-      sigSchemes = schemes
+      result = parseSignaturesExt(A, dataStart, n, sigSchemes)
     of extServerName:
-      if server or seenSni:
+      if server:
         return "TLS server_name extension is invalid or duplicated"
       seenSni = true
-      if not readU16(A, dataStart, x):
-        return "TLS SNI list is incomplete"
-      listEnd = dataStart + 2 + int(x)
-      if listEnd != dataEnd or dataStart + 5 > dataEnd or A[dataStart + 2] != 0'u8 or
-          not readU16(A, dataStart + 3, n):
-        return "TLS SNI entry is invalid"
-      nameLen = int(n)
-      if dataStart + 5 + nameLen != dataEnd:
-        return "TLS SNI hostname length is invalid"
-      name = newString(nameLen)
-      p = 0
-      while p < nameLen:
-        name[p] = char(A[dataStart + 5 + p])
-        p = p + 1
-      if not validHelloHost(name):
-        return "TLS SNI hostname is invalid"
-      serverName = name.toLowerAscii()
+      result = parseSniExt(A, dataStart, dataEnd, serverName)
     of extAlpn:
-      if server or seenAlpn:
+      if server:
         return "TLS ALPN extension is invalid or duplicated"
       seenAlpn = true
-      if not readU16(A, dataStart, x) or dataStart + 2 + int(x) != dataEnd:
-        return "TLS ALPN list length is invalid"
-      p = dataStart + 2
-      while p < dataEnd:
-        nameLen = int(A[p])
-        p = p + 1
-        if nameLen == 0 or p + nameLen > dataEnd:
-          return "TLS ALPN identifier is invalid"
-        name = newString(nameLen)
-        listEnd = 0
-        while listEnd < nameLen:
-          name[listEnd] = char(A[p + listEnd])
-          listEnd = listEnd + 1
-        alpn.add(name)
-        p = p + nameLen
+      result = parseAlpnExt(A, dataStart, dataEnd, alpn)
     else:
       discard
+    if result.len > 0:
+      return
     o = dataEnd
+  discard seenSni
+  discard seenAlpn
   if not seenVersion or not versionOk or not seenKey:
     return "TLS hello is missing required version or key share"
   if not server and (not seenGroups or not seenSignatures):

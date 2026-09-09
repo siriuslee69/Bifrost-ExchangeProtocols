@@ -64,6 +64,17 @@ proc initChunkedDecoder*(): ChunkedDecoder {.role: truthBuilder,
   result.totalBytes = 0
   result.err = ""
 
+proc onlyBlanksLeft(l: string, start, stop: int): bool {.inline,
+    role: parser, tag: "protocol|parsing|validation".} =
+  ## l/start/stop: is everything from `start` to `stop` a space or a tab?
+  var
+    i: int = start
+  while i < stop:
+    if l[i] != ' ' and l[i] != '\t':
+      return false
+    i = i + 1
+  result = true
+
 proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
     tag: "protocol|parsing|validation".} =
   ## l: one chunk-size line, `\r\n` already removed.
@@ -87,12 +98,10 @@ proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
     of 'a'..'f': d = ord(l[i]) - ord('a') + 10
     of 'A'..'F': d = ord(l[i]) - ord('A') + 10
     of ' ', '\t':
-      # Trailing spaces before the extension separator are tolerated,
-      # but a digit may never follow them.
-      while i < stop:
-        if l[i] != ' ' and l[i] != '\t':
-          return (false, 0'i64)
-        i = i + 1
+      ## Trailing spaces before the extension separator are tolerated, but a
+      ## digit may never follow them -- otherwise "1 2" would read as 0x12.
+      if not onlyBlanksLeft(l, i, stop):
+        return (false, 0'i64)
       break
     else:
       return (false, 0'i64)
@@ -127,6 +136,97 @@ proc takeLine(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
       return (false, true)
   result = (false, false)
 
+## ╭⟢ one state at a time
+##
+## The decoder is a four-state machine, and it used to be written as one
+## loop holding a case holding the whole of every state. Each state is now
+## its own step. Every one returns "stop reading" -- because the input ran
+## out mid-item, or because the stream is bad -- so the loop below is only
+## the walk between states.
+
+proc failChunked(D: var ChunkedDecoder, why: string) {.inline,
+    role: actor, tag: "protocol|validation".} =
+  ## D/why: end the stream, and say why once rather than at five sites.
+  D.state = cdsError
+  D.err = why
+
+proc stepChunkSize(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
+    maxBodyBytes: int64): bool {.inline, role: parser,
+    tag: "protocol|parsing|validation".} =
+  ## D/A/i/maxBodyBytes: read one chunk-size line and size the next chunk.
+  var
+    line: tuple[have: bool, bad: bool] = takeLine(D, A, i, httpMaxChunkLineLen)
+    size: tuple[ok: bool, size: int64] = (ok: false, size: 0'i64)
+  if line.bad:
+    failChunked(D, "chunk size line too long")
+    return true
+  if not line.have:
+    return true
+  size = parseChunkSize(D.line)
+  D.line = ""
+  if not size.ok:
+    failChunked(D, "malformed chunk size")
+    return true
+  if size.size == 0:
+    D.state = cdsTrailer
+    return false
+  ## The running total is checked BEFORE the bytes are taken, so a declared
+  ## size that would cross the cap never reserves anything.
+  if D.totalBytes + size.size > maxBodyBytes:
+    failChunked(D, "chunked body exceeds limit")
+    return true
+  D.remaining = size.size
+  D.state = cdsData
+
+proc stepChunkData(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
+    R: var ChunkedFeedResult): bool {.inline, role: parser,
+    tag: "protocol|parsing".} =
+  ## D/A/i/R: take as much of the current chunk as this input holds.
+  var
+    take: int = A.len - i
+  if int64(take) > D.remaining:
+    take = int(D.remaining)
+  if take > 0:
+    R.data.add(A[i ..< i + take])
+    i = i + take
+    D.remaining = D.remaining - int64(take)
+    D.totalBytes = D.totalBytes + int64(take)
+  if D.remaining == 0:
+    D.state = cdsDataCrLf
+
+proc stepChunkCrLf(D: var ChunkedDecoder; A: openArray[byte];
+    i: var int): bool {.inline, role: parser,
+    tag: "protocol|parsing|validation".} =
+  ## D/A/i: the empty line that must follow a chunk's bytes.
+  var
+    line: tuple[have: bool, bad: bool] = takeLine(D, A, i, 4)
+  if line.bad:
+    failChunked(D, "missing chunk terminator")
+    return true
+  if not line.have:
+    return true
+  if D.line.len != 0:
+    D.line = ""
+    failChunked(D, "malformed chunk terminator")
+    return true
+  D.line = ""
+  D.state = cdsSize
+
+proc stepChunkTrailer(D: var ChunkedDecoder; A: openArray[byte];
+    i: var int): bool {.inline, role: parser,
+    tag: "protocol|parsing|validation".} =
+  ## D/A/i: trailer lines, ending at the first empty one.
+  var
+    line: tuple[have: bool, bad: bool] = takeLine(D, A, i, httpMaxChunkLineLen)
+  if line.bad:
+    failChunked(D, "trailer line too long")
+    return true
+  if not line.have:
+    return true
+  if D.line.len == 0:
+    D.state = cdsDone
+  D.line = ""
+
 proc feedChunked*(D: var ChunkedDecoder; A: openArray[byte];
     maxBodyBytes: int64): ChunkedFeedResult {.role: orchestrator,
     tag: "protocol|parsing|validation".} =
@@ -137,9 +237,7 @@ proc feedChunked*(D: var ChunkedDecoder; A: openArray[byte];
   ## false and `ok` is true.
   var
     i: int = 0
-    line: tuple[have: bool, bad: bool]
-    size: tuple[ok: bool, size: int64]
-    take: int = 0
+    stop: bool = false
   result.ok = true
   result.data = @[]
   if D.state == cdsDone:
@@ -148,72 +246,13 @@ proc feedChunked*(D: var ChunkedDecoder; A: openArray[byte];
   if D.state == cdsError:
     return ChunkedFeedResult(ok: false, consumed: 0, data: @[], done: false,
       err: D.err)
-
-  while i < A.len and D.state notin {cdsDone, cdsError}:
+  while i < A.len and D.state notin {cdsDone, cdsError} and not stop:
     case D.state
-    of cdsSize:
-      line = takeLine(D, A, i, httpMaxChunkLineLen)
-      if line.bad:
-        D.state = cdsError
-        D.err = "chunk size line too long"
-        break
-      if not line.have:
-        break
-      size = parseChunkSize(D.line)
-      D.line = ""
-      if not size.ok:
-        D.state = cdsError
-        D.err = "malformed chunk size"
-        break
-      if size.size == 0:
-        D.state = cdsTrailer
-      else:
-        if D.totalBytes + size.size > maxBodyBytes:
-          D.state = cdsError
-          D.err = "chunked body exceeds limit"
-          break
-        D.remaining = size.size
-        D.state = cdsData
-    of cdsData:
-      take = A.len - i
-      if int64(take) > D.remaining:
-        take = int(D.remaining)
-      if take > 0:
-        result.data.add(A[i ..< i + take])
-        i = i + take
-        D.remaining = D.remaining - int64(take)
-        D.totalBytes = D.totalBytes + int64(take)
-      if D.remaining == 0:
-        D.state = cdsDataCrLf
-    of cdsDataCrLf:
-      line = takeLine(D, A, i, 4)
-      if line.bad:
-        D.state = cdsError
-        D.err = "missing chunk terminator"
-        break
-      if not line.have:
-        break
-      if D.line.len != 0:
-        D.state = cdsError
-        D.err = "malformed chunk terminator"
-        D.line = ""
-        break
-      D.line = ""
-      D.state = cdsSize
-    of cdsTrailer:
-      line = takeLine(D, A, i, httpMaxChunkLineLen)
-      if line.bad:
-        D.state = cdsError
-        D.err = "trailer line too long"
-        break
-      if not line.have:
-        break
-      if D.line.len == 0:
-        D.state = cdsDone
-      D.line = ""
-    else:
-      break
-
+    of cdsSize: stop = stepChunkSize(D, A, i, maxBodyBytes)
+    of cdsData: stop = stepChunkData(D, A, i, result)
+    of cdsDataCrLf: stop = stepChunkCrLf(D, A, i)
+    of cdsTrailer: stop = stepChunkTrailer(D, A, i)
+    else: stop = true
   result.consumed = i
   result.done = D.state == cdsDone
   if D.state == cdsError:

@@ -372,6 +372,35 @@ proc acceptClientHandshake(S: var Tls13ClientSession, H: Tls13Handshake,
   else:
     S.failClient(O, "TLS handshake message arrived in invalid client state")
 
+proc acceptClientEvent(S: var Tls13ClientSession, E: Tls13Event,
+    O: var Tls13ClientOutput): bool {.inline, role: orchestrator,
+    tag: "tls|cryptoBoundary".} =
+  ## S/E/O: one decoded event. True when the caller must stop reading --
+  ## a failure, a close, or an alert. The feed loop then holds nothing but
+  ## the walk, instead of a case inside a loop inside a loop.
+  case E.kind
+  of tekError:
+    S.failClient(O, E.err)
+    result = true
+  of tekClosed:
+    O.closed = true
+    if S.state != tcsConnected:
+      S.state = tcsClosed
+    result = true
+  of tekAlert:
+    S.state = tcsFailed
+    O.err = "TLS peer sent alert " & $E.alertDescription
+    result = true
+  of tekApplicationData:
+    if S.state != tcsConnected:
+      S.failClient(O,
+        "TLS application data arrived before handshake completion")
+      return true
+    O.applicationData.add(E.data)
+  of tekHandshake:
+    S.acceptClientHandshake(E.handshake, O)
+    result = S.state == tcsFailed
+
 proc feedTls13Client*(S: var Tls13ClientSession,
     A: openArray[byte]): Tls13ClientOutput {.role: orchestrator,
     tag: "tls|transport|cryptoBoundary".} =
@@ -382,29 +411,8 @@ proc feedTls13Client*(S: var Tls13ClientSession,
   while true:
     i = 0
     while i < step.events.len:
-      case step.events[i].kind
-      of tekError:
-        S.failClient(result, step.events[i].err)
+      if acceptClientEvent(S, step.events[i], result):
         return
-      of tekClosed:
-        result.closed = true
-        if S.state != tcsConnected:
-          S.state = tcsClosed
-        return
-      of tekAlert:
-        S.state = tcsFailed
-        result.err = "TLS peer sent alert " & $step.events[i].alertDescription
-        return
-      of tekApplicationData:
-        if S.state != tcsConnected:
-          S.failClient(result,
-            "TLS application data arrived before handshake completion")
-          return
-        result.applicationData.add(step.events[i].data)
-      of tekHandshake:
-        S.acceptClientHandshake(step.events[i].handshake, result)
-        if S.state == tcsFailed:
-          return
       i = i + 1
     if not step.progressed:
       return

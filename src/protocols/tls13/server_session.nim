@@ -300,68 +300,100 @@ proc acceptClientFinished(S: var Tls13ServerSession, H: Tls13Handshake,
   clearTls13HandshakeSecrets(S.handshakeSecrets)
   clearTls13ApplicationSecrets(S.applicationSecrets)
 
+## ╭⟢ one event at a time
+##
+## The feed loop used to be five deep: a loop over steps, a loop over the
+## events in a step, a case on the event kind, a case on the session state,
+## and a test inside that. Each layer below is one of those, pulled out. The
+## bool every one returns means "the caller must stop" -- a failure, a close,
+## or an alert -- so the loop that remains has nothing in it but the walk.
+
+proc acceptServerClientHello(S: var Tls13ServerSession, H: Tls13Handshake,
+    O: var Tls13ServerOutput): bool {.inline, role: orchestrator,
+    tag: "tls|cryptoBoundary".} =
+  ## S/H/O: session awaiting a ClientHello, the message, and the output.
+  var
+    clientHello: Tls13ClientHelloResult = default(Tls13ClientHelloResult)
+  if H.messageType != thtClientHello:
+    S.failServer(O, "TLS server expected ClientHello")
+    return true
+  clientHello = decodeTls13ClientHello(H.body)
+  if not clientHello.ok:
+    S.failServer(O, clientHello.err)
+    return true
+  try:
+    S.emitServerFlight(clientHello.hello, H.encoded, O)
+  except CatchableError as e:
+    S.failServer(O, e.msg)
+  result = S.state == tssFailed
+
+proc acceptServerPostHandshake(S: var Tls13ServerSession, H: Tls13Handshake,
+    O: var Tls13ServerOutput): bool {.inline, role: orchestrator,
+    tag: "tls|cryptoBoundary".} =
+  ## S/H/O: connected session and a message arriving after the handshake.
+  ## Only a KeyUpdate is allowed here, and only the "please update" form of
+  ## it is answered; anything else ends the session rather than being
+  ## ignored, so a peer cannot keep sending things this side does not read.
+  if H.messageType != thtKeyUpdate:
+    S.failServer(O, "TLS post-handshake message is unsupported")
+    return true
+  if H.body.len == 1 and H.body[0] == 1'u8:
+    O.outbound.add(S.connection.encodeTls13KeyUpdate())
+
+proc acceptServerHandshake(S: var Tls13ServerSession, H: Tls13Handshake,
+    O: var Tls13ServerOutput): bool {.inline, role: orchestrator,
+    tag: "tls|cryptoBoundary".} =
+  ## S/H/O: which handshake message is allowed depends on the state.
+  case S.state
+  of tssAwaitClientHello:
+    result = acceptServerClientHello(S, H, O)
+  of tssAwaitClientFinished:
+    S.acceptClientFinished(H, O)
+    result = S.state == tssFailed
+  of tssConnected:
+    result = acceptServerPostHandshake(S, H, O)
+  else:
+    S.failServer(O, "TLS handshake message arrived in invalid server state")
+    result = true
+
+proc acceptServerEvent(S: var Tls13ServerSession, E: Tls13Event,
+    O: var Tls13ServerOutput): bool {.inline, role: orchestrator,
+    tag: "tls|cryptoBoundary".} =
+  ## S/E/O: one decoded event. True when the caller must stop reading.
+  case E.kind
+  of tekError:
+    S.failServer(O, E.err)
+    result = true
+  of tekClosed:
+    O.closed = true
+    if S.state != tssConnected:
+      S.state = tssClosed
+    result = true
+  of tekAlert:
+    S.state = tssFailed
+    O.err = "TLS peer sent alert " & $E.alertDescription
+    result = true
+  of tekApplicationData:
+    if S.state != tssConnected:
+      S.failServer(O,
+        "TLS application data arrived before handshake completion")
+      return true
+    O.applicationData.add(E.data)
+  of tekHandshake:
+    result = acceptServerHandshake(S, E.handshake, O)
+
 proc feedTls13Server*(S: var Tls13ServerSession,
     A: openArray[byte]): Tls13ServerOutput {.role: orchestrator,
     tag: "tls|transport|cryptoBoundary".} =
   ## S/A: server session and arbitrary next transport bytes.
   var
     step: Tls13FeedStep = S.connection.feedTls13One(A)
-    clientHello: Tls13ClientHelloResult
     i: int = 0
   while true:
     i = 0
     while i < step.events.len:
-      case step.events[i].kind
-      of tekError:
-        S.failServer(result, step.events[i].err)
+      if acceptServerEvent(S, step.events[i], result):
         return
-      of tekClosed:
-        result.closed = true
-        if S.state != tssConnected:
-          S.state = tssClosed
-        return
-      of tekAlert:
-        S.state = tssFailed
-        result.err = "TLS peer sent alert " & $step.events[i].alertDescription
-        return
-      of tekApplicationData:
-        if S.state != tssConnected:
-          S.failServer(result,
-            "TLS application data arrived before handshake completion")
-          return
-        result.applicationData.add(step.events[i].data)
-      of tekHandshake:
-        case S.state
-        of tssAwaitClientHello:
-          if step.events[i].handshake.messageType != thtClientHello:
-            S.failServer(result, "TLS server expected ClientHello")
-            return
-          clientHello = decodeTls13ClientHello(step.events[i].handshake.body)
-          if not clientHello.ok:
-            S.failServer(result, clientHello.err)
-            return
-          try:
-            S.emitServerFlight(clientHello.hello,
-              step.events[i].handshake.encoded, result)
-          except CatchableError as e:
-            S.failServer(result, e.msg)
-          if S.state == tssFailed:
-            return
-        of tssAwaitClientFinished:
-          S.acceptClientFinished(step.events[i].handshake, result)
-          if S.state == tssFailed:
-            return
-        of tssConnected:
-          if step.events[i].handshake.messageType != thtKeyUpdate:
-            S.failServer(result, "TLS post-handshake message is unsupported")
-            return
-          if step.events[i].handshake.body.len == 1 and
-              step.events[i].handshake.body[0] == 1'u8:
-            result.outbound.add(S.connection.encodeTls13KeyUpdate())
-        else:
-          S.failServer(result,
-            "TLS handshake message arrived in invalid server state")
-          return
       i = i + 1
     if not step.progressed:
       return

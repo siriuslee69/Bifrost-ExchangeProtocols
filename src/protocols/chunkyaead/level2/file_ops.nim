@@ -529,6 +529,27 @@ proc ensureTasksOk(ts: seq[ChunkHashTask]) {.role: parser,
     if not t.ok:
       raise newException(IOError, t.err)
 
+proc appendChunkFile(fOut: var File, path: string,
+    buf: var seq[uint8]) {.inline, role: dataWriter,
+    tag: "chunkyAead|write".} =
+  ## fOut/path/buf: copy one chunk file onto the end of the merged output.
+  ## The buffer is the caller's, so a merge of many chunks allocates once
+  ## rather than once per chunk.
+  var
+    fIn: File
+    got: int = 0
+  if not open(fIn, path, fmRead):
+    raise newException(IOError, "failed to open chunk for merge")
+  try:
+    while true:
+      got = fIn.readBuffer(addr buf[0], buf.len)
+      if got <= 0:
+        break
+      if fOut.writeBuffer(addr buf[0], got) != got:
+        raise newException(IOError, "failed to write merged output")
+  finally:
+    close(fIn)
+
 proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
     role: dataWriter, tag: "chunkyAead|write".} =
   var
@@ -546,18 +567,7 @@ proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
     buf.setLen(b)
     i = 0
     while i < paths.len:
-      okIn = open(fIn, paths[i], fmRead)
-      if not okIn:
-        raise newException(IOError, "failed to open chunk for merge")
-      try:
-        while true:
-          got = fIn.readBuffer(addr buf[0], buf.len)
-          if got <= 0:
-            break
-          if fOut.writeBuffer(addr buf[0], got) != got:
-            raise newException(IOError, "failed to write merged output")
-      finally:
-        close(fIn)
+      appendChunkFile(fOut, paths[i], buf)
       i = i + 1
   finally:
     close(fOut)

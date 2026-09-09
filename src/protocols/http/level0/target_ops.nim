@@ -189,9 +189,28 @@ proc normalizeHttpPath*(p: string): tuple[ok: bool, path: string] {.
     seg.add('/')
   result = (true, seg)
 
+proc addQueryPair(P: var seq[HttpQueryParam], piece: string) {.inline,
+    role: dataWriter, tag: "protocol|parsing".} =
+  ## P/piece: one `key=value` (or bare `key`) between two separators.
+  ##
+  ## A pair that fails to decode is skipped rather than failing the whole
+  ## request: one bad parameter should not cost the client its page. An
+  ## empty key is skipped too, since nothing could ask for it afterwards.
+  var
+    eq: int = piece.find('=')
+    k: tuple[ok: bool, value: string] = (ok: false, value: "")
+    v: tuple[ok: bool, value: string] = (ok: true, value: "")
+  if eq < 0:
+    k = percentDecodeForm(piece)
+  else:
+    k = percentDecodeForm(piece[0 ..< eq])
+    v = percentDecodeForm(piece[eq + 1 .. ^1])
+  if k.ok and v.ok and k.value.len > 0:
+    P.add(HttpQueryParam(key: k.value, value: v.value))
+
 proc parseQueryParams*(q: string): seq[HttpQueryParam] {.role: parser,
     tag: "protocol|parsing".} =
-  ## q: raw query string, `?` already removed.
+  ## q: the raw query string, without the leading `?`.
   ##
   ## A key with no `=` yields an empty value. Pairs that fail to decode
   ## are skipped rather than failing the whole request, because one bad
@@ -199,27 +218,13 @@ proc parseQueryParams*(q: string): seq[HttpQueryParam] {.role: parser,
   var
     i: int = 0
     start: int = 0
-    piece: string = ""
-    eq: int = 0
-    k: tuple[ok: bool, value: string]
-    v: tuple[ok: bool, value: string]
   result = @[]
   if q.len == 0:
     return
   while i <= q.len:
     if i == q.len or q[i] == '&':
       if i > start:
-        piece = q[start ..< i]
-        eq = piece.find('=')
-        if eq < 0:
-          k = percentDecodeForm(piece)
-          if k.ok and k.value.len > 0:
-            result.add(HttpQueryParam(key: k.value, value: ""))
-        else:
-          k = percentDecodeForm(piece[0 ..< eq])
-          v = percentDecodeForm(piece[eq + 1 .. ^1])
-          if k.ok and v.ok and k.value.len > 0:
-            result.add(HttpQueryParam(key: k.value, value: v.value))
+        addQueryPair(result, q[start ..< i])
       start = i + 1
     i = i + 1
 

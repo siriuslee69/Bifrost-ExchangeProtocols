@@ -138,6 +138,19 @@ proc readHandshakeFrame(sock: DacSocket, timeoutMs: int,
   except CatchableError as e:
     result.err = e.msg
 
+proc matchesExpected(f: AmeHandshakeFrame,
+    wanted: openArray[AmeHandshakeExpect]): bool {.inline, role: parser,
+    tag: "validation".} =
+  ## f/wanted: is this frame one of the records this step was waiting for?
+  ## Both possible answers to a hello are awaited at once, so this is a list
+  ## rather than a single comparison.
+  var
+    i: int = 0
+  while i < wanted.len:
+    if f.kind == wanted[i].kind and f.step == wanted[i].step:
+      return true
+    i = i + 1
+
 proc awaitStep(sock: DacSocket, wanted: openArray[AmeHandshakeExpect],
     sessionId: uint64, timeoutMs, maxDatagramBytes: int,
     remote: var DacAddress, matchRemote: bool):
@@ -171,15 +184,12 @@ proc awaitStep(sock: DacSocket, wanted: openArray[AmeHandshakeExpect],
       continue
     if sessionId != 0'u64 and got.frame.sessionId != sessionId:
       continue
-    i = 0
-    while i < wanted.len:
-      if got.frame.kind == wanted[i].kind and got.frame.step == wanted[i].step:
-        if not matchRemote:
-          remote = got.remote
-        result.frame = got.frame
-        result.ok = true
-        return
-      i = i + 1
+    if matchesExpected(got.frame, wanted):
+      if not matchRemote:
+        remote = got.remote
+      result.frame = got.frame
+      result.ok = true
+      return
   result.err = "AME handshake saw only unrelated datagrams"
 
 proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
