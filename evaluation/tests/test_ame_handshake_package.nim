@@ -901,3 +901,37 @@ suite "AME secure package":
     expect ValueError:
       discard initAmeAuthorityRoot("root", [AmeIdentitySigningKey(
         algorithm: asaEd25519, publicKey: @[])])
+
+suite "a half-built authentication must not authenticate anybody":
+  ## `AmeAuthentication` is one object now, so a caller can reach a handshake
+  ## call with a default-constructed one. Its `mode` is the first enum value,
+  ## `atmAuthorityCertificate`, which is exactly the case where forgetting to
+  ## fill it in must not quietly succeed.
+  # {.testKind: tkEdgeCase.}
+  test "a default authentication refuses the peer instead of trusting it":
+    var
+      p: Pair = newPair("failclosed")
+      empty: AmeAuthentication = default(AmeAuthentication)
+      client: AmeClientHandshake = beginAmeHandshake(81'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.auth, p.serverCert, p.serverKey)
+      done: AmeHandshakeResult
+    check server.ok
+    check empty.mode == atmAuthorityCertificate
+    done = finishAmeHandshake(client, server.state.serverHello, empty,
+      p.clientCert, p.clientKey, nowUnix)
+    check not done.ok
+    check done.err == "pinned authority root is incomplete"
+
+  # {.testKind: tkEdgeCase.}
+  test "each constructor refuses material it cannot judge with":
+    ## A short secret is the dangerous one: it would still produce a tag, and
+    ## the tag would still verify between two peers who share it.
+    expect ValueError:
+      discard initAmePskAuthentication("id", newSeq[byte](15))
+    expect ValueError:
+      discard initAmePskAuthentication("", newSeq[byte](32))
+    expect ValueError:
+      discard initAmeCertificateAuthentication(default(AmeAuthorityRoot))
+    expect ValueError:
+      discard initAmePinnedAuthentication(default(AmePinnedPeerIdentity))
