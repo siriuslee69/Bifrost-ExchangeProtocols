@@ -95,112 +95,51 @@ proc rangeIsZero*(A: openArray[uint8], offset, count: int): bool {.role: parser.
       return false
     i = i + 1
 
+proc dacEnumFromId[T: enum](id: uint8, what: string): T {.role: parser,
+    inline.} =
+  ## id: the raw byte off the wire.
+  ## what: the field's name, used only to word the refusal.
+  ##
+  ## Every DAC enum below is uint8-backed and numbered from 0x00 upward with
+  ## no gaps, so the byte IS the ordinal and no lookup table is needed:
+  ##
+  ##   byte 0x00  0x01  0x02  0x03  ...  high(T)   past high(T)
+  ##        |     |     |     |          |         |
+  ##        v     v     v     v          v         raise ValueError
+  ##       name0 name1 name2 name3      nameN
+  ##
+  ## Adding a name to one of those enums extends the accepted range on its
+  ## own. Giving one an explicit non-contiguous value would break that, which
+  ## is why the enums state every value rather than leaving them implicit.
+  if id > uint8(ord(high(T))):
+    raise newException(ValueError, "DAC " & what & " id mismatch")
+  result = T(id)
+
 proc dacPathLaneFromId*(id: uint8): DacPathLane {.role: parser.} =
   ## id: raw DAC path lane byte.
-  case id
-  of 0x00'u8:
-    result = dplCleanPath
-  of 0x01'u8:
-    result = dplMobilePath
-  of 0x02'u8:
-    result = dplThinPath
-  of 0x03'u8:
-    result = dplLossyPath
-  of 0x04'u8:
-    result = dplBlockedUdpPath
-  of 0x05'u8:
-    result = dplRecoveryPath
-  of 0x06'u8:
-    result = dplSuperCleanPath
-  else:
-    raise newException(ValueError, "DAC path lane id mismatch")
+  result = dacEnumFromId[DacPathLane](id, "path lane")
 
 proc dacTransferClassFromId*(id: uint8): DacTransferClass {.role: parser.} =
   ## id: raw DAC transfer class byte.
-  case id
-  of 0x00'u8:
-    result = dtcStatus
-  of 0x01'u8:
-    result = dtcControl
-  of 0x02'u8:
-    result = dtcUserData
-  of 0x03'u8:
-    result = dtcArchive
-  of 0x04'u8:
-    result = dtcRecovery
-  of 0x05'u8:
-    result = dtcRealtime
-  else:
-    raise newException(ValueError, "DAC transfer class id mismatch")
+  result = dacEnumFromId[DacTransferClass](id, "transfer class")
 
 proc dacRepairModeFromId*(id: uint8): DacRepairMode {.role: parser.} =
   ## id: raw DAC repair mode byte.
-  case id
-  of 0x00'u8:
-    result = drmNone
-  of 0x01'u8:
-    result = drmXor
-  of 0x02'u8:
-    result = drmReedSolomon
-  of 0x03'u8:
-    result = drmTcpExact
-  else:
-    raise newException(ValueError, "DAC repair mode id mismatch")
+  result = dacEnumFromId[DacRepairMode](id, "repair mode")
 
 proc dacRepairReasonFromId*(id: uint8): DacRepairReason {.role: parser.} =
   ## id: raw DAC repair reason byte.
-  case id
-  of 0x00'u8:
-    result = drrMissing
-  of 0x01'u8:
-    result = drrCorrupt
-  of 0x02'u8:
-    result = drrDecodeFailed
-  of 0x03'u8:
-    result = drrTimeout
-  else:
-    raise newException(ValueError, "DAC repair reason id mismatch")
+  result = dacEnumFromId[DacRepairReason](id, "repair reason")
 
 proc dacRepairSourceFromId*(id: uint8): DacRepairSource {.role: parser.} =
   ## id: raw DAC repair source byte.
-  case id
-  of 0x00'u8:
-    result = drsUdpExtraParity
-  of 0x01'u8:
-    result = drsTcpExactChunk
-  of 0x02'u8:
-    result = drsTcpFullFallback
-  else:
-    raise newException(ValueError, "DAC repair source id mismatch")
+  result = dacEnumFromId[DacRepairSource](id, "repair source")
 
 proc dacCommitStatusFromId*(id: uint8): DacCommitStatus {.role: parser.} =
   ## id: raw DAC commit status byte.
-  case id
-  of 0x00'u8:
-    result = dcsRejected
-  of 0x01'u8:
-    result = dcsCommitted
-  of 0x02'u8:
-    result = dcsCommittedWithRepair
-  of 0x03'u8:
-    result = dcsExpired
-  else:
-    raise newException(ValueError, "DAC commit status id mismatch")
+  result = dacEnumFromId[DacCommitStatus](id, "commit status")
 
-proc dacPathSwitchReasonFromId*(id: uint8): DacPathSwitchReason {.role: parser.} =
+proc dacPathSwitchReasonFromId*(id: uint8): DacPathSwitchReason {.
+    role: parser.} =
   ## id: raw DAC path-switch reason byte.
-  case id
-  of 0x00'u8:
-    result = dpsrLoss
-  of 0x01'u8:
-    result = dpsrMetered
-  of 0x02'u8:
-    result = dpsrUdpBlocked
-  of 0x03'u8:
-    result = dpsrAddressChanged
-  of 0x04'u8:
-    result = dpsrReceiverPressure
-  of 0x05'u8:
-    result = dpsrBatterySaver
-  else:
-    raise newException(ValueError, "DAC path switch reason id mismatch")
+  result = dacEnumFromId[DacPathSwitchReason](id, "path switch reason")

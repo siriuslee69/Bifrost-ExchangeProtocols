@@ -70,32 +70,39 @@ proc readStateField(A: openArray[uint8], cursor: var int,
     result = @A[cursor ..< cursor + count]
   cursor = cursor + count
 
+proc decodeStateEnum[T: enum](v: uint8, what: string): T {.role: parser,
+    tag: "fomke|parsing", inline.} =
+  ## v: the stable byte read back out of a saved FOMKE state.
+  ## what: the field's name, used only to word the refusal.
+  ##
+  ## Unlike the DAC enums, these do not all start at 0x00 -- FomkeRole and
+  ## FomkeLane are numbered from 0x01 -- so the byte is NOT the ordinal and
+  ## must be matched against the declared values rather than cast:
+  ##
+  ##   FomkeRole   0x01 frInitiator   0x02 frResponder    (0x00 invalid)
+  ##   FomkeLane   0x01 flLane1       0x02 flLane2        (0x00 invalid)
+  ##   Gb3KdfMode  0x00 gb3Sequential 0x01 gb3MemoryMixed
+  ##
+  ## Casting instead would quietly accept 0x00 as a role and a lane.
+  for e in T:
+    if v == uint8(ord(e)):
+      return e
+  raise newException(ValueError, "FOMKE state " & what & " is invalid")
+
 proc decodeStateRole(v: uint8): FomkeRole {.role: parser,
     tag: "fomke|parsing".} =
   ## v: stable local FOMKE endpoint role.
-  if v == uint8(ord(frInitiator)):
-    return frInitiator
-  if v == uint8(ord(frResponder)):
-    return frResponder
-  raise newException(ValueError, "FOMKE state role is invalid")
+  result = decodeStateEnum[FomkeRole](v, "role")
 
 proc decodeStateLane(v: uint8): FomkeLane {.role: parser,
     tag: "fomke|parsing".} =
   ## v: stable FOMKE lane identifier.
-  if v == uint8(ord(flLane1)):
-    return flLane1
-  if v == uint8(ord(flLane2)):
-    return flLane2
-  raise newException(ValueError, "FOMKE state lane is invalid")
+  result = decodeStateEnum[FomkeLane](v, "lane")
 
 proc decodeStateKdfMode(v: uint8): Gb3KdfMode {.role: parser,
     tag: "fomke|parsing".} =
   ## v: stable GB3HKDF mode identifier.
-  if v == uint8(ord(gb3Sequential)):
-    return gb3Sequential
-  if v == uint8(ord(gb3MemoryMixed)):
-    return gb3MemoryMixed
-  raise newException(ValueError, "FOMKE state KDF mode is invalid")
+  result = decodeStateEnum[Gb3KdfMode](v, "KDF mode")
 
 proc decodeStateTagLen(v: uint8): AmeAuthTagLen {.role: parser,
     tag: "fomke|parsing".} =

@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Make a fresh clone build, and point autopush back at agents/PROGRESS.md
+Commit Message: Collapse the DAC and FOMKE enum decoders onto two generics
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
