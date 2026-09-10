@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Collapse the DAC and FOMKE enum decoders onto two generics
+Commit Message: Pin Tyr at the runePragmas migration so a fresh clone builds
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -59,14 +59,14 @@ Features (Done):
 - Every site nested deeper than triple is gone: 26 -> 0.
 - Unused public routines 47 -> 21; coverage 199 untested -> 148.
 - Tests and benchmarks live under `evaluation/`.
+- A fresh clone builds. `Rune-Pragmas` is a submodule, and the pinned
+  `Tyr-Crypto` is at Tyr `main` 1585636, the first Tyr commit that imports
+  `runePragmas` instead of the `metaPragmas` that no longer exists. Both
+  verified by hiding the sibling checkouts and compiling against the
+  submodules alone.
 
 Features (In Progress):
-- The pinned `submodules/Tyr-Crypto` still imports `metaPragmas`, which no
-  longer exists anywhere. Tyr's move onto `runePragmas` sits unpushed on
-  Tyr's `nightly`. Until Tyr promotes and pushes that, a standalone clone of
-  Bifrost builds only against a sibling `Tyr-Crypto` checkout, not against
-  its own submodule. Nothing here can fix it; the pin bump is one commit
-  once Tyr's `main` carries the migration.
+- Nothing. Everything above is complete and every suite passes.
 
 Notes:
 - `Rune-Pragmas` is now a real submodule (`submodules/Rune-Pragmas`), not
