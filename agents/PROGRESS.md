@@ -6,10 +6,28 @@ Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
   Every site deeper than that is gone. Mostly BFX2, the HTTP request parser
   and the CHUNKYAEAD worker pool.
-- 33 routine families Otter reads as one routine with a knob: the five
+- 32 routine families Otter reads as one routine with a knob: the five
   `initAme*Algorithms`, the five `carriers` frame wrappers, the four
   `requireAme*Built` guards, the three hash entry points. These want
   generics rather than the data table the DAC presets took.
+- The biggest single family is the five `sealAme{Tcp,Dac}Frame` /
+  `{begin,answer,finish,confirm}Ame{Tcp,Dac}ExchangeFrame` pairs in
+  `ame/level2/session.nim` -- 63 lines, and the pairs differ ONLY in
+  `acrTcp` vs `acrDac`. It is left alone on purpose: `level2/carriers.nim`
+  already dispatches over exactly those pairs, so collapsing them makes its
+  five wrappers trivial too, and the `when acrX in ameCarriersBuilt` guards
+  live in that wrapper layer. Doing it properly means moving
+  `ameCarriersBuilt` down to a level0 module so `session.nim` can guard
+  directly and the wrapper layer can go -- about 98 lines across both
+  families, but it touches the slim-build facade that `testDacFlag` and
+  `testMinimalAme` pin by compile-failure probe. Worth doing; not worth
+  doing halfway.
+- Three families Otter lists are better left as they are, so they will keep
+  showing up: `outbound`/`inboundAmeDirection` plus `fomkeRoleFor` (the
+  third returns a different type, and merging the other two swaps two named
+  calls for one bool flag), the three `init*TransportDescriptor`
+  configurators (merging invents a public enum to save five lines), and the
+  three `httpConnection*` predicates (one line each already).
 - 4 oversized files: `http/level1/request_parser.nim`, `bfx2/reader.nim`,
   `tools/run_tls13_openssl_interop.nim`, `tools/generate_bfx2_vectors.nim`.
 - 21 unused public routines, and none of them are deletable as they stand:
