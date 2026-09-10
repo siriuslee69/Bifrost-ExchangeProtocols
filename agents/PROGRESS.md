@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Correct the clone instructions: one level of submodules, not recursive
+Commit Message: Unbreak the recursive clone chain and fix a one-in-eight flaky test
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).

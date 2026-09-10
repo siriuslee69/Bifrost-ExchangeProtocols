@@ -242,12 +242,15 @@ suite "AME private handshake":
         padding: apadBlock64)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey, wanted)
-      bare = newPair("tunables-bare")
-      bareClient: AmeClientHandshake = beginAmeHandshake(9'u64, bare.layout,
-        bare.tier)
-      bareServer = answerAmeHandshake(bareClient.hello,
-        [handshakePath(bare.layout, bare.tier)], bare.auth,
-        bare.serverCert, bare.serverKey)
+      ## The control answers the SAME hello with the SAME identity, and
+      ## differs from `server` in one thing only: it names no tunables, so
+      ## it does not pad. A separately seeded pair would carry a different
+      ## certificate and different key material, which is a different
+      ## plaintext length before padding is reached at all -- see the note
+      ## on the length comparison below.
+      bareServer = answerAmeHandshake(client.hello,
+        [handshakePath(p.layout, p.tier)], p.auth,
+        p.serverCert, p.serverKey)
       clientDone: AmeHandshakeResult
       serverDone: AmeHandshakeResult
       clientSession: AmeSession
@@ -266,10 +269,19 @@ suite "AME private handshake":
     ## The unpadded block is NOT asserted to be a non-multiple of 64. Its
     ## length follows randomly generated certificate key material, so it
     ## lands on a multiple about one run in sixty-four -- which failed this
-    ## test for a reason that had nothing to do with padding. What actually
-    ## distinguishes the two is that one was rounded and the other was not:
-    ## a padded block is never shorter than the bare one, and the padding
-    ## policy is what says so.
+    ## test for a reason that had nothing to do with padding.
+    ##
+    ## The comparison below is only meaningful because `bareServer` answers
+    ## the same hello with the same certificate and key. Rounding UP can
+    ## only ever add bytes, so padded >= bare holds every run:
+    ##
+    ##   same plaintext P     padded   -> ceil(P/64)*64   >= P
+    ##                        bare     -> P
+    ##
+    ## Against a separately seeded pair it did not hold. Two pairs carry
+    ## two different certificates, so the two plaintexts differ before
+    ## padding applies, and a padded 2496 against a bare 2503 failed this
+    ## test roughly one run in eight while saying nothing about padding.
     check bareServer.state.serverHello.params.padding == apadNone
     check server.state.serverHello.params.padding == apadBlock64
     check server.state.serverHello.sealed.len >=
