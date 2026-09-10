@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Bump Tyr to close the second path to the dead Fylgia reference
+Commit Message: Say that a recursive clone works now, and what it costs
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).

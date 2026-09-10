@@ -29,21 +29,18 @@ git submodule update --init
 nimble test
 ```
 
-**Not `--recursive`, and not `--init --recursive`.** Bifrost needs only its
-own six submodules. Recursing further walks into dependencies-of-dependencies
-that Bifrost does not build and cannot fix, and one of them currently stops
-the clone dead:
+**Why one level and not `--recursive`.** One level is all Bifrost needs, and
+it is far cheaper. Recursing pulls the vendored C sources its dependencies
+carry -- libsodium, liboqs, openssl, PQClean, lz4, zstd:
 
 ```text
-Bifrost
-└── Eir-CompressionAndECC
-    └── Otter-RepoEvaluation
-        └── Fylgia-Utils @ 2a259c6   <- no longer on the remote
-            fatal: remote error: upload-pack: not our ref 2a259c6...
+git submodule update --init      6 repositories, ~157 MB
+git clone --recursive            plus their vendored C sources, ~4.6 GB
 ```
 
-One level is enough: a clone done this way builds the library and passes the
-full suite, 96 suites and 525 checks, with no sibling checkouts present.
+Both work, and both pass the full suite, 96 suites and 525 checks, with no
+sibling checkouts anywhere present. Take `--recursive` only when you actually
+intend to build the native crypto libraries from source.
 
 Windows needs Nim 1.6+ with a working `gcc` on `PATH` (the Nim installer's
 MinGW is enough). `nimble testTls` additionally needs OpenSSL development
