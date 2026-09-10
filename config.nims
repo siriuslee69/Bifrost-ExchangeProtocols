@@ -84,4 +84,5 @@ elif dirExists(thisDir() & "/submodules/Rune-Pragmas/meta"):
   switch("path", thisDir() & "/submodules/Rune-Pragmas/meta")
 else:
   echo "config.nims: cannot find runePragmas. Run `git submodule update " &
-    "--init --recursive`, or clone Rune-Pragmas next to this repository."
+    "--init` (one level, NOT --recursive), or clone Rune-Pragmas next to " &
+    "this repository."

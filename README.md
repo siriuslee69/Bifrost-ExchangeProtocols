@@ -4,16 +4,18 @@ Nim protocol library for transport, BFX2, DAC, AME, and FOMKE.
 
 ## Installation
 
-Clone with `--recursive`. Bifrost's pragma definitions, crypto, error
-correction, and SIMD tables all live in other repositories, pinned here as
-submodules. A plain `git clone` leaves `submodules/` empty and every source
-file then fails with `cannot open file: runePragmas`.
+Clone, then init the submodules **one level deep**. Bifrost's pragma
+definitions, crypto, error correction, and SIMD tables all live in other
+repositories, pinned here as submodules. A plain `git clone` on its own
+leaves `submodules/` empty and every source file then fails with
+`cannot open file: runePragmas`.
 
 **NixOS**
 
 ```text
-git clone --recursive https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
+git clone https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
 cd Bifrost-ExchangeProtocols
+git submodule update --init
 nix-shell            # brings nim, gcc, libsodium, openssl
 nimble test
 ```
@@ -21,20 +23,37 @@ nimble test
 **Windows 11**
 
 ```text
-git clone --recursive https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
+git clone https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
 cd Bifrost-ExchangeProtocols
+git submodule update --init
 nimble test
 ```
+
+**Not `--recursive`, and not `--init --recursive`.** Bifrost needs only its
+own six submodules. Recursing further walks into dependencies-of-dependencies
+that Bifrost does not build and cannot fix, and one of them currently stops
+the clone dead:
+
+```text
+Bifrost
+└── Eir-CompressionAndECC
+    └── Otter-RepoEvaluation
+        └── Fylgia-Utils @ 2a259c6   <- no longer on the remote
+            fatal: remote error: upload-pack: not our ref 2a259c6...
+```
+
+One level is enough: a clone done this way builds the library and passes the
+full suite, 96 suites and 525 checks, with no sibling checkouts present.
 
 Windows needs Nim 1.6+ with a working `gcc` on `PATH` (the Nim installer's
 MinGW is enough). `nimble testTls` additionally needs OpenSSL development
 libraries; without them that one task stops with a message saying so, and
 every other task still runs.
 
-Already cloned without `--recursive`? Fix it in place:
+Already cloned without the submodules? Fix it in place with the same command:
 
 ```text
-git submodule update --init --recursive
+git submodule update --init
 ```
 
 **The desktop client only.** `nimble desktop` needs one extra package that the

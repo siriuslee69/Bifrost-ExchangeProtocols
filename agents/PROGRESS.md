@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Pin Tyr at the runePragmas migration so a fresh clone builds
+Commit Message: Correct the clone instructions: one level of submodules, not recursive
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
