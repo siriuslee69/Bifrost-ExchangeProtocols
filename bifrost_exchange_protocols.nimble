@@ -17,7 +17,11 @@ license       = "UNLICENSED"
 srcDir        = "src"
 bin           = @[]
 requires "nim >= 1.6.0"
-requires "webui >= 2.5.0"
+
+## `webui` is NOT required here. Only `src/clients/desktop/app.nim` imports it,
+## and Bifrost is a protocol library first: a service that links the wire
+## formats should not have to install a GUI toolkit to do it. The `desktop`
+## and `desktopBuild` tasks check for it and say how to install it.
 
 proc normalizePath(p: string): string =
   ## Normalize slashes for Nim compiler path arguments.
@@ -461,19 +465,73 @@ proc runGradle(args: openArray[string]) =
     runCommand(joinPath(androidRoot, "gradlew"),
       @["--project-dir", androidRoot] & @args)
 
+proc requireWebui(taskName: string) =
+  ## taskName: the task asking for webui, named back in the error message.
+  ## Only the desktop client needs webui, so it is not a package requirement.
+  ## Checked here instead, where the answer is actionable.
+  var home: string = getHomeDir()
+  if findDirWithPrefix(joinPath(home, ".nimble", "pkgs2"), "webui-").len > 0:
+    return
+  if findDirWithPrefix(joinPath(home, ".nimble", "pkgs"), "webui-").len > 0:
+    return
+  quit(
+    taskName & " needs the webui package, which Bifrost does not require as a\n" &
+    "library dependency. Install it once with:\n\n" &
+    "    nimble install webui\n"
+  )
+
+proc resolveProgressPath(): string =
+  ## Where this repo keeps its handoff notes. `.iron/` was removed, so the
+  ## commit message autopush uses lives in `agents/PROGRESS.md` now.
+  var
+    ts: seq[string] = @[
+      "agents/PROGRESS.md",
+      "agents/progress.md"
+    ]
+  for t in ts:
+    if fileExists(t):
+      return t
+  result = ts[0]
+
+proc resolveGitIndexLockPath(): string =
+  result = joinPath(".git", "index.lock")
+
+proc resolveAutopushMessagePath(): string =
+  result = joinPath(".git", "autopush-commit-message.txt")
+
+proc resolveCommitMessage(progressPath: string): string =
+  ## progressPath: the PROGRESS.md whose `Commit Message:` line is taken.
+  var
+    msg: string = ""
+    content: string = ""
+  if fileExists(progressPath):
+    content = readFile(progressPath)
+    for line in content.splitLines:
+      if line.startsWith("Commit Message:"):
+        msg = line["Commit Message:".len .. ^1].strip()
+        break
+  if msg.len == 0:
+    msg = "No specific commit message given."
+  result = msg
+
 proc isGeneratedOrLocalArtifact(path: string): bool =
-  ## Reject local/generated outputs before autopush can commit them.
-  let p = normalizePath(path)
+  ## path: one staged repo-relative path checked against local/generated
+  ## outputs. The gradle and kotlin caches sit under `src/clients/android/`,
+  ## so they are matched anywhere in the path rather than only at its start.
+  var p: string = normalizePath(path)
   result = splitPath(p).tail.startsWith(".fuse_hidden") or
     p.startsWith("nimcache") or
     p.startsWith("build/") or p.startsWith("builds/") or
     p.startsWith(".gradle/") or p.startsWith(".kotlin/") or
+    p.contains("/.gradle/") or p.contains("/.kotlin/") or
+    p.contains("/app/build/") or
+    p.startsWith(".android-sdk/") or p.startsWith(".android-home/") or
     p.endsWith(".exe") or p.endsWith(".dll") or p.endsWith(".so") or
     p.endsWith(".dylib") or p.endsWith(".o") or p.endsWith(".obj") or
     p.endsWith(".a") or p.endsWith(".lib") or p.endsWith(".pdb") or
     p == "local.properties" or p == "userconfig.toml" or
     p == "nimble.paths" or p == "nimble.develop" or
-    p.startsWith(".iron/.local")
+    p.startsWith("agents/.local")
 
 task buildLib, "Build the bifrost_exchange_protocols module as a library":
   runNim("c", "src/bifrost_exchange_protocols.nim",
@@ -652,7 +710,7 @@ task examples, "Run all Bifrost examples":
   runNim("c", "examples/secure_authority_package.nim", @["-r"])
   runNim("c", "examples/fomke_ame_chain.nim", @["-r"])
 
-task releaseHygiene, "Audit generated and local repo artifacts that should not ship":
+task releaseHygiene, "Check generated and local repo artifacts that should not ship":
   runRepoHygiene(@["--root=."])
 
 task cleanGenerated, "Remove generated and local repo artifacts such as build/, nimcache/, and helper binaries":
@@ -662,9 +720,11 @@ task androidDebug, "Build the Android LAN client debug APK":
   runGradle(@[":androidApp:assembleDebug"])
 
 task desktop, "Build and run the themed direct-LAN desktop client":
+  requireWebui("nimble desktop")
   runNim("c", "src/clients/desktop/app.nim", @["--threads:on", "-r"])
 
 task desktopBuild, "Build the themed direct-LAN desktop client for release":
+  requireWebui("nimble desktopBuild")
   runNim("c", "src/clients/desktop/app.nim", @[
     "--threads:on", "-d:release", "--out:build/clients/bifrost-lan-desktop"
   ])
@@ -683,18 +743,19 @@ task androidInstall, "Install the Android LAN client debug APK on a connected de
   runGradle(@[":androidApp:installDebug"])
 
 task autopush, "Add, commit, and push after rejecting generated/local artifacts":
-  let path = ".iron/PROGRESS.md"
-  var msg = ""
-  if fileExists(path):
-    let content = readFile(path)
-    for line in content.splitLines:
-      if line.startsWith("Commit Message:"):
-        msg = line["Commit Message:".len .. ^1].strip()
-        break
-  if msg.len == 0:
-    msg = "No specific commit message given."
+  var
+    progressPath: string = resolveProgressPath()
+    lockPath: string = resolveGitIndexLockPath()
+    msg: string = resolveCommitMessage(progressPath)
+    msgPath: string = resolveAutopushMessagePath()
+    staged: string = ""
+  if fileExists(lockPath):
+    quit(
+      "Refusing to run autopush because Git lock exists at " & lockPath &
+      ". If no Git process is active, remove the stale lock and retry."
+    )
   runCommand("git", @["add", "-A", "."])
-  let staged = captureCommand("git", @["diff", "--cached", "--name-only"]).strip()
+  staged = captureCommand("git", @["diff", "--cached", "--name-only"]).strip()
   if staged.len == 0:
     echo "No staged changes. Skipping commit."
   else:
@@ -703,7 +764,8 @@ task autopush, "Add, commit, and push after rejecting generated/local artifacts"
         echo "Refusing autopush: generated/local artifact staged: " & stagedPath
         echo "Remove it from the index or extend .gitignore before committing."
         quit(1)
-    runCommand("git", @["commit", "-m", msg])
+    writeFile(msgPath, msg & "\n")
+    runCommand("git", @["commit", "--file", msgPath])
   runCommand("git", @["push"])
 
 task switch, "Toggle the working branch between nightly and main":
@@ -718,7 +780,7 @@ task switch, "Toggle the working branch between nightly and main":
     "' to '" & target & "'."
   runCommand("git", @["checkout", target])
 
-task applynightly, "Promote nightly onto main by fast-forward and push":
+task applyNightly, "Promote nightly onto main by fast-forward and push":
   var
     branch: string = captureCommand("git", @["branch", "--show-current"]).strip()
   if branch == "main":

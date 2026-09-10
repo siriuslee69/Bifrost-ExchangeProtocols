@@ -2,6 +2,75 @@
 
 Nim protocol library for transport, BFX2, DAC, AME, and FOMKE.
 
+## Installation
+
+Clone with `--recursive`. Bifrost's pragma definitions, crypto, error
+correction, and SIMD tables all live in other repositories, pinned here as
+submodules. A plain `git clone` leaves `submodules/` empty and every source
+file then fails with `cannot open file: runePragmas`.
+
+**NixOS**
+
+```text
+git clone --recursive https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
+cd Bifrost-ExchangeProtocols
+nix-shell            # brings nim, gcc, libsodium, openssl
+nimble test
+```
+
+**Windows 11**
+
+```text
+git clone --recursive https://github.com/siriuslee69/Bifrost-ExchangeProtocols.git
+cd Bifrost-ExchangeProtocols
+nimble test
+```
+
+Windows needs Nim 1.6+ with a working `gcc` on `PATH` (the Nim installer's
+MinGW is enough). `nimble testTls` additionally needs OpenSSL development
+libraries; without them that one task stops with a message saying so, and
+every other task still runs.
+
+Already cloned without `--recursive`? Fix it in place:
+
+```text
+git submodule update --init --recursive
+```
+
+**The desktop client only.** `nimble desktop` needs one extra package that the
+library itself does not:
+
+```text
+nimble install webui
+```
+
+**Where configuration lives.**
+
+```text
+config.toml                <- shipped defaults
+userconfig.toml.template   <- copy to userconfig.toml for local overrides
+```
+
+Leave `config.toml` alone unless you are changing a protocol default. Local
+and per-machine changes belong in `userconfig.toml`, which is gitignored.
+
+Neither file is read on its own — nothing in the library loads a config at
+startup. A program says which files it wants and in what order. Because
+`parseBifrostConfigText` takes a starting config, the second file overrides
+only the keys it mentions:
+
+```nim
+var cfg = loadBifrostConfigFile("config.toml")     # shipped defaults
+if fileExists("userconfig.toml"):
+  cfg = parseBifrostConfigText(readFile("userconfig.toml"), cfg)
+applyBifrostConfig(cfg)                            # now the library uses it
+```
+
+Both entry points validate before returning: an out-of-range value or an
+unknown key raises rather than being silently clamped or ignored. So a typo in
+`userconfig.toml` stops the program at startup instead of quietly leaving a
+protocol limit at its default.
+
 ## Names And Abbreviations
 
 Every protocol name in this repo is an abbreviation. Spelled out once, here:

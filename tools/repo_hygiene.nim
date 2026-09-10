@@ -1,4 +1,4 @@
-## Bifrost Repo Hygiene Tool <- generated artifact audit + cleanup
+## Bifrost Repo Hygiene Tool <- generated artifact check + cleanup
 
 import std/[os, parseopt, strutils]
 
@@ -78,8 +78,8 @@ proc normalizedRoot*(root: string): string =
   result = t
 
 proc relPathFrom*(root, path: string): string =
-  let absRoot = normalizedRoot(root)
   var
+    absRoot: string = normalizedRoot(root)
     absPath: string = absolutePath(path)
   absPath = absPath.replace('\\', '/')
   result = relativePath(absPath, absRoot).replace('\\', '/')
@@ -94,11 +94,11 @@ proc hasGeneratedExt(path: string): bool =
     i.inc
 
 proc siblingNimPath(path: string): string =
-  let parts = splitFile(path)
+  var parts: tuple[dir, name, ext: string] = splitFile(path)
   result = joinPath(parts.dir, parts.name & ".nim")
 
 proc isSourceArtifact(path: string): bool =
-  let parts = splitFile(path)
+  var parts: tuple[dir, name, ext: string] = splitFile(path)
   if hasGeneratedExt(path):
     return true
   if parts.ext.len == 0:
@@ -144,7 +144,7 @@ proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
   var
     absPath: string = ""
     relPath: string = ""
-    auditRoot: string = ""
+    scanRoot: string = ""
     name: string = ""
   for relRoot in GeneratedRoots:
     absPath = joinPath(root, relRoot)
@@ -165,10 +165,10 @@ proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
         result.addFinding(relPath, false, hfkLocal, true)
 
   for relRoot in SourceArtifactRoots:
-    auditRoot = joinPath(root, relRoot)
-    if not dirExists(auditRoot):
+    scanRoot = joinPath(root, relRoot)
+    if not dirExists(scanRoot):
       continue
-    addSourceRootFindings(root, auditRoot, result)
+    addSourceRootFindings(root, scanRoot, result)
 
   for kind, p in walkDir(root):
     relPath = relPathFrom(root, p)
@@ -177,7 +177,7 @@ proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
       if name.startsWith(prefix):
         result.addFinding(relPath, kind == pcDir, hfkGenerated, true)
     if kind == pcFile:
-      let parts = splitFile(relPath)
+      var parts: tuple[dir, name, ext: string] = splitFile(relPath)
       if parts.name == "bifrost_exchange_protocols" and
           (parts.ext.len == 0 or hasGeneratedExt(relPath)):
         result.addFinding(relPath, false, hfkGenerated, true)
@@ -188,7 +188,7 @@ proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
       result.addFinding(relPath, kind == pcDir, hfkGenerated, true)
 
 proc removeFinding*(root: string; finding: HygieneFinding) =
-  let absPath = joinPath(root, finding.relPath)
+  var absPath: string = joinPath(root, finding.relPath)
   if finding.isDir:
     if dirExists(absPath):
       removeDir(absPath)

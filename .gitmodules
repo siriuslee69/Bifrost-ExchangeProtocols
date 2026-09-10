@@ -18,3 +18,11 @@
 	path = submodules/Otter-RepoEvaluation
 	url = https://github.com/siriuslee69/Otter-RepoEvaluation.git
 	branch = main
+[submodule "submodules/Rune-Pragmas"]
+	path = submodules/Rune-Pragmas
+	url = ../Rune-Pragmas.git
+	branch = main
+[submodule "deps/Rune-Pragmas"]
+	path = submodules/Rune-Pragmas
+	url = ../Rune-Pragmas.git
+	branch = main

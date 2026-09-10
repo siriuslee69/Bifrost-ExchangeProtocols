@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Cover DKIM, the HTTP streaming path, and the TLS connection counters
+Commit Message: Make a fresh clone build, and point autopush back at agents/PROGRESS.md
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -43,9 +43,27 @@ Features (Done):
 - Tests and benchmarks live under `evaluation/`.
 
 Features (In Progress):
-- Nothing. Everything above is complete and every suite passes.
+- The pinned `submodules/Tyr-Crypto` still imports `metaPragmas`, which no
+  longer exists anywhere. Tyr's move onto `runePragmas` sits unpushed on
+  Tyr's `nightly`. Until Tyr promotes and pushes that, a standalone clone of
+  Bifrost builds only against a sibling `Tyr-Crypto` checkout, not against
+  its own submodule. Nothing here can fix it; the pin bump is one commit
+  once Tyr's `main` carries the migration.
 
 Notes:
+- `Rune-Pragmas` is now a real submodule (`submodules/Rune-Pragmas`), not
+  just a sibling path. 126 of 134 files under `src/` import `runePragmas`,
+  so before this the repository compiled only on a machine that happened to
+  have the sibling checkout. `config.nims` picks sibling first and submodule
+  second with `elif`, never both: Nim takes the LAST matching `--path`, so
+  adding both would silently reverse the intended preference.
+- `webui` is deliberately NOT a package requirement. Only the desktop client
+  imports it; `requireWebui` checks for it inside the two tasks that need it.
+- autopush now follows Proto-RepoTemplate verbatim in shape: message via
+  `--file`, stale-lock refusal, `agents/PROGRESS.md` as the source. It read a
+  path removed in the restructure, so every autopush had been committing
+  "No specific commit message given." `captureCommand` stands in for the
+  template's `captureGit` -- same job, and a second one would be a duplicate.
 - Two traps worth not re-learning. Otter's "written and never read" list
   does not scan `evaluation/`, so a field a test asserts on shows up as
   dead -- `AmeSession.lastErr` nearly got deleted on the tool's word. And

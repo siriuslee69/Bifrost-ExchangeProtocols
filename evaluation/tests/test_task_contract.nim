@@ -66,14 +66,14 @@ const
   ]
 
 proc shouldScanRepoFile(p: string): bool =
-  let lower = p.toLowerAscii()
+  var lower: string = p.toLowerAscii()
   for ext in repoScanExts:
     if lower.endsWith(ext):
       return true
   result = false
 
 proc shouldSkipRepoPath(p: string): bool =
-  let normalized = "/" & p.replace('\\', '/')
+  var normalized: string = "/" & p.replace('\\', '/')
   for skipped in skippedRepoScanDirs:
     if normalized.contains(skipped):
       return true
@@ -122,7 +122,17 @@ suite "Bifrost task contract":
   runNim("c", "src/bifrost_exchange_protocols.nim",
     @["--app:lib", "--outdir:build/lib"])""") >= 0
     check content.find("""runNim("c", "src/bifrost_exchange_protocols.nim", @["--app:lib"])""") < 0
-    check content.find("""runCommand("git", @["commit", "-m", msg])""") >= 0
+    ## autopush follows Proto-RepoTemplate: the message goes through a file
+    ## rather than `-m`, so a multi-word subject survives quoting, and the
+    ## stale Git lock is refused before anything is staged.
+    check content.find("""runCommand("git", @["commit", "--file", msgPath])""") >= 0
+    check content.find("""proc resolveProgressPath(): string =""") >= 0
+    check content.find("""      "agents/PROGRESS.md",""") >= 0
+    check content.find("""proc resolveCommitMessage(progressPath: string): string =""") >= 0
+    check content.find("""proc resolveGitIndexLockPath(): string =""") >= 0
+    check content.find("""proc resolveAutopushMessagePath(): string =""") >= 0
+    ## Split so the removed folder's name never appears whole in this repo.
+    check content.find(".ir" & "on/PROGRESS.md") < 0
     check content.find("""proc shellPath(p: string): string =""") >= 0
     check content.find("""paths.add("--path:" & normalizePath(src))""") >= 0
     check content.find("""proc runCommand(command: string; args: openArray[string]) =""") >= 0
@@ -165,7 +175,7 @@ suite "Bifrost task contract":
     readmeText = readFile("README.md")
     ignoreText = readFile(".gitignore")
     toolText = readFile("tools/repo_hygiene.nim")
-    check content.find("""task releaseHygiene, "Audit generated and local repo artifacts that should not ship":""") >= 0
+    check content.find("""task releaseHygiene, "Check generated and local repo artifacts that should not ship":""") >= 0
     check content.find("""proc runRepoHygiene(extraArgs: openArray[string] = []) =""") >= 0
     check content.find("bifrost_repo_hygiene_tool") >= 0
     check content.find("bifrost_repo_hygiene_nimcache") >= 0

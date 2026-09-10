@@ -24,6 +24,7 @@ pkgs.stdenv.mkDerivation {
       --nimcache:nimcache_nix \
       --outdir:build/lib \
       --path:src \
+      --path:submodules/Rune-Pragmas/meta \
       --path:submodules/Fylgia-Utils/src \
       --path:submodules/Tyr-Crypto/src \
       --path:submodules/Tyr-Crypto \

@@ -11,9 +11,6 @@ proc addPathIfExists(pathArg: string) =
     switch("path", pathArg.replace('\\', '/'))
 
 addPathIfExists(joinPath(repoRoot, "src"))
-## Our pragma module is named for this repository, not `metaPragmas`, so it
-## cannot collide with the one Tyr and every other Nim repo here also ships.
-## That is what lets `meta` sit on the path and every file import it flat.
 if dirExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src")):
   addPathIfExists(joinPath(repoRoot, "..", "Otter-RepoEvaluation", "src"))
 else:
@@ -31,11 +28,6 @@ if tyrRoot.len == 0 and
 if tyrRoot.len > 0:
   addPathIfExists(tyrRoot)
   addPathIfExists(joinPath(tyrRoot, "src"))
-  ## Tyr keeps its Otter-readable pragma definitions in `meta/`. Leaving this
-  ## path out is what made a plain `nim c` fail with
-  ## "cannot open file: metaPragmas".
-  addPathIfExists(joinPath(tyrRoot, "meta"))
-  addPathIfExists(joinPath(tyrRoot, "tools", "meta"))
 
 ## Sibling checkouts win over the pinned submodules for the same reason Tyr
 ## does above: Bifrost, Eir, and SIMD-Nexus move together, and the DAC repair
@@ -81,8 +73,15 @@ when useLocalNimblePaths():
 # end Nimble config
 
 ## Shared pragma module: one file for the whole workspace, so there is no
-## per-repository copy to drift or to collide on the Nim path.
+## per-repository copy to drift or to collide on the Nim path. A sibling
+## checkout wins over the pinned submodule for the same reason Tyr does
+## above -- during cross-repository work the two move together. Exactly one
+## of the two is put on the path, because Nim takes the LAST matching
+## `--path` entry and adding both would silently reverse that preference.
 if dirExists(thisDir() & "/../Rune-Pragmas/meta"):
   switch("path", thisDir() & "/../Rune-Pragmas/meta")
-if dirExists(thisDir() & "/submodules/Rune-Pragmas/meta"):
+elif dirExists(thisDir() & "/submodules/Rune-Pragmas/meta"):
   switch("path", thisDir() & "/submodules/Rune-Pragmas/meta")
+else:
+  echo "config.nims: cannot find runePragmas. Run `git submodule update " &
+    "--init --recursive`, or clone Rune-Pragmas next to this repository."
