@@ -152,11 +152,20 @@ proc cloneExchangeState(E: AmeExchangeState): AmeExchangeState {.
 
 proc cloneEpoch(E: AmeEpochKeySet): AmeEpochKeySet {.role: helper.} =
   ## E: epoch copied without sharing secret or transcript byte storage.
+  ##
+  ## `params` is copied like everything else, and that is load-bearing rather
+  ## than tidy. A retiring epoch is asked for its OWN padding policy when it
+  ## opens a frame that was already travelling when the epoch turned
+  ## (`openFrameBody`). Leaving the field at its default made that read
+  ## answer `apadNone` no matter what the epoch actually used, so with
+  ## `apadBlock64` switched on every in-flight frame was refused for
+  ## disagreeing with a policy it had never been sealed under.
   result.epochId = E.epochId
   result.layout = E.layout
   result.tier = E.tier
   result.exchange = cloneExchangeState(E.exchange)
   result.transcriptSalt = copyBytes(E.transcriptSalt)
+  result.params = E.params
 
 proc requireAmeAuth*(a: AmeAuthPackage) {.role: parser.} =
   ## a: exact current and optional retiring epoch state.

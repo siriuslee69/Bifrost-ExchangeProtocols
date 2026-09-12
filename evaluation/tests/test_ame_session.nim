@@ -62,6 +62,25 @@ proc layeredAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
     tier.masks.kem), [@[byte 9, 8, 7, 6]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
+proc paddedUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
+  ## Same as `exactUpgradeSession` but with block padding switched on, which
+  ## is the only configuration that can catch a retiring epoch losing its
+  ## own padding policy.
+  var
+    layout: AmeSuiteLayout = exactLayout()
+    tier: AmeMaskTier = exactTier(layout, 1'u32, 0b10000000'u8)
+    state: AmeExchangeState = initAmeExchangeState(exactKems)
+    auth: AmeAuthPackage = default(AmeAuthPackage)
+    target: AmeMaskTier = default(AmeMaskTier)
+    path: AmeTierPath = default(AmeTierPath)
+  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+    0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
+  auth = initAmeAuthPackage(layout, tier, state, endpointRole = role,
+    params = AmeRuntimeParams(authTagLen: aatl32, padding: apadBlock64))
+  target = exactTier(layout, 2'u32, 0b11000000'u8)
+  path = initAmeTierPath(layout, [tier, target])
+  result = initAmeSession(auth, path, peerTrustRequired = false)
+
 proc exactUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
   var
     auth: AmeAuthPackage = exactAuth(role)
@@ -372,6 +391,35 @@ suite "AME mask-tier sessions":
     check not step.available
     step = connection.recordTransferredBytes(1'u64 * ameBytesPerMiB)
     check step.exchangeMask == 0b01000000'u8
+
+  # {.testKind: tkRegression, covers: "cloneEpoch", pins: "a retiring epoch kept no padding policy of its own".}
+  test "a retiring epoch keeps the padding policy it was used with":
+    ## `cloneEpoch` copied five fields and left `params` at its default, so a
+    ## retiring epoch always answered `apadNone`. `openFrameBody` asks the
+    ## retiring epoch for the policy to strip a frame sealed before the
+    ## rotation, so with `apadBlock64` on that read was simply wrong.
+    ##
+    ## Driven through `rotateAmeTier`, which is the public entry point that
+    ## performs the clone. A full frame exchange cannot reach it: FOMKE
+    ## refuses to seal while an upgrade is pending and refuses to upgrade
+    ## while a skip is outstanding, so no data frame can straddle a rotation
+    ## on either lane.
+    var
+      client: AmeSession = paddedUpgradeSession(aerInitiator)
+      server: AmeSession = paddedUpgradeSession(aerResponder)
+      target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
+        0b11000000'u8)
+      request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
+        target, 0b01000000'u8)
+    installSignaturePeers(client, server)
+    rotateAmeTier(client, request,
+      [@[byte 3, 1, 4, 1, 5, 9, 2, 6]], @[byte 7, 7, 7, 7])
+    check client.auth.current.epochId == 2'u32
+    check client.auth.retiringFramesLeft == ameRetiringGraceFrames
+    ## `current` takes its params from the request, so it is the RETIRING
+    ## epoch that must have carried the old ones across the clone.
+    check client.auth.retiring.params.padding == apadBlock64
+    check client.auth.retiring.params.authTagLen == aatl32
 
   # {.testKind: tkUnit.}
   test "authenticated TCP exchange commits only after epoch-ready":

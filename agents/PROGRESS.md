@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Say that a recursive clone works now, and what it costs
+Commit Message: Give a retiring epoch back the padding policy it was used with
 
 Features (Planned):
 - 85 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -92,6 +92,27 @@ Notes:
   Confusing the two is how a body larger than policy would look encodable.
 - A session-level FOMKE skip only arises on the datagram carrier. The TCP
   carrier requires an exact sequence, so a gap there is refused outright.
+- OPEN QUESTION: is the retiring-epoch grace window reachable at all through
+  the public API? `cloneEpoch` was dropping `params`, which meant
+  `auth.retiring.params.padding` was always `apadNone` and every in-flight
+  frame was refused whenever `apadBlock64` was on. That is fixed. What is
+  NOT settled is whether anything ever gets there. Three attempts to write
+  the natural test each hit a wall that is deliberate:
+
+    TCP   an exact sequence is required, so holding a frame back is a gap
+          and is refused outright
+    DAC   FOMKE refuses a KEM upgrade while a receive-side skip is
+          outstanding, so a held frame BEFORE the rotation blocks it
+    DAC   FOMKE refuses to seal while an upgrade is pending, so a held
+          frame cannot be made AFTER the rotation message either
+
+  Between them, no data frame appears able to straddle a rotation on either
+  lane. If that is right, then `ameRetiringGraceFrames`, `fomkeRetiring`,
+  `fomkeRetiringFramesLeft` and `auth.retiring` are a state machine nothing
+  drives, and the regression test has to reach it through `rotateAmeTier`
+  directly, which is what it does. Worth settling before trusting the
+  window: either find the path (`discardAmeSessionSkipped`? the DAC relay?
+  simultaneous rekey?) and test it, or delete the machinery.
 - The Android instrumented tests cannot be compiled here: gradle wants
   `androidx.tracing:tracing:1.1.0` and it is not in the offline cache. The
   JVM unit tests run and pass. Set `ANDROID_HOME` to the repo's
