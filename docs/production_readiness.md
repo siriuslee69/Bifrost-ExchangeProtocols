@@ -251,7 +251,8 @@ Removing it removed failure modes, not just bytes:
   65,535 epochs could not use the DAC carrier at all. It can now.
 - Payloads over 65,535 bytes needed the SuperClean "extended body length"
   framing to widen the outer header. The AME length is `u32` natively, so no
-  path lane needs widening.
+  path lane needs widening -- and the `bodyLenMode`/`maxBodyLen` knobs that
+  selected that widening are gone with the header they described.
 
 DAC control messages -- manifests, chunks, parity, receipts, repair hints --
 now travel as `ampkDacControl` AME frames. **The message kind is the first byte

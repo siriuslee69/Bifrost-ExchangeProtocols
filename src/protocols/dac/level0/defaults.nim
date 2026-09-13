@@ -38,20 +38,15 @@ radios, where the cost being saved is a wake-up, not bandwidth.
 proc initDacDefaults*(p: DacPathLane, c: DacTransferClass,
     repair: DacRepairMode, ack: DacAckMode, chunkBytes, dataShards,
     parityShards, ackBatchChunks, ackMaxDelayMs, repairWaitMs: uint16,
-    repairRounds: uint8,
-    bodyLenMode: DacBodyLenMode = dblU16,
-    maxBodyLen: uint32 = uint32(high(uint16))): DacScenarioDefaults {.role: configurator.} =
+    repairRounds: uint8): DacScenarioDefaults {.role: configurator.} =
   ## p/c/repair/ack: path, transfer, repair, and ACK policies.
   ## chunkBytes/dataShards/parityShards: frame and repair-group sizing.
   ## ackBatchChunks/ackMaxDelayMs: starting ACK batch size and time bound.
   ## repairWaitMs/repairRounds: repair control defaults.
-  ## bodyLenMode/maxBodyLen: width and maximum for the DAC body length field.
   result.pathLane = p
-  result.bodyLenMode = bodyLenMode
   result.transferClass = c
   result.repairMode = repair
   result.ackMode = ack
-  result.maxBodyLen = maxBodyLen
   result.chunkBytes = chunkBytes
   result.dataShards = dataShards
   result.parityShards = parityShards
@@ -62,12 +57,6 @@ proc initDacDefaults*(p: DacPathLane, c: DacTransferClass,
 
 proc validateDacDefaults*(d: DacScenarioDefaults): bool {.role: parser.} =
   ## d: DAC scenario defaults to validate before use.
-  if d.pathLane == dplSuperCleanPath and
-      (d.bodyLenMode != dblU32 or d.maxBodyLen > dacSuperCleanMaxBodyLen):
-    return false
-  if d.pathLane != dplSuperCleanPath and
-      (d.bodyLenMode != dblU16 or d.maxBodyLen > uint32(high(uint16))):
-    return false
   if d.chunkBytes == 0'u16:
     return false
   if d.ackMode != damSilent and d.ackBatchChunks == 0'u16:
@@ -101,8 +90,6 @@ type
     ackMaxDelayMs: uint16
     repairWaitMs: uint16
     repairRounds: uint8
-    bodyLenMode: DacBodyLenMode
-    maxBodyLen: uint32
     forcedClass: bool
 
 const
@@ -111,29 +98,29 @@ const
   ## documentation and the code could drift apart without anything noticing.
   dacScenarioPresets: array[DacScenario, DacScenarioPreset] = [
     (dplSuperCleanPath, drmNone, damBatch, 32768'u16, 64'u16, 0'u16,
-      256'u16, 25'u16, 25'u16, 1'u8, dblU32, dacSuperCleanMaxBodyLen, false),
+      256'u16, 25'u16, 25'u16, 1'u8, false),
     (dplCleanPath, drmXor, damBatch, 1200'u16, 32'u16, 1'u16,
-      64'u16, 100'u16, 75'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+      64'u16, 100'u16, 75'u16, 2'u8, false),
     (dplMobilePath, drmReedSolomon, damBatch, 900'u16, 24'u16, 2'u16,
-      32'u16, 400'u16, 250'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+      32'u16, 400'u16, 250'u16, 2'u8, false),
     (dplThinPath, drmTcpExact, damNackOnly, 700'u16, 16'u16, 1'u16,
-      16'u16, 700'u16, 500'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+      16'u16, 700'u16, 500'u16, 2'u8, false),
     (dplThinPath, drmXor, damBatch, 576'u16, 12'u16, 1'u16,
-      12'u16, 1000'u16, 700'u16, 2'u8, dblU16, uint32(high(uint16)), false),
+      12'u16, 1000'u16, 700'u16, 2'u8, false),
     (dplLossyPath, drmReedSolomon, damBatch, 768'u16, 16'u16, 4'u16,
-      16'u16, 500'u16, 350'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+      16'u16, 500'u16, 350'u16, 3'u8, false),
     (dplLossyPath, drmReedSolomon, damExplicit, 512'u16, 12'u16, 6'u16,
-      8'u16, 300'u16, 200'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+      8'u16, 300'u16, 200'u16, 3'u8, false),
     (dplLossyPath, drmReedSolomon, damBatch, 1000'u16, 24'u16, 3'u16,
-      32'u16, 1200'u16, 900'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+      32'u16, 1200'u16, 900'u16, 3'u8, false),
     (dplLossyPath, drmReedSolomon, damBatch, 768'u16, 16'u16, 3'u16,
-      16'u16, 500'u16, 300'u16, 3'u8, dblU16, uint32(high(uint16)), false),
+      16'u16, 500'u16, 300'u16, 3'u8, false),
     (dplThinPath, drmXor, damBatch, 576'u16, 8'u16, 1'u16,
-      8'u16, 1500'u16, 1000'u16, 1'u8, dblU16, uint32(high(uint16)), false),
+      8'u16, 1500'u16, 1000'u16, 1'u8, false),
     (dplMobilePath, drmXor, damBatch, 900'u16, 16'u16, 1'u16,
-      64'u16, 2500'u16, 1000'u16, 1'u8, dblU16, uint32(high(uint16)), false),
+      64'u16, 2500'u16, 1000'u16, 1'u8, false),
     (dplRecoveryPath, drmReedSolomon, damVerified, 512'u16, 8'u16, 6'u16,
-      4'u16, 200'u16, 150'u16, 4'u8, dblU16, uint32(high(uint16)), true)
+      4'u16, 200'u16, 150'u16, 4'u8, true)
   ]
 
 proc dacDefaultsFor*(s: DacScenario,
@@ -152,7 +139,7 @@ proc dacDefaultsFor*(s: DacScenario,
     cls = dtcRecovery
   result = initDacDefaults(p.lane, cls, p.repair, p.ack, p.chunkBytes,
     p.dataShards, p.parityShards, p.ackBatchChunks, p.ackMaxDelayMs,
-    p.repairWaitMs, p.repairRounds, p.bodyLenMode, p.maxBodyLen)
+    p.repairWaitMs, p.repairRounds)
 
 proc dacDefaultsForPath*(p: DacPathLane,
     c: DacTransferClass = dtcUserData): DacScenarioDefaults {.role: truthBuilder.} =

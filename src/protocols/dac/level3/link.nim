@@ -121,7 +121,6 @@ type
     defaults*: DacScenarioDefaults
     policy*: DacScramblePolicy
     limits*: DacPackageLimits
-    nextSequence*: uint32
     observed*: DacPathStats
     pathMoves*: uint16
     outgoing*: DacOutgoing
@@ -149,25 +148,18 @@ proc initDacLink*(sessionId: uint64, laneId: uint32,
   result.outgoing.scramble = initDacScrambleState(seed)
   result.incoming.ack = initDacAckPolicy(d)
 
-proc dacLinkFlags(k: DacMessageKind): DacFrameFlags {.role: helper.} =
-  ## k: message kind whose structural flags are derived.
-  result.needsAck = k in {dmkPackageChunk, dmkPackageManifest}
-  result.isParity = k == dmkParityShard
-  result.isRepair = k in {dmkRepairChunk, dmkRepairHint}
-
 proc tagDacBody(S: var DacLink, k: DacMessageKind,
     body: ByteSeq): DacTaggedMessage {.role: truthBuilder.} =
-  ## S: link whose sequence counter advances by one.
+  ## S: link the message comes from. Unused now, and kept so the call reads
+  ##    the same at every site if ordering ever needs to come back here.
   ## k: message kind this body answers to.
   ## body: encoded body bytes.
-  ## Stamps identity and order onto a message without deciding how it travels.
-  if S.nextSequence == high(uint32):
-    raise newException(ValueError, "DAC link sequence is exhausted")
+  ##
+  ## Order is the AME sequence's job, not DAC's. This used to stamp a second
+  ## counter that advanced in lockstep with it and that nothing read.
+  discard S
   result.kind = k
-  result.sequence = S.nextSequence
-  result.flags = dacLinkFlags(k)
   result.body = body
-  S.nextSequence = S.nextSequence + 1'u32
 
 proc appendDacParityFrames(S: var DacLink, F: var seq[DacTaggedMessage],
     groupId: uint32) {.role: dataWriter.} =

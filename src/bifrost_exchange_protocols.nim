@@ -27,7 +27,7 @@ import ./protocols/chunkyaead as chunkyaead
 import ./protocols/dac/build as dac_build
 import ./protocols/dac/types as dac_types
 import ./protocols/dac/level0/transport as dac_transport
-import ./protocols/dac/level0/framing as dac_framing
+import ./protocols/dac/level0/wire_helpers as dac_wire_helpers
 import ./protocols/dac/level0/defaults as dac_defaults
 import ./protocols/dac/level1/path_probe as dac_path_probe
 import ./protocols/dac/level0/path_stats as dac_path_stats
@@ -83,7 +83,7 @@ export chunkyaead
 export dac_build
 export dac_types
 export dac_transport
-export dac_framing
+export dac_wire_helpers
 export dac_defaults
 export dac_path_probe
 export dac_path_stats

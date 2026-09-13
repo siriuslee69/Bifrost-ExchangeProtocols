@@ -6,7 +6,6 @@ import ../types
 import runePragmas
 
 const
-  dacSuperCleanMaxBodyLen* = 16_777_216'u32
 
   dacCarriedAscii* = """
 DAC does not frame anything itself. Every message it sends travels as the
@@ -89,11 +88,6 @@ type
     dplRecoveryPath = 0x05'u8,
     dplSuperCleanPath = 0x06'u8
 
-  ## DacBodyLenMode: body length field width selected by the path profile.
-  DacBodyLenMode* = enum
-    dblU16 = 0x00'u8,
-    dblU32 = 0x01'u8
-
   ## DacTransferClass: vertical transfer meaning.
   DacTransferClass* = enum
     dtcStatus = 0x00'u8,
@@ -144,37 +138,23 @@ type
     damExplicit = 0x03'u8,
     damVerified = 0x04'u8
 
-  ## DacFrameFlags: common DAC frame flags.
-  DacFrameFlags* {.role: configurator.} = object
-    needsAck*: bool
-    isRepair*: bool
-    isParity*: bool
-    endOfGroup*: bool
-    endOfPackage*: bool
-    pathProbe*: bool
-    creditBound*: bool
-    tcpRepairAllowed*: bool
-    extendedBodyLen*: bool
-
-  ## DacTaggedMessage: one thing the link wants to say, before any framing has
-  ## decided how to carry it. The kind and the body are DAC's business; whether
-  ## that ends up as a bare DAC1 frame or as authenticated bytes inside an AME
-  ## frame is the carrier's. The sequence is stamped here rather than at render
-  ## time so the order the link chose survives whichever framing is used.
+  ## DacTaggedMessage: one thing the link wants to say -- a kind and a body,
+  ## and nothing else.
+  ##
+  ## It used to stamp a sequence here too, for the DAC header to carry. The
+  ## AME frame has its own sequence and its own replay window over it, so a
+  ## second counter was two numbers that always agreed and one of them was
+  ## never read.
   DacTaggedMessage* {.role: truthState.} = object
     kind*: DacMessageKind
-    sequence*: uint32
-    flags*: DacFrameFlags
     body*: ByteSeq
 
   ## DacScenarioDefaults: default transport policy values for one condition.
   DacScenarioDefaults* {.role: configurator.} = object
     pathLane*: DacPathLane
-    bodyLenMode*: DacBodyLenMode
     transferClass*: DacTransferClass
     repairMode*: DacRepairMode
     ackMode*: DacAckMode
-    maxBodyLen*: uint32
     chunkBytes*: uint16
     dataShards*: uint16
     parityShards*: uint16

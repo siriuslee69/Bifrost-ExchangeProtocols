@@ -18,7 +18,7 @@ import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level0/protocols as ame_protocols
 import ../../src/protocols/ame/level2/trust
 import ../../src/protocols/dac/types
-import ../../src/protocols/dac/level0/framing
+import ../../src/protocols/dac/level0/wire_helpers
 import ../../src/protocols/dac/level0/protocols as dac_protocols
 import ../../src/protocols/dac/level1/path_policy
 import ../../src/protocols/http/types

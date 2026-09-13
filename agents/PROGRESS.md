@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Delete the unauthenticated DAC framing; AME carries every DAC word now
+Commit Message: Sweep the fields the deleted DAC framing left behind
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -294,6 +294,38 @@ Notes:
   (`raiseExcludedSym` and siblings), and the `-d:ssl`-absent branch of
   `buildTlsContext` which raises by design. Nothing unfinished is hiding
   behind that count; Otter reads "short body returning a constant" as a stub.
+- Sweep after the framing deletion. Three things it had orphaned, all found by
+  asking Otter for readers rather than by reasoning about it:
+
+    DacTaggedMessage.flags   NEVER READ ANYWHERE. I had claimed the loop still
+                             set them "for its own use" -- it set them for
+                             nobody. Gone, with DacFrameFlags and dacLinkFlags.
+    DacTaggedMessage.sequence  written by tagDacBody, read nowhere. The AME
+                             header carries a sequence and the replay window
+                             runs over THAT one, so this was a second counter
+                             that always agreed and nobody consulted. Gone,
+                             with DacLink.nextSequence.
+    bodyLenMode, maxBodyLen  plus DacBodyLenMode and dacSuperCleanMaxBodyLen.
+                             They configured the width of a length field that
+                             no longer exists, and were read only by the
+                             validation that checked them against each other.
+
+  Otter CONFIG dead fields 35 -> 27.
+-  is now . It holds little-endian
+  readers/writers and two name lookups and frames nothing; keeping the old
+  name would have been the same kind of stale signpost the deletion was
+  about. Eight importers, all updated.
+- The module `dac/level0/framing.nim` is now `wire_helpers.nim`. It holds
+  little-endian readers/writers and two name lookups, and frames nothing;
+  keeping the old name would have been the same kind of stale signpost the
+  deletion was about. Eight importers, all updated.
+- KNOWN and NOT swept: DacScenarioDefaults.ackMode. Set per profile, asserted
+  by one test, and acted on by nothing -- the ACK cadence is INFERRED by
+  level1/ack_policy.nim, which is precisely the design a declared mode
+  rejects. It is read only to check a non-silent profile also set a batch
+  size. It predates the framing removal, so deleting it is a separate
+  decision, not fallout. Said out loud in dac/README.md rather than left for
+  somebody to rediscover.
 - What the DAC deletion cost in tests, and what replaced it. Nothing was
   dropped without its invariant being rehomed or explicitly retired:
 

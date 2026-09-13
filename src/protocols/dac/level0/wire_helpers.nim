@@ -1,5 +1,5 @@
 ## ----------------------------------------------------------------------
-## DAC Framing <- shared little-endian helpers and message-kind names
+## DAC Wire Helpers <- little-endian readers/writers and message-kind names
 ## ----------------------------------------------------------------------
 
 import ../../types

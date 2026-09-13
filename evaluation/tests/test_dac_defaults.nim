@@ -7,7 +7,7 @@ import unittest
 
 import ../../src/protocols/types
 import ../../src/protocols/dac/types
-import ../../src/protocols/dac/level0/framing
+import ../../src/protocols/dac/level0/wire_helpers
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level1/path_probe
 import ../../src/protocols/dac/level0/path_stats
@@ -41,14 +41,10 @@ suite "DAC defaults":
     clean = dacDefaultsFor(dscCleanLan)
     recovery = dacDefaultsFor(dscWeakRecovery)
     check superClean.pathLane == dplSuperCleanPath
-    check superClean.bodyLenMode == dblU32
-    check superClean.maxBodyLen == dacSuperCleanMaxBodyLen
     check superClean.chunkBytes == 32768'u16
     check superClean.repairMode == drmNone
     check validateDacDefaults(superClean)
     check clean.chunkBytes == 1200'u16
-    check clean.bodyLenMode == dblU16
-    check clean.maxBodyLen == uint32(high(uint16))
     check clean.dataShards == 32'u16
     check clean.parityShards == 1'u16
     check clean.ackBatchChunks == 64'u16

@@ -45,51 +45,63 @@ check after package repair.
 +----------------------+                          +----------------------+
 ```
 
-## Base Frame
+## No Frame Of Its Own
 
-Common `DAC1` envelope. The first four bytes are `DAC` magic plus one
-format-version byte. Normal path lanes keep `BodyLen` as `u16`; the
-same-room/server-rack `SuperCleanPath` uses the extended envelope with
-`BodyLen` as `u32`.
+DAC used to have a `DAC1` envelope: magic, version, kind, flags, session,
+lane, epoch, sequence and a body length — 27 bytes of it. **It is gone.**
+
+Every message DAC sends is the body of an AME frame, and its kind is the first
+byte of that body:
 
 ```text
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| Magic | Ver | Kind | Flags | Session  | Lane     | Epoch  | Seq    | BodyLen | Body... |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| DAC   | u8  | u8   | u16   | u64      | u32      | u16    | u32    | u16     | n bytes |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-
-SuperCleanPath extended envelope:
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| Magic | Ver | Kind | Flags | Session  | Lane     | Epoch  | Seq    | BodyLen | Body... |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| DAC   | u8  | u8   | u16   | u64      | u32      | u16    | u32    | u32     | n bytes |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
+  +------------- one AME frame -------------+
+  | AME header | FOMKE | tag | ciphertext   |
+  +------------------------------|----------+
+                                 |
+                    +------------v-------------+
+                    | DacKind u8 | DAC body    |
+                    +--------------------------+
 ```
+
+The kind is recovered only after the tag has checked out, so a stranger cannot
+present one. Before, the kind sat in a header nobody had authenticated, and a
+bare frame from an unknown address could claim a slot in the link table.
+
+Every field of that envelope was restating something:
+
+| field | why it is gone |
+|---|---|
+| Magic, Ver | the AME header already names the frame and its version |
+| Kind | now the first byte of the sealed body, so it is authenticated |
+| Flags | never read by a peer; the loop set them for nobody |
+| Session, Lane, Seq | the AME header carries all three, and binds them |
+| Epoch | AME epochs are the only epochs; DAC never had its own |
+| BodyLen | the carrier delimits the frame, and the tag covers the length |
 
 ## AME + DAC Layering
 
-DAC owns delivery. AME owns message verification and encryption. That means a
-receiver parses DAC first, uses the DAC `Kind` and `Flags` to ACK, repair,
-reorder, or reassemble the body, and only then hands the delivered bytes to AME.
-
-For encrypted application data, the DAC body normally contains an `AME2` frame,
-or a package/chunk schema whose payload is a slice of AME secure-package bytes.
-After DAC delivery is complete, AME parses that body, verifies it, decrypts it,
-and yields the actual application message.
+**AME carries. DAC decides.** A receiver authenticates and opens an AME frame
+first, reads the kind from the front of the plaintext, and only then does DAC
+see anything at all. There is no branch in which DAC believes a kind it has not
+already checked a tag over.
 
 ```text
-+---------------- DAC1 -----------------+---------------- AME2 ----------------+
-| path lane, repair, ACK, package order  | root/child lane, crypto, message     |
-| BodyLen says how many bytes to deliver | parse only after DAC has delivered   |
-+---------------------------------------+--------------------------------------+
-| DAC Body: AME2 frame bytes or chunks that reassemble an AME secure package   |
-+------------------------------------------------------------------------------+
++---------------- AME ------------------+---------------- DAC ----------------+
+| session, lane, sequence, replay        | chunking, parity, ACK pacing,       |
+| the tag over header AND body           | repair timing, path choice          |
+| recovers the kind, then hands it over  | acts only on what AME handed it     |
++---------------------------------------+-------------------------------------+
 ```
+
+The one place DAC **is** the outer layer is a stored package: AME seals the
+whole thing once, and DAC then cuts the sealed blob into chunks and adds parity
+on top. Encrypt, authenticate, then add repair data — which is what lets a
+relay holding no key rebuild a lost chunk.
 
 ## Sender Receiver Messages
 
-Every DAC message is carried by a `DAC1` header. `Kind` says which body follows.
+Every DAC message is carried by an AME frame. The kind, sealed with the body,
+says which body follows.
 Some bodies travel sender to receiver, some receiver to sender, and some are
 runtime memory views built from messages that already arrived.
 
@@ -188,44 +200,42 @@ carrier contract.
 The following boxes are readable versions of the DAC schemas in `types.nim`.
 Numbers are concrete example values, not fixed protocol constants.
 
-### DacFrameHeader
+### DacTaggedMessage
 
-The DAC header wraps every body. It is parsed before the body.
-`encodeDacFrame` and `decodeDacFrame` enforce magic, version, known kind,
-known flags, exact body length, and the SuperClean `u32` body limit.
+One thing the link wants to say. A kind and a body, and nothing else — the AME
+carrier seals both together, so the kind is authenticated rather than declared.
 
 ```text
-+----------------------------- DAC1 Header ------------------------------+
-| Magic=DAC | Ver=1 | Kind=PackageChunk | Flags=CreditBound+ExtendedLen |
-| Session=42 | Lane=5 | Epoch=2 | Seq=10 | BodyLenMode=u32 | BodyLen=70000 |
++--------------------------- DacTaggedMessage ---------------------------+
+| Kind=PackageChunk | Body = 70000 bytes of encoded chunk                |
++------------------------------------------------------------------------+
+                                  |
+                    sealed into one AME frame, kind 0x0B
+                                  v
++------------------------------------------------------------------------+
+| AME header 26 B | FOMKE 13 B | tag | enc: [DacKind u8][70000 bytes]     |
 +------------------------------------------------------------------------+
 ```
 
-### DacFrameFlags
-
-Flags tell the receiver how to treat the body.
-
-```text
-+-------------------+-------+--------------------------------------------+
-| Flag              | Value | Meaning in this example                    |
-+-------------------+-------+--------------------------------------------+
-| NeedsAck          | no    | receiver may batch ACK                     |
-| IsRepair          | no    | this is not repair data                    |
-| IsParity          | no    | this is original data                      |
-| EndOfGroup        | no    | more chunks may follow in the group        |
-| EndOfPackage      | no    | package is not complete yet                |
-| PathProbe         | no    | ordinary package data                      |
-| CreditBound       | yes   | sender is obeying receiver budget          |
-| TcpRepairAllowed  | yes   | receiver may ask for exact TCP repair      |
-| ExtendedBodyLen   | yes   | BodyLen is u32                             |
-+-------------------+-------+--------------------------------------------+
-```
+There is no `DacFrameHeader` and no `DacFrameFlags` any more. The flags said
+things like `NeedsAck`, `IsRepair` and `ExtendedBodyLen`; no peer ever read
+them, and the length they described belonged to a field the carrier now
+delimits. The sequence went the same way — the AME header carries one, with a
+replay window over it, so a second counter was two numbers that always agreed.
 
 ### DacScenarioDefaults
 
-Defaults are the chosen behavior for one path condition. Every field here is
-read by something: a value that changed nothing would be a note to a future
-implementer wearing the costume of a knob, which is worse than no note.
+Defaults are the chosen behavior for one path condition. Nearly every field
+here is read by something -- a value that changed nothing would be a note to a
+future implementer wearing the costume of a knob, which is worse than no note.
+
+One exception, stated rather than hidden: `ackMode` is set per profile and
+nothing acts on it. The ACK cadence is INFERRED -- the receiver watches what
+arrives and picks its own batch size and deadline, which is the whole design
+of `level1/ack_policy.nim`. A declared mode is the thing that design rejected.
+It is read only to check that a non-silent profile also set a batch size.
+Either the loop should honour it or it should go; it predates the framing
+removal and is not fallout from it.
 
 BlockedUdpPath has no defaults at all. It is a signal that UDP does not work
 on this path, and the answer is the TCP carrier, so asking for its parameters
@@ -233,8 +243,8 @@ raises rather than returning a datagram policy that cannot be used.
 
 ```text
 +--------------------------- SuperClean Defaults ------------------------+
-| PathLane=SuperCleanPath | BodyLenMode=u32 | TransferClass=UserData     |
-| RepairMode=None | AckMode=Batch | MaxBodyLen=16777216                  |
+| PathLane=SuperCleanPath | TransferClass=UserData                       |
+| RepairMode=None | AckMode=Batch                                        |
 | ChunkBytes=32768 | DataShards=64 | ParityShards=0                      |
 | AckBatchChunks=256 | AckMaxDelayMs=25 | RepairWaitMs=25 | Rounds=1     |
 +------------------------------------------------------------------------+
@@ -370,7 +380,7 @@ AME protects it when encryption or verification is required.
 | Kind | Tick  | PosX | PosY | PosZ | RotX | RotY | RotZ |
 | u8   | u32   | f32  | f32  | f32  | f32  | f32  | f32  |
 +------+-------+------+------+------+------+------+------+
-| BodyLen=29 | TransferClass=Realtime | DAC Kind=DriftPayload             |
+| Body = 29 bytes | TransferClass=Realtime | DAC Kind=DriftPayload       |
 +--------------------------------------------------------------------------+
 ```
 
@@ -456,7 +466,7 @@ path epoch.
 
 ## Path Profiles
 
-- `SuperCleanPath`: same-room or same-rack servers, `u32` `BodyLen`, up to
+- `SuperCleanPath`: same-room or same-rack servers, up to
   16 MiB per DAC body by default, no repair unless the receiver asks.
 - `CleanPath`: LAN/Wi-Fi defaults with small `u16` frames and light parity.
 - `MobilePath`, `ThinPath`, and `LossyPath`: progressively smaller chunks,

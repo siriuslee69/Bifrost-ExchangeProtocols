@@ -7,7 +7,7 @@ import unittest
 import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
-import ../../src/protocols/dac/level0/framing
+import ../../src/protocols/dac/level0/wire_helpers
 import ../../src/protocols/dac/level1/package_manifest
 import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table

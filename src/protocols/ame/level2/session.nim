@@ -26,7 +26,7 @@ import ../../fomke/level1/chain
 import ../../fomke/level2/wire
 import ../../config
 import ../../dac/types
-import ../../dac/level0/framing
+import ../../dac/level0/wire_helpers
 import ../../dac/level0/defaults as dac_defaults
 import runePragmas
 

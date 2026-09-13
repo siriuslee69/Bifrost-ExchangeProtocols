@@ -271,7 +271,7 @@ UDP forward (the blind VPS relay)
   -> a missing NAS buffers, a full buffer gives up the oldest
   -> a returning NAS drains in order, and may have moved address
   -> the NAS is poked only when a poke is due
-  -> SuperClean extended frames and normal-path rejection
+  -> the loop acts on a fixed set of kinds and nothing else
   -> durable trigger cancellation and completion
   -> receive timeout errors without malformed-frame exceptions
   -> simultaneous rekey converges on one epoch instead of splitting it

@@ -14,7 +14,7 @@ import unittest
 import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
-import ../../src/protocols/dac/level0/framing
+import ../../src/protocols/dac/level0/wire_helpers
 import ../../src/protocols/dac/level0/ack_range
 import ../../src/protocols/dac/level0/package_commit
 import ../../src/protocols/dac/level0/path_stats

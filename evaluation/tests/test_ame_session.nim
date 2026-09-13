@@ -19,7 +19,7 @@ import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/dac/types
-import ../../src/protocols/dac/level0/framing
+import ../../src/protocols/dac/level0/wire_helpers
 import runePragmas
 
 const
