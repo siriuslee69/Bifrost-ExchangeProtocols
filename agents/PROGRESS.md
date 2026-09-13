@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Mask the frame counter, rotate the session id, and add the blind UDP relay
+Commit Message: Attack the protocol on purpose, and write down how far each attempt gets
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -225,3 +225,42 @@ Notes:
   no keys so it cannot produce anything the NAS would accept as authentic;
   what it sends must be something the NAS will answer or ignore cheaply from
   an unauthenticated source. Not yet decided what that datagram should be.
+- `evaluation/tests/test_attack_surface.nim` is written from the attacker's
+  chair: every test names WHAT THEY HOLD, WHAT THEY TRY, and HOW FAR THEY GET.
+  The third one is the point -- it asserts on the specific error, because the
+  check that refused an attack is the check that must never be weakened. If
+  one of those strings changes, a layer of defence moved.
+
+  Two findings from writing it, both worth keeping:
+
+    a replay is stopped by the RATCHET, not the replay window. Using a
+      message key destroys it, so the second copy finds no key. The window is
+      the backstop behind that. If that assertion ever starts reading "AME
+      replay rejected" instead, the ratchet stopped consuming its keys and
+      forward secrecy went with it.
+    a reused relay tag CAN misdeliver an answer to the wrong client. The
+      relay is not a security boundary -- the bytes were sealed for somebody
+      else and do not open -- but the test says so out loud rather than
+      implying the relay prevents it. `clientIdleMs` is the lever.
+- RECORDED LIMITATION, not a bug: an observer who can watch BOTH sides of the
+  relay pairs the flows trivially, because the relay forwards bytes unchanged.
+  Header protection and id rotation defeat an observer on ONE side. Nothing
+  short of the relay re-encrypting would defeat both, and that would cost the
+  relay its keylessness. There is a test that fails if this ever silently
+  changes.
+- Repair geometry differs sharply by preset and a test written against the
+  wrong one looks like a protocol bug. Measured, not assumed:
+
+    dscCleanLan    18 KB -> 16 chunks, ONE group, ONE XOR shard
+                   budget: one lost chunk, full stop
+    dscHeavyLoss   18 KB -> 36 chunks, THREE groups of 12, SIX Reed-Solomon
+                   shards each; budget six per group, independently
+
+  Two of the loss tests were written assuming several groups on a clean LAN
+  and failed. The protocol was right and the tests were wrong.
+- The 16 routines Otter lists as PLACEHOLDERS were checked one by one and are
+  false positives: zero-value initializers (`initDacRepairTimer`,
+  `initTls13SocketSession`), `noreturn` raisers for excluded primitives
+  (`raiseExcludedSym` and siblings), and the `-d:ssl`-absent branch of
+  `buildTlsContext` which raises by design. Nothing unfinished is hiding
+  behind that count; Otter reads "short body returning a constant" as a stub.

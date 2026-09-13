@@ -218,6 +218,36 @@ AME
   -> responder candidate epoch before confirmation
   -> retiring epoch outliving live traffic, and the DAC replay window
 
+Attack surface (each test names the exact check that stops the attack)
+  intercepting a package in flight
+    -> holding EVERY chunk reveals none of the plaintext
+    -> reassembling without a key yields sealed bytes, not text
+    -> the manifest states the size, and that is a named leak
+    -> a chunk swapped in from another package is refused
+    -> a poisoned repair shard cannot be used to forge plaintext
+  attacks on one AME frame
+    -> a data frame relabelled as control is refused
+    -> a frame from another session, or from before a rotation, is refused
+    -> truncation, splicing, and a guessed session id are refused
+    -> shifting the MASKED counter still breaks the tag
+    -> a replay is stopped by the ratchet, one layer before the window
+    -> the padded flag cannot be cleared to hand filler up as data
+  attacks through the relay
+    -> a flood from many addresses cannot exhaust it
+    -> a reused tag CAN misdeliver; only the endpoint catches it
+  what the relay does NOT hide
+    -> an observer on BOTH sides can pair the flows (a recorded limitation)
+    -> an observer on ONE side cannot follow the counter
+  losing things, and getting them back
+    -> XOR parity rebuilds its one lost chunk, byte for byte
+    -> two losses in a one-shard group are refused, never guessed at
+    -> Reed-Solomon covers losses in every group at once
+    -> datagrams out of order all open, with the right payloads
+    -> a datagram lost for good leaves its key held, the rest still open
+    -> a session full of permanent losses can be freed and keeps working
+    -> loss one way does not desynchronise the other
+    -> a package survives loss AND reordering together
+
 AME header protection
   -> the counter on the wire does not count, and the key puts it back
   -> masking twice returns the frame that went in
