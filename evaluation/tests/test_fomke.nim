@@ -557,9 +557,9 @@ suite "FOMKE":
     var
       initial: AmeExchangeState = initialExchangeState()
       alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
-        fomkeInitialTier(), frInitiator, maxSkip = 4'u32)
+        fomkeInitialTier(), frInitiator, reorderCeiling = 4'u32)
       bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
-        fomkeInitialTier(), frResponder, maxSkip = 4'u32)
+        fomkeInitialTier(), frResponder, reorderCeiling = 4'u32)
       message: FomkeMessage
       opened: FomkeOpenResult
       i: int = 0
@@ -922,6 +922,5 @@ suite "AME with FOMKE":
     discard sealAmeDacFrame(connection, @[byte 1])
     clearAmeSession(connection)
     check connection.fomke.lane1.chainKey.len == 0
-    check connection.fomkeRetiring.lane1.chainKey.len == 0
     check fomkePreparedMessages(connection.fomkeSendCache) == 0
     check connection.auth.current.exchange.activeMask == 0'u8

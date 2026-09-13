@@ -15,7 +15,7 @@ import runePragmas
 
 const
   fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]
-  fomkeStateVersion = 1'u8
+  fomkeStateVersion = 2'u8
 
 proc requireStateBytes(A: openArray[uint8], cursor, count: int) {.role: parser,
     tag: "fomke|parsing|validation".} =
@@ -177,7 +177,9 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
   appendStateField(result, encodeAmeMaskTier(S.tier))
   appendStateChain(result, S.lane1)
   appendStateChain(result, S.lane2)
-  appendAmeU32(result, S.maxSkip)
+  appendAmeU32(result, S.reorderWindow)
+  appendAmeU32(result, S.reorderCeiling)
+  appendAmeU32(result, S.orderedRun)
   result.add(uint8(ord(S.kdf.mode)))
   appendAmeU32(result, S.kdf.rounds)
   appendAmeU64(result, S.kdf.blockIndex)
@@ -226,7 +228,9 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   result.tier = decodeAmeMaskTier(result.layout, tier)
   result.lane1 = readStateChain(A, cursor)
   result.lane2 = readStateChain(A, cursor)
-  result.maxSkip = readStateU32(A, cursor)
+  result.reorderWindow = readStateU32(A, cursor)
+  result.reorderCeiling = readStateU32(A, cursor)
+  result.orderedRun = readStateU32(A, cursor)
   result.kdf.mode = decodeStateKdfMode(readStateU8(A, cursor))
   result.kdf.rounds = readStateU32(A, cursor)
   result.kdf.blockIndex = readStateU64(A, cursor)
@@ -234,7 +238,7 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   discard initGb3KdfConfig(result.kdf.rounds, result.kdf.blockIndex,
     result.kdf.mode, result.kdf.memoryBlocks)
   count = readStateU32(A, cursor)
-  if count > result.maxSkip or count > fomkeMaxSkipLimit:
+  if count > result.reorderWindow or count > fomkeMaxReorderWindow:
     raise newException(ValueError, "FOMKE skipped state exceeds its limit")
   while i < count:
     result.skipped.add(readStateSkipped(A, cursor, result.epoch))

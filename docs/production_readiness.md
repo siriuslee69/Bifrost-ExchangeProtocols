@@ -204,10 +204,19 @@ What stayed:
   receiver must read it before it knows which keys to reach for. Every byte of
   it still goes into the tag, so a header edited in flight makes the body fail
   to open.
-- **A retiring grace window.** After an epoch turns, frames already in flight
-  carry the previous epoch. The pre-upgrade ratchet is kept for a bounded
-  number of frames and erased at zero, so old keys do not outlive the handful
-  of packets they exist for.
+- **One retiring epoch, for stored packages only.** After an epoch turns, the
+  previous epoch's keys are kept so a package sealed and stored under them can
+  still be opened. A package has no ratchet, no sequence and no sender waiting
+  to send it again, so losing those keys loses the bytes.
+
+  It is NOT kept for frames. A frame sealed under the previous epoch is
+  refused, and the transport recovers it — DAC rebuilds it from repair shards
+  or asks for it again, TCP retransmits.
+
+  Its lifetime is exactly one rotation: the next rotation replaces it. It used
+  to expire after a hundred received frames instead, which counted live
+  traffic and then erased keys that live traffic has nothing to do with, so a
+  busy session destroyed a stored package's keys within a second.
 ## One Framing
 
 A DAC datagram is one AME frame. It used to be two headers:

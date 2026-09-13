@@ -29,10 +29,6 @@ import ../../dac/level0/framing
 import ../../dac/level0/defaults as dac_defaults
 import runePragmas
 
-const
-  ameRetiringGraceFrames* = 100
-    ## Frames the previous epoch stays openable after a rotation, so packets
-    ## already in flight under the old keys are not dropped.
 
 type
   AmeSession* {.role: truthState.} = object
@@ -55,13 +51,6 @@ type
       ## The one thing that protects payloads. Always present on a live
       ## session -- there is no mode in which a frame body is unprotected or
       ## protected twice.
-    fomkeRetiring*: FomkeState
-      ## The ratchet as it stood just before the last epoch change. Frames
-      ## that were already travelling when the epoch turned still open here.
-    fomkeRetiringFramesLeft*: int
-      ## How many more frames the retiring ratchet may open. It counts down
-      ## on every accepted frame and the state is erased at zero, so the old
-      ## keys do not outlive the handful of packets they exist for.
     fomkeCandidate*: FomkeState
       ## The ratchet as it WOULD be after the staged epoch change. The last
       ## message of a rotation -- epoch-ready -- is the first message of the
@@ -154,12 +143,12 @@ proc cloneEpoch(E: AmeEpochKeySet): AmeEpochKeySet {.role: helper.} =
   ## E: epoch copied without sharing secret or transcript byte storage.
   ##
   ## `params` is copied like everything else, and that is load-bearing rather
-  ## than tidy. A retiring epoch is asked for its OWN padding policy when it
-  ## opens a frame that was already travelling when the epoch turned
-  ## (`openFrameBody`). Leaving the field at its default made that read
+  ## than tidy. A retiring epoch is asked for its OWN tag length and padding
+  ## policy when it opens a sealed package that was stored under it
+  ## (`openAmeSecurePackage`). Leaving the field at its default made that read
   ## answer `apadNone` no matter what the epoch actually used, so with
-  ## `apadBlock64` switched on every in-flight frame was refused for
-  ## disagreeing with a policy it had never been sealed under.
+  ## `apadBlock64` switched on the package was refused for disagreeing with a
+  ## policy it had never been sealed under.
   result.epochId = E.epochId
   result.layout = E.layout
   result.tier = E.tier
@@ -193,7 +182,6 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
   result.current.tier = t
   result.current.exchange = E
   result.current.transcriptSalt = copyBytes(transcriptSalt)
-  result.retiringFramesLeft = 0
   result.sessionId = sessionId
   result.endpointRole = endpointRole
   result.current.params = params
@@ -290,7 +278,6 @@ proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
   next.transcriptSalt = copyBytes(transcriptSalt)
   clearEpoch(S.auth.retiring)
   S.auth.retiring = cloneEpoch(S.auth.current)
-  S.auth.retiringFramesLeft = ameRetiringGraceFrames
   S.auth.current = next
   requireAmeAuth(S.auth)
 
@@ -407,14 +394,6 @@ proc restoreConfiguredAmeFomkeCache(S: var AmeSession) {.
     S.fomkeSendCache = prepareFomkeSendCache(S.fomke,
       S.fomkePregenerationMessages)
 
-proc retireAmeFomke(S: var AmeSession, previous: sink FomkeState) {.
-    role: actor, tag: "cryptoBoundary|fomke".} =
-  ## S/previous: ratchet as it stood before the epoch turned, kept alive for a
-  ## bounded number of frames so packets already in flight still open.
-  clearFomkeState(S.fomkeRetiring)
-  S.fomkeRetiring = previous
-  S.fomkeRetiringFramesLeft = ameRetiringGraceFrames
-
 proc clearAmeSession*(S: var AmeSession) {.role: actor,
     tag: "appApi|cryptoBoundary|protocol".} =
   ## S: current, retiring, pending AME, and FOMKE secrets to erase.
@@ -428,7 +407,6 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   clearFomkeSendCache(S.fomkeSendCache)
   clearFomkeState(S.fomke)
   clearFomkeState(S.fomkeCandidate)
-  clearFomkeState(S.fomkeRetiring)
   S = default(AmeSession)
 
 proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
@@ -623,11 +601,9 @@ proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
   validateFomkeUpgrade(S.fomke, fomkeCommit)
   clearEpoch(S.auth.retiring)
   S.auth.retiring = cloneEpoch(S.auth.current)
-  S.auth.retiringFramesLeft = ameRetiringGraceFrames
   S.auth.current = S.pendingIncoming.candidate
   S.pendingIncoming = default(AmePendingIncomingExchange)
   setCurrentAmeTier(S.path, targetTier)
-  retireAmeFomke(S, cloneFomkeState(S.fomke))
   if S.fomkeCandidateActive:
     ## The candidate already opened the epoch-ready frame, so its receive
     ## chain has moved past that message. Adopting it -- rather than deriving
@@ -764,7 +740,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     result.auth.current.layout, result.auth.current.tier,
     fomkeRoleFor(result.auth.endpointRole),
     result.auth.current.transcriptSalt,
-    initGb3KdfConfig(), fomkeDefaultMaxSkip,
+    initGb3KdfConfig(), fomkeDefaultReorderCeiling,
     result.auth.current.params.authTagLen)
   runtime = currentBifrostConfig()
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)
@@ -967,30 +943,35 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     role: orchestrator, tag: "cryptoBoundary|fomke|protocol".} =
   ## S/f/carrier: authenticate and open one frame body.
   ##
-  ## The current ratchet is tried first. If the epoch just turned, a frame
-  ## that was already in flight carries the previous epoch, so the retiring
-  ## ratchet gets one attempt before the frame is refused. That window is
-  ## bounded by a frame count, not by time.
+  ## There is one ratchet and it is the current one. A frame sealed under the
+  ## previous epoch is refused here, and the transport is what recovers it --
+  ## DAC rebuilds it from repair shards or asks for it again, TCP retransmits.
+  ##
+  ## This used to keep the PREVIOUS ratchet alive for a hundred frames as a
+  ## second way to open such a frame. It never once ran, because three other
+  ## rules each make the situation it was built for impossible:
+  ##
+  ##   TCP needs an exact sequence, so a held-back frame is a gap and is
+  ##     refused before it ever reaches a ratchet
+  ##   FOMKE refuses to rotate while a skipped key is outstanding, so a frame
+  ##     cannot be held back across the rotation from before it
+  ##   FOMKE refuses to seal while an upgrade is pending, so one cannot be
+  ##     made after it either
+  ##
+  ## Keeping a whole second ratchet -- including its cache of skipped keys --
+  ## to answer a question the protocol refuses to ask was memory and key
+  ## material spent on nothing.
   var
     aad: ByteSeq = @[]
     message: FomkeMessage = default(FomkeMessage)
     opened: FomkeOpenResult = default(FomkeOpenResult)
     padding: AmePaddingPolicy = S.auth.current.params.padding
   ## The envelope carries no tag length, so the split between tag and
-  ## ciphertext comes from what THIS epoch agreed. A retiring epoch that used
-  ## a different length is decoded again below with its own value, which is
-  ## the only way that case can be right rather than lucky.
+  ## ciphertext comes from what THIS epoch agreed.
   aad = buildAad(carrier, f.header)
   try:
     message = decodeFomkeMessage(f.payload, S.fomke.tagLen)
     opened = openFomkeMessage(S.fomke, message, aad)
-    if not opened.ok and S.fomkeRetiringFramesLeft > 0:
-      message = decodeFomkeMessage(f.payload, S.fomkeRetiring.tagLen)
-      if S.fomkeRetiring.epoch == message.epoch:
-        opened = openFomkeMessage(S.fomkeRetiring, message, aad)
-        ## A frame already travelling when the epoch turned was padded under
-        ## the OLD epoch's policy, so that is the policy to strip with.
-        padding = S.auth.retiring.params.padding
   except ValueError as exc:
     secureClearAmeBytes(aad)
     result.err = exc.msg
@@ -1012,21 +993,6 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     result.err = exc.msg
     return
   result.ok = true
-
-proc consumeRetiringGrace(S: var AmeSession) {.role: actor.} =
-  ## S: connection whose old epoch expires after authenticated frame progress.
-  if S.auth.retiring.epochId != 0'u32:
-    if S.auth.retiringFramesLeft > 0:
-      S.auth.retiringFramesLeft = S.auth.retiringFramesLeft - 1
-    if S.auth.retiringFramesLeft <= 0:
-      clearEpoch(S.auth.retiring)
-      S.auth.retiringFramesLeft = 0
-  if S.fomkeRetiringFramesLeft <= 0:
-    return
-  S.fomkeRetiringFramesLeft = S.fomkeRetiringFramesLeft - 1
-  if S.fomkeRetiringFramesLeft <= 0:
-    clearFomkeState(S.fomkeRetiring)
-    S.fomkeRetiringFramesLeft = 0
 
 proc sealAmeTcpFrame*(S: var AmeSession,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator.} =
@@ -1157,7 +1123,6 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
       S.lastErr = result.err
       return
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
-  consumeRetiringGrace(S)
   circ_seq.push(S.inbox, result.packet)
   S.lastErr = ""
 
@@ -1351,7 +1316,6 @@ proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
     result.err = "AME DAC control message kind is unknown"
     return
   result.body = opened.payload[1 .. ^1]
-  consumeRetiringGrace(S)
   result.ok = true
 
 proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
@@ -1428,7 +1392,6 @@ proc finishAmeTcpExchangeFrame*(S: var AmeSession,
   ## genuine rotation from a replayed one: it can only open this frame with a
   ## ratchet it derived itself from the same exchange.
   fomkeCommit = S.fomke.pending.commit
-  retireAmeFomke(S, cloneFomkeState(S.fomke))
   confirmFomkeUpgrade(S.fomke, fomkeCommit)
   ## The new epoch may have agreed a different tag length. The envelope no
   ## longer states one, so the ratchet has to be moved onto it here or the
@@ -1490,7 +1453,6 @@ proc finishAmeDacExchangeFrame*(S: var AmeSession,
   finishAmeSessionExchange(S,
     decodeAmeExchangeReply(S.auth.current.layout.kems, opened.payload))
   fomkeCommit = S.fomke.pending.commit
-  retireAmeFomke(S, cloneFomkeState(S.fomke))
   confirmFomkeUpgrade(S.fomke, fomkeCommit)
   ## The new epoch may have agreed a different tag length. The envelope no
   ## longer states one, so the ratchet has to be moved onto it here or the

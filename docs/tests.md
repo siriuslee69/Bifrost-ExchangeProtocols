@@ -92,7 +92,10 @@ FOMKE forward secrecy
   -> the chain key is replaced, not extended, on every step
   -> an epoch change destroys every key from the epoch before it
   -> a failed open leaves the ratchet exactly where it was
-  -> a gap past the skip budget is refused, not absorbed
+  -> a gap past the reorder window is refused, not absorbed
+  -> a path that never reorders narrows the reorder window
+  -> proved reordering widens the reorder window, up to the ceiling
+  -> a forged message cannot widen the reorder window
   -> messages that never arrive can be given up on, and a rekey then runs
   -> a full skip cache stops receiving, and giving up starts it again
   -> a message given up on stays shut even if it does turn up later
@@ -213,7 +216,7 @@ AME
   -> full-width epoch and detached nonce/AAD binding
   -> authenticated Offer -> Reply -> EpochReady over TCP and DAC
   -> responder candidate epoch before confirmation
-  -> bounded retiring epoch and DAC replay window
+  -> retiring epoch outliving live traffic, and the DAC replay window
   -> SuperClean extended frames and normal-path rejection
   -> durable trigger cancellation and completion
   -> receive timeout errors without malformed-frame exceptions

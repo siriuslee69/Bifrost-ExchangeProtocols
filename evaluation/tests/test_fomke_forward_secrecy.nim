@@ -171,13 +171,13 @@ suite "FOMKE forward secrecy":
     check opened.payload == @[byte 3, 3, 3]
 
   # {.testKind: tkEdgeCase.}
-  test "a gap larger than the skip budget is refused, not absorbed":
+  test "a gap larger than the reorder window is refused, not absorbed":
     var
       p = fsPair()
       far: FomkeMessage
       i: int = 0
       opened: FomkeOpenResult
-    p.b.maxSkip = 4'u32
+    p.b.reorderWindow = 4'u32
     while i < 10:
       far = sealFomkeMessage(p.a, @[byte uint8(i)])
       i = i + 1
@@ -185,9 +185,71 @@ suite "FOMKE forward secrecy":
     ## far on demand is work an attacker could ask for without limit.
     opened = openFomkeMessage(p.b, far)
     check not opened.ok
-    check opened.err == "FOMKE message gap exceeds skipped-key limit"
+    check opened.err == "FOMKE message gap exceeds the reorder window"
     check p.b.lane1.nextIndex == 0'u64
     check p.b.skipped.len == 0
+
+  # {.testKind: tkUnit, covers: "narrowFomkeReorderWindow".}
+  test "a path that never reorders narrows the reorder window":
+    ## The window is what a forged message can make this side derive before
+    ## its tag is checked: a message claiming a position N ahead costs N
+    ## derivations and is then thrown away. So a path that is not using the
+    ## room should not keep it open.
+    var
+      p: tuple[a: FomkeState, b: FomkeState] = fsPair()
+      message: FomkeMessage = default(FomkeMessage)
+      opened: FomkeOpenResult = default(FomkeOpenResult)
+      i: int = 0
+    check fomkeReorderWindow(p.b) == fomkeDefaultReorderWindow
+    while i < int(fomkeReorderRelaxRuns):
+      message = sealFomkeMessage(p.a, @[byte uint8(i and 0xFF)])
+      opened = openFomkeMessage(p.b, message)
+      check opened.ok
+      i = i + 1
+    check fomkeReorderWindow(p.b) == fomkeDefaultReorderWindow div 2'u32
+
+  # {.testKind: tkUnit, covers: "widenFomkeReorderWindow".}
+  test "proved reordering widens the reorder window, up to the ceiling":
+    ## A jump forward is proof this path needs at least that much room. The
+    ## window opens to twice the jump, so the next one being slightly worse
+    ## does not cost a refusal, and never past the session's ceiling.
+    var
+      p: tuple[a: FomkeState, b: FomkeState] = fsPair()
+      message: FomkeMessage = default(FomkeMessage)
+      opened: FomkeOpenResult = default(FomkeOpenResult)
+      i: int = 0
+    while i < 10:
+      discard sealFomkeMessage(p.a, @[byte uint8(i)])
+      i = i + 1
+    message = sealFomkeMessage(p.a, @[byte 99])
+    opened = openFomkeMessage(p.b, message)
+    check opened.ok
+    check fomkeSkippedMessages(p.b) == 10
+    check fomkeReorderWindow(p.b) == 20'u32
+    check fomkeReorderWindow(p.b) <= p.b.reorderCeiling
+
+  # {.testKind: tkEdgeCase, covers: "widenFomkeReorderWindow", pins: "a forger could widen the window it is measured by".}
+  test "a forged message cannot widen the reorder window":
+    ## Widening happens on the COPY of the state that is kept only once the
+    ## tag verifies. If it happened on the live state instead, anyone able to
+    ## send bytes could walk the window up to its ceiling and then aim the
+    ## full amplifier at this side, without ever holding a key.
+    var
+      p: tuple[a: FomkeState, b: FomkeState] = fsPair()
+      message: FomkeMessage = default(FomkeMessage)
+      opened: FomkeOpenResult = default(FomkeOpenResult)
+      before: uint32 = 0'u32
+      i: int = 0
+    while i < 8:
+      discard sealFomkeMessage(p.a, @[byte uint8(i)])
+      i = i + 1
+    message = sealFomkeMessage(p.a, @[byte 42])
+    before = fomkeReorderWindow(p.b)
+    message.ciphertext[0] = message.ciphertext[0] xor 0xFF'u8
+    opened = openFomkeMessage(p.b, message)
+    check not opened.ok
+    check fomkeReorderWindow(p.b) == before
+    check fomkeSkippedMessages(p.b) == 0
 
   # {.testKind: tkUnit.}
   test "every switched-on KEM slot feeds the root, not just the first":

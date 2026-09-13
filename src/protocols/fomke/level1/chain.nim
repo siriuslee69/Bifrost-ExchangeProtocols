@@ -213,8 +213,12 @@ proc validateFomkeState*(S: FomkeState) {.role: parser,
   if S.lane1.chainKey.len != fomkeChainKeyBytes or
       S.lane2.chainKey.len != fomkeChainKeyBytes:
     raise newException(ValueError, "FOMKE directional chain key is invalid")
-  if S.maxSkip > fomkeMaxSkipLimit:
-    raise newException(ValueError, "FOMKE skipped-key limit is too large")
+  if S.reorderCeiling > fomkeMaxReorderWindow or
+      S.reorderCeiling < fomkeMinReorderWindow:
+    raise newException(ValueError, "FOMKE reorder ceiling is out of range")
+  if S.reorderWindow > S.reorderCeiling or
+      S.reorderWindow < fomkeMinReorderWindow:
+    raise newException(ValueError, "FOMKE reorder window is out of range")
   while i < S.skipped.len:
     if S.skipped[i].keyMaterial.len != fomkeMessageKeyBytes:
       raise newException(ValueError, "FOMKE skipped message key is invalid")
@@ -273,7 +277,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     L: AmeSuiteLayout, t: AmeMaskTier, role: FomkeRole,
     context: openArray[uint8] = [],
     c: Gb3KdfConfig = initGb3KdfConfig(),
-    maxSkip: uint32 = fomkeDefaultMaxSkip,
+    reorderCeiling: uint32 = fomkeDefaultReorderCeiling,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
     tag: "appApi|cryptoBoundary|exchange|fomke".} =
@@ -281,9 +285,11 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
   ##    are consumed and erased on return. Mixing all of them is what makes a
   ##    hybrid exchange worth having: an attacker must break every slot, not
   ##    the weakest one.
-  ## A/L/t/role/context/c/maxSkip/tagLen: KEM path, slot layout, active slots,
-  ##    endpoint direction, transcript binding, work policy, skip budget, and
-  ##    the tag length this session agreed.
+  ## A/L/t/role/context/c/reorderCeiling/tagLen: KEM path, slot layout, active
+  ##    slots, endpoint direction, transcript binding, work policy, the widest
+  ##    the reorder window may ever grow, and the tag length this session
+  ##    agreed. The window itself starts well below that ceiling and is only
+  ##    widened by reordering a verified message has proved.
   var
     info: ByteSeq = @[]
     root: ByteSeq = @[]
@@ -295,8 +301,9 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     if S[i].len == 0:
       raise newException(ValueError, "FOMKE shared secret row is empty")
     i = i + 1
-  if maxSkip > fomkeMaxSkipLimit:
-    raise newException(ValueError, "FOMKE skipped-key limit is too large")
+  if reorderCeiling > fomkeMaxReorderWindow or
+      reorderCeiling < fomkeMinReorderWindow:
+    raise newException(ValueError, "FOMKE reorder ceiling is out of range")
   validateAmeTier(L, t)
   info = buildFomkeRootInfo(A, L, t, 1'u32, context)
   appendAmeLabel(seed, "FOMKE-ROOT-SECRETS-v1")
@@ -309,7 +316,9 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
   result.tagLen = tagLen
   result.lane1 = deriveFomkeLaneRoot(root, flLane1, result.epoch, c)
   result.lane2 = deriveFomkeLaneRoot(root, flLane2, result.epoch, c)
-  result.maxSkip = maxSkip
+  result.reorderCeiling = reorderCeiling
+  result.reorderWindow = min(fomkeDefaultReorderWindow, reorderCeiling)
+  result.orderedRun = 0'u32
   result.kdf = c
   secureClearAmeBytes(seed)
   secureClearAmeBytes(root)
@@ -323,12 +332,12 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
 proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
     t: AmeMaskTier, role: FomkeRole, context: openArray[uint8] = [],
     c: Gb3KdfConfig = initGb3KdfConfig(),
-    maxSkip: uint32 = fomkeDefaultMaxSkip,
+    reorderCeiling: uint32 = fomkeDefaultReorderCeiling,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
     tag: "appApi|ame|cryptoBoundary|exchange|fomke".} =
   ## E/L/t: finished exchange plus the slot layout and active slots.
-  ## role/context/c/maxSkip/tagLen: endpoint and derivation policy.
+  ## role/context/c/reorderCeiling/tagLen: endpoint and derivation policy.
   ##
   ## Every KEM slot the tier switches on must have produced a secret, and all
   ## of them go into the root. A tier that names two KEMs but derives from one
@@ -353,8 +362,8 @@ proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
       appendFomkeField(row, E.sharedSecrets[i])
       secrets.add(row)
     i = i + 1
-  result = initFomke(secrets, E.algorithms, L, t, role, context, c, maxSkip,
-    tagLen)
+  result = initFomke(secrets, E.algorithms, L, t, role, context, c,
+    reorderCeiling, tagLen)
 
 proc buildFomkeBlockInfo(lane: FomkeLane, epoch: uint32,
     index: uint64): ByteSeq {.role: truthBuilder,
@@ -445,12 +454,10 @@ proc sealFomkeMessage*(S: var FomkeState, plaintext: openArray[uint8],
   ## S/plaintext/aad: sender state, one message, and external binding.
   var
     lane: FomkeLane = flLane1
-    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
-      index: 0'u64, keyMaterial: @[])
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (0'u64, @[])
     material: ByteSeq = @[]
     messageAad: ByteSeq = @[]
-    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (
-      ciphertext: @[], authTag: @[])
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (@[], @[])
   requireFomkeQuiescent(S)
   lane = outboundFomkeLane(S.role)
   if lane == flLane1:
@@ -492,8 +499,7 @@ proc prepareFomkeSendCache*(S: FomkeState,
   var
     C: FomkeChainState = default(FomkeChainState)
     lane: FomkeLane = flLane1
-    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
-      index: 0'u64, keyMaterial: @[])
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (0'u64, @[])
     i: int = 0
   requireFomkeQuiescent(S)
   requireFomkeSendCacheBounds(messageCount)
@@ -564,8 +570,7 @@ proc sealFomkeMessagePrepared*(S: var FomkeState, C: var FomkeSendCache,
     lane: FomkeLane = flLane1
     entry: FomkePreparedSendEntry = default(FomkePreparedSendEntry)
     messageAad: ByteSeq = @[]
-    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (
-      ciphertext: @[], authTag: @[])
+    sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (@[], @[])
   requireFomkeQuiescent(S)
   lane = outboundFomkeLane(S.role)
   if not fomkeSendCacheMatches(S, C):
@@ -604,42 +609,94 @@ proc takeSkippedFomkeKey(S: var seq[FomkeSkippedKey], epoch: uint32,
       return
     i = i + 1
 
+proc narrowFomkeReorderWindow(S: var FomkeState) {.role: actor,
+    tag: "fomke", inline.} =
+  ## S: window halved one step, once enough messages have arrived in order.
+  ##
+  ## Every message that turns up exactly where it was expected is one piece of
+  ## evidence that the path is not reordering anything and the room being held
+  ## open is not being used. After `fomkeReorderRelaxRuns` of them the window
+  ## halves, down to `fomkeMinReorderWindow` and no further.
+  S.orderedRun = S.orderedRun + 1'u32
+  if S.orderedRun < fomkeReorderRelaxRuns:
+    return
+  S.orderedRun = 0'u32
+  S.reorderWindow = max(S.reorderWindow div 2'u32, fomkeMinReorderWindow)
+
+proc widenFomkeReorderWindow(S: var FomkeState, distance: uint64) {.
+    role: actor, tag: "fomke", inline.} =
+  ## S/distance: window opened to cover a message that sat `distance` places
+  ## out of position, with the same again as headroom so the next one being
+  ## slightly worse does not cost a refusal.
+  ##
+  ## Only ever called for a message whose key was really produced, and only
+  ## ever on the copy of the state that is kept if the tag then verifies. A
+  ## forged message therefore cannot widen the window it is being measured by.
+  var
+    target: uint32 = S.reorderCeiling
+  S.orderedRun = 0'u32
+  if distance < uint64(S.reorderCeiling div 2'u32):
+    target = uint32(distance) * 2'u32
+  if target <= S.reorderWindow:
+    return
+  S.reorderWindow = min(target, S.reorderCeiling)
+
 proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
     lane: FomkeLane): ByteSeq {.role: actor,
     tag: "cryptoBoundary|fomke|kdf".} =
-  ## S/index/lane: receive chain advanced up to one message, at most `maxSkip`
-  ## steps ahead. Keys for the messages that were jumped over are cached, so a
-  ## datagram that arrives late still opens; anything further ahead is refused
-  ## rather than letting a peer make this side derive without bound.
+  ## S/index/lane: receive chain advanced up to one message, at most
+  ## `reorderWindow` steps ahead. Keys for the messages that were jumped over
+  ## are cached, so a datagram that arrives late still opens; anything further
+  ## ahead is refused rather than letting a peer make this side derive without
+  ## bound.
+  ##
+  ## The window moves with what this lane actually sees:
+  ##
+  ##   message sits exactly where expected  -> narrow, slowly
+  ##   message sits out of position         -> widen, at once
+  ##
+  ## A jump FORWARD widens it as well as a late arrival does. It has to: the
+  ## window is what gates a forward jump in the first place, so a window that
+  ## only grew on late arrivals could never grow enough to let a bigger jump
+  ## through and would never see one.
   var
     C: FomkeChainState = default(FomkeChainState)
-    key: tuple[index: uint64, keyMaterial: ByteSeq] = (
-      index: 0'u64, keyMaterial: @[])
+    key: tuple[index: uint64, keyMaterial: ByteSeq] = (0'u64, @[])
     skipped: FomkeSkippedKey = default(FomkeSkippedKey)
+    distance: uint64 = 0'u64
   if lane == flLane1:
     C = cloneFomkeChain(S.lane1)
   else:
     C = cloneFomkeChain(S.lane2)
   if index < C.nextIndex:
+    distance = C.nextIndex - index
     clearFomkeChain(C)
-    return takeSkippedFomkeKey(S.skipped, S.epoch, index, lane)
-  if index - C.nextIndex > uint64(S.maxSkip):
+    result = takeSkippedFomkeKey(S.skipped, S.epoch, index, lane)
+    if result.len > 0:
+      widenFomkeReorderWindow(S, distance)
+    return
+  distance = index - C.nextIndex
+  if distance > uint64(S.reorderWindow):
     clearFomkeChain(C)
-    raise newException(ValueError, "FOMKE message gap exceeds skipped-key limit")
+    raise newException(ValueError, "FOMKE message gap exceeds the reorder window")
   while C.nextIndex <= index:
     key = advanceFomkeChain(C, lane, S.epoch, S.kdf)
     if key.index == index:
       result = key.keyMaterial
-    else:
-      if uint32(S.skipped.len) >= S.maxSkip:
-        secureClearAmeBytes(key.keyMaterial)
-        clearFomkeChain(C)
-        raise newException(ValueError, "FOMKE skipped-key cache is full")
-      skipped.epoch = S.epoch
-      skipped.index = key.index
-      skipped.lane = lane
-      skipped.keyMaterial = key.keyMaterial
-      S.skipped.add(skipped)
+      break
+    if uint32(S.skipped.len) >= S.reorderWindow:
+      secureClearAmeBytes(key.keyMaterial)
+      clearFomkeChain(C)
+      raise newException(ValueError, "FOMKE skipped-key cache is full")
+    skipped.epoch = S.epoch
+    skipped.index = key.index
+    skipped.lane = lane
+    skipped.keyMaterial = key.keyMaterial
+    S.skipped.add(skipped)
+  if distance == 0'u64:
+    narrowFomkeReorderWindow(S)
+  else:
+    widenFomkeReorderWindow(S, distance)
   if lane == flLane1:
     clearFomkeChain(S.lane1)
     S.lane1 = C
@@ -883,6 +940,14 @@ proc fomkeSkippedMessages*(S: FomkeState): int {.role: parser,
   ## A caller watches this to decide when to give up on them.
   result = S.skipped.len
 
+proc fomkeReorderWindow*(S: FomkeState): uint32 {.role: parser,
+    tag: "appApi|fomke".} =
+  ## S: how far out of order this lane is currently willing to accept a
+  ## message. It is the reorder depth this lane has measured, plus headroom,
+  ## so a transport that reports path statistics can read the number here
+  ## instead of measuring the same thing a second time.
+  result = S.reorderWindow
+
 proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
     tag: "appApi|cryptoBoundary|fomke".} =
   ## S: give up on every message that was jumped over, and say how many were
@@ -892,7 +957,8 @@ proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
   ## This exists because two rules would otherwise trap a session on a lossy
   ## link forever:
   ##
-  ##   1. a gap wider than `maxSkip`, or a full cache, refuses the message
+  ##   1. a gap wider than `reorderWindow`, or a full cache, refuses the
+  ##      message
   ##   2. a KEM upgrade refuses to run while any skipped key is outstanding
   ##
   ## A message that is lost for good is never taken out of the cache by

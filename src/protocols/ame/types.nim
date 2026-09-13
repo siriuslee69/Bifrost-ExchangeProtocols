@@ -381,14 +381,38 @@ type
     transcriptSalt*: ByteSeq
     params*: AmeRuntimeParams
       ## The tunables THIS epoch was created with. They live per epoch, not
-      ## per session, because a retiring epoch must keep opening frames that
-      ## were sealed under its own values while the new epoch uses the new
-      ## ones. Bound into every tag, so both endpoints must agree.
+      ## per session, because a retiring epoch must keep opening SEALED
+      ## PACKAGES that were sealed under its own values while the new epoch
+      ## uses the new ones. Bound into every tag, so both endpoints agree.
 
   AmeAuthPackage* {.role: truthState.} = object
     current*: AmeEpochKeySet
     retiring*: AmeEpochKeySet
-    retiringFramesLeft*: int
+      ## The epoch before the last rotation, kept so a sealed package that
+      ## was stored under it can still be opened.
+      ##
+      ## A package is not a frame. It has no ratchet, no sequence, and no
+      ## sender waiting to send it again -- it is bytes that came off a
+      ## relay, out of a file, or from a courier nobody trusts, and it may
+      ## have been sitting there for a week. If the keys are gone the bytes
+      ## are gone, and the only sign of it is a plain "authentication
+      ## failed".
+      ##
+      ## So its lifetime is one rotation, and nothing else:
+      ##
+      ##   rotate ──▶ current becomes retiring, the older retiring is erased
+      ##
+      ## It used to be erased after a hundred RECEIVED FRAMES instead. That
+      ## measured ordinary live traffic and then switched off something live
+      ## traffic has nothing to do with, so a busy session destroyed the keys
+      ## a stored package needed within a second, while an idle one kept them
+      ## for days.
+      ##
+      ## One rotation is one spare epoch -- the same memory ceiling as the
+      ## frame counter had, bounded by the event that actually makes the old
+      ## keys obsolete. A package that sits through TWO rotations is still
+      ## unopenable; a package meant to outlive its session has to carry its
+      ## own key material rather than rely on this.
     sessionId*: uint64
     endpointRole*: AmeEndpointRole
     authenticationMode*: AmeAuthenticationMode

@@ -38,8 +38,41 @@ const
     ## What one ratchet step hands out. It is not the encryption key itself:
     ## it is the seed the per-message key block is expanded from, so its size
     ## does not change when the layout switches more cipher slots on.
-  fomkeDefaultMaxSkip* = 64'u32
-  fomkeMaxSkipLimit* = 4_096'u32
+  fomkeMinReorderWindow* = 4'u32
+  fomkeDefaultReorderWindow* = 16'u32
+  fomkeDefaultReorderCeiling* = 64'u32
+  fomkeMaxReorderWindow* = 4_096'u32
+  fomkeReorderRelaxRuns* = 64'u32
+    ## How far out of order messages are allowed to arrive.
+    ##
+    ## Datagrams do not always turn up in the order they were sent. When
+    ## message 7 arrives before message 5, this side runs its key chain
+    ## forward to 7 and KEEPS the keys it stepped over, so that 5 still opens
+    ## when it turns up a moment later. Those kept keys are the cost:
+    ##
+    ##   window of  4  ->  at most  4 kept keys  ->  about 256 bytes
+    ##   window of 16  ->  at most 16 kept keys  ->  about   1 kilobyte
+    ##   window of 64  ->  at most 64 kept keys  ->  about   4 kilobytes
+    ##
+    ## The window is also what a FORGED message can make this side do. A
+    ## message claiming a position N ahead costs N key derivations before its
+    ## tag can be checked and it is thrown away, so a wide window is a wide
+    ## amplifier: one cheap packet in, N derivations out.
+    ##
+    ## So the window is not a fixed setting. It starts narrow and is widened
+    ## only by reordering that a VERIFIED message has proved:
+    ##
+    ##   starts at   fomkeDefaultReorderWindow  (16)
+    ##   grows to    FomkeState.reorderCeiling       as reordering is proved
+    ##   shrinks to  fomkeMinReorderWindow       (4) on a path that behaves
+    ##
+    ## Widening happens on the copy of the state that is kept only once the
+    ## tag verifies, so a forger cannot widen their own amplifier. An honest
+    ## peer on a badly reordering path widens it within a few messages.
+    ##
+    ## `fomkeReorderRelaxRuns` is how many messages must arrive in order
+    ## before the window halves back down one step. `fomkeMaxReorderWindow`
+    ## is the hard limit on any ceiling a caller may ask for.
   fomkeDefaultPreparedMessages* = 8
   fomkeMaxPreparedMessages* = 4_096
 
@@ -156,7 +189,14 @@ type
     lane1*: FomkeChainState
     lane2*: FomkeChainState
     skipped*: seq[FomkeSkippedKey]
-    maxSkip*: uint32
+    reorderWindow*: uint32
+      ## How far ahead of the next expected position a message may sit and
+      ## still be opened. Moves on its own as the path is measured.
+    reorderCeiling*: uint32
+      ## The widest `reorderWindow` may ever become on this session. Fixed
+      ## when the ratchet is built and never moved afterwards.
+    orderedRun*: uint32
+      ## Messages that have arrived in order since the window last moved.
     kdf*: Gb3KdfConfig
     pending*: FomkePendingUpgrade
 

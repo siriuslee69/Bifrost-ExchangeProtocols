@@ -356,23 +356,34 @@ suite "AME mask-tier sessions":
     check openAmeDacControl(receiver, frame).ok
     check not openAmeDacControl(receiver, frame).ok
 
-  # {.testKind: tkUnit.}
-  test "authenticated progress expires the retiring epoch":
+  # {.testKind: tkRegression, covers: "openAmeTcpFrame", pins: "live traffic erased the epoch a stored package needs".}
+  test "live traffic does not expire the retiring epoch":
+    ## The retiring epoch is what opens a SEALED PACKAGE stored before the
+    ## last rotation. A package has no ratchet, no sequence, and no sender
+    ## waiting to send it again, so losing those keys loses the bytes -- and
+    ## says so only as a plain "authentication failed".
+    ##
+    ## It used to be erased after a hundred RECEIVED FRAMES. That counted
+    ## ordinary live traffic and then switched off something live traffic has
+    ## nothing to do with, so a busy session destroyed a stored package's keys
+    ## within a second while an idle one kept them for days. A hundred and
+    ## fifty frames here is past that old threshold on purpose.
     var
       sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
         peerTrustRequired = false)
       receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
+      i: int = 0
     receiver.auth.retiring = receiver.auth.current
-    receiver.auth.retiringFramesLeft = 1
     receiver.auth.current.epochId = receiver.auth.current.epochId + 1'u32
-    frame = sealAmeTcpFrame(sender, @[byte 3, 2, 1])
-    opened = openAmeTcpFrame(receiver, frame)
-    check opened.ok
-    check receiver.auth.retiring.epochId == 0'u32
-    check receiver.auth.retiringFramesLeft == 0
+    while i < 150:
+      frame = sealAmeTcpFrame(sender, @[byte 3, 2, 1])
+      opened = openAmeTcpFrame(receiver, frame)
+      check opened.ok
+      i = i + 1
+    check receiver.auth.retiring.epochId == 1'u32
 
   # {.testKind: tkUnit.}
   test "only successful transfer accounting emits data trigger":
@@ -395,15 +406,12 @@ suite "AME mask-tier sessions":
   # {.testKind: tkRegression, covers: "cloneEpoch", pins: "a retiring epoch kept no padding policy of its own".}
   test "a retiring epoch keeps the padding policy it was used with":
     ## `cloneEpoch` copied five fields and left `params` at its default, so a
-    ## retiring epoch always answered `apadNone`. `openFrameBody` asks the
-    ## retiring epoch for the policy to strip a frame sealed before the
+    ## retiring epoch always answered `apadNone`. `openAmeSecurePackage` asks
+    ## the retiring epoch for the policy to strip a package stored before the
     ## rotation, so with `apadBlock64` on that read was simply wrong.
     ##
     ## Driven through `rotateAmeTier`, which is the public entry point that
-    ## performs the clone. A full frame exchange cannot reach it: FOMKE
-    ## refuses to seal while an upgrade is pending and refuses to upgrade
-    ## while a skip is outstanding, so no data frame can straddle a rotation
-    ## on either lane.
+    ## performs the clone.
     var
       client: AmeSession = paddedUpgradeSession(aerInitiator)
       server: AmeSession = paddedUpgradeSession(aerResponder)
@@ -415,7 +423,6 @@ suite "AME mask-tier sessions":
     rotateAmeTier(client, request,
       [@[byte 3, 1, 4, 1, 5, 9, 2, 6]], @[byte 7, 7, 7, 7])
     check client.auth.current.epochId == 2'u32
-    check client.auth.retiringFramesLeft == ameRetiringGraceFrames
     ## `current` takes its params from the request, so it is the RETIRING
     ## epoch that must have carried the old ones across the clone.
     check client.auth.retiring.params.padding == apadBlock64

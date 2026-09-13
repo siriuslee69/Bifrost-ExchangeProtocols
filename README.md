@@ -858,8 +858,50 @@ receive index 5, chain expects 3
 
 receive index 3 later     -> take key 3 from the cache, open, remove it
 receive index 3 again     -> not in cache, not derivable backward -> rejected
-receive index 3 + maxSkip -> gap too large -> rejected (default 64, cap 4096)
+receive index 3 + window  -> gap too large -> rejected (window starts at 16)
 ```
+
+**Def. — the reorder window.** How far ahead of the next expected position a
+message may sit and still be opened. It is the one number that bounds both
+costs of arriving out of order:
+
+```text
+  window of  4  ->  at most  4 parked keys  ->  about 256 bytes held
+  window of 16  ->  at most 16 parked keys  ->  about   1 kilobyte held
+  window of 64  ->  at most 64 parked keys  ->  about   4 kilobytes held
+```
+
+It bounds a second cost that is easier to miss. A message claiming a position
+`N` ahead makes this side derive `N` keys **before** its tag can be checked:
+
+```text
+  one forged datagram in
+        |
+        v
+  N key derivations                  <- paid before the tag is looked at
+        |
+        v
+  tag fails, everything thrown away  <- paid for nothing
+```
+
+So a wide window is a wide amplifier: one cheap packet in, `N` derivations
+out. This is why it is not a fixed setting. It starts at 16 and moves with
+what the lane actually sees:
+
+```text
+  message sits exactly where expected   -> narrow, after 64 of them
+  message sits out of position by N     -> widen to 2N, at once
+```
+
+Widening happens on the **copy** of the state that is kept only once the tag
+verifies. A forged message is thrown away before its measurement is committed,
+so nobody can walk the window up and then aim the full amplifier at this side.
+An honest peer on a badly reordering path widens it within a few messages.
+
+The ceiling is fixed when the ratchet is built (`reorderCeiling`, default 64)
+and the window never grows past it. Loss on a datagram link is usually handled
+below this layer anyway — DAC rebuilds a missing frame from repair shards, or
+asks for it again — so the window rarely needs to be wide.
 
 **Step 7 — epoch upgrade.** An AME tier transition prepares candidate chains
 for epoch `n+1` beside the live epoch `n` chains. The new root is derived from
@@ -888,7 +930,7 @@ everything eventually arrives, and it is a trap on one where it does not:
         v
   its key stays in the cache forever
         |
-        +--> after maxSkip of them, the cache is full
+        +--> after a window of them, the cache is full
         |      -> the next gap is refused: "skipped-key cache is full"
         |
         +--> and a rekey refuses to run at all while any are outstanding
@@ -1146,10 +1188,13 @@ out for itself. Four fields a reader might expect are **absent**:
   delimits the envelope.
 - **No tag length.** The receiver splits tag from ciphertext using the length
   its own epoch agreed, and would refuse any other value anyway. Removing the
-  field removed a number an attacker could edit — and made the retiring-epoch
-  case correct rather than lucky, since a frame in flight when the tag length
-  changed is now decoded again with the old epoch's length instead of trusting
-  a byte the sender wrote.
+  field removed a number an attacker could edit, and left exactly one place
+  that decides where the tag ends: the epoch both sides negotiated.
+
+  A frame sealed under the previous epoch has no second chance at a different
+  split — it is refused, and the transport sends it again. A sealed *package*
+  is the one thing that can outlive its epoch, and it carries its own tag
+  length in its own header (`ASP`), so it never depended on this field.
 
 What the tag covers: a label, the slot layout, the tier, the tag length, the
 message's epoch/index/lane, the caller's binding bytes (which include the
