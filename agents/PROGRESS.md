@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Attack the protocol on purpose, and write down how far each attempt gets
+Commit Message: Say when a stored package is simply too old, instead of calling it a forgery
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -221,6 +221,15 @@ Notes:
   makes a DOWN NAS look permanently overdue, so the relay pokes on every
   single tick -- a poke storm from the weakest machine at the worst moment.
   `nasPoked` is a separate flag from `nasStarted` for exactly that reason.
+- DECIDED: a package outlives exactly ONE rotation and is then discarded.
+  Keeping more epochs alive is keeping more key material alive, and the point
+  of rotating is that old keys stop existing. What changed is that the case is
+  now LEGIBLE: `restoreAmeSecurePackage` sets `expired` and reports the epoch
+  the package named, separately from a package whose bytes do not check out.
+  Those two want opposite responses -- discard the first without a second
+  thought, look into the second -- and one error string for both was hiding a
+  real problem behind a routine one. `ameSecurePackageEpoch` reads the epoch
+  off stored bytes with no key, so a caller can sort a pile before trying any.
 - OPEN: the relay keepalive PAYLOAD is the caller's to supply. The relay holds
   no keys so it cannot produce anything the NAS would accept as authentic;
   what it sends must be something the NAS will answer or ignore cheaply from

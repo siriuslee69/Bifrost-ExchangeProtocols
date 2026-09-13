@@ -412,9 +412,15 @@ type
       ##
       ## One rotation is one spare epoch -- the same memory ceiling as the
       ## frame counter had, bounded by the event that actually makes the old
-      ## keys obsolete. A package that sits through TWO rotations is still
-      ## unopenable; a package meant to outlive its session has to carry its
-      ## own key material rather than rely on this.
+      ## keys obsolete.
+      ##
+      ## A package that sits through TWO rotations is gone, and that is the
+      ## decided policy rather than a gap to close. Keeping more epochs alive
+      ## is keeping more key material alive, and the point of rotating is that
+      ## old keys stop existing.  reports that case
+      ## as , separately from a package whose bytes do not check out,
+      ## because the two want opposite responses: discard the first without a
+      ## second thought, look into the second.
     sessionId*: uint64
     endpointRole*: AmeEndpointRole
     authenticationMode*: AmeAuthenticationMode

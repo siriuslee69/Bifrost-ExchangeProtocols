@@ -33,6 +33,21 @@ type
     dataCount*: uint16
     repairCount*: uint16
     status*: DacCommitStatus
+    epochId*: uint32
+      ## Which epoch the package says it was sealed under. Set only when it
+      ## could not be opened, since that is the only time it is interesting.
+    expired*: bool
+      ## The keys for that epoch are gone, and the caller should DISCARD the
+      ## package rather than retry it or suspect tampering.
+      ##
+      ## A session keeps two epochs: the current one and the one before it. A
+      ## package survives exactly one rotation and no more -- the older keys
+      ## were erased on purpose, which is what forward secrecy means.
+      ##
+      ## Worth separating from an ordinary failure, because the two want
+      ## opposite responses. A package that will not open because the bytes
+      ## are wrong is a problem to look into; one that will not open because
+      ## it sat too long is nothing to look into at all.
     err*: string
 
 proc securePackageAad(packageId: uint64, epochId: uint32,
@@ -143,7 +158,7 @@ proc openSecurePackageWithEpoch(E: AmeEpochKeySet, packageId: uint64,
   ## E/packageId/wire/compression: epoch and restored secure-package bytes.
   var
     decoded = decodeSecurePackage(wire)
-    opened: tuple[ok: bool, payload: ByteSeq]
+    opened: tuple[ok: bool, payload: ByteSeq] = (false, @[])
     keyContext: ByteSeq = @[]
   if decoded.epochId != E.epochId or
       decoded.nonce.len != ameProtectionNonceLen(E.layout, E.tier):
@@ -159,6 +174,28 @@ proc openSecurePackageWithEpoch(E: AmeEpochKeySet, packageId: uint64,
   result.payload = decodeAmeCompressed(opened.payload, compression)
   result.ok = true
 
+proc ameSecurePackageEpoch*(wire: openArray[uint8]): uint32 {.role: parser,
+    tag: "appApi|ame|parsing".} =
+  ## wire: a sealed package envelope, read for its epoch and nothing else.
+  ##
+  ## The epoch travels in the clear for the same reason a frame header does: a
+  ## receiver has to know which keys to reach for before it can check
+  ## anything. It is still covered by the tag, so reading it early is safe and
+  ## editing it is not.
+  if wire.len < ameSecurePackageHeaderLen or
+      wire[0 .. 2] != ameSecurePackageMagic:
+    raise newException(ValueError, "AME secure-package identity mismatch")
+  result = readSecurePackageU32(wire, 4)
+
+proc securePackageEpochHeld(a: AmeAuthPackage, epochId: uint32): bool {.
+    role: parser, tag: "ame|validation".} =
+  ## a/epochId: whether this session still holds keys for that epoch.
+  ##
+  ## Exactly two are held, ever: the current one and the one before it.
+  if epochId == a.current.epochId:
+    return true
+  result = a.retiring.epochId != 0'u32 and epochId == a.retiring.epochId
+
 proc restoreAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
     wire: openArray[uint8],
     compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):
@@ -169,10 +206,28 @@ proc restoreAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
   ## carried, which is the whole point of sealing the package rather than the
   ## transport: the same call restores a package that came off the relay, out
   ## of a file, or from a courier nobody trusts.
+  ##
+  ## ┊ A package outlives exactly one rotation, and then it is gone ┊
+  ##
+  ## A session keeps two epochs of keys: the current one and the one before
+  ## it. A package sealed under anything older CANNOT be opened -- the keys
+  ## were erased on purpose, which is what forward secrecy means.
+  ##
+  ##   sealed under epoch 5, opened while current is 5   -> opens
+  ##   sealed under epoch 5, opened while current is 6   -> opens (retiring)
+  ##   sealed under epoch 5, opened while current is 7   -> GONE
+  ##
+  ## That is a policy, not an accident, so this says which of the two things
+  ## went wrong rather than reporting one error for both. `expired` means the
+  ## keys are gone and the caller should discard the package; without it, a
+  ## failure means the bytes did not check out, which is a different problem
+  ## with a different response.
   var
-    opened: tuple[ok: bool, payload: ByteSeq]
+    opened: tuple[ok: bool, payload: ByteSeq] = (false, @[])
+    epochId: uint32 = 0'u32
   result.packageId = packageId
   try:
+    epochId = ameSecurePackageEpoch(wire)
     opened = openSecurePackageWithEpoch(a.current, packageId, wire,
       compression, a.sessionId, inboundAmeDirection(a.endpointRole))
     if not opened.ok and a.retiring.epochId != 0'u32:
@@ -181,11 +236,21 @@ proc restoreAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
   except CatchableError as e:
     result.err = e.msg
     return
-  if not opened.ok:
+  if opened.ok:
+    result.payload = opened.payload
+    result.ok = true
+    return
+  result.epochId = epochId
+  if securePackageEpochHeld(a, epochId):
     result.err = "AME secure-package authentication failed"
     return
-  result.payload = opened.payload
-  result.ok = true
+  result.expired = epochId < a.current.epochId
+  if not result.expired:
+    result.err = "AME secure-package names epoch " & $epochId &
+      ", which this session has not reached"
+    return
+  result.err = "AME secure-package epoch " & $epochId &
+    " is past the keys this session keeps; discard it"
 
 proc finishAmeSecurePackage*(a: AmeAuthPackage, S: DacPackageReceiver,
     compression: AmeCompressionPolicy = defaultAmeCompressionPolicy()):

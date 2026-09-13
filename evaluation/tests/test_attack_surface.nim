@@ -811,3 +811,135 @@ suite "losing things, and getting them back":
     restored = finishAmeSecurePackage(receiver, relay, plan.compression)
     check restored.ok
     check restored.payload == plaintext
+
+suite "a package outlives one rotation, and then it is gone":
+  ## A session keeps two epochs of keys: the current one and the one before
+  ## it. That is the whole allowance a stored package gets.
+  ##
+  ##   sealed under epoch 5, opened while current is 5   -> opens
+  ##   sealed under epoch 5, opened while current is 6   -> opens (retiring)
+  ##   sealed under epoch 5, opened while current is 7   -> GONE
+  ##
+  ## The last line is a decision, not a gap. Keeping more epochs alive is
+  ## keeping more key material alive, and the point of rotating is that old
+  ## keys stop existing. A package that sat too long is discarded.
+  ##
+  ## What these tests hold the line on is that "discard it" and "somebody
+  ## tampered with this" are told APART. They want opposite responses, and one
+  ## error string for both would hide a real problem behind a routine one.
+
+  proc sealedWire(plan: AmeSecurePackagePlan): ByteSeq {.role: helper.} =
+    ## plan: the sealed bytes as they would be reassembled from every chunk.
+    ## This is what somebody finds on a disk, with no session involved.
+    for chunk in plan.package.chunks:
+      result.add(chunk.payload)
+    result.setLen(int(plan.package.manifest.totalLen))
+
+  proc restoreFrom(a: AmeAuthPackage,
+      plan: AmeSecurePackagePlan): AmeSecurePackageResult {.role: helper.} =
+    ## a/plan: every chunk delivered, then opened with whatever keys `a` has.
+    var
+      relay: DacPackageReceiver = initDacPackageReceiver(
+        plan.package.manifest)
+    for chunk in plan.package.chunks:
+      relay.acceptDacPackageChunk(chunk)
+    result = finishAmeSecurePackage(a, relay, plan.compression)
+
+  proc rotate(S: var AmeSession, seed: byte) {.role: helper.} =
+    ## S/seed: one epoch turn, with fresh KEM secrets.
+    rotateAmeTier(S, initAmeExchangeRequest(atKems,
+      atTier(S.auth.current.layout), 0b11000000'u8),
+      [@[seed, 41'u8, 42'u8, 43'u8], @[seed, 51'u8, 52'u8, 53'u8]],
+      @[seed, 2'u8, 3'u8, 4'u8])
+
+  # {.testKind: tkIntegration, covers: "restoreAmeSecurePackage".}
+  test "a package opens under its own epoch and one rotation later":
+    var
+      sender: AmeSession = atSession(aerInitiator)
+      receiver: AmeSession = atSession(aerResponder)
+      plaintext: ByteSeq = secretBytes() & patterned(4_000)
+      plan: AmeSecurePackagePlan = planAmeSecurePackage(sender.auth, 91'u64,
+        plaintext, dacDefaultsFor(dscCleanLan))
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
+    check receiver.auth.current.epochId == 1'u32
+    restored = restoreFrom(receiver.auth, plan)
+    check restored.ok
+    check restored.payload == plaintext
+    ## One rotation. The epoch it was sealed under is now `retiring`, and the
+    ## package still opens from there.
+    rotate(receiver, 60'u8)
+    check receiver.auth.current.epochId == 2'u32
+    check receiver.auth.retiring.epochId == 1'u32
+    restored = restoreFrom(receiver.auth, plan)
+    check restored.ok
+    check restored.payload == plaintext
+
+  # {.testKind: tkRegression, covers: "restoreAmeSecurePackage", pins: "an expired package was indistinguishable from a tampered one".}
+  test "two rotations later it is refused, and says to discard it":
+    var
+      sender: AmeSession = atSession(aerInitiator)
+      receiver: AmeSession = atSession(aerResponder)
+      plaintext: ByteSeq = secretBytes()
+      plan: AmeSecurePackagePlan = planAmeSecurePackage(sender.auth, 92'u64,
+        plaintext, dacDefaultsFor(dscCleanLan))
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
+    rotate(receiver, 60'u8)
+    rotate(receiver, 70'u8)
+    check receiver.auth.current.epochId == 3'u32
+    check receiver.auth.retiring.epochId == 2'u32
+    restored = restoreFrom(receiver.auth, plan)
+    check not restored.ok
+    ## The verdict a caller acts on: the keys are gone, throw it away. Not a
+    ## string to parse -- a field to branch on.
+    check restored.expired
+    check restored.epochId == 1'u32
+    check restored.err ==
+      "AME secure-package epoch 1 is past the keys this session keeps; " &
+      "discard it"
+
+  # {.testKind: tkRegression.}
+  test "a tampered package under a live epoch is NOT reported as expired":
+    ## The other half of the same statement, and the reason the two are
+    ## separated at all. This package is from an epoch the session still
+    ## holds, so its failure is a real problem and must not be waved through
+    ## as routine expiry.
+    var
+      sender: AmeSession = atSession(aerInitiator)
+      receiver: AmeSession = atSession(aerResponder)
+      plan: AmeSecurePackagePlan = planAmeSecurePackage(sender.auth, 93'u64,
+        secretBytes(), dacDefaultsFor(dscCleanLan))
+      relay: DacPackageReceiver = default(DacPackageReceiver)
+      edited: DacPackageChunk = default(DacPackageChunk)
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
+      i: int = 0
+    relay = initDacPackageReceiver(plan.package.manifest)
+    while i < plan.package.chunks.len:
+      edited = plan.package.chunks[i]
+      if i == 0:
+        edited.payload[edited.payload.len - 1] =
+          edited.payload[edited.payload.len - 1] xor 0xFF'u8
+      relay.acceptDacPackageChunk(edited)
+      i = i + 1
+    restored = finishAmeSecurePackage(receiver.auth, relay, plan.compression)
+    check not restored.ok
+    check not restored.expired
+
+  # {.testKind: tkUnit, covers: "ameSecurePackageEpoch".}
+  test "the epoch can be read off the bytes without any key at all":
+    ## What lets a caller sort a pile of stored packages before trying any of
+    ## them -- and what lets the relay, which holds nothing, tell one epoch's
+    ## traffic from another's. The field is in the clear for the same reason
+    ## the frame header is, and it is covered by the tag just the same.
+    var
+      sender: AmeSession = atSession(aerInitiator)
+      first: AmeSecurePackagePlan = planAmeSecurePackage(sender.auth,
+        94'u64, secretBytes(), dacDefaultsFor(dscCleanLan))
+      second: AmeSecurePackagePlan = default(AmeSecurePackagePlan)
+    check ameSecurePackageEpoch(sealedWire(first)) == 1'u32
+    rotate(sender, 60'u8)
+    second = planAmeSecurePackage(sender.auth, 95'u64, secretBytes(),
+      dacDefaultsFor(dscCleanLan))
+    check ameSecurePackageEpoch(sealedWire(second)) == 2'u32
+    ## Rubbish is refused rather than answered with a number.
+    expect ValueError:
+      discard ameSecurePackageEpoch(@[byte 1, 2, 3])

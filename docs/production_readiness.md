@@ -217,6 +217,13 @@ What stayed:
   to expire after a hundred received frames instead, which counted live
   traffic and then erased keys that live traffic has nothing to do with, so a
   busy session destroyed a stored package's keys within a second.
+
+  A package that sits through TWO rotations is gone. That is the decided
+  policy, not a gap: keeping more epochs alive is keeping more key material
+  alive, and the point of rotating is that old keys stop existing.
+  `restoreAmeSecurePackage` reports that case as `expired` with the epoch it
+  named, separately from a package whose bytes do not check out -- the two
+  want opposite responses, so they get different answers.
 ## One Framing
 
 A DAC datagram is one AME frame. It used to be two headers:
