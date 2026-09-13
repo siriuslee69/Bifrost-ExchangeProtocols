@@ -49,18 +49,6 @@ suite "protocol descriptors name themselves":
 
 suite "DAC body length and class naming":
   # {.testKind: tkUnit.}
-  test "the body length mode decides the maximum body":
-    ## This reports what the LENGTH FIELD can express, which is not the same
-    ## as what any profile will actually send: the super-clean preset caps
-    ## itself at dacSuperCleanMaxBodyLen, well below the field is capable of.
-    ## Two different limits, and confusing them is how a body larger than a
-    ## policy allows would still look encodable.
-    check dacMaxBodyLenForMode(dblU16) == uint32(high(uint16))
-    check dacMaxBodyLenForMode(dblU32) == high(uint32)
-    check dacMaxBodyLenForMode(dblU32) > dacMaxBodyLenForMode(dblU16)
-    check dacSuperCleanMaxBodyLen < dacMaxBodyLenForMode(dblU32)
-
-  # {.testKind: tkUnit.}
   test "every transfer class renders a distinct name":
     var
       seen: seq[string] = @[]

@@ -78,62 +78,6 @@ suite "DAC defaults":
       discard dacDefaultsForPath(dplBlockedUdpPath)
 
   # {.testKind: tkUnit.}
-  test "frame headers pack flags and keep DAC magic/version byte":
-    var
-      flags: DacFrameFlags
-      h: DacFrameHeader
-      frame: ByteSeq
-      decoded: DacDecodedFrame
-    flags.needsAck = true
-    flags.creditBound = true
-    flags.tcpRepairAllowed = true
-    h = initDacFrameHeader(dmkPackageManifest, 42'u64, 5'u32, 2'u16,
-      9'u32, 16'u32, flags)
-    check h.magic == dacMagic
-    check h.formatVersion == dacFormatVersion
-    check dacBaseHeaderLen == 27
-    check dacExtendedHeaderLen == 29
-    check h.flags == 0x00C1'u16
-    check h.bodyLenMode == dblU16
-    check h.messageKind == dmkPackageManifest
-    frame = encodeDacFrame(h, @[byte 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-      12, 13, 14, 15, 16])
-    decoded = decodeDacFrame(frame)
-    check decoded.header.messageKind == dmkPackageManifest
-    check decoded.header.sessionId == 42'u64
-    check decoded.header.bodyLenMode == dblU16
-    check decoded.flags.needsAck
-    check decoded.flags.creditBound
-    check decoded.payload.len == 16
-    check dacMessageKindFromId(0x03'u8) == dmkPackageManifest
-    h = initDacSuperCleanFrameHeader(dmkPackageChunk, 42'u64, 5'u32, 2'u16,
-      10'u32, 70000'u32, flags)
-    check h.flags == 0x01C1'u16
-    check h.bodyLenMode == dblU32
-    check h.bodyLen == 70000'u32
-    frame = encodeDacFrame(h, newSeq[byte](70000))
-    decoded = decodeDacFrame(frame)
-    check decoded.header.bodyLen == 70000'u32
-    check decoded.flags.extendedBodyLen
-    expect ValueError:
-      discard initDacFrameHeader(dmkPackageChunk, 42'u64, 5'u32, 2'u16,
-        10'u32, 70000'u32, flags)
-    expect ValueError:
-      discard initDacSuperCleanFrameHeader(dmkPackageChunk, 42'u64, 5'u32,
-        2'u16, 10'u32, dacSuperCleanMaxBodyLen + 1'u32, flags)
-    frame[0] = uint8('X')
-    expect ValueError:
-      discard decodeDacFrame(frame)
-    check dacPathLaneName(dplSuperCleanPath) == "SuperCleanPath"
-    check dacBodyLenModeForPath(dplSuperCleanPath) == dblU32
-    check dacHeaderLenForMode(dblU32) == uint8(dacExtendedHeaderLen)
-    check dacBaseFrameAscii.contains("Common DAC1 Envelope")
-    check dacBaseFrameAscii.contains("SuperCleanPath extended envelope")
-    check dacBaseFrameAscii.contains("AME parses")
-    check dacBaseFrameAscii.contains("3-byte magic DAC + 1-byte format version")
-    check dacBaseFrameAscii.contains("DAC   | u8")
-
-  # {.testKind: tkUnit.}
   test "message schemas initialize with defaults":
     var
       p: DacPathProbe

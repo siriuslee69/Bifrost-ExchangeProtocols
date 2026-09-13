@@ -30,13 +30,15 @@ import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table
 import ./fuzz_support
 
-proc sampleFrame(): ByteSeq =
-  ## A well-formed DAC frame carrying a package chunk.
-  var
-    flags: DacFrameFlags
-    h: DacFrameHeader = initDacFrameHeader(dmkPackageChunk, 7'u64, 2'u32,
-      1'u16, 5'u32, 24'u32, flags)
-  result = encodeDacFrame(h, rampBytes(24))
+proc sampleChunkBody(): ByteSeq =
+  ## A well-formed package-chunk BODY.
+  ##
+  ## There is no frame to fuzz any more: DAC frames nothing itself, so the
+  ## only bytes it ever parses are a body that AME has already authenticated.
+  ## That makes this the interesting input -- what a peer WITH the keys can
+  ## still send, which is anything at all.
+  result = encodeDacPackageChunk(initDacPackageChunk(7'u64, 1'u32, 5'u16,
+    0'u32, rampBytes(24)))
 
 proc sampleManifest(): ByteSeq =
   ## A well-formed package manifest body.
@@ -46,30 +48,7 @@ proc sampleManifest(): ByteSeq =
   result = encodeDacPackageManifest(initDacPackageManifest(7'u64, dtcUserData,
     dacDefaultsFor(dscBadSignal), 20_000'u64, digest))
 
-suite "DAC frame envelope fuzz":
-  # {.testKind: tkFuzz.}
-  test "the outer frame decoder never raises a Defect":
-    fuzzBody("decodeDacFrame", 1'u64, sampleFrame()):
-      discard decodeDacFrame(data)
-
-  # {.testKind: tkFuzz.}
-  test "every defined flag pattern round-trips and undefined bits are refused":
-    var
-      i: int = 0
-      refused: int = 0
-      broke: bool = false
-    while i <= int(high(uint16)) and not broke:
-      try:
-        check packDacFrameFlags(unpackDacFrameFlags(uint16(i))) == uint16(i)
-      except ValueError:
-        refused = refused + 1
-      except Defect as e:
-        checkpoint("unpackDacFrameFlags raised a Defect on " & $i & ": " & e.msg)
-        broke = true
-      i = i + 1
-    check not broke
-    check refused == 0x10000 - 0x0200
-
+suite "DAC message fuzz":
   # {.testKind: tkFuzz.}
   test "every message-kind byte maps or reports unknown":
     var
@@ -175,12 +154,12 @@ suite "DAC body decoder fuzz":
 
 suite "DAC link fuzz":
   # {.testKind: tkFuzz.}
-  test "the loop survives arbitrary frames without raising":
+  test "the loop survives an arbitrary body without raising":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       S: DacLink = initDacLink(7'u64, 2'u32, d, 99'u64)
       R: Rng = Rng(seed: 4242'u64)
-      sample: ByteSeq = sampleFrame()
+      sample: ByteSeq = sampleChunkBody()
       data: ByteSeq = @[]
       step: DacLinkStep
       round: int = 0
@@ -188,71 +167,24 @@ suite "DAC link fuzz":
     while round < 4000 and not broke:
       data = mutate(R, sample)
       try:
-        step = feedDacFrame(S, data, uint32(round))
+        step = feedDacMessage(S, dmkPackageChunk, data, uint32(round))
         check step.kind != dlkNone or true
       except Defect as e:
-        checkpoint("feedDacFrame raised a Defect on round " & $round &
+        checkpoint("feedDacMessage raised a Defect on round " & $round &
           ": " & e.msg)
         broke = true
       except CatchableError as e:
-        checkpoint("feedDacFrame escaped an error on round " & $round &
+        checkpoint("feedDacMessage escaped an error on round " & $round &
           ": " & e.msg)
         broke = true
       round = round + 1
     check not broke
 
-  # {.testKind: tkFuzz.}
-  test "the identity peek never raises and never half-fills a result":
-    var
-      R: Rng = Rng(seed: 8181'u64)
-      sample: ByteSeq = sampleFrame()
-      id: DacFrameIdentity
-      data: ByteSeq = @[]
-      round: int = 0
-      broke: bool = false
-    while round < 6000 and not broke:
-      data = mutate(R, sample)
-      try:
-        id = peekDacFrameIdentity(data)
-        if not id.ok and (id.sessionId != 0'u64 or id.laneId != 0'u32 or
-            id.headerLen != 0 or id.messageKind != dmkUnknown):
-          checkpoint("peekDacFrameIdentity left fields set on a refusal at " &
-            "round " & $round)
-          broke = true
-        if id.ok and id.headerLen + int(id.bodyLen) != data.len:
-          checkpoint("peekDacFrameIdentity accepted a length mismatch at " &
-            "round " & $round)
-          broke = true
-      except CatchableError as e:
-        checkpoint("peekDacFrameIdentity raised at round " & $round & ": " & e.msg)
-        broke = true
-      except Defect as e:
-        checkpoint("peekDacFrameIdentity raised a Defect at round " & $round &
-          ": " & e.msg)
-        broke = true
-      round = round + 1
-    check not broke
-
-  # {.testKind: tkFuzz.}
-  test "the peek accepts exactly what the full decoder accepts":
-    var
-      R: Rng = Rng(seed: 9191'u64)
-      sample: ByteSeq = sampleFrame()
-      data: ByteSeq = @[]
-      decoded: bool = false
-      round: int = 0
-      mismatches: int = 0
-    while round < 6000:
-      data = mutate(R, sample)
-      decoded = true
-      try:
-        discard decodeDacFrame(data)
-      except CatchableError:
-        decoded = false
-      if decoded != peekDacFrameIdentity(data).ok:
-        mismatches = mismatches + 1
-      round = round + 1
-    check mismatches == 0
+  ## Two tests stood here, both fuzzing `peekDacFrameIdentity` -- the cheap
+  ## prefix read a dispatcher used to decide which link a BARE datagram
+  ## belonged to. There is no bare datagram any more: a peer is identified by
+  ## the session its address already holds, so there is no prefix to read and
+  ## nothing for a stranger to malform.
 
   # {.testKind: tkFuzz.}
   test "a hostile peer cannot make the link table raise or overgrow":
@@ -260,25 +192,29 @@ suite "DAC link fuzz":
       T: DacLinkTable = initDacLinkTable(dacDefaultsFor(dscBadSignal), 3'u64,
         capacity = 8, idleMs = 25'u32)
       R: Rng = Rng(seed: 5150'u64)
-      sample: ByteSeq = sampleFrame()
+      sample: ByteSeq = sampleChunkBody()
       data: ByteSeq = @[]
-      r: DacLinkRoute
+      a: tuple[admit: DacLinkAdmit, slot: int] = (dlaExisting, -1)
       round: int = 0
       broke: bool = false
     while round < 6000 and not broke:
       data = mutate(R, sample)
       try:
-        r = routeDacFrame(T, initDacLinkKey("10.9.9." & $(round mod 251),
-          uint16(1024 + (round mod 4096)), dlcDatagram), data, uint32(round))
-        if r.slot >= T.slots.len or dacLinkTableLive(T) > T.slots.len:
+        a = admitDacLink(T, initDacLinkKey("10.9.9." & $(round mod 251),
+          uint16(1024 + (round mod 4096)), dlcDatagram), uint64(round),
+          1'u32, uint32(round))
+        if a.slot >= 0:
+          discard feedDacMessage(T.slots[a.slot].link, dmkPackageChunk, data,
+            uint32(round))
+        if a.slot >= T.slots.len or dacLinkTableLive(T) > T.slots.len:
           checkpoint("link table exceeded its capacity at round " & $round)
           broke = true
       except CatchableError as e:
-        checkpoint("routeDacFrame escaped an error at round " & $round &
+        checkpoint("feedDacMessage escaped an error at round " & $round &
           ": " & e.msg)
         broke = true
       except Defect as e:
-        checkpoint("routeDacFrame raised a Defect at round " & $round &
+        checkpoint("feedDacMessage raised a Defect at round " & $round &
           ": " & e.msg)
         broke = true
       round = round + 1
@@ -293,14 +229,16 @@ suite "DAC link fuzz":
       receiver: DacLink = initDacLink(7'u64, 2'u32, d, 2'u64)
       R: Rng = Rng(seed: 77'u64)
       payload: ByteSeq = rampBytes(9_000)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
-        beginDacPackage(sender, 5'u64, payload, 0'u32))
+      frames: seq[DacTaggedMessage] = beginDacPackage(sender, 5'u64,
+        payload, 0'u32)
       step: DacLinkStep
       done: bool = false
       i: int = 0
     while i < frames.len:
-      discard feedDacFrame(receiver, mutate(R, sampleFrame()), uint32(i))
-      step = feedDacFrame(receiver, frames[i], uint32(i))
+      discard feedDacMessage(receiver, dmkPackageChunk,
+        mutate(R, sampleChunkBody()), uint32(i))
+      step = feedDacMessage(receiver, frames[i].kind, frames[i].body,
+        uint32(i))
       if step.kind == dlkPackageComplete:
         check step.payload == payload
         done = true

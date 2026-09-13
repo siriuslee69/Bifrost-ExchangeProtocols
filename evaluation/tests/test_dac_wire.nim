@@ -191,29 +191,3 @@ suite "DAC wire":
     body[14] = uint8(ord(drmNone))
     expect ValueError:
       discard decodeDacParityShard(body)
-
-  # {.testKind: tkIntegration.}
-  test "manifest body roundtrips through DAC1 framing":
-    var
-      defaults: DacScenarioDefaults
-      digest: array[32, uint8]
-      manifest: DacPackageManifest
-      body: ByteSeq
-      header: DacFrameHeader
-      frame: ByteSeq
-      decodedFrame: DacDecodedFrame
-      decodedManifest: DacPackageManifest
-      flags: DacFrameFlags
-    defaults = dacDefaultsFor(dscCleanLan)
-    digest[0] = 0x42'u8
-    manifest = initDacPackageManifest(9001'u64, dtcArchive, defaults,
-      4096'u64, digest)
-    body = encodeDacPackageManifest(manifest)
-    flags.needsAck = true
-    header = initDacFrameHeader(dmkPackageManifest, 42'u64, 5'u32, 2'u16,
-      9'u32, uint32(body.len), flags)
-    frame = encodeDacFrame(header, body)
-    decodedFrame = decodeDacFrame(frame)
-    decodedManifest = decodeDacPackageManifest(decodedFrame.payload)
-    check decodedFrame.header.messageKind == dmkPackageManifest
-    check decodedManifest == manifest

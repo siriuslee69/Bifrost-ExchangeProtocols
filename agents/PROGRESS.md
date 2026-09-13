@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Say when a stored package is simply too old, instead of calling it a forgery
+Commit Message: Delete the unauthenticated DAC framing; AME carries every DAC word now
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -230,6 +230,27 @@ Notes:
   thought, look into the second -- and one error string for both was hiding a
   real problem behind a routine one. `ameSecurePackageEpoch` reads the epoch
   off stored bytes with no key, so a caller can sort a pile before trying any.
+- DECIDED and DONE: the bare, unauthenticated DAC1 framing is deleted.
+  DacFrameHeader, DacDecodedFrame, DacFrameIdentity, the whole encode/decode/
+  peek codec, the frame-flag pack pair, renderDacFrame(s), feedDacFrame,
+  routeDacFrame and dacFrameOpensLink. Roughly 400 lines.
+
+  The invariant that now holds, and that any future change must keep:
+
+    DAC manages AME's parameters from what it observes.
+    DAC may set a message KIND in an AME frame for repair/ack/request.
+    DAC never sends a message without AME.
+    AME needs no unauthenticated channel -- the first handshake included,
+      which is sealed by signature or authority.
+
+  It had no production caller. AmeDacRelay drops any datagram from an address
+  holding no session, so a slot has always come from the handshake and never
+  from a frame. The doc comment claiming it was for "a path probe before a
+  session exists" described an intention nothing implemented.
+
+  Import direction is worth stating because it is easy to get backwards:
+  AME imports DAC. DAC never imports AME. That is what lets
+  -d:bifrostDac=off delete the adaptive layer and leave a working wire.
 - OPEN: the relay keepalive PAYLOAD is the caller's to supply. The relay holds
   no keys so it cannot produce anything the NAS would accept as authentic;
   what it sends must be something the NAS will answer or ignore cheaply from
@@ -273,3 +294,27 @@ Notes:
   (`raiseExcludedSym` and siblings), and the `-d:ssl`-absent branch of
   `buildTlsContext` which raises by design. Nothing unfinished is hiding
   behind that count; Otter reads "short body returning a constant" as a stub.
+- What the DAC deletion cost in tests, and what replaced it. Nothing was
+  dropped without its invariant being rehomed or explicitly retired:
+
+    test_dac_link          carries DacTaggedMessage through the hostile pipe
+                           instead of bytes. Loss, reordering and duplication
+                           never cared about framing.
+    test_dac_link_table    `admitAndFeed` stands in for `routeDacFrame`, doing
+                           what AmeDacRelay does: admit from the session, then
+                           feed the loop. Capacity, eviction, sweep and close
+                           coverage is unchanged.
+    test_wire_fuzz         fuzzes BODIES now, which is the input that still
+                           exists -- what a peer WITH the keys can send.
+    "a frame for another session is dropped"  -> moved to AME, where the
+                           binding now lives. test_attack_surface covers it.
+    "rubbish from an unknown address consumes no slot" -> retired. A stranger
+                           cannot present a frame at all; the relay drops the
+                           datagram before parsing. test_attack_surface's
+                           "a flood from many addresses cannot exhaust the
+                           relay" is the equivalent.
+- `dacMagic`, `dacFormatVersion`, `dacBaseHeaderLen`, `dacExtendedHeaderLen`,
+  `dacBaseFrameAscii` and the three `dac*BodyLenMode*` helpers went with the
+  frame -- they described a header that no longer exists. `DacFrameFlags` and
+  `DacTaggedMessage` STAY: the loop still sets flags for its own use, even
+  though they never travel, because only the kind and the body are sealed.

@@ -32,7 +32,7 @@ src/protocols
 ├── dac/
 │   ├── types.nim
 │   ├── level0/  <- framing, transport, body codecs, sender/receiver helpers
-│   ├── level1/  <- DAC1 message bodies, plus the self-inferred ACK/repair pacing
+│   ├── level1/  <- DAC message bodies, plus the self-inferred ACK/repair pacing
 │   ├── level2/  <- package planning, XOR/Reed-Solomon repair, exact repair, commit
 │   └── level3/  <- the link loop that drives all of it, plus the bounded
 │                    per-peer link table; both transport-agnostic

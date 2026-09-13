@@ -276,18 +276,31 @@ suite "AME DAC relay bounds":
     check step.err == "DAC relay has no session for that peer"
 
 suite "DAC admission and dispatch agree":
-  # {.testKind: tkIntegration.}
-  test "every kind that opens a link is a kind the loop acts on":
+  ## There used to be TWO admission rules here and a test that they agreed:
+  ## `dacFrameOpensLink` decided whether a bare, unauthenticated DAC1 frame
+  ## from a stranger could claim a slot, and `dacLinkHandlesKind` decided
+  ## whether the loop had a branch for that kind. Two rules that had to be
+  ## kept in step, and had already drifted once -- `dmkPathProbe` was on the
+  ## first list and not the second, so 40 probes from 40 addresses filled a
+  ## 4-slot table with entries the loop then ignored.
+  ##
+  ## The bare framing is gone, so the first rule is gone with it. A kind is
+  ## only ever seen after `openAmeDacControl` has checked the tag, which means
+  ## a stranger cannot present a kind at all. One rule, nothing to drift.
+
+  # {.testKind: tkRegression, covers: "dacLinkHandlesKind", pins: "an unauthenticated kind could claim a link slot".}
+  test "the loop acts on a fixed set of kinds and nothing else":
     var
+      handled: int = 0
       k: DacMessageKind
     for k in DacMessageKind:
-      if dacFrameOpensLink(k):
-        check dacLinkHandlesKind(k)
-
-  # {.testKind: tkEdgeCase.}
-  test "a path probe no longer takes a slot the loop cannot use":
-    check not dacFrameOpensLink(dmkPathProbe)
+      if dacLinkHandlesKind(k):
+        handled = handled + 1
+    check handled == 8
+    ## A path probe is still not one of them. The loop has no branch for it,
+    ## and a kind the loop cannot act on must never reach the link.
     check not dacLinkHandlesKind(dmkPathProbe)
+    check not dacLinkHandlesKind(dmkUnknown)
 
 suite "secure package over the relay":
   # {.testKind: tkIntegration.}

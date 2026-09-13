@@ -196,14 +196,14 @@ proc exactBenchAuth(seed: openArray[uint8],
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc buildDacBenchHeader(payloadLen: int): DacFrameHeader =
-  var flags: DacFrameFlags
-  if payloadLen > int(high(uint16)):
-    result = initDacSuperCleanFrameHeader(dmkPackageChunk, 9'u64,
-      5'u32, 0'u16, 1'u32, uint32(payloadLen), flags)
-  else:
-    result = initDacFrameHeader(dmkPackageChunk, 9'u64,
-      5'u32, 0'u16, 1'u32, uint32(payloadLen), flags)
+proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk =
+  ## payload: the bytes one package chunk carries.
+  ##
+  ## The benchmark used to time a DAC frame envelope. There is no envelope
+  ## now -- DAC frames nothing itself -- so what is worth timing is the codec
+  ## that is still on the hot path: one package chunk in and out of its body
+  ## bytes, which is what AME then seals.
+  result = initDacPackageChunk(9'u64, 5'u32, 1'u16, 0'u32, payload)
 
 proc benchAmeProtect(cfg: BenchConfig): BenchResult =
   var
@@ -269,17 +269,17 @@ proc benchAmeOpen(cfg: BenchConfig): BenchResult =
 proc benchDacEncode(cfg: BenchConfig): BenchResult =
   let
     payload = buildPayload(cfg.payloadBytes)
-    h = buildDacBenchHeader(payload.len)
+    c = buildDacBenchChunk(payload)
   var
     frame: ByteSeq
     startedAt: MonoTime
     endedAt: MonoTime
   for _ in 0 ..< cfg.warmup:
-    frame = encodeDacFrame(h, payload)
+    frame = encodeDacPackageChunk(c)
     mixSinkBytes(frame)
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
-    frame = encodeDacFrame(h, payload)
+    frame = encodeDacPackageChunk(c)
     mixSinkBytes(frame)
   endedAt = getMonoTime()
   result = initResult("dac_encode", cfg, frame.len, frame, startedAt, endedAt)
@@ -287,21 +287,20 @@ proc benchDacEncode(cfg: BenchConfig): BenchResult =
 proc benchDacDecode(cfg: BenchConfig): BenchResult =
   let
     payload = buildPayload(cfg.payloadBytes)
-    h = buildDacBenchHeader(payload.len)
-    frame = encodeDacFrame(h, payload)
+    frame = encodeDacPackageChunk(buildDacBenchChunk(payload))
   var
-    decoded: DacDecodedFrame
+    decoded: DacPackageChunk
     startedAt: MonoTime
     endedAt: MonoTime
   for _ in 0 ..< cfg.warmup:
-    decoded = decodeDacFrame(frame)
+    decoded = decodeDacPackageChunk(frame)
     mixSinkBytes(decoded.payload)
-    mixSinkUint(decoded.header.sequence)
+    mixSinkUint(uint64(decoded.chunkId))
   startedAt = getMonoTime()
   for _ in 0 ..< cfg.iterations:
-    decoded = decodeDacFrame(frame)
+    decoded = decodeDacPackageChunk(frame)
     mixSinkBytes(decoded.payload)
-    mixSinkUint(decoded.header.sequence)
+    mixSinkUint(uint64(decoded.chunkId))
   endedAt = getMonoTime()
   result = initResult("dac_decode", cfg, frame.len, frame, startedAt, endedAt)
 

@@ -7,7 +7,6 @@ import unittest
 import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
-import ../../src/protocols/dac/level0/framing
 import ../../src/protocols/dac/level2/package_transfer
 import ../../src/protocols/dac/level3/link
 import runePragmas
@@ -33,12 +32,17 @@ proc rampBytes(n: int): ByteSeq =
     result[i] = uint8((i * 7 + (i shr 3)) mod 251)
     i = i + 1
 
-proc carry(P: var Pipe, F: seq[ByteSeq]): seq[ByteSeq] =
+proc carry(P: var Pipe, F: seq[DacTaggedMessage]): seq[DacTaggedMessage] =
   ## P: pipe deciding what survives the trip.
-  ## F: frames handed to the pipe.
+  ## F: messages handed to the pipe.
+  ##
+  ## Messages, not frames. DAC does not frame anything itself any more -- what
+  ## it hands out is a kind and a body, and AME is what puts those on a wire.
+  ## The pipe drops, reorders and duplicates them exactly as it did the bytes,
+  ## because none of those hazards care what the framing looks like.
   var
     i: int = 0
-    kept: seq[ByteSeq] = @[]
+    kept: seq[DacTaggedMessage] = @[]
   while i < F.len:
     P.sent = P.sent + 1
     if P.dropEvery > 0 and P.sent mod P.dropEvery == 0:
@@ -64,34 +68,36 @@ proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
   var
     sender: DacLink = initDacLink(9'u64, 1'u32, d, 0xABCDEF'u64)
     receiver: DacLink = initDacLink(9'u64, 1'u32, d, 0x123456'u64)
-    toReceiver: seq[ByteSeq] = @[]
-    toSender: seq[ByteSeq] = @[]
+    toReceiver: seq[DacTaggedMessage] = @[]
+    toSender: seq[DacTaggedMessage] = @[]
     step: DacLinkStep
     nowMs: uint32 = 0'u32
     i: int = 0
     tick: int = 0
-  toReceiver = carry(P, renderDacFrames(sender, beginDacPackage(sender,
-    77'u64, payload, nowMs)))
+  toReceiver = carry(P, beginDacPackage(sender,
+    77'u64, payload, nowMs))
   while tick < maxTicks:
     nowMs = nowMs + 60'u32
     i = 0
     while i < toReceiver.len:
-      step = feedDacFrame(receiver, toReceiver[i], nowMs)
-      toSender.add(renderDacFrames(receiver, step.messages))
+      step = feedDacMessage(receiver, toReceiver[i].kind,
+        toReceiver[i].body, nowMs)
+      toSender.add(step.messages)
       if step.kind == dlkPackageComplete:
         return (true, step.payload, tick)
       i = i + 1
     toReceiver = @[]
     i = 0
     while i < toSender.len:
-      step = feedDacFrame(sender, toSender[i], nowMs)
-      toReceiver.add(renderDacFrames(sender, step.messages))
+      step = feedDacMessage(sender, toSender[i].kind, toSender[i].body,
+        nowMs)
+      toReceiver.add(step.messages)
       i = i + 1
     toSender = @[]
     step = tickDacLink(receiver, nowMs)
-    toSender.add(renderDacFrames(receiver, step.messages))
+    toSender.add(step.messages)
     step = tickDacLink(sender, nowMs)
-    toReceiver.add(renderDacFrames(sender, step.messages))
+    toReceiver.add(step.messages)
     toReceiver = carry(P, toReceiver)
     toSender = carry(P, toSender)
     tick = tick + 1
@@ -116,18 +122,19 @@ suite "DAC link on a clean pipe":
       receiver: DacLink = initDacLink(4'u64, 2'u32, d, 2'u64)
       payload: ByteSeq = rampBytes(6_000)
       step: DacLinkStep
-      back: seq[ByteSeq] = @[]
-      frames: seq[ByteSeq] = renderDacFrames(sender,
+      back: seq[DacTaggedMessage] = @[]
+      frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 5'u64, payload, 0'u32))
       i: int = 0
     check sender.outgoing.active
     while i < frames.len:
-      step = feedDacFrame(receiver, frames[i], 10'u32)
-      back.add(renderDacFrames(receiver, step.messages))
+      step = feedDacMessage(receiver, frames[i].kind, frames[i].body,
+        10'u32)
+      back.add(step.messages)
       i = i + 1
     i = 0
     while i < back.len:
-      discard feedDacFrame(sender, back[i], 20'u32)
+      discard feedDacMessage(sender, back[i].kind, back[i].body, 20'u32)
       i = i + 1
     check dacLinkIdle(sender)
     check dacLinkIdle(receiver)
@@ -206,14 +213,14 @@ suite "DAC link gives up cleanly":
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
+      frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
       step: DacLinkStep
       nowMs: uint32 = 0'u32
       failed: bool = false
       tick: int = 0
-    discard feedDacFrame(receiver, frames[0], nowMs)
-    discard feedDacFrame(receiver, frames[1], nowMs)
+    discard feedDacMessage(receiver, frames[0].kind, frames[0].body, nowMs)
+    discard feedDacMessage(receiver, frames[1].kind, frames[1].body, nowMs)
     check dacLinkMissingCount(receiver) > 0
     check dacRepairRoundsLeft(receiver)
     while tick < 40:
@@ -234,14 +241,14 @@ suite "DAC link gives up cleanly":
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
+      frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
       hints: int = 0
       step: DacLinkStep
       nowMs: uint32 = 0'u32
       tick: int = 0
-    discard feedDacFrame(receiver, frames[0], nowMs)
-    discard feedDacFrame(receiver, frames[1], nowMs)
+    discard feedDacMessage(receiver, frames[0].kind, frames[0].body, nowMs)
+    discard feedDacMessage(receiver, frames[1].kind, frames[1].body, nowMs)
     while tick < 40:
       nowMs = nowMs + 400'u32
       step = tickDacLink(receiver, nowMs)
@@ -254,69 +261,32 @@ suite "DAC link gives up cleanly":
 
 suite "DAC link refuses rubbish":
   # {.testKind: tkEdgeCase.}
-  test "a malformed frame is reported, never raised":
+  test "a malformed body is reported, never raised":
+    ## The loop is handed a kind and a body, both already authenticated by
+    ## AME. It must still refuse a body that does not decode -- a peer who
+    ## holds the keys can send nonsense, and nonsense must not end the loop.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
       S: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      step: DacLinkStep
-    step = feedDacFrame(S, @[byte 0, 1, 2, 3], 0'u32)
+      step: DacLinkStep = default(DacLinkStep)
+    step = feedDacMessage(S, dmkPackageManifest, @[byte 0, 1, 2, 3], 0'u32)
     check step.kind == dlkIgnored
     check step.err.len > 0
-    step = feedDacFrame(S, @[], 0'u32)
-    check step.kind == dlkIgnored
-
-  # {.testKind: tkUnit.}
-  test "a frame for another session or lane is dropped":
-    var
-      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      mine: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      other: DacLink = initDacLink(2'u64, 1'u32, d, 1'u64)
-      frames: seq[ByteSeq] = renderDacFrames(other,
-        beginDacPackage(other, 3'u64, rampBytes(2_000), 0'u32))
-      step: DacLinkStep = feedDacFrame(mine, frames[0], 0'u32)
+    step = feedDacMessage(S, dmkPackageManifest, @[], 0'u32)
     check step.kind == dlkIgnored
     check step.err.len > 0
 
   # {.testKind: tkUnit.}
-  test "a truncated body is reported without ending the loop":
+  test "a kind the loop has no branch for is ignored":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
-        beginDacPackage(sender, 3'u64, rampBytes(2_000), 0'u32))
-      broken: ByteSeq = frames[0]
-      step: DacLinkStep
-    broken.setLen(broken.len - 1)
-    step = feedDacFrame(receiver, broken, 0'u32)
+      S: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
+      step: DacLinkStep = feedDacMessage(S, dmkPathProbe, @[byte 1], 0'u32)
     check step.kind == dlkIgnored
-    step = feedDacFrame(receiver, frames[0], 0'u32)
-    check step.kind == dlkManifestAccepted
 
-  # {.testKind: tkUnit.}
-  test "chunks arriving before their manifest are ignored, not misfiled":
-    var
-      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
-        beginDacPackage(sender, 3'u64, rampBytes(6_000), 0'u32))
-      step: DacLinkStep = feedDacFrame(receiver, frames[1], 0'u32)
-    check step.kind == dlkIgnored
-    check dacLinkMissingCount(receiver) == 0
+## The test that used to sit here -- "a frame for another session or lane is
+## dropped" -- checked a session id the DAC header carried. There is no DAC
+## header now, so that binding is AME's to enforce and it does: see
+## test_attack_surface.nim, "a frame from another session is refused by this
+## one". The check did not disappear, it moved to the layer that owns it.
 
-  # {.testKind: tkUnit.}
-  test "a repeated manifest does not restart a live receive":
-    var
-      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
-      frames: seq[ByteSeq] = renderDacFrames(sender,
-        beginDacPackage(sender, 3'u64, rampBytes(6_000), 0'u32))
-      step: DacLinkStep
-    discard feedDacFrame(receiver, frames[0], 0'u32)
-    discard feedDacFrame(receiver, frames[1], 0'u32)
-    check dacLinkMissingCount(receiver) > 0
-    step = feedDacFrame(receiver, frames[0], 0'u32)
-    check step.kind == dlkIgnored
-    check dacLinkMissingCount(receiver) > 0

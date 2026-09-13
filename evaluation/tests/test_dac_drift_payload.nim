@@ -15,10 +15,6 @@ suite "DAC Drift Payload":
       p1: DacDriftPacket
       p2: DacDriftPacket
       bs: ByteSeq = @[]
-      frame: ByteSeq = @[]
-      flags: DacFrameFlags
-      header: DacFrameHeader
-      decoded: DacDecodedFrame
       ok: bool = false
     pose.position.x = 1.25'f32
     pose.position.y = -2.5'f32
@@ -28,14 +24,10 @@ suite "DAC Drift Payload":
     pose.rotation.z = -0.25'f32
     p0 = initDacDriftSnapshot(pose, 99'u32)
     bs = encodeDacDriftPacket(p0)
-    flags.needsAck = true
-    header = initDacFrameHeader(dmkDriftPayload, 11'u64, 5'u32, 1'u16,
-      3'u32, uint32(bs.len), flags)
-    frame = encodeDacFrame(header, bs)
-    decoded = decodeDacFrame(frame)
-    check decoded.header.messageKind == dmkDriftPayload
-    check decoded.payload == bs
-    ok = decodeDacDriftPacket(decoded.payload, p2)
+    ## These bytes are the whole message. They used to be wrapped in a DAC
+    ## frame here and unwrapped again, but DAC frames nothing itself now --
+    ## an AME frame carries the kind and exactly these bytes.
+    ok = decodeDacDriftPacket(bs, p2)
     check ok
     check p2.tick == 99'u32
     ok = decodeDacDriftPacket(bs, p1)

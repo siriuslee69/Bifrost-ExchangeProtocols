@@ -133,43 +133,89 @@ Supporting terms used throughout:
 | -> optional FOMKE per-message ratchet        |
 +----------------------|-----------------------+
                        v
-+---------------- DAC1 delivery ---------------+
++---------------- DAC delivery -----------------+
 | manifest -> chunks -> parity -> repair       |
 | -> digest check -> commit receipt             |
 +----------------------------------------------+
 ```
 
 AME owns both the crypto toolkit and the live session (epochs, triggers,
-handshake, TCP/DAC carriers, replay). DAC only delivers opaque body bytes.
+handshake, TCP/DAC carriers, replay). **DAC frames nothing itself** — it
+decides parameters and AME carries the words.
 
-Two axes matter:
+### Which one is on the outside? ⌜guide⌟
+
+This is the thing people get backwards, so it is worth stating twice, because
+the answer is **different for a live frame and for a stored package**.
+
+**A live frame — AME is outermost. There is no DAC header.**
+
+```text
++------------------------------ one AME frame --------------------------------+
+| AME header 26 B (session, lane, sequence, kind, class)                      |
+|   in the clear, because a receiver must read it before it can pick keys;    |
+|   every byte of it still goes into the tag below                            |
+|  +-------------------- FOMKE envelope 13 B ---------------------------------+|
+|  | epoch | index | lane | tag | ciphertext                                 ||
+|  |   opened once -> app bytes. There is no second layer either side.        ||
+|  +--------------------------------------------------------------------------+|
++-----------------------------------------------------------------------------+
+```
+
+A DAC message rides *inside* that ciphertext, its kind as the first byte:
+
+```text
+AME frame, kind = 0x0B DacControl
+  -> sealed payload -> [ DacKind u8 | DAC body ]
+```
+
+So the kind is recovered only after the tag checks out. There is no
+unauthenticated DAC framing and no way for a stranger to present a kind.
+
+**A stored package — DAC is outermost, wrapping something AME already sealed.**
+
+```text
+plaintext
+   |  AME seals it ONCE
+   v
+[ "ASP" | ver | epoch | nonce | tag | ciphertext ]      one sealed blob
+   |  DAC cuts it up and adds parity
+   v
+[chunk][chunk][chunk][chunk]  +  [parity shards]        DAC framing, outside
+```
+
+Encrypt → authenticate → **then** add repair data. That ordering is the point:
+a relay holding no key can rebuild a lost chunk from parity, and the one tag
+over the whole blob is checked at the end, by the endpoint, on bytes that have
+already been put back together.
+
+Two axes, to keep the two apart:
 
 ```text
 OWNERSHIP (API)
   app  ->  AmeSession  ->  FOMKE ratchet  ->  DAC / TCP stream
 
-WIRE (bytes, outer to inner)
-  [stream 4 | DAC1 27/29]
+WIRE, live frame (outer to inner)
+  [stream length prefix 4, TCP only]
     -> AME header 26
       -> FOMKE envelope 13 + tag + ciphertext
-        -> app bytes
+        -> app bytes, or [DacKind u8 | DAC body]
+
+WIRE, stored package (outer to inner)
+  DAC chunk + parity
+    -> ASP envelope 15 + nonce + tag + ciphertext
+      -> app bytes
 ```
+
+Which layer does what:
+
+| | decides | carries |
+|---|---|---|
+| **AME** | which algorithms, the identity, the AAD | yes — it is the envelope |
+| **FOMKE** | the key for this one message | its 13-byte position marker |
+| **DAC** | chunking, parity, ACK pacing, repair timing, path | no, for frames; yes, for packages |
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
-
-```text
-+----------------------------- DAC1 frame ------------------------------------+
-| DAC header (delivery: session, lane, path-epoch, sequence)                  |
-|  +-------------------------- AME frame ------------------------------------+|
-|  | AME header (session, lane tree, sequence, kind, class)                  ||
-|  |   plain to read, but every byte of it goes into the tag below           ||
-|  |  +------------------ FOMKE envelope -----------------------------------+||
-|  |  | epoch | index | lane | tag | ciphertext                            |||
-|  |  |   opened once -> app bytes. There is no second layer either side.   |||
-|  |  +---------------------------------------------------------------------+||
-|  +-------------------------------------------------------------------------+|
-+-----------------------------------------------------------------------------+
-```
 
 ## Quick Start
 
@@ -1142,7 +1188,7 @@ Every magic is **three letters plus one version byte**, so the first four
 bytes of any layer read as a name and a number:
 
 ```text
-DAC1  -> transport and repair framing              (dac/level0/framing.nim)
+DAC   -> chunking, parity, ACK pacing, repair    (dac/level*, no framing)
 AME4  -> routing header, then one FOMKE envelope   (ame/level2/wire.nim)
 FOMKE -> the message envelope: header, tag, ct     (fomke/level2/wire.nim)
 FKU1  -> tier-bound AME/FOMKE upgrade confirmation (fomke/level2/wire.nim)
@@ -1170,10 +1216,10 @@ the application's own bytes. A frame is encrypted exactly once.
 
 ```text
 PHASE A -- the handshake (no session keys yet)
-  [stream 4 | DAC1] -> AME4 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
+  [stream 4] -> AME4 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
 
 PHASE B -- after the handshake
-  [stream 4 | DAC1] -> AME4 header -> FOMKE envelope -> plaintext
+  [stream 4] -> AME4 header -> FOMKE envelope -> plaintext
 ```
 
 ### TCP/TLS stream frame
@@ -1187,21 +1233,36 @@ offset 0        4
 Total = 4 + Len
 ```
 
-### DAC1 Frame (Data Adaptive Connection)
+### DAC message — no frame of its own
 
-Optional outermost delivery shell. Stage-blind: it does not know handshake
-from live traffic. It adapts body length, chunks, ACK, and repair only.
+DAC had a 27-byte envelope of its own and it is **gone**. Every message it
+sends is the body of an AME frame, and its kind is the first byte of that
+body:
 
 ```text
-Base header = 27 B   (BodyLen = u16)
-Extended    = 29 B   (BodyLen = u32, flag bit 8)
-
- 0     3   4    5     7        15    19    21    25      27
-+-----+---+---+----+---------+-----+-----+-----+-------+------+
-|DAC  |Ver|Knd|Flgs| Session |Lane |Epch | Seq |BodyLn | Body |
-| 3B  |1B |1B |2B  | 8B      |4B   |2B   |4B   |2or4B  | n    |
-+-----+---+---+----+---------+-----+-----+-----+-------+------+
+  +------------- one AME frame -------------+
+  | AME header | FOMKE | tag | ciphertext   |
+  +------------------------------|----------+
+                                 |
+                    +------------v-------------+
+                    | DacKind u8 | DAC body    |
+                    +--------------------------+
 ```
+
+The kind is recovered only after the tag checks out, so a stranger cannot
+present one. Before this, the kind sat in a header nobody had authenticated
+and a bare frame from an unknown address could claim a slot in the link table.
+
+What went with the envelope, and why none of it is missed:
+
+| field | why it is gone |
+|---|---|
+| Magic, Ver | the AME header already names the frame and its version |
+| Kind | now the first byte of the sealed body, so it is authenticated |
+| Flags | never read by a peer; the loop sets them for its own use |
+| Session, Lane, Seq | the AME header carries all three, and binds them |
+| Epoch | AME epochs are the only epochs; DAC never had its own |
+| BodyLen | the carrier delimits the frame, and the tag covers the length |
 
 ### AME Frame — fixed **26 B**
 
@@ -1414,7 +1475,6 @@ Travels inside an authenticated EpochReady frame.
 | Item | Bytes |
 |---|---:|
 | Stream header | 4 |
-| DAC1 base / ext | 27 / 29 |
 | AME header | 26 |
 | FOMKE header + tag | 13 + 32 = 45 |
 | FKU1 | 108 |

@@ -218,7 +218,11 @@ suite "AME mask-tier sessions":
     check decoded.header.sessionId == sender.sessionId
     check decoded.header.laneId == sender.laneId
     check frame.len == ameFrameHeaderLen + decoded.payload.len
-    check not peekDacFrameIdentity(frame).ok
+    ## The datagram starts with the AME magic and nothing else. This used to
+    ## check that it was NOT also a bare DAC1 frame, back when that framing
+    ## existed and a datagram could plausibly have been either. There is only
+    ## one framing now, so the check is that it is the right one.
+    check @(frame[0 ..< 3]) == @ameMagic
     opened = openAmeDacFrame(receiver, frame)
     check opened.ok
     check opened.packet.payload == @[byte 5, 6, 7]

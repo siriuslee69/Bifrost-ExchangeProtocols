@@ -6,34 +6,32 @@ import ../types
 import runePragmas
 
 const
-  dacMagic* = [uint8('D'), uint8('A'), uint8('C')]
-  dacFormatVersion* = 1'u8
-  dacBaseHeaderLen* = 27
-  dacExtendedHeaderLen* = 29
   dacSuperCleanMaxBodyLen* = 16_777_216'u32
 
-  dacBaseFrameAscii* = """
-+-------------------------- Common DAC1 Envelope --------------------------+
-| DAC1 prefix = 3-byte magic DAC + 1-byte format version.                  |
-| Default paths use BodyLen as u16. SuperCleanPath uses BodyLen as u32.    |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| Magic | Ver | Kind | Flags | Session  | Lane     | Epoch  | Seq    | BodyLen | Body... |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| DAC   | u8  | u8   | u16   | u64      | u32      | u16    | u32    | u16     | n bytes |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
+  dacCarriedAscii* = """
+DAC does not frame anything itself. Every message it sends travels as the
+body of an AME frame, and its KIND is the first byte of that body:
 
-SuperCleanPath extended envelope:
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| Magic | Ver | Kind | Flags | Session  | Lane     | Epoch  | Seq    | BodyLen | Body... |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
-| DAC   | u8  | u8   | u16   | u64      | u32      | u16    | u32    | u32     | n bytes |
-+-------+-----+------+-------+----------+----------+--------+--------+---------+---------+
+  +------------- one AME frame -------------+
+  | AME header | FOMKE | tag | ciphertext   |
+  +------------------------------|----------+
+                                 |
+                    +------------v-------------+
+                    | DacKind u8 | DAC body    |
+                    +--------------------------+
 
-Body layering:
-+---------------- DAC transport ----------------+---------------- AME message ----------------+
-| DAC parses Kind/Flags/Session/Lane/BodyLen     | Body can contain AME1 root/child bytes.     |
-| DAC repairs, ACKs, reorders, and reassembles.  | AME parses, verifies, decrypts afterwards.  |
-+-----------------------------------------------+---------------------------------------------+
+So the kind is recovered only after the tag has checked out. There is no
+unauthenticated DAC framing and no way for a stranger to present a kind:
+DAC decides parameters, AME carries the words.
+
+What DAC still owns, above that line:
+
+  +----------------------+                    +----------------------+
+  | package scheduler    | -- Manifest/Chunks | package receive map  |
+  | parity builder       | -- ParityShard --> | group repair actor   |
+  | repair actor         | <- Ack/RepairHint  | gap/receipt builder  |
+  | commit writer        | -- PackageCommit-> | digest/commit actor  |
+  +----------------------+                    +----------------------+
 """
 
   dacSenderReceiverAscii* = """
@@ -158,25 +156,6 @@ type
     tcpRepairAllowed*: bool
     extendedBodyLen*: bool
 
-  ## DacFrameHeader: fixed DAC frame prefix.
-  DacFrameHeader* {.role: truthState.} = object
-    magic*: array[3, uint8]
-    formatVersion*: uint8
-    messageKind*: DacMessageKind
-    flags*: uint16
-    sessionId*: uint64
-    laneId*: uint32
-    epochId*: uint16
-    sequence*: uint32
-    bodyLenMode*: DacBodyLenMode
-    bodyLen*: uint32
-
-  ## DacDecodedFrame: parsed DAC envelope and body bytes.
-  DacDecodedFrame* {.role: truthState.} = object
-    header*: DacFrameHeader
-    flags*: DacFrameFlags
-    payload*: ByteSeq
-
   ## DacTaggedMessage: one thing the link wants to say, before any framing has
   ## decided how to carry it. The kind and the body are DAC's business; whether
   ## that ends up as a bare DAC1 frame or as authenticated bytes inside an AME
@@ -187,22 +166,6 @@ type
     sequence*: uint32
     flags*: DacFrameFlags
     body*: ByteSeq
-
-  ## DacFrameIdentity: the routing fields of a frame, read without copying the
-  ## body. A dispatcher holding many peers has to know which link a datagram
-  ## belongs to before it is willing to spend an allocation on it, so this
-  ## reads the fixed prefix and stops. `ok` false means the bytes are not a
-  ## usable DAC frame; it never raises, because deciding to drop a datagram
-  ## must be the cheapest thing the dispatcher can do.
-  DacFrameIdentity* {.role: truthState.} = object
-    ok*: bool
-    messageKind*: DacMessageKind
-    sessionId*: uint64
-    laneId*: uint32
-    epochId*: uint16
-    sequence*: uint32
-    bodyLen*: uint32
-    headerLen*: int
 
   ## DacScenarioDefaults: default transport policy values for one condition.
   DacScenarioDefaults* {.role: configurator.} = object

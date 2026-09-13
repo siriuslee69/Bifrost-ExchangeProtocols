@@ -260,9 +260,15 @@ observer cannot tell an ACK from a repair hint by looking, and a peer that
 rewrites one fails verification rather than being believed. Before this, DAC
 control traffic rode bare and anyone could forge a receipt.
 
-`renderDacFrame` still produces the old bare DAC1 frame. That path is for a
-path probe sent before a session exists, and for tests. Nothing on a live
-session should use it, and it is documented as unauthenticated.
+The bare framing that produced those DAC1 frames is **gone** -- the header
+type, its codec, the prefix peek a dispatcher used to route a stranger's
+datagram, and the table rule that let a frame claim a slot. It survived the
+merge as a path for probes sent before a session exists, and it had no
+production caller: `AmeDacRelay` drops any datagram from an address holding no
+session, so a slot has always come from the handshake and never from a frame.
+
+What that leaves is one way in, and it is authenticated. There is no branch in
+which DAC believes a message kind it has not already checked a tag over.
 
 ## The Assembled Path
 

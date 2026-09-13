@@ -8,7 +8,6 @@ when not dacAdaptiveBuilt:
   {.error: "This module is part of the DAC adaptive layer, which -d:bifrostDac=off removed from this build.".}
 
 import ../types
-import ../level0/framing
 import ../level0/defaults
 import ../level1/scramble
 import ../level2/package_transfer
@@ -21,18 +20,18 @@ A DacLink is one conversation. A server holds many, so something has to say
 which arriving datagram belongs to which one, and how much that is allowed
 to cost.
 
-   datagram + peer address
+   AME frame + peer address
              |
              v
-   peekDacFrameIdentity()      <- fixed prefix only, no body allocation
-             |
+   openAmeDacControl()         <- the kind is recovered only after the tag
+             |                    checks out. A stranger gets no further.
              v
    find (host, port, carrier)  <- linear scan of a capped array
         |            |
      found        not found
         |            |
         v            v
-   feedDacFrame   admit? -> a free slot, or an IDLE slot to reuse
+   feedDacMessage admit? -> a free slot, or an IDLE slot to reuse
                      |
                   neither: REFUSE. An established link is never evicted
                   to make room for a stranger.
@@ -254,62 +253,15 @@ proc admitDacLink*(T: var DacLinkTable, k: DacLinkKey, sessionId: uint64,
   result.admit = dlaRefusedFull
   result.slot = -1
 
-proc dacFrameOpensLink*(k: DacMessageKind): bool {.role: parser.} =
-  ## k: message kind asked whether it may bring a brand new peer into the table.
-  ## Only a frame the LOOP CAN ACT ON qualifies. Every other kind refers to
-  ## state a new link does not have -- a chunk without its manifest, an ACK for
-  ## a package never sent -- and the link would ignore it anyway. Spending a
-  ## slot on one would let a stranger fill the table with frames that cannot
-  ## do anything, so the table declines before the slot is touched.
-  ##
-  ## `dmkPathProbe` was on this list and should not have been. The loop has no
-  ## branch for it, so a probe took a slot and was then ignored: 40 probes from
-  ## 40 addresses filled a 4-slot table completely, which is exactly the flood
-  ## this rule exists to stop. It belongs here again only once the loop
-  ## answers a probe, and `dacLinkHandlesKind` is what decides that.
-  result = k in {dmkPackageManifest}
-
 proc dacLinkHandlesKind*(k: DacMessageKind): bool {.role: parser.} =
   ## k: message kind asked whether the link loop has a branch for it at all.
-  ## Kept beside the admission rule so the two cannot drift: a kind that opens
-  ## a link must be a kind the loop acts on, and a test asserts that.
+  ##
+  ## Every kind here arrives inside an AME frame, authenticated, so the loop
+  ## is never handed one it has not already been told to trust. There is no
+  ## longer a bare-frame admission rule beside this to drift away from it.
   result = k in {dmkPackageManifest, dmkPackageChunk, dmkParityShard,
     dmkAckRange, dmkRepairHint, dmkRepairChunk, dmkPackageCommit,
     dmkPathStats}
-
-proc routeDacFrame*(T: var DacLinkTable, k: DacLinkKey,
-    A: openArray[uint8], nowMs: uint32): DacLinkRoute {.role: orchestrator.} =
-  ## T/k: table and the peer the datagram came from.
-  ## A: one arriving datagram, of any length and any content.
-  ## nowMs: caller's millisecond clock.
-  ## The identity is read from the fixed prefix before any slot is touched, so
-  ## rubbish from an unknown address is dropped without allocating a body or
-  ## consuming a slot. A frame that does decode is fed to the peer's link. A
-  ## peer with no slot yet gets one only if the frame opens a conversation and
-  ## the table can afford it.
-  var
-    id: DacFrameIdentity = peekDacFrameIdentity(A)
-    a: tuple[admit: DacLinkAdmit, slot: int]
-  result.slot = -1
-  if not id.ok:
-    result.admit = dlaRefusedFrame
-    result.step.kind = dlkIgnored
-    result.step.err = "DAC datagram is not a usable frame"
-    return
-  if findDacLinkSlot(T, k) < 0 and not dacFrameOpensLink(id.messageKind):
-    result.admit = dlaRefusedKind
-    result.step.kind = dlkIgnored
-    result.step.err = "DAC frame from an unknown peer does not open a link"
-    return
-  a = admitDacLink(T, k, id.sessionId, id.laneId, nowMs, id.epochId)
-  result.admit = a.admit
-  result.slot = a.slot
-  if a.slot < 0:
-    result.step.kind = dlkIgnored
-    result.step.err = "DAC link table is full of live links"
-    return
-  T.slots[a.slot].lastSeenMs = nowMs
-  result.step = feedDacFrame(T.slots[a.slot].link, A, nowMs)
 
 proc tickDacLinkTable*(T: var DacLinkTable, nowMs: uint32): seq[DacLinkRoute] {.
     role: orchestrator.} =

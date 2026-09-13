@@ -33,8 +33,8 @@ instead of landing in `tools/`.
 +----------------+-----------------------------------------------+
 | ame_protect    | AME payload protect with representative AAD   |
 | ame_open       | AME payload open with representative AAD      |
-| dac_encode     | DAC1 frame encode over one package payload    |
-| dac_decode     | DAC1 frame decode over one package payload    |
+| dac_encode     | DAC package-chunk body encode                 |
+| dac_decode     | DAC package-chunk body decode                 |
 | bfx2_encode    | BFX2 envelope write/checksum path             |
 | bfx2_decode    | BFX2 envelope read/checksum path              |
 | ame_dac_seal   | AME over DAC seal + frame construction        |

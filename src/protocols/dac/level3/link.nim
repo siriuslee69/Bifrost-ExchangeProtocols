@@ -9,7 +9,6 @@ when not dacAdaptiveBuilt:
 
 import ../../types
 import ../types
-import ../level0/framing
 import ../level0/defaults
 import ../level0/ack_range
 import ../level0/package_commit
@@ -39,11 +38,14 @@ inside one process.
                                     |
    tickDacLink(nowMs) --->  ACK deadline, repair wait ---> messages to send
 
-What carries a message is not DAC's decision. On a live session the AME
-carrier seals it, with the kind as the first byte of the protected plaintext,
-so an observer cannot tell an ACK from a repair hint and a peer cannot forge
-either. `renderDacFrame` still writes the bare DAC1 frame for a path probe
-sent before a session exists; nothing authenticates that one.
+What carries a message is not DAC's decision, and DAC frames nothing itself.
+The AME carrier seals it, with the kind as the first byte of the protected
+plaintext, so an observer cannot tell an ACK from a repair hint and a peer
+cannot forge either.
+
+There used to be a second way out of here: a bare DAC1 frame that wrote the
+kind into a header nobody had authenticated. It is gone. Every kind the loop
+sees has already passed a tag check, so a stranger cannot present one at all.
 
 Every decision is local. The sender picks chunk order, delay, parity width and
 its own repair timer; the receiver picks its ACK batch size and deadline. An
@@ -71,8 +73,8 @@ type
     dlkIgnored
 
   ## DacLinkStep: outcome of one fed frame or one tick.
-  ## messages: what the link wants to say, in order. Render them with
-  ## `renderDacFrame` for bare DAC1, or seal them through the AME carrier.
+  ## messages: what the link wants to say, in order. A kind and a body each;
+  ## the AME carrier is what puts them on a wire.
   ## payload: the finished package, set only on dlkPackageComplete.
   DacLinkStep* {.role: truthState.} = object
     kind*: DacLinkEventKind   ## otter:latest
@@ -167,33 +169,6 @@ proc tagDacBody(S: var DacLink, k: DacMessageKind,
   result.body = body
   S.nextSequence = S.nextSequence + 1'u32
 
-proc renderDacFrame*(S: DacLink, m: DacTaggedMessage): ByteSeq {.
-    role: actor.} =
-  ## S: link supplying the session, lane and epoch the frame is stamped with.
-  ## m: message to carry as a bare DAC1 frame.
-  ## This is the unauthenticated framing: it is what a path probe uses before a
-  ## session exists, and what a test pipe uses. Traffic on a live session goes
-  ## through the AME carrier instead, which authenticates the kind rather than
-  ## writing a header a receiver would have to trust.
-  var
-    h: DacFrameHeader
-  if S.defaults.bodyLenMode == dblU32:
-    h = initDacSuperCleanFrameHeader(m.kind, S.sessionId, S.laneId, S.epochId,
-      m.sequence, uint32(m.body.len), m.flags)
-  else:
-    h = initDacFrameHeader(m.kind, S.sessionId, S.laneId, S.epochId,
-      m.sequence, uint32(m.body.len), m.flags)
-  result = encodeDacFrame(h, m.body)
-
-proc renderDacFrames*(S: DacLink,
-    M: openArray[DacTaggedMessage]): seq[ByteSeq] {.role: actor.} =
-  ## S/M: link and the messages to render as bare DAC1 frames, in order.
-  var
-    i: int = 0
-  while i < M.len:
-    result.add(renderDacFrame(S, M[i]))
-    i = i + 1
-
 proc appendDacParityFrames(S: var DacLink, F: var seq[DacTaggedMessage],
     groupId: uint32) {.role: dataWriter.} =
   ## S: link emitting one group's parity.
@@ -214,8 +189,7 @@ proc beginDacPackage*(S: var DacLink, packageId: uint64,
   ## A: payload bytes, already encrypted or compressed by the caller.
   ## nowMs: caller's millisecond clock.
   ## Returns the manifest, then every chunk in scrambled order, then the parity
-  ## for each group. Send them in the order returned, through whichever framing
-  ## the carrier uses -- `renderDacFrame` for bare DAC1, or the AME carrier,
+  ## for each group. Send them in the order returned, through the AME carrier,
   ## which authenticates the kind instead of writing it into a header.
   var
     i: int = 0
@@ -536,29 +510,6 @@ proc feedDacMessage*(S: var DacLink, k: DacMessageKind,
   except CatchableError:
     result.kind = dlkIgnored
     result.err = "DAC message body did not decode"
-
-proc feedDacFrame*(S: var DacLink, A: openArray[uint8],
-    nowMs: uint32): DacLinkStep {.role: orchestrator.} =
-  ## S: link the frame belongs to.
-  ## A: one complete bare DAC1 frame as it arrived.
-  ## nowMs: caller's millisecond clock.
-  ## A malformed or foreign frame is reported, never raised: a peer must not be
-  ## able to end the loop by sending rubbish. Note that nothing here is
-  ## authenticated -- the kind comes off the wire. A live session should use
-  ## the AME carrier and `feedDacMessage` instead.
-  var
-    f: DacDecodedFrame
-  try:
-    f = decodeDacFrame(A)
-  except CatchableError:
-    result.kind = dlkIgnored
-    result.err = "DAC frame did not decode"
-    return
-  if f.header.sessionId != S.sessionId or f.header.laneId != S.laneId:
-    result.kind = dlkIgnored
-    result.err = "DAC frame is for another session or lane"
-    return
-  result = feedDacMessage(S, f.header.messageKind, f.payload, nowMs)
 
 proc dacSenderRepairDue(S: DacLink, nowMs: uint32): bool {.role: parser.} =
   ## S: link whose outgoing package may need another parity round.
