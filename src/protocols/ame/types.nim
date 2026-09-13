@@ -461,6 +461,18 @@ type
     packet*: AmePacket
     err*: string
 
+  ## AmeDacControlOpen: one DAC control datagram, after it authenticated.
+  ## kind and body are meaningful ONLY when ok is true -- the kind is read out
+  ## of the decrypted plaintext, so a frame that failed its tag never gets far
+  ## enough to have one. The same four fields were written out longhand at four
+  ## call sites before this had a name.
+  AmeDacControlOpen* {.role: preparedData,
+      expectedCount: [0, 512], lifeCycle: lcJob.} = tuple
+    ok: bool
+    kind: DacMessageKind
+    body: ByteSeq
+    err: string
+
   AmeSessionInfo* {.role: truthState.} = object
     layoutBytes*: int
     tierId*: uint32

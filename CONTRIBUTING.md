@@ -20,7 +20,7 @@ deterministic, and protocol-focused.
 
 ```text
 Bifrost-ExchangeProtocols
-├── .iron/
+├── agents/
 ├── docs/
 ├── examples/
 ├── src/
@@ -38,8 +38,11 @@ Bifrost-ExchangeProtocols
 
 1. Initialize the checked-in submodules:
    `git submodule update --init submodules/Fylgia-Utils submodules/Tyr-Crypto submodules/SIMD-Nexus submodules/Eir-CompressionAndECC`.
-2. Use sibling repos only through `.iron/.local.gitmodules.toml` when you need
-   local development overrides.
+2. Sibling checkouts in the parent workspace are picked up automatically by
+   `config.nims` -- a sibling `Tyr-Crypto`, `Eir-CompressionAndECC` or
+   `SIMD-Nexus` wins over the pinned submodule, so those repos can move
+   together during development. Build with `-d:bifrostPinnedTyr` to force the
+   pin instead.
 3. Put machine-specific Android SDK/NDK paths in the environment or
    `local.properties`.
 4. Install OpenSSL development libraries before running `nimble testTls`, or
@@ -74,7 +77,8 @@ the default `nimble build` command is not a supported artifact path here.
 1. Keep wire layouts explicit.
 2. Add tests when bytes, validation, or negotiation behavior changes.
 3. Update README and `docs/` when production assumptions change.
-4. Do not commit local `.iron/.local*` overrides.
+4. Do not create a `.iron/` directory. It was removed from this layout;
+   handoff notes live in `agents/PROGRESS.md`.
 5. Do not ship debug-only Android demo shortcuts as release behavior.
 
 

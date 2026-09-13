@@ -4,10 +4,8 @@
 
 ```text
 Bifrost-ExchangeProtocols
-├── .iron/
-│   ├── PROGRESS.md
-│   ├── conventions/
-│   └── meta/
+├── agents/
+│   └── PROGRESS.md   project state and handoff notes
 ├── docs/
 ├── examples/
 ├── src/
@@ -19,6 +17,10 @@ Bifrost-ExchangeProtocols
 │   ├── benchmarks/  performance measurements
 │   └── statistics/  repository and code statistics
 ├── tools/
+├── submodules/    pinned dependencies, nothing else
+├── nix/           shell and dependency pins
+├── web/
+├── config.nims
 ├── bifrost_exchange_protocols.nimble
 ├── README.md
 └── CONTRIBUTING.md
@@ -30,7 +32,7 @@ Bifrost-ExchangeProtocols
 +----------------------+-----------------------------------------------+
 | Folder               | Responsibility                                |
 +----------------------+-----------------------------------------------+
-| .iron/               | coordination, conventions, progress           |
+| agents/              | project state and agent handoff notes         |
 | docs/                | production notes and maintainer docs          |
 | examples/            | runnable protocol references                  |
 | src/protocols/       | canonical wire and transport code             |

@@ -303,13 +303,86 @@ are rejected by the constructor.
 
 ### PathStats
 
-PathStats reports what the receiver sees on the path.
+PathStats reports what the receiver saw on the path. It is sent once, when a
+package finishes, because that is the moment every number in it is settled
+rather than guessed.
 
 ```text
 +------------------------------ PathStats -------------------------------+
-| LossPpm=120 | RttMs=1 | JitterMs=0 | ReorderDepth=0 | MtuHint=9000     |
-| QueueMs=1 | CreditHint=512                                             |
+| LossPpm=120 | RttMs=0 | JitterMs=3 | ReorderDepth=0 | MtuHint=1200     |
+| QueueMs=48 | CreditHint=13977                                          |
 +------------------------------------------------------------------------+
+```
+
+**A zero means "I did not measure this".** Not "I measured zero". The only
+exception is `LossPpm`, where a receiver that lost nothing really does mean
+it, and which every receiver can always fill in. A rule in the lane policy
+whose input is zero is skipped rather than believed.
+
+That convention is not decoration. Here is what each field is, and which of
+them Bifrost's own receiver can honestly produce:
+
+```text
+  field         who can know it                        filled in?
+  -----------   ------------------------------------   ----------
+  LossPpm       chunks repaired / chunks expected       yes
+  MtuHint       the chunk size that GOT THROUGH, read   yes
+                off the sender's manifest
+  JitterMs      how much the gap between arrivals        yes
+                kept changing
+  QueueMs       how long this side has been holding      yes
+                an unfinished package
+  CreditHint    chunks of room left on top of what       yes, floored at 1
+                is already held                         so 0 stays free to
+                                                        mean "not measured"
+  RttMs         only a side that SENT something and      only when this link
+                was answered                            has sent
+  ReorderDepth  nobody, on this wire -- see below        no, always 0
+```
+
+`MtuHint` is the sender's chunk size, not the receiver's. Reporting your own
+configuration back at a peer is a statement about your plans and about nothing
+else; the size that arrived is a fact about the path.
+
+`ReorderDepth` is left at zero deliberately. A DAC sender shuffles a package's
+chunks on purpose, so that an observer cannot read the shape of a file out of
+the order its pieces cross the wire:
+
+```text
+  the package          0   1   2   3  ...  33
+  what the sender      19  4   27  2  ...  8      <- Fisher-Yates, every send
+  emits
+  what arrives on a    19  4   27  2  ...  8      <- identical: the wire did
+  FLAWLESS wire                                      nothing at all
+```
+
+Measured against chunk ids, that flawless delivery reports a reorder depth of
+31 and the lossy-lane rule fires on it. The number is real; it is a
+measurement of the sender's shuffling and not of the path. Measuring it
+properly needs the carrier's send counter — AME stamps a monotonic sequence on
+every frame, and an inversion in THAT is the network's doing — which means
+handing the sequence down into the loop. Until then the field stays zero and
+the rule that reads it stays quiet.
+
+#### What a report does when it lands
+
+Nothing, directly. A report is a fact about the speaker, never an instruction
+for the listener. The listener runs it through `recommendDacPathFromStats` and
+moves its **own** lane at most one step:
+
+```text
+  SuperClean  <-  Clean  <-  Mobile  <-  Thin  <-  Lossy  <-  Recovery
+      5           4          3          2         1           0
+                   \________/
+                    one step per report, in whichever direction the
+                    numbers point, and never while this side has a
+                    package in flight
+```
+
+One step per report means a peer cannot drive the other end anywhere in a
+hurry, however it lies. It also means a genuinely bad path takes as many
+packages to reach the right lane as there are steps between here and there —
+which is the trade that bounds the damage.
 ```
 
 ### ReceiveBudget
@@ -410,14 +483,82 @@ The package receive map is receiver memory built from `PackageManifest`,
 
 ### AckRange
 
-AckRange says which DAC sequence numbers arrived.
+AckRange says which chunk ids arrived.
 
 ```text
 +------------------------------- AckRange -------------------------------+
 | AckBase=10 | GapBits=0 | CommitCount=0                                |
-| Ranges: [StartSeq=10, Count=4]  -> received seq 10,11,12,13            |
+| Ranges: [StartSeq=10, Count=4]  -> received chunk 10,11,12,13          |
 +------------------------------------------------------------------------+
 ```
+
+#### Receipts and the shuffle ʕ•́ᴥ•̀ʔっ♡
+
+The receiver batches its receipts instead of answering every chunk, and it
+picks the batch size itself by watching what arrives. The whole scheme rests
+on one assumption that is worth stating out loud, because DAC breaks it on
+purpose:
+
+> a hole in the middle of the batch means something was lost
+
+That is true of a stream that arrives in the order it was sent. A DAC sender
+does not send in order — it shuffles (see `level1/scramble.nim`) — so a hole
+usually means "not sent yet" and fills itself in a moment later. Two things
+follow, and the loop has to get both right:
+
+**The window must be anchored to the package, not to the first arrival.**
+The manifest says how many chunks there are, so the batch opens at chunk 0
+and spans the whole package:
+
+```text
+  base                                              window
+   |  0  1  2  3  4  5  6  7  8  ...                   |
+      .  .  X  .  .  .  .  .  .            first arrival is chunk 2
+      ^
+      base stays at 0, so chunks 0 and 1 are still welcome when they land
+```
+
+Letting the first arrival set the base puts most of a shuffled package below
+it, where arrivals are refused and never reported. And when the batch closes,
+the base may only advance over chunks that actually **arrived**:
+
+```text
+      0  1  2  3  4  5  6  7  8
+      X  X  X  .  X  X  .  X  X        X = arrived,  . = still missing
+      \_____/
+       settled  ->  base moves 3; 4, 5, 7 and 8 stay in the window
+```
+
+Sliding the whole span instead leaves chunks 3 and 6 permanently below the
+base. They then appear in no receipt ever again, and the sender spends repair
+rounds on chunks it already delivered.
+
+**A hole must not move the levers.** The batch size and deadline shrink on
+loss and creep back when things are clean. Fed on phantom holes they collapse:
+
+```text
+  34 chunks, flawless wire, every one delivered
+                            before        after
+  receipts sent             6             1
+  batch size                64 -> 2       64 (untouched)
+  deadline                  100ms -> 5ms  100ms (untouched)
+  chunks the sender was     14 of 33      33 of 33
+  told had arrived
+  parity re-sent for        20            0
+  chunks already held
+```
+
+So where the sender shuffles, holes are ignored and the levers move on
+evidence the receiver actually has: the stall timer. When nothing has arrived
+for a while and chunks are still missing, that silence is real loss — the
+levers halve, and the batch is flushed on the spot so the sender knows exactly
+what it still owes before it spends a repair round.
+
+`DacAckPolicy.holesMeanLoss` is the switch, and `initDacLink` sets it from
+this side's own scramble policy: a link that shuffles assumes its peer does
+too. That is the safe direction to be wrong in — the worst case is that loss
+is caught by the stall timer a beat later instead of instantly.
+
 
 ### RepairHint
 
@@ -477,27 +618,40 @@ path epoch.
 ## Module Split
 
 ```text
-+----------------------------+------------------------------------------------+
-| Module                     | Responsibility                                 |
-+----------------------------+------------------------------------------------+
-| types.nim                  | shared enums, defaults, frame and message schemas |
-| level0/transport.nim       | DAC address and socket helpers                 |
-| level0/framing.nim         | frame flag packing and renderer names         |
-| level0/body_codec.nim      | shared little-endian body codec helpers       |
-| level0/sender_receiver.nim | sender and receiver truth-state initializers  |
-| level0/defaults.nim        | path defaults for repair and ACK behavior     |
-| level0/path_stats.nim      | receiver path metrics                         |
-| level0/receive_budget.nim  | receiver memory/credit budget                 |
-| level0/ack_range.nim       | compact ACK ranges                            |
-| level0/package_commit.nim  | digest-verified package commit                |
-| level0/protocols.nim       | protocol descriptor                           |
-| level1/path_probe.nim      | reachability probing                          |
-| level1/package_manifest.nim| package declaration                           |
-| level1/package_chunk.nim   | original data chunks                          |
-| level1/parity_shard.nim    | parity/FEC shards                             |
-| level1/repair_hint.nim     | receiver repair requests                      |
-| level1/repair_chunk.nim    | exact repair chunks or extra parity           |
-| level1/path_switch.nim     | horizontal path-lane epoch changes            |
-| level1/drift_payload.nim   | compact realtime drift packet body            |
-+----------------------------+------------------------------------------------+
++-----------------------------+-----------------------------------------------+
+| Module                      | Responsibility                                |
++-----------------------------+-----------------------------------------------+
+| types.nim                   | shared enums, defaults, message schemas       |
+| build.nim                   | is the adaptive layer in this build at all    |
+| level0/transport.nim        | DAC address and socket helpers                |
+| level0/wire_helpers.nim     | little-endian readers/writers and kind names  |
+| level0/body_codec.nim       | shared body codec helpers                     |
+| level0/defaults.nim         | the path profile table, as data               |
+| level0/path_stats.nim       | the receiver's path report, on the wire       |
+| level0/ack_range.nim        | compact ACK ranges and bitmaps                |
+| level0/package_commit.nim   | digest-verified package commit                |
+| level0/protocols.nim        | protocol descriptor                           |
+| level1/package_manifest.nim | package declaration                           |
+| level1/package_chunk.nim    | original data chunks                          |
+| level1/parity_shard.nim     | parity/FEC shards                             |
+| level1/repair_hint.nim      | receiver repair requests                      |
+| level1/repair_chunk.nim     | exact repair chunks or extra parity           |
+| level1/ack_policy.nim       | WHEN to send a receipt, and the repair timer  |
+| level1/path_meter.nim       | what the receiver measures as chunks land     |
+| level1/path_policy.nim      | turning a report into at most one lane step   |
+| level1/scramble.nim         | send delay and chunk-order shuffling          |
+| level1/path_probe.nim       | reachability probing -- codec only, see below |
+| level1/path_switch.nim      | path-lane epoch changes -- codec only         |
+| level1/drift_payload.nim    | compact realtime drift packet -- codec only   |
+| level2/package_transfer.nim | planning, receiving, repairing one package    |
+| level3/link.nim             | the loop: one connection's whole state        |
+| level3/link_table.nim       | many connections, bounded                     |
++-----------------------------+-----------------------------------------------+
 ```
+
+**Codec only** means exactly that: the message has a body, an encoder, a
+decoder and fuzz tests, and `feedDacMessage` has no branch for its kind. Four
+of the twelve kinds are in that state — `PathProbe`, `PathSwitchRequest`,
+`PathSwitchAck` and `DriftPayload`. They are exported from the umbrella module,
+so a caller can build one and seal it, and the peer's loop will answer
+`dlkIgnored`. Do not reach for them expecting the loop to act.

@@ -585,6 +585,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_path_adaptation.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
     runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
     runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
@@ -668,7 +669,7 @@ task testDac, "Run DAC transport schema/default tests":
   runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
-
+  runNim("c", "evaluation/tests/test_dac_path_adaptation.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
 
 

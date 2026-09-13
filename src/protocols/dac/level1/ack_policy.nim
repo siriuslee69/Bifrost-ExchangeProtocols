@@ -55,6 +55,28 @@ type
   ## cleanRuns: consecutive loss-free batches, used to relax slowly.
   ## started: set once the first frame has been seen, so a closed batch keeps
   ## its advanced base instead of silently re-basing onto the next arrival.
+  ## windowChunks: how many identifiers the open batch may span at once. Zero
+  ## lets the batch ceiling decide, which is all a policy watching an endless
+  ## sequence can do. A caller that knows the whole range -- a DAC package
+  ## knows its chunk count from the manifest -- should say so, or identifiers
+  ## past the window are refused and never make it into any receipt.
+  ## holesMeanLoss: whether a hole in the open batch is evidence of anything.
+  ## True for a stream that arrives in the order it was sent -- the ordinary
+  ## case, and what everything above assumes. False where the SENDER reorders
+  ## on purpose, because then a hole means "not sent yet" and fills itself in
+  ## a moment later. A DAC sender shuffles a package's chunks so an observer
+  ## cannot read the shape of a file out of the order its pieces cross the
+  ## wire, which makes a flawless delivery look like relentless loss:
+  ##
+  ##   34 chunks, nothing dropped, every one delivered
+  ##     -> 6 ACKs instead of 1
+  ##     -> batch 64 -> 2, deadline 100ms -> 5ms
+  ##     -> the sender told only 14 of them arrived
+  ##     -> parity re-sent for 20 chunks already sitting at the receiver
+  ##
+  ## A policy that says false owes its levers a verdict from somewhere that
+  ## does know -- the receiver's own stall timer, and what a finished package
+  ## had to repair.
   DacAckPolicy* {.role: truthState.} = object
     base*: uint32
     arrivals*: ByteSeq
@@ -67,6 +89,8 @@ type
     ceilingMs*: uint16
     cleanRuns*: uint8
     started*: bool
+    holesMeanLoss*: bool
+    windowChunks*: uint16
 
   ## DacRepairTimer: sender-side repair timing state for one connection.
   ## The sender never reads a receiver-advertised hold time. It measures how
@@ -80,19 +104,27 @@ type
     peakMs*: uint16
     samples*: uint16
 
-proc initDacAckPolicy*(d: DacScenarioDefaults): DacAckPolicy {.role: configurator.} =
+proc initDacAckPolicy*(d: DacScenarioDefaults,
+    holesMeanLoss: bool = true): DacAckPolicy {.role: configurator.} =
   ## d: scenario defaults whose ACK batch and deadline seed the levers and
   ## bound how far they may relax back.
+  ## holesMeanLoss: false when the sender reorders on purpose. See the type.
   if d.ackBatchChunks == 0'u16:
     raise newException(ValueError, "DAC ACK batch size must be positive")
   result.batchChunks = d.ackBatchChunks
   result.deadlineMs = d.ackMaxDelayMs
   result.ceilingChunks = d.ackBatchChunks
   result.ceilingMs = d.ackMaxDelayMs
+  result.holesMeanLoss = holesMeanLoss
   result.arrivals = @[]
 
 proc dacAckWindowLimit(S: DacAckPolicy): int {.role: math.} =
-  ## S: policy whose widest encodable batch is returned.
+  ## S: policy whose widest open batch is returned.
+  ## A caller that declared the stream's whole range gets that range; one that
+  ## did not gets twice the batch ceiling, which is the only guess available.
+  ## Both are clamped to the widest receipt the wire format can carry.
+  if S.windowChunks > 0'u16:
+    return min(int(S.windowChunks), dacAckMaxGapBytes * 8)
   result = min(int(S.ceilingChunks) * 2, dacAckMaxGapBytes * 8)
 
 proc resetDacAckBatch*(S: var DacAckPolicy, base: uint32,
@@ -105,6 +137,26 @@ proc resetDacAckBatch*(S: var DacAckPolicy, base: uint32,
   S.pending = 0'u16
   S.span = 0'u16
   S.openedMs = nowMs
+
+proc openDacAckBatchAt*(S: var DacAckPolicy, base: uint32, window: uint16,
+    nowMs: uint32) {.role: actor.} =
+  ## S: policy whose first batch is placed deliberately rather than guessed.
+  ## base: the lowest identifier this stream will ever use.
+  ## window: how many identifiers the stream spans in total, so the batch can
+  ## hold all of them at once instead of chasing them. Wider than the widest
+  ## encodable receipt is clamped down to that.
+  ## nowMs: caller's millisecond clock.
+  ##
+  ## Left alone, the first arrival decides where the batch starts, which is
+  ## the only thing a policy watching an open-ended sequence CAN do. A caller
+  ## that knows the range up front -- a DAC package knows its chunk count from
+  ## the manifest -- should say so instead, because otherwise every identifier
+  ## below that first arrival falls outside the window and is refused. With a
+  ## sender that shuffles its chunks on purpose, "below the first arrival" is
+  ## most of the package.
+  resetDacAckBatch(S, base, nowMs)
+  S.windowChunks = window
+  S.started = true
 
 proc dacAckGapsPending*(S: DacAckPolicy): uint16 {.role: parser.} =
   ## S: policy whose observed gap count in the open batch is returned.
@@ -139,9 +191,15 @@ proc dacAckDue*(S: DacAckPolicy, nowMs: uint32): bool {.role: parser.} =
   ## S: policy holding the open batch.
   ## nowMs: caller's millisecond clock.
   ## A gap ends the batch at once; otherwise whichever bound trips first does.
+  ##
+  ## Where the sender reorders on purpose there is a hole after almost every
+  ## arrival -- the shuffle guarantees it -- so closing on holes turns one
+  ## receipt for a 40-chunk package into twenty-seven. Such a receiver waits
+  ## for the count or the deadline, and its loop flushes the batch on purpose
+  ## the moment the stream stalls, which is when the sender needs the truth.
   if S.pending == 0'u16:
     return false
-  if dacAckGapsPending(S) > 0'u16:
+  if S.holesMeanLoss and dacAckGapsPending(S) > 0'u16:
     return true
   if S.pending >= S.batchChunks:
     return true
@@ -178,18 +236,60 @@ proc adaptDacAckPolicy*(S: var DacAckPolicy, gaps: uint16) {.
     return
   relaxDacAckLevers(S)
 
+proc arrivedDacPrefix(S: DacAckPolicy): int {.role: math.} =
+  ## S: policy whose settled run is measured.
+  ## How many sequences from the base have actually arrived, with no hole in
+  ## them. Everything in that run is finished business; the first hole is not.
+  while result < int(S.span) and dacBitSet(S.arrivals, result):
+    result = result + 1
+
+proc slideDacAckBatch(S: var DacAckPolicy, nowMs: uint32) {.role: actor.} =
+  ## S: policy whose window moves past the run that is settled, and no further.
+  ##
+  ## The base advances over arrivals ONLY, never over a hole:
+  ##
+  ##   base                                    span
+  ##    |  0  1  2  3  4  5  6  7  8            |
+  ##       X  X  X  .  X  X  .  X  X       X = arrived,  . = still missing
+  ##       \_____/
+  ##        settled -> base moves 3, and 4,5,7,8 stay in the window
+  ##
+  ## Sliding the whole span instead -- which is what this used to do -- puts
+  ## sequence 3 and 6 permanently below the base, where `observeDacArrival`
+  ## refuses them. They then never appear in any receipt, whatever happens
+  ## next, and the sender spends repair rounds on chunks already delivered.
+  var
+    keep: int = arrivedDacPrefix(S)
+    rest: ByteSeq = @[]
+    i: int = 0
+    held: uint16 = 0'u16
+  i = keep
+  while i < int(S.span):
+    if dacBitSet(S.arrivals, i):
+      dacSetBit(rest, i - keep)
+      held = held + 1'u16
+    i = i + 1
+  S.base = S.base + uint32(keep)
+  S.span = S.span - uint16(keep)
+  S.pending = held
+  S.arrivals = rest
+  S.openedMs = nowMs
+
 proc closeDacAckBatch*(S: var DacAckPolicy, commitCount: uint8,
     nowMs: uint32): DacAckRange {.role: orchestrator.} =
-  ## S: policy whose open batch becomes one wire receipt and then resets.
+  ## S: policy whose open batch becomes one wire receipt and then slides on.
   ## commitCount: committed package count reported alongside the receipt.
   ## nowMs: caller's millisecond clock.
+  ## The levers move from the holes in this batch only where holes mean loss;
+  ## see `holesMeanLoss` on the type for who gets to say.
   var
     gaps: uint16 = dacAckGapsPending(S)
   if S.pending == 0'u16:
     raise newException(ValueError, "DAC ACK batch has nothing to report")
   result = buildDacAckRange(S.base, S.arrivals, int(S.span), commitCount)
-  adaptDacAckPolicy(S, gaps)
-  resetDacAckBatch(S, S.base + uint32(S.span), nowMs)
+  if S.holesMeanLoss:
+    adaptDacAckPolicy(S, gaps)
+  slideDacAckBatch(S, nowMs)
 
 proc initDacRepairTimer*(): DacRepairTimer {.role: configurator.} =
   ## Start with no observations; the profile floor governs until one lands.

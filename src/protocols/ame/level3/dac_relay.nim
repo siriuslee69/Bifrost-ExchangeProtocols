@@ -8,6 +8,7 @@ when not dacAdaptiveBuilt:
   {.error: "This module is part of the DAC adaptive layer, which -d:bifrostDac=off removed from this build.".}
 
 import ../../types
+import ../types
 import ../../dac/types
 import ../../dac/level1/scramble
 import ../../dac/level2/package_transfer
@@ -93,7 +94,7 @@ proc admitAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey, S: AmeSession,
   ## A peer enters here and nowhere else, so the relay never has to decide
   ## whether an unknown datagram deserves memory.
   var
-    a: tuple[admit: DacLinkAdmit, slot: int]
+    a: tuple[admit: DacLinkAdmit, slot: int] = (dlaExisting, -1)
   a = admitDacLink(R.table, key, S.sessionId, S.laneId, nowMs)
   if a.slot < 0:
     result.slot = -1
@@ -137,10 +138,17 @@ proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
     step: var AmeDacRelayStep) {.role: orchestrator.} =
   ## R/slot/inner: relay, slot, and what the link loop produced.
   ## step: relay-level outcome being filled.
-  sealRelayMessages(R, slot, inner.messages, step)
-  if step.err.len > 0:
-    step.kind = adrDropped
-    return
+  ##
+  ## What ARRIVED is decided before what can be SAID about it. Those are two
+  ## different facts and only one of them can fail here:
+  ##
+  ##   the link completed a package   <- already parsed, repaired, digest-checked
+  ##   the reply could not be sealed  <- a separate problem, on the way out
+  ##
+  ## This used to seal first and bail on failure, which threw the finished
+  ## payload away to report that the receipt did not go out. The receive had
+  ## already closed by then, so those bytes were gone for good and the caller
+  ## was handed a drop -- the one outcome that says nothing arrived.
   case inner.kind
   of dlkPackageComplete:
     step.kind = adrPackageComplete
@@ -152,6 +160,13 @@ proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
     step.kind = adrNone
   else:
     step.kind = adrProgress
+  sealRelayMessages(R, slot, inner.messages, step)
+  ## A reply that could not be sealed is reported in `err` and leaves `kind`
+  ## alone, EXCEPT where there was nothing to report anyway: a step that
+  ## produced no event becomes a drop, so a caller watching `kind` still sees
+  ## that something went wrong.
+  if step.err.len > 0 and step.kind == adrNone:
+    step.kind = adrDropped
 
 proc dropRelayStep(R: var AmeDacRelay, key: DacLinkKey, why: string,
     step: var AmeDacRelayStep) {.role: actor.} =
@@ -173,7 +188,7 @@ proc feedAmeDacDatagram*(R: var AmeDacRelay, key: DacLinkKey,
   ## loop. Nothing here raises, so a peer cannot end the relay with rubbish.
   var
     slot: int = findDacLinkSlot(R.table, key)
-    opened: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
+    opened: AmeDacControlOpen = default(AmeDacControlOpen)
   result.peer = key
   if slot < 0:
     dropRelayStep(R, key, "DAC datagram from a peer with no session", result)
@@ -199,6 +214,14 @@ proc sendAmeDacPackage*(R: var AmeDacRelay, key: DacLinkKey,
   ## nowMs: caller's millisecond clock.
   ## Returns the datagrams to transmit, in order. Pace them with
   ## `ameDacSendDelayMs` if the scramble policy asks for a delay.
+  ##
+  ## A send either happens whole or not at all. `beginDacPackage` claims the
+  ## link's one outgoing slot before anything is sealed, so a seal that fails
+  ## halfway would otherwise leave the link holding a package no peer has ever
+  ## heard of -- and every later send on that link answering "DAC link already
+  ## has a package in flight", forever, with no public way to clear it. On any
+  ## failure the claim is given back and the half-sealed datagrams are dropped,
+  ## so the caller can simply try again.
   var
     slot: int = findDacLinkSlot(R.table, key)
   result.peer = key
@@ -212,9 +235,13 @@ proc sendAmeDacPackage*(R: var AmeDacRelay, key: DacLinkKey,
   except CatchableError as e:
     result.kind = adrDropped
     result.err = e.msg
+    result.send = @[]
+    discard abandonDacPackage(R.table.slots[slot].link)
     return
   if result.err.len > 0:
     result.kind = adrDropped
+    result.send = @[]
+    discard abandonDacPackage(R.table.slots[slot].link)
     return
   R.table.slots[slot].lastSeenMs = nowMs
   result.kind = adrProgress
@@ -237,8 +264,8 @@ proc tickAmeDacRelay*(R: var AmeDacRelay,
   ## one pass over the slots.
   var
     i: int = 0
-    step: AmeDacRelayStep
-    inner: DacLinkStep
+    step: AmeDacRelayStep = default(AmeDacRelayStep)
+    inner: DacLinkStep = default(DacLinkStep)
   while i < R.table.slots.len:
     if R.table.slots[i].used:
       step = default(AmeDacRelayStep)

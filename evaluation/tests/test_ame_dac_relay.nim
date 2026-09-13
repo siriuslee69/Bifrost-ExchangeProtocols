@@ -441,3 +441,83 @@ suite "DAC path reports move a lane without being asked to":
     feedLossReport(R, slot)
     check R.table.slots[slot].link.pathMoves == 0'u16
     check R.table.slots[slot].link.defaults.pathLane == dplSuperCleanPath
+
+suite "when the relay cannot seal what it wants to say":
+  ## Sealing a reply and receiving a package are two different facts, and only
+  ## one of them can fail on the way out. A relay that muddles them either
+  ## destroys bytes it already holds, or leaves a link unable to send ever
+  ## again. Both had happened. The lever both tests use is the AME send
+  ## sequence: exhaust it and every seal on that session refuses.
+
+  # {.testKind: tkRegression, covers: "applyLinkStep", pins: "a verified payload discarded because its receipt could not be sealed".}
+  test "a finished package still reaches the caller when the commit will not seal":
+    ## HOLDS: a complete package, assembled, digest-checked, sitting in the
+    ##        receiver's hands.
+    ## TRIES: sealing the commit that says so, with the sequence exhausted.
+    ## GETS:  the payload AND an error. It used to get neither -- the step
+    ##        came back as a drop with the bytes thrown away, and since the
+    ##        receive had already closed they were unrecoverable.
+    var
+      P = peerSessions()
+      sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
+      receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64)
+      payload: ByteSeq = rampBytes(3_000)
+      out1: AmeDacRelayStep = default(AmeDacRelayStep)
+      got: AmeDacRelayStep = default(AmeDacRelayStep)
+      recovered: ByteSeq = @[]
+      complained: bool = false
+    discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
+    discard admitAmeDacPeer(receiver, keyA(), P.b, 0'u32)
+    out1 = sendAmeDacPackage(sender, keyB(), 1'u64, payload, 0'u32)
+    check out1.kind == adrProgress
+    receiver.sessions[0].nextAmeSequence = high(uint32)
+    for datagram in out1.send:
+      got = feedAmeDacDatagram(receiver, keyA(), datagram, 1'u32)
+      if got.kind == adrPackageComplete:
+        recovered = got.payload
+        complained = got.err.len > 0
+    check recovered == payload
+    check complained
+
+  # {.testKind: tkRegression, covers: "sendAmeDacPackage", pins: "a failed send wedging the link forever".}
+  test "a send that cannot be sealed leaves the link able to try again":
+    ## HOLDS: a link with no package in flight.
+    ## TRIES: sending one whose datagrams cannot be sealed.
+    ## GETS:  a clean refusal, no half-package handed out, and a link that
+    ##        works the moment the session does. It used to answer "DAC link
+    ##        already has a package in flight" to every send from then on,
+    ##        with no public way to clear it.
+    var
+      P = peerSessions()
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 3'u64)
+      payload: ByteSeq = rampBytes(3_000)
+      bad: AmeDacRelayStep = default(AmeDacRelayStep)
+      again: AmeDacRelayStep = default(AmeDacRelayStep)
+      slot: int = 0
+    discard admitAmeDacPeer(R, keyB(), P.a, 0'u32)
+    slot = ameDacPeerSlot(R, keyB())
+    R.sessions[slot].nextAmeSequence = high(uint32)
+    bad = sendAmeDacPackage(R, keyB(), 1'u64, payload, 0'u32)
+    check bad.kind == adrDropped
+    check bad.err.len > 0
+    ## Nothing half-sealed escapes: a send either happened or it did not.
+    check bad.send.len == 0
+    check not R.table.slots[slot].link.outgoing.active
+    R.sessions[slot].nextAmeSequence = 1'u32
+    again = sendAmeDacPackage(R, keyB(), 2'u64, payload, 0'u32)
+    check again.kind == adrProgress
+    check again.err.len == 0
+    check again.send.len > 0
+
+  # {.testKind: tkUnit, covers: "abandonDacPackage".}
+  test "abandoning a package is idempotent and frees the slot":
+    var
+      d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
+      S: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
+    discard beginDacPackage(S, 1'u64, rampBytes(3_000), 0'u32)
+    check S.outgoing.active
+    check abandonDacPackage(S)
+    check not S.outgoing.active
+    check not abandonDacPackage(S)
+    ## And the link takes a new package, which is the whole point.
+    check beginDacPackage(S, 2'u64, rampBytes(3_000), 0'u32).len > 0

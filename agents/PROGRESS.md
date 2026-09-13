@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Sweep the fields the deleted DAC framing left behind
+Commit Message: Measure the path instead of guessing at it, and stop the loop adapting backwards
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -68,6 +68,14 @@ Features (Done):
 - Session id rotation, three frames, changing only the wire label and no key.
 - A blind UDP forwarder for the VPS: address mapping, NAS keepalive, a tiny
   overflow buffer, and no key material anywhere in it.
+- The adaptive loop adapts in the right direction. A clean link stays clean;
+  a lossy one walks down one step per package and settles. It used to reach
+  the recovery lane in four packages on a flawless LAN.
+- The receipt tells the sender what actually arrived. A flawless 34-chunk
+  delivery now acknowledges all 34 in one receipt, where it used to report 14
+  in six receipts and re-send parity for 20 chunks already delivered.
+- A finished package reaches the caller even when its receipt cannot be
+  sealed, and a send that cannot be sealed leaves the link usable.
 - A fresh clone builds. `Rune-Pragmas` is a submodule, and the pinned
   `Tyr-Crypto` is at Tyr `main` 1585636, the first Tyr commit that imports
   `runePragmas` instead of the `metaPragmas` that no longer exists. Both
@@ -311,10 +319,6 @@ Notes:
                              validation that checked them against each other.
 
   Otter CONFIG dead fields 35 -> 27.
--  is now . It holds little-endian
-  readers/writers and two name lookups and frames nothing; keeping the old
-  name would have been the same kind of stale signpost the deletion was
-  about. Eight importers, all updated.
 - The module `dac/level0/framing.nim` is now `wire_helpers.nim`. It holds
   little-endian readers/writers and two name lookups, and frames nothing;
   keeping the old name would have been the same kind of stale signpost the
@@ -347,6 +351,114 @@ Notes:
                            relay" is the equivalent.
 - `dacMagic`, `dacFormatVersion`, `dacBaseHeaderLen`, `dacExtendedHeaderLen`,
   `dacBaseFrameAscii` and the three `dac*BodyLenMode*` helpers went with the
-  frame -- they described a header that no longer exists. `DacFrameFlags` and
-  `DacTaggedMessage` STAY: the loop still sets flags for its own use, even
-  though they never travel, because only the kind and the body are sealed.
+  frame -- they described a header that no longer exists. `DacTaggedMessage`
+  stays, carrying a kind and a body and nothing else. `DacFrameFlags` did NOT
+  stay: an earlier note here claimed the loop still set flags "for its own
+  use", and the sweep proved nothing ever read them.
+- THE BIG ONE, and the shape of it is worth more than the fix: **a number
+  nobody measured was being read as a measurement.** `measureDacPath` filled
+  three of `DacPathStats`' seven fields and left four at zero. One of those
+  four is `creditHint`, and `targetDacPathFromStats` opens with
+  `creditHint <= 32` meaning "the receiver is out of buffer" -- the FIRST
+  rule, so it fired before loss, MTU or round trip were even looked at.
+
+  Every report DAC generated therefore said "I am drowning", and every link
+  walked itself down the lane ladder one package at a time:
+
+    clean -> mobile -> thin -> lossy -> recovery, in four packages, on a
+    wire that had dropped nothing, with the reason given as "receiver
+    pressure" on a receiver that was idle
+
+  Measured, not reasoned about: two DacLinks, a perfect pipe, five packages.
+  The existing tests never caught it because every one of them hand-builds a
+  fully-populated `DacPathStats` -- none had ever used the report DAC itself
+  produces.
+
+  Fixed on both sides. The receiver now measures what it honestly can
+  (`level1/path_meter.nim` plus `dacReceiveCreditChunks`), and the policy
+  skips any rule whose input is zero. `mtuHint` is now the chunk size that
+  GOT THROUGH, read off the sender's manifest, instead of this side's own
+  configured chunk size -- which was a statement about this side's plans and
+  about nothing else. `rttMs` is reported only when this link has sent
+  something and been answered.
+- The same shape appeared twice more, which is why it is worth naming: **a
+  number that describes the SPEAKER'S OWN behaviour is not a measurement of
+  the path.**
+
+    reorderDepth   chunk order says what the sender's shuffle did. On a
+                   flawless 34-chunk delivery it reads 31, which alone puts
+                   the link over `dacShouldEnterLossyPath`. Left at zero on
+                   purpose now; the honest measurement needs the CARRIER's
+                   send counter (AME's monotonic sequence), because an
+                   inversion in THAT is the network's doing. Worth wiring the
+                   day the rule is wanted, not before.
+    ACK holes      same cause. See below -- it was doing real damage.
+- The ACK batch was being fed chunk ids by a shuffling sender, and it is
+  written for a stream that arrives in the order it was sent. Measured on a
+  perfect wire, 34 chunks, nothing dropped:
+
+                              before        after
+    receipts sent             6             1
+    batch size                64 -> 2       64 (untouched)
+    deadline                  100ms -> 5ms  100ms (untouched)
+    sender told arrived       14 of 33      33 of 33
+    parity re-sent for        20            0
+    chunks already held
+
+  Three separate bugs, all from the same assumption:
+
+    1. the base floated to the FIRST arrival, so with a shuffle most of the
+       package landed below it and `observeDacArrival` refused it. The
+       function documents that contract -- "the caller answers by closing the
+       batch and offering it again" -- and `feedDacChunk` was discarding the
+       answer. Now the batch opens at chunk 0 with the manifest's chunk count
+       as its window, and the refusal is honoured.
+    2. closing slid the base by the whole SPAN, past sequences that had never
+       arrived, putting them permanently out of reach. Now it slides by the
+       arrived PREFIX only, so a hole keeps the window open over it.
+    3. holes halved the levers. Now `holesMeanLoss` (set from this side's own
+       scramble policy) decides whether they are evidence at all, and where
+       they are not, the verdict comes from the stall timer instead -- which
+       also flushes the batch on the spot, so the sender knows what it still
+       owes before it spends a repair round.
+- Two bugs at the AME/DAC seam, both about confusing "what arrived" with
+  "what I could say about it":
+
+    a finished package was DISCARDED when its commit could not be sealed.
+      `applyLinkStep` sealed first and bailed on failure, so a payload that
+      was parsed, repaired and digest-checked was thrown away to report that
+      the receipt did not go out -- and since `finishDacIncoming` had already
+      closed the receive, it was gone for good. The caller got `adrDropped`:
+      the one answer that means nothing arrived. Now the event is decided
+      from the link's own outcome first and the seal error rides alongside.
+    a send that could not be sealed WEDGED the link. `beginDacPackage` claims
+      the one outgoing slot before anything is sealed; nothing released it but
+      a commit, which needs a peer that received something. Every later send
+      answered "DAC link already has a package in flight", forever.
+      `abandonDacPackage` is the way out, and `sendAmeDacPackage` rolls back
+      and drops any half-sealed datagrams, so a send happens whole or not at
+      all.
+- A lane move used to rebuild the ACK policy under an open receive, throwing
+  away where the batch was and what it had counted. The new lane seeds the
+  NEXT receive; `openDacIncoming` calls `initDacAckPolicy` with the current
+  defaults anyway.
+- `test_dac_link`'s harness had a blind spot worth remembering: it watched for
+  `dlkPackageComplete` only while feeding messages, never on the receiver's
+  own tick. A package that finishes by rebuilding a group from parity already
+  in hand completes ON the tick, so the run burned every remaining tick and
+  reported failure for a payload sitting complete in the receiver. The loop
+  reports the event; a harness has to read it.
+- `AmeDacControlOpen` names the tuple `openAmeDacControl` returns. The same
+  four fields were spelled out longhand at four call sites, and the wrapped
+  spelling is one of the `nim-check.sh` false positives noted above.
+- STILL OPEN, unchanged: `DacScenarioDefaults.ackMode` (set per profile, acted
+  on by nothing); the relay keepalive payload; `dmkPathProbe`,
+  `dmkPathSwitchRequest`, `dmkPathSwitchAck` and `dmkDriftPayload` are
+  exported codecs with no branch in `feedDacMessage` -- a caller can build and
+  seal one and the peer will answer `dlkIgnored`. Said out loud in
+  `dac/README.md` under Module Split rather than left to be discovered.
+- `docs/repo_structure.md` and `CONTRIBUTING.md` described a `.iron/` tree
+  that does not exist and that the conventions forbid recreating. Corrected to
+  `agents/`. The nimble file still has `findIronOverrideFile` looking for
+  `.iron/.local.gitmodules.toml` -- dead, since nobody may create that
+  directory, but it is build machinery and deleting it was not this task.

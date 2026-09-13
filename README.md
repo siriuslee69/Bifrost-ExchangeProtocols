@@ -741,6 +741,9 @@ to send with. Pure arithmetic; no socket touches it:
 ```text
   DacPathStats          loss ppm, rtt, jitter, reorder depth,
                         mtu hint, queue ms, credit hint
+        |               ZERO MEANS "NOT MEASURED", never "measured zero".
+        |               Only loss ppm is exempt. A rule whose input is
+        |               missing is skipped, not believed.
         |
   recommendDacPathFromStats     moves ONE step toward a target, never jumps
         |
@@ -778,6 +781,35 @@ Notice that heavy loss gets the **small** ACK batch, not the large one: every
 un-acknowledged frame is retransmit state the sender cannot free yet. Long
 deadlines are for battery radios, where what is being saved is a wake-up
 rather than bandwidth.
+
+### One sentence that costs more than it looks ⌜guide⌟
+
+> A zero in a path report means "I did not measure this".
+
+Everything above is arithmetic on numbers a peer sent. If a number nobody
+measured reads as a measurement, the arithmetic is exactly as confident as if
+it were real — and it will be wrong in whatever direction the unfilled field
+happens to point. That is not hypothetical. `creditHint` went unfilled, the
+first rule in the chain reads `creditHint <= 32` as "the receiver is out of
+buffer", and so **every** report said so:
+
+```text
+  a flawless LAN, one package at a time
+
+  clean  ->  mobile  ->  thin  ->  lossy  ->  recovery
+     1          2         3         4          and stays there
+
+  chunks 1200 -> 512 bytes, parity none -> six-way Reed-Solomon,
+  ACK batch 64 -> 4, and the stated reason is "receiver pressure"
+  on a receiver that has not been asked to do anything.
+```
+
+The same shape appears twice more in this protocol, so it is worth
+recognising: **a number that describes the speaker's own behaviour is not a
+measurement of the path.** DAC shuffles its chunks on purpose, which makes
+chunk order say what the sender did, not what the wire did — so reorder depth
+read off chunk ids is meaningless, and so is a hole in an ACK batch. Both are
+handled in `src/protocols/dac/README.md`; both were getting it wrong.
 
 ### How AME reaches it ʚ♡ɞ
 

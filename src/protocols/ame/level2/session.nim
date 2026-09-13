@@ -1410,9 +1410,8 @@ proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
   secureClearAmeBytes(tagged)
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
-proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
-    ok: bool, kind: DacMessageKind, body: ByteSeq, err: string] {.
-    role: orchestrator.} =
+proc openAmeDacControl*(S: var AmeSession,
+    frame: openArray[uint8]): AmeDacControlOpen {.role: orchestrator.} =
   ## S/frame: connection and one DAC-carried control datagram.
   ## Returns the kind and body only after the frame authenticates, so the
   ## caller never dispatches on a kind an attacker chose.

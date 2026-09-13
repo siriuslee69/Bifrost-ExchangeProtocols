@@ -19,6 +19,7 @@ import ../level1/repair_hint
 import ../level1/repair_chunk
 import ../level0/path_stats
 import ../level1/ack_policy
+import ../level1/path_meter
 import ../level1/path_policy
 import ../level1/scramble
 import ../level2/package_transfer
@@ -102,12 +103,16 @@ type
   ## arriving is not progress: a sender that keeps topping up parity this side
   ## cannot use would otherwise refresh the timer forever and the receiver would
   ## never escalate to asking for exact chunks.
+  ## meter: the arrival pattern, measured as it lands. This is what the path
+  ## report is built from, so the report states what this side SAW rather than
+  ## what this side is configured to do.
   DacIncoming* {.role: truthState.} = object
     active*: bool
     receiver*: DacPackageReceiver
     ack*: DacAckPolicy
     parity*: seq[DacParityShard]
     lastProgressMs*: uint32
+    meter*: DacArrivalMeter
 
   ## DacLink: one connection's whole adaptive state.
   ## observed: what THIS side measured about the path, which is the only thing
@@ -146,7 +151,7 @@ proc initDacLink*(sessionId: uint64, laneId: uint32,
   result.limits = limits
   result.outgoing.timer = initDacRepairTimer()
   result.outgoing.scramble = initDacScrambleState(seed)
-  result.incoming.ack = initDacAckPolicy(d)
+  result.incoming.ack = initDacAckPolicy(d, not policy.shuffleChunks)
 
 proc tagDacBody(S: var DacLink, k: DacMessageKind,
     body: ByteSeq): DacTaggedMessage {.role: truthBuilder.} =
@@ -223,6 +228,32 @@ proc clearDacOutgoing(S: var DacLink) {.role: actor.} =
   S.outgoing.acked = @[]
   S.outgoing.rounds = 0'u8
 
+proc abandonDacPackage*(S: var DacLink): bool {.role: actor.} =
+  ## S: link giving up the package it holds in flight. Returns false when it
+  ## held none, so calling this twice is harmless.
+  ##
+  ## `beginDacPackage` claims the one outgoing slot BEFORE its messages have
+  ## gone anywhere, which is the right order -- the plan has to exist before it
+  ## can be handed out. But it means a carrier that then fails to put those
+  ## messages on the wire has left the link owning a package that no peer will
+  ## ever acknowledge, and nothing else releases the slot: the only other way
+  ## out is a commit, which needs the peer to have received something.
+  ##
+  ##   beginDacPackage()  ->  outgoing.active = true
+  ##          |
+  ##          +--> carrier seals and sends  ->  peer commits  ->  slot freed
+  ##          |
+  ##          +--> carrier cannot seal      ->  nothing sent  ->  STUCK
+  ##                                                               here
+  ##
+  ## This is the way out of that corner. It tells the peer nothing, because
+  ## there is nothing to tell: the peer never heard of the package. Whatever
+  ## fraction did escape is ignored on arrival once the manifest times out.
+  if not S.outgoing.active:
+    return false
+  clearDacOutgoing(S)
+  result = true
+
 proc openDacIncoming(S: var DacLink, m: DacPackageManifest,
     nowMs: uint32) {.
     role: actor.} =
@@ -231,8 +262,10 @@ proc openDacIncoming(S: var DacLink, m: DacPackageManifest,
   ## nowMs: caller clock, which seeds the progress timer.
   S.incoming.receiver = initDacPackageReceiver(m, S.limits)
   S.incoming.parity = @[]
-  S.incoming.ack = initDacAckPolicy(S.defaults)
+  S.incoming.ack = initDacAckPolicy(S.defaults, not S.policy.shuffleChunks)
+  openDacAckBatchAt(S.incoming.ack, 0'u32, m.dataCount, nowMs)
   S.incoming.lastProgressMs = nowMs
+  S.incoming.meter = initDacArrivalMeter(nowMs)
   S.incoming.active = true
 
 proc groupParityFor(S: DacLink, groupId: uint32): seq[DacParityShard] {.
@@ -252,8 +285,8 @@ proc tryDacGroupRepair(S: var DacLink, groupId: uint32): bool {.
   ## groupId: repair group to rebuild.
   var
     shards: seq[DacParityShard] = groupParityFor(S, groupId)
-    record: DacPackageGroupRepair
-    report: DacGroupRepairReport
+    record: DacPackageGroupRepair = default(DacPackageGroupRepair)
+    report: DacGroupRepairReport = default(DacGroupRepairReport)
   if shards.len == 0:
     return false
   try:
@@ -279,30 +312,58 @@ proc repairEveryDacGroup(S: var DacLink): bool {.role: orchestrator.} =
       result = true
     g = g + 1'u32
 
-proc measureDacPath(S: var DacLink) {.role: math.} =
+proc measureDacPath(S: var DacLink, nowMs: uint32) {.role: math.} =
   ## S: link recording what IT observed, never what it wants the peer to do.
-  ## Loss is the share of chunks that had to be repaired rather than arriving,
-  ## and the round trip is the receipt latency the sender already measures for
-  ## its repair timer. Both are facts about this side of the wire.
+  ## nowMs: caller's millisecond clock.
+  ##
+  ## Seven numbers go on the wire and every one of them has to be a thing this
+  ## side actually saw. Where it saw nothing, it says nothing -- the field stays
+  ## zero and the peer's lane policy skips the rule that reads it:
+  ##
+  ##   lossPpm     chunks that had to be repaired, over chunks expected
+  ##   rttMs       the SENDER's measured receipt latency -- reported only when
+  ##               this side has sent something and been answered, because a
+  ##               link that has only ever received cannot know a round trip
+  ##   jitterMs    how much the gap between arrivals kept changing
+  ##   reorderDepth  LEFT AT ZERO, on purpose. The sender shuffles its chunks
+  ##               deliberately, so chunk-id order says what the SENDER did and
+  ##               nothing about the path -- see path_meter.nim
+  ##   mtuHint     the chunk size that GOT THROUGH, read off the sender's
+  ##               manifest -- not this side's own configured chunk size, which
+  ##               is a statement about this side's plans and about nothing else
+  ##   queueMs     how long an unfinished package has been held here
+  ##   creditHint  chunks of room left on top of what is already held
+  ##
+  ## This used to fill three of the seven and leave four at zero, which the peer
+  ## then read as measurements. One of those four -- creditHint -- is tested
+  ## first and reads low as "the receiver is drowning", so every report said so
+  ## and every link walked itself down to the recovery lane.
   var
     total: int = int(S.incoming.receiver.manifest.dataCount)
-  S.observed.rttMs = S.outgoing.timer.peakMs
-  S.observed.mtuHint = S.defaults.chunkBytes
+  S.observed = default(DacPathStats)
+  S.observed.mtuHint = S.incoming.receiver.manifest.chunkBytes
+  S.observed.jitterMs = S.incoming.meter.jitterMs
+  S.observed.queueMs = dacQueueMs(S.incoming.meter, nowMs)
+  S.observed.creditHint = dacReceiveCreditChunks(S.incoming.receiver)
+  if S.outgoing.timer.samples > 0'u16:
+    S.observed.rttMs = S.outgoing.timer.peakMs
   if total > 0:
     S.observed.lossPpm = uint32((int(S.incoming.receiver.repairCount) *
       1_000_000) div total)
 
-proc emitDacPathStats(S: var DacLink, F: var seq[DacTaggedMessage]) {.
-    role: dataWriter.} =
+proc emitDacPathStats(S: var DacLink, F: var seq[DacTaggedMessage],
+    nowMs: uint32) {.role: dataWriter.} =
   ## S: link stating what it measured.
   ## F: outbox the report is appended to.
-  measureDacPath(S)
+  ## nowMs: caller's millisecond clock.
+  measureDacPath(S, nowMs)
   F.add(tagDacBody(S, dmkPathStats, encodeDacPathStats(S.observed)))
 
-proc finishDacIncoming(S: var DacLink, R: var DacLinkStep) {.
-    role: orchestrator.} =
+proc finishDacIncoming(S: var DacLink, R: var DacLinkStep,
+    nowMs: uint32) {.role: orchestrator.} =
   ## S: link whose complete package is verified and committed.
   ## R: step filled with the payload and the commit frame.
+  ## nowMs: caller's millisecond clock.
   var
     outcome: DacPackageResult = finishDacPackage(S.incoming.receiver)
   if not outcome.ok:
@@ -317,8 +378,19 @@ proc finishDacIncoming(S: var DacLink, R: var DacLinkStep) {.
   ## so how much of it had to be repaired is a settled number rather than a
   ## guess mid-flight. The peer may move its own lane on the strength of it,
   ## or ignore it entirely.
-  emitDacPathStats(S, R.messages)
+  emitDacPathStats(S, R.messages, nowMs)
   S.incoming.active = false
+
+proc noteDacAckEvidence(S: var DacLink, lost: bool) {.role: actor, inline.} =
+  ## S: link whose ACK levers move on evidence it actually has.
+  ## lost: whether this side has just caught the path losing something.
+  ##
+  ## Only for a stream whose holes say nothing -- one this side's own sender
+  ## policy tells it is shuffled. Where holes DO mean loss, `closeDacAckBatch`
+  ## has already read them and a second verdict here would double-count.
+  if S.incoming.ack.holesMeanLoss:
+    return
+  adaptDacAckPolicy(S.incoming.ack, if lost: 1'u16 else: 0'u16)
 
 proc emitDacAck(S: var DacLink, F: var seq[DacTaggedMessage], nowMs: uint32) {.
     role: dataWriter.} =
@@ -329,6 +401,7 @@ proc emitDacAck(S: var DacLink, F: var seq[DacTaggedMessage], nowMs: uint32) {.
     return
   F.add(tagDacBody(S, dmkAckRange,
     encodeDacAckRange(closeDacAckBatch(S.incoming.ack, 0'u8, nowMs))))
+  noteDacAckEvidence(S, false)
 
 proc feedDacManifest(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -354,12 +427,20 @@ proc feedDacChunk(S: var DacLink, body: openArray[uint8], nowMs: uint32,
   acceptDacPackageChunk(S.incoming.receiver, c)
   if missingChunkCount(S.incoming.receiver) < before:
     S.incoming.lastProgressMs = nowMs
-  discard observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs)
+  ## `observeDacArrival` answers false for an id the open window cannot hold,
+  ## and its contract is that the caller closes the batch and offers it again.
+  ## That contract was being discarded. With a sender that shuffles, an id
+  ## below the window is the common case, not the rare one, and every refused
+  ## id is a chunk the sender is never told about.
+  if not observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs):
+    emitDacAck(S, R.messages, nowMs)
+    discard observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs)
+  observeDacChunkArrival(S.incoming.meter, nowMs)
   R.kind = dlkChunkAccepted
   if dacAckDue(S.incoming.ack, nowMs):
     emitDacAck(S, R.messages, nowMs)
   if missingChunkCount(S.incoming.receiver) == 0:
-    finishDacIncoming(S, R)
+    finishDacIncoming(S, R, nowMs)
 
 proc feedDacParity(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -372,14 +453,14 @@ proc feedDacParity(S: var DacLink, body: openArray[uint8], nowMs: uint32,
   S.incoming.parity.add(p)
   R.kind = dlkParityStored
   if missingChunkCount(S.incoming.receiver) == 0:
-    finishDacIncoming(S, R)
+    finishDacIncoming(S, R, nowMs)
     return
   if not tryDacGroupRepair(S, p.groupId):
     return
   R.kind = dlkRepaired
   S.incoming.lastProgressMs = nowMs
   if missingChunkCount(S.incoming.receiver) == 0:
-    finishDacIncoming(S, R)
+    finishDacIncoming(S, R, nowMs)
 
 proc feedDacAck(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -427,10 +508,16 @@ proc feedDacRepairChunk(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     return
   acceptDacRepairChunk(S.incoming.receiver, c)
   S.incoming.lastProgressMs = nowMs
-  discard observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs)
+  if not observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs):
+    emitDacAck(S, R.messages, nowMs)
+    discard observeDacArrival(S.incoming.ack, uint32(c.chunkId), nowMs)
+  ## Deliberately NOT fed to the arrival meter. A repair chunk is a chunk this
+  ## side asked for again, so counting it as a late arrival would report loss
+  ## twice -- once honestly as lossPpm, and once as reorder depth and jitter
+  ## that the path never actually produced. The meter measures the first pass.
   R.kind = dlkRepaired
   if missingChunkCount(S.incoming.receiver) == 0:
-    finishDacIncoming(S, R)
+    finishDacIncoming(S, R, nowMs)
 
 proc feedDacPathStats(S: var DacLink, body: openArray[uint8],
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -446,8 +533,15 @@ proc feedDacPathStats(S: var DacLink, body: openArray[uint8],
   if not move.ok or S.outgoing.active:
     return
   S.defaults = dacDefaultsForPath(move.path, S.defaults.transferClass)
-  S.incoming.ack = initDacAckPolicy(S.defaults)
   S.pathMoves = S.pathMoves + 1'u16
+  ## The new lane seeds the NEXT receive's ACK cadence, never this one's. An
+  ## open batch holds arrivals nobody has reported yet; rebuilding the policy
+  ## under it throws those away, so the sender waits out its repair timer and
+  ## re-sends parity for chunks that are sitting here already. The next
+  ## manifest calls initDacAckPolicy with these defaults anyway.
+  if S.incoming.active:
+    return
+  S.incoming.ack = initDacAckPolicy(S.defaults, not S.policy.shuffleChunks)
 
 proc feedDacCommit(S: var DacLink, body: openArray[uint8],
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -586,8 +680,16 @@ proc tickDacLink*(S: var DacLink, nowMs: uint32): DacLinkStep {.
   if not dacReceiverRepairDue(S, nowMs):
     return
   S.incoming.lastProgressMs = nowMs
+  noteDacAckEvidence(S, true)
+  ## The stream has stopped with holes in it. Whatever the batch is holding,
+  ## the sender needs it NOW -- it is about to spend a repair round, and the
+  ## worst thing it can do is spend it on chunks already sitting here. This is
+  ## the moment a shuffled stream earns back the gap-triggered receipt it does
+  ## not get: one flush when the silence says the holes are real, instead of
+  ## one after every arrival because the shuffle made a hole.
+  emitDacAck(S, result.messages, nowMs)
   if repairEveryDacGroup(S) and missingChunkCount(S.incoming.receiver) == 0:
-    finishDacIncoming(S, result)
+    finishDacIncoming(S, result, nowMs)
     return
   if requestDacRepair(S, result.messages):
     result.kind = dlkRepairRequested

@@ -505,3 +505,32 @@ proc missingChunkCount*(S: DacPackageReceiver): int {.role: parser.} =
     if not S.received[i]:
       result = result + 1
     i = i + 1
+
+proc dacReceiveCreditChunks*(S: DacPackageReceiver): uint16 {.role: math.} =
+  ## S: receiver asked how much room it has left ON TOP of what it already holds.
+  ##
+  ## The receiver reserves a whole package up front, so the interesting number
+  ## is not this package's headroom -- that was checked at admission -- but what
+  ## would be left for the next one. Both limits are consulted and the tighter
+  ## one wins:
+  ##
+  ##   by chunk count :  maxChunks       - dataCount
+  ##   by memory      : (maxPackageBytes - totalLen) / chunkBytes
+  ##
+  ## A live receive always leaves room for what it is already using, so the
+  ## answer is floored at 1. That keeps 0 free to mean one thing only -- "this
+  ## side did not measure it" -- which is what the lane policy needs, because a
+  ## zero it cannot distinguish from a measurement is a zero it will misread.
+  var
+    byChunks: uint32 = 0'u32
+    byBytes: uint64 = 0'u64
+    t: uint64 = 0'u64
+  if S.manifest.chunkBytes == 0'u16:
+    return 1'u16
+  if uint32(S.limits.maxChunks) > uint32(S.manifest.dataCount):
+    byChunks = uint32(S.limits.maxChunks) - uint32(S.manifest.dataCount)
+  if uint64(S.limits.maxPackageBytes) > S.manifest.totalLen:
+    byBytes = (uint64(S.limits.maxPackageBytes) - S.manifest.totalLen) div
+      uint64(S.manifest.chunkBytes)
+  t = min(uint64(byChunks), byBytes)
+  result = uint16(max(1'u64, min(t, uint64(high(uint16)))))

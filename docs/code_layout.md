@@ -31,8 +31,11 @@ src/protocols
 │                    assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim
-│   ├── level0/  <- framing, transport, body codecs, sender/receiver helpers
-│   ├── level1/  <- DAC message bodies, plus the self-inferred ACK/repair pacing
+│   ├── level0/  <- transport, little-endian wire helpers, body codecs, and
+│   │                the path-profile table
+│   ├── level1/  <- DAC message bodies, the self-inferred ACK/repair pacing,
+│   │                what the receiver measures (path_meter), and what it does
+│   │                about a peer's report (path_policy)
 │   ├── level2/  <- package planning, XOR/Reed-Solomon repair, exact repair, commit
 │   └── level3/  <- the link loop that drives all of it, plus the bounded
 │                    per-peer link table; both transport-agnostic
@@ -54,7 +57,6 @@ src/protocols
 
 ```text
 nimble task
-  -> .iron/.local.gitmodules.toml override when present
   -> submodules/<dependency>/src
   -> repo-local dependency folder fallback
   -> parent workspace sibling fallback

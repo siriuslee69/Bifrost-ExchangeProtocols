@@ -130,7 +130,6 @@ MITM, loss, and repair
 
 DAC
   -> defaults validation
-  -> frame header encode/decode
   -> typed body encode/decode and manifest/ACK validation
   -> ACK receipts in run and bitmap form, and the encoder picking the shorter
   -> batch pacing: count bound, deadline bound, and a gap closing at once
@@ -147,6 +146,24 @@ DAC
   -> a link that cannot finish reports failure instead of hanging forever
   -> the repair-round budget is spent, not looped
   -> drift payload encode/decode
+
+DAC path adaptation
+  -> five flawless packages move the lane not at all -- the whole point of the
+     "a zero means not measured" rule, and what used to walk a clean LAN down
+     to the recovery lane in four packages
+  -> losing one chunk in five walks the lane down and SETTLES, one step each
+  -> an empty report asks for nothing, and cannot buy a promotion either
+  -> a receiver genuinely out of room still reports it, guard and all
+  -> a flawless 34-chunk delivery reports NO reordering: chunk order measures
+     the sender's deliberate shuffle, not the path
+  -> a perfectly steady stream has a gap but no jitter
+  -> queue time runs from the manifest, not from the last chunk
+  -> credit is floored at 1, so zero stays free to mean "not measured"
+  -> a lane move leaves an open receive's ACK batch exactly where it was
+  -> every delivered chunk is acknowledged on a wire that lost nothing, in a
+     handful of receipts rather than one per arrival
+  -> a flawless delivery leaves the ACK levers at the profile
+  -> the ACK window stays open over a hole instead of sliding past it
 
 AME DAC relay
   -> a peer with a session gets a slot; one without is dropped unparsed
@@ -165,6 +182,11 @@ AME DAC relay
   -> a completed package reports what this side measured
   -> a peer's report moves this side's lane, one step at a time
   -> a report cannot move a lane out from under a package in flight
+  -> a finished package still reaches the caller when its commit will not
+     seal: receiving and replying are two facts, and only one of them failed
+  -> a send that cannot be sealed hands out nothing and leaves the link able
+     to try again, instead of holding a phantom package forever
+  -> abandoning a package is idempotent and frees the slot
 
 AME DAC endpoint
   -> a package crosses two real loopback UDP sockets and commits
@@ -185,8 +207,6 @@ Wire fuzz
   -> every DAC decoder survives thousands of mutated frames without a Defect
   -> the link loop never raises on arbitrary bytes, and still completes a real
      package interleaved with rubbish
-  -> the header peek refuses exactly what the full decoder refuses, and never
-     leaves a field set on a refusal
   -> a hostile peer cannot make the link table raise or exceed its capacity
   -> AME frame headers, frames, and protected bodies, including a mutation at
      either depth of the nested pair

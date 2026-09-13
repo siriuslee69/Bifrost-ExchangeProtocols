@@ -300,7 +300,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       body: ByteSeq = @[byte 9, 8, 7, 6]
       frame: ByteSeq = @[]
-      got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
+      got: AmeDacControlOpen = default(AmeDacControlOpen)
     frame = sealAmeDacControl(sender, dmkAckRange, body)
     got = openAmeDacControl(receiver, frame)
     check got.ok
@@ -330,7 +330,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       frame: ByteSeq = @[]
       tampered: ByteSeq = @[]
-      got: tuple[ok: bool, kind: DacMessageKind, body: ByteSeq, err: string]
+      got: AmeDacControlOpen = default(AmeDacControlOpen)
       i: int = 0
     frame = sealAmeDacControl(sender, dmkAckRange, @[byte 1, 2, 3, 4])
     while i < frame.len:

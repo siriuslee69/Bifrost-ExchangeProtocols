@@ -70,7 +70,7 @@ proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
     receiver: DacLink = initDacLink(9'u64, 1'u32, d, 0x123456'u64)
     toReceiver: seq[DacTaggedMessage] = @[]
     toSender: seq[DacTaggedMessage] = @[]
-    step: DacLinkStep
+    step: DacLinkStep = default(DacLinkStep)
     nowMs: uint32 = 0'u32
     i: int = 0
     tick: int = 0
@@ -95,6 +95,14 @@ proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
       i = i + 1
     toSender = @[]
     step = tickDacLink(receiver, nowMs)
+    ## A package can finish on the receiver's OWN tick, not only while a
+    ## message is being fed: that is what happens when the last hole is filled
+    ## by rebuilding a group from parity already in hand. Watching only the
+    ## feed loop misses it, and the run then burns every remaining tick and
+    ## reports a failure for a payload that is sitting complete in the
+    ## receiver. The loop reports the event; the harness has to read it.
+    if step.kind == dlkPackageComplete:
+      return (true, step.payload, tick)
     toSender.add(step.messages)
     step = tickDacLink(sender, nowMs)
     toReceiver.add(step.messages)
@@ -108,7 +116,7 @@ suite "DAC link on a clean pipe":
   test "a package crosses and is committed":
     var
       payload: ByteSeq = rampBytes(20_000)
-      P: Pipe
+      P: Pipe = Pipe(dropEvery: 0)
       outcome = runLink(payload, dacDefaultsFor(dscBadSignal), P)
     check outcome.ok
     check outcome.got == payload
@@ -121,7 +129,7 @@ suite "DAC link on a clean pipe":
       sender: DacLink = initDacLink(4'u64, 2'u32, d, 1'u64)
       receiver: DacLink = initDacLink(4'u64, 2'u32, d, 2'u64)
       payload: ByteSeq = rampBytes(6_000)
-      step: DacLinkStep
+      step: DacLinkStep = default(DacLinkStep)
       back: seq[DacTaggedMessage] = @[]
       frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 5'u64, payload, 0'u32))
@@ -215,7 +223,7 @@ suite "DAC link gives up cleanly":
       receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
       frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
-      step: DacLinkStep
+      step: DacLinkStep = default(DacLinkStep)
       nowMs: uint32 = 0'u32
       failed: bool = false
       tick: int = 0
@@ -244,7 +252,7 @@ suite "DAC link gives up cleanly":
       frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
       hints: int = 0
-      step: DacLinkStep
+      step: DacLinkStep = default(DacLinkStep)
       nowMs: uint32 = 0'u32
       tick: int = 0
     discard feedDacMessage(receiver, frames[0].kind, frames[0].body, nowMs)
