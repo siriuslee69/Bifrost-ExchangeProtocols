@@ -43,6 +43,21 @@
 ## fail to open. That covers the flags too: an attacker who clears the padded
 ## bit does not get a receiver to hand up padding as data, they get a frame
 ## that fails to open at all. Numbers are little-endian throughout.
+##
+## ONE field of it is also masked, and this module does not do the masking.
+## The sequence at offset 22 counts up by one per frame forever, which makes
+## it the field that links two sightings of a flow together, so it is XORed
+## with a per-frame mask by `level1/header_protection` on the way out and put
+## back on the way in:
+##
+##   what this module encodes    the TRUE sequence, which the tag covers
+##   what travels                that number XORed with the frame's mask
+##   what this module decodes    the masked number, which the session layer
+##                               replaces with the true one before use
+##
+## So a caller reading `decodeAmeFrameHeader(...).sequence` straight off the
+## wire gets the masked value, not the sender's counter. `AmeSession` does
+## the unmasking in `decodeProtectedFrame`; nothing else should need to.
 
 import ../../types
 import ../types
@@ -155,7 +170,7 @@ proc encodeAmeFrame*(kind: AmePacketKind, messageClass: AmeMessageClass,
     sequence: uint32, payload: openArray[uint8]): ByteSeq {.
     role: dataWriter.} =
   ## kind/messageClass/flags/session/lane/sequence/payload: complete frame.
-  var h: AmeFrameHeader
+  var h: AmeFrameHeader = default(AmeFrameHeader)
   requireAmeU32Len(payload.len, "frame payload")
   h = initAmeFrameHeader(kind, messageClass, flags, sessionId, rootLaneId,
     laneId, sequence)

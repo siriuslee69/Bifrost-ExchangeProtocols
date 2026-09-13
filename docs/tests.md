@@ -217,6 +217,30 @@ AME
   -> authenticated Offer -> Reply -> EpochReady over TCP and DAC
   -> responder candidate epoch before confirmation
   -> retiring epoch outliving live traffic, and the DAC replay window
+
+AME header protection
+  -> the counter on the wire does not count, and the key puts it back
+  -> masking twice returns the frame that went in
+  -> the same payload twice gives two different masks
+  -> editing the masked counter still breaks the frame
+  -> a stranger's key recovers the wrong counter
+  -> the two directions do not share a header key
+
+AME session id rotation
+  -> both sides end up answering to the same new id
+  -> rotating the label re-derives no keys
+  -> a frame sealed under the old id still opens for a while
+  -> the old id is forgotten once the window runs out
+  -> an assigned id is never zero and never the one in use
+
+UDP forward (the blind VPS relay)
+  -> a datagram reaches the NAS with its bytes untouched
+  -> the answer finds its way back by tag, and two clients never share one
+  -> an answer for a released slot is dropped, not redirected
+  -> the client table has a ceiling and refuses past it
+  -> a missing NAS buffers, a full buffer gives up the oldest
+  -> a returning NAS drains in order, and may have moved address
+  -> the NAS is poked only when a poke is due
   -> SuperClean extended frames and normal-path rejection
   -> durable trigger cancellation and completion
   -> receive timeout errors without malformed-frame exceptions

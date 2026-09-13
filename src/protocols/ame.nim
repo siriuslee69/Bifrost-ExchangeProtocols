@@ -77,6 +77,7 @@ import ./ame/level1/suites as ame_suites
 import ./ame/level1/derivation as ame_derivation
 import ./ame/level1/tier_aead as ame_tier_aead
 import ./ame/level1/padding as ame_padding
+import ./ame/level1/header_protection as ame_header_protection
 import ./ame/level1/presets as ame_presets
 import ./ame/level1/path_triggers as ame_path_triggers
 import ./ame/level1/compression as ame_compression
@@ -98,6 +99,7 @@ export ame_exchange_paths
 export ame_suites
 export ame_derivation
 export ame_tier_aead
+export ame_header_protection
 export ame_padding
 export ame_presets
 export ame_path_triggers

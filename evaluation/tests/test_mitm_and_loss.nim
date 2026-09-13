@@ -27,6 +27,7 @@ import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/level1/compression
 import ../../src/protocols/ame/level1/path_triggers
+import ../../src/protocols/ame/level1/header_protection
 import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level3/handshake
@@ -154,7 +155,11 @@ suite "MITM on a live session":
     check h.sessionId == sender.sessionId
     check h.rootLaneId == sender.rootLaneId
     check h.laneId == sender.laneId
-    check h.sequence == 0'u32
+    ## The sequence is deliberately NOT on that list any more. It is masked
+    ## on the wire, so what an observer decodes here is a different
+    ## unpredictable number on every frame instead of a counter they can
+    ## follow. Holding the key puts it back.
+    check unmaskedAmeFrameSequence(frame, sender.headerKeySend) == 0'u32
     ## The length is readable, and with padding off it IS the plaintext
     ## length. That is a real leak and it is why padding exists.
     check frame.len == ameFrameHeaderLen + fomkeWireLen(plaintext.len, aatl32)
@@ -601,8 +606,8 @@ suite "loss, drops, and real repair":
       first: ByteSeq = sealAmeTcpFrame(sender, @[byte 1])
       second: ByteSeq = sealAmeTcpFrame(sender, @[byte 2])
       third: ByteSeq = sealAmeTcpFrame(sender, @[byte 3])
-    check decodeAmeFrameHeader(second).sequence == 1'u32
-    check decodeAmeFrameHeader(third).sequence == 2'u32
+    check unmaskedAmeFrameSequence(second, sender.headerKeySend) == 1'u32
+    check unmaskedAmeFrameSequence(third, sender.headerKeySend) == 2'u32
     check openAmeTcpFrame(receiver, first).ok
     ## TCP already guarantees order, so a missing frame is not loss -- it is
     ## an attacker deleting from the stream, or a broken connection. Either

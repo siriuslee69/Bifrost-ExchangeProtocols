@@ -18,6 +18,7 @@ import ../level1/suites
 import ../level1/symmetric
 import ../level1/path_triggers
 import ../level1/padding
+import ../level1/header_protection
 import ./wire
 import ../../fomke/types
 import ../../fomke/level0/gb3hkdf
@@ -29,6 +30,11 @@ import ../../dac/level0/framing
 import ../../dac/level0/defaults as dac_defaults
 import runePragmas
 
+const
+  ameSessionIdGraceFrames* = 100
+    ## How many arriving frames may still carry the session id this side used
+    ## before the last rotation. It bounds frames that were already in the
+    ## air, which is the one thing a frame count is actually a good clock for.
 
 type
   AmeSession* {.role: truthState.} = object
@@ -63,6 +69,36 @@ type
     tcpRecvSequence*: uint32
     dacAmeReplay*: AmeReplayWindow
     pendingParams*: AmeRuntimeParams
+    previousSessionId*: uint64
+      ## The id this session answered to before the last rotation. Accepted on
+      ## RECEIVE only -- nothing is ever sealed under it again.
+    previousSessionIdFramesLeft*: int
+      ## How many more arriving frames may still carry the old id. Counts down
+      ## on every accepted frame and the old id is forgotten at zero.
+      ##
+      ## A frame count is the right clock here, unlike the epoch case, because
+      ## what it bounds IS a number of frames: the ones that were already in
+      ## the air when the id changed. And unlike the epoch case it is
+      ## reachable, on the datagram carrier, where nothing keeps a data frame
+      ## from overtaking the assign message that changed the id:
+      ##
+      ##   TCP   order is guaranteed, so every frame after the assign
+      ##         already carries the new id and this never fires
+      ##   DAC   datagrams reorder, so a frame sealed before the assign can
+      ##         easily land after it
+      ##
+      ## What it holds is one integer, not key material -- forgetting it early
+      ## costs a dropped frame the transport re-sends, never a lost secret.
+    headerKeySend*: ByteSeq
+      ## Masks the sequence number on frames leaving this side.
+    headerKeyRecv*: ByteSeq
+      ## Unmasks it on frames arriving. Two keys, not one, for the same reason
+      ## the ratchet has two lanes: a frame this side sent must not be
+      ## reflectable back at it looking like a frame it received.
+      ##
+      ## Both are derived once per epoch, not once per frame -- deriving one
+      ## runs every switched-on KDF slot, and a frame only needs a keyed
+      ## BLAKE3 call over 16 bytes.
 
     lastErr*: string
 
@@ -259,6 +295,25 @@ proc ameEpochKeyContext*(E: AmeEpochKeySet, sessionId: uint64,
   appendAmeU32(result, uint32(E.transcriptSalt.len))
   appendAmeBytes(result, E.transcriptSalt)
 
+proc refreshAmeHeaderKeys*(S: var AmeSession) {.role: actor,
+    tag: "ame|cryptoBoundary|kdf".} =
+  ## S: header-protection keys rebuilt for whatever epoch is now current.
+  ##
+  ## Must be called wherever `auth.current` changes. The keys are bound to the
+  ## epoch id, so a stale pair produces a mask the peer cannot reproduce and
+  ## every frame fails to open -- loudly, which is the right way for this to
+  ## go wrong if a future rotation path forgets to call it.
+  secureClearAmeBytes(S.headerKeySend)
+  secureClearAmeBytes(S.headerKeyRecv)
+  S.headerKeySend = deriveAmeHeaderKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier,
+    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      outboundAmeDirection(S.auth.endpointRole)))
+  S.headerKeyRecv = deriveAmeHeaderKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier,
+    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      inboundAmeDirection(S.auth.endpointRole)))
+
 proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
     sharedSecrets: openArray[ByteSeq], transcriptSalt: openArray[uint8]) {.
     role: actor.} =
@@ -280,6 +335,7 @@ proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
   S.auth.retiring = cloneEpoch(S.auth.current)
   S.auth.current = next
   requireAmeAuth(S.auth)
+  refreshAmeHeaderKeys(S)
 
 proc transitionTranscriptSalt(E: AmeEpochKeySet, o: AmeExchangeOffer,
     r: AmeExchangeReply): ByteSeq {.role: truthBuilder.} =
@@ -602,6 +658,7 @@ proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
   clearEpoch(S.auth.retiring)
   S.auth.retiring = cloneEpoch(S.auth.current)
   S.auth.current = S.pendingIncoming.candidate
+  refreshAmeHeaderKeys(S)
   S.pendingIncoming = default(AmePendingIncomingExchange)
   setCurrentAmeTier(S.path, targetTier)
   if S.fomkeCandidateActive:
@@ -742,6 +799,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     result.auth.current.transcriptSalt,
     initGb3KdfConfig(), fomkeDefaultReorderCeiling,
     result.auth.current.params.authTagLen)
+  refreshAmeHeaderKeys(result)
   runtime = currentBifrostConfig()
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)
   result.fomkePregenerationMessages = runtime.fomkePregenerationMessages
@@ -921,6 +979,52 @@ proc buildAad(carrier: AmeCarrier,
   result.add(uint8(ord(carrier)))
   appendAmeBytes(result, encodeAmeFrameHeader(h))
 
+proc encodeProtectedFrame(S: AmeSession, h: AmeFrameHeader,
+    body: openArray[uint8]): ByteSeq {.role: dataWriter,
+    tag: "ame|cryptoBoundary|wire".} =
+  ## S/h/body: one finished frame, with its counter masked on the way out.
+  ##
+  ## The header goes into the tag with the TRUE sequence and is masked only
+  ## afterwards, so the number the tag commits to and the number on the wire
+  ## are deliberately different. A receiver undoes the mask first and then
+  ## computes the same tag input this side did.
+  result = encodeAmeFrame(h, body)
+  maskAmeFrameHeader(result, S.headerKeySend)
+
+proc recvHeaderKey(S: AmeSession, useCandidate: bool = false): ByteSeq {.
+    role: parser, tag: "ame|cryptoBoundary".} =
+  ## S/useCandidate: which epoch's header key an arriving frame was masked
+  ## with.
+  ##
+  ## Almost always the current epoch's. The exception is epoch-ready, which
+  ## the peer seals as the FIRST frame of the epoch it is asking this side to
+  ## move to -- so it is the one frame whose counter was masked with a key
+  ## `auth.current` cannot produce yet. The candidate epoch can, and this side
+  ## has already built it in order to open the body at all.
+  ##
+  ## Falling back when there is no candidate is not a silent pass: the frame
+  ## then unmasks to the wrong sequence, that wrong number goes into the tag
+  ## input, and the open fails with the message the caller expects.
+  if not useCandidate or S.pendingIncoming.candidate.epochId == 0'u32:
+    return S.headerKeyRecv
+  result = deriveAmeHeaderKey(S.pendingIncoming.candidate.exchange,
+    S.pendingIncoming.candidate.layout, S.pendingIncoming.candidate.tier,
+    ameEpochKeyContext(S.pendingIncoming.candidate, S.auth.sessionId,
+      inboundAmeDirection(S.auth.endpointRole)))
+
+proc decodeProtectedFrame(S: AmeSession, frame: openArray[uint8],
+    useCandidate: bool = false): AmeDecodedFrame {.role: parser,
+    tag: "ame|cryptoBoundary|parsing".} =
+  ## S/frame/useCandidate: one arriving frame, with its counter put back the
+  ## way the sender wrote it before anything else looks at it.
+  ##
+  ## Everything downstream -- the binding checks, the replay window, the tag
+  ## itself -- reads `header.sequence`, so this is the only place that needs
+  ## to know the number on the wire was ever masked.
+  result = decodeAmeFrame(frame)
+  result.header.sequence = unmaskedAmeFrameSequence(frame,
+    recvHeaderKey(S, useCandidate))
+
 proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator,
     tag: "cryptoBoundary|fomke|protocol".} =
@@ -1007,7 +1111,7 @@ proc sealAmeTcpFrame*(S: var AmeSession,
   requireFrameBodyFits(S, body.len, "TCP payload")
   h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
     S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
-  result = encodeAmeFrame(h, sealFrameBody(S, h, acrTcp, body))
+  result = encodeProtectedFrame(S, h, sealFrameBody(S, h, acrTcp, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 proc sealAmeDacFrame*(S: var AmeSession,
@@ -1027,9 +1131,32 @@ proc sealAmeDacFrame*(S: var AmeSession,
   requireFrameBodyFits(S, body.len, "DAC payload")
   h = initAmeFrameHeader(ampkLaneData, S.messageClass, frameFlags(S),
     S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
-  result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, body))
+  result = encodeProtectedFrame(S, h, sealFrameBody(S, h, acrDac, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
+
+proc acceptsSessionId(S: AmeSession, id: uint64): bool {.role: parser,
+    tag: "ame|validation".} =
+  ## S/id: the id an arriving frame claims.
+  ##
+  ## Two ids are answered to, never more: the current one and the one used
+  ## before the last rotation, and the second only while frames sealed before
+  ## the change could still be in the air.
+  if id == S.sessionId:
+    return true
+  result = S.previousSessionIdFramesLeft > 0 and id == S.previousSessionId and
+    id != 0'u64
+
+proc consumeSessionIdGrace(S: var AmeSession) {.role: actor,
+    tag: "ame|protocol".} =
+  ## S: connection whose old session id expires as frames go by.
+  if S.previousSessionIdFramesLeft <= 0:
+    return
+  S.previousSessionIdFramesLeft = S.previousSessionIdFramesLeft - 1
+  if S.previousSessionIdFramesLeft > 0:
+    return
+  S.previousSessionId = 0'u64
+  S.previousSessionIdFramesLeft = 0
 
 proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
     expected: AmePacketKind): string {.role: parser.} =
@@ -1039,7 +1166,8 @@ proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
   if f.header.packetKind != expected:
     return "AME expected lane data"
   if f.header.messageClass != S.messageClass or
-      f.header.sessionId != S.sessionId or f.header.rootLaneId != S.rootLaneId or
+      not acceptsSessionId(S, f.header.sessionId) or
+      f.header.rootLaneId != S.rootLaneId or
       f.header.laneId != S.laneId:
     return "AME frame binding mismatch"
 
@@ -1123,6 +1251,7 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
       S.lastErr = result.err
       return
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
+  consumeSessionIdGrace(S)
   circ_seq.push(S.inbox, result.packet)
   S.lastErr = ""
 
@@ -1130,7 +1259,7 @@ proc openAmeTcpFrame*(S: var AmeSession, frame: openArray[uint8],
     remote: transport_types.TcpAddress = default(transport_types.TcpAddress)):
     AmeOpenResult {.role: orchestrator.} =
   ## S/frame/remote: TCP-carried AME2 frame.
-  result = openDecoded(S, decodeAmeFrame(frame), acrTcp,
+  result = openDecoded(S, decodeProtectedFrame(S, frame), acrTcp,
     remoteTcp = remote)
 
 proc openAmeDacFrame*(S: var AmeSession, frame: openArray[uint8],
@@ -1138,7 +1267,7 @@ proc openAmeDacFrame*(S: var AmeSession, frame: openArray[uint8],
     AmeOpenResult {.role: orchestrator.} =
   ## S/frame/remote: DAC-carried AME2 frame. The datagram is the AME frame
   ## itself; there is no outer header to strip or to disagree with it.
-  result = openDecoded(S, decodeAmeFrame(frame), acrDac, remoteDac = remote)
+  result = openDecoded(S, decodeProtectedFrame(S, frame), acrDac, remoteDac = remote)
 
 proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
     carrier: AmeCarrier, payload: openArray[uint8]): ByteSeq {.
@@ -1150,7 +1279,8 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
     body: ByteSeq = @[]
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
-  if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady}:
+  if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady,
+      ampkSessionIdRequest, ampkSessionIdAssign}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
@@ -1158,7 +1288,7 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   requireFrameBodyFits(S, body.len, "control payload")
   h = initAmeFrameHeader(kind, amcControl, frameFlags(S), S.sessionId,
     S.rootLaneId, S.laneId, S.nextAmeSequence)
-  result = encodeAmeFrame(h, sealFrameBody(S, h, carrier, body))
+  result = encodeProtectedFrame(S, h, sealFrameBody(S, h, carrier, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
@@ -1166,7 +1296,7 @@ proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
   ## S/f/expected: expected authenticated control metadata.
   if f.header.packetKind != expected or f.header.messageClass != amcControl:
     return "AME control packet kind mismatch"
-  if f.header.sessionId != S.sessionId or
+  if not acceptsSessionId(S, f.header.sessionId) or
       f.header.rootLaneId != S.rootLaneId or
       f.header.laneId != S.laneId:
     return "AME control frame binding mismatch"
@@ -1183,7 +1313,7 @@ proc openControlFrame(S: var AmeSession, frame: openArray[uint8],
   ## it, and hold it aside. Nothing is committed until the payload inside has
   ## been checked against what this side independently derived.
   var
-    f: AmeDecodedFrame = decodeAmeFrame(frame)
+    f: AmeDecodedFrame = decodeProtectedFrame(S, frame, useCandidate)
     aad: ByteSeq = @[]
     message: FomkeMessage = default(FomkeMessage)
     fomkeOpened: FomkeOpenResult = default(FomkeOpenResult)
@@ -1276,7 +1406,7 @@ proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
   requireFrameBodyFits(S, tagged.len, "DAC control payload")
   h = initAmeFrameHeader(ampkDacControl, amcControl, frameFlags(S),
     S.sessionId, S.rootLaneId, S.laneId, S.nextAmeSequence)
-  result = encodeAmeFrame(h, sealFrameBody(S, h, acrDac, tagged))
+  result = encodeProtectedFrame(S, h, sealFrameBody(S, h, acrDac, tagged))
   secureClearAmeBytes(tagged)
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
@@ -1294,7 +1424,7 @@ proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
   if result.err.len > 0:
     return
   try:
-    f = decodeAmeFrame(frame)
+    f = decodeProtectedFrame(S, frame)
   except CatchableError as exc:
     result.err = exc.msg
     return
@@ -1311,6 +1441,7 @@ proc openAmeDacControl*(S: var AmeSession, frame: openArray[uint8]): tuple[
   if opened.payload.len < 1:
     result.err = "AME DAC control message carries no kind"
     return
+  consumeSessionIdGrace(S)
   result.kind = dacMessageKindFromId(opened.payload[0])
   if result.kind == dmkUnknown:
     result.err = "AME DAC control message kind is unknown"
@@ -1529,3 +1660,138 @@ template ameSendTransaction*(S: var AmeSession, payload: openArray[uint8],
     restoreAmeSend(S, rollback, fomke, cache)
     raise
   discardAmeSendRollback(S, fomke, cache)
+
+## ╭⟢ rotating the session id 🌊
+##
+## The session id is eight bytes in the clear on every single frame, and until
+## now it never changed. With the sequence number masked it became the last
+## field that links a conversation to itself:
+##
+##   what an observer sees          before        after masking the counter
+##   -------------------------      -----------   --------------------------
+##   sequence                       0,1,2,3...    noise
+##   session id                     same, always  same, always   <- this one
+##
+## For a relay that matters most of all. Traffic going into the relay and
+## traffic coming out of it carry the same id, so anyone watching both sides
+## can pair them up without touching a single encrypted byte.
+##
+## So the id is rotated, and the exchange is three frames:
+##
+##   requester                             responder
+##   ---------                             ---------
+##   SessionIdRequest  ------------------>
+##                                         picks an id nothing else is using
+##                     <------------------ SessionIdAssign (new id inside)
+##   adopts the new id                     adopts the new id
+##
+## Both frames are sealed under the OLD id, because that is the only id both
+## sides share while the exchange is in flight. Each side switches only after
+## the assign frame is safely sealed or safely opened.
+##
+## ┊ Why this does not change any key ┊
+##
+## There are two session ids and it is worth being clear about which is which:
+##
+##   auth.sessionId   the CRYPTOGRAPHIC identity. Agreed at the handshake,
+##                    mixed into every derived key, and never rotated.
+##   sessionId        the id written into the header. A label for routing and
+##                    demultiplexing, and the one that rotates.
+##
+## Rotating the label therefore re-derives nothing. Every traffic key, the
+## header keys and any sealed package stay exactly as they were. The label is
+## still authenticated -- it is part of the header, and the header is part of
+## the tag -- so nobody can edit it in flight either.
+
+proc deriveAmeSessionIdCandidate*(S: AmeSession,
+    attempt: uint32 = 0'u32): uint64 {.role: truthBuilder,
+    tag: "ame|cryptoBoundary|kdf".} =
+  ## S/attempt: an id no observer can predict, for the side that assigns one.
+  ##
+  ## Derived from this side's header key rather than drawn from a random
+  ## source. Two reasons: the value has to be unpredictable to anyone without
+  ## the keys, which a key-derived value is by construction; and a protocol
+  ## that needs no entropy source is one less thing to get wrong on a small
+  ## device that may not have a good one.
+  ##
+  ## `attempt` exists because the assigning side owns the id space and has to
+  ## avoid handing out one it is already using for somebody else. It bumps the
+  ## input to get a different answer, and does not have to be kept.
+  var
+    seed: ByteSeq = @[]
+    digest: ByteSeq = @[]
+    i: int = 0
+  appendAmeLabel(seed, "AME-SESSION-ID-v1")
+  appendAmeU64(seed, S.auth.sessionId)
+  appendAmeU32(seed, S.auth.current.epochId)
+  appendAmeU32(seed, attempt)
+  appendAmeU64(seed, S.sessionId)
+  digest = blake3AmeMac(S.headerKeySend, seed, 16)
+  while i < 8:
+    result = result or (uint64(digest[i]) shl (8 * i))
+    i = i + 1
+  secureClearAmeBytes(seed)
+  secureClearAmeBytes(digest)
+  ## Zero is not an id -- it is what an unset field reads as, and
+  ## `acceptsSessionId` uses that to tell "no previous id" from a real one.
+  if result == 0'u64:
+    result = 1'u64
+
+proc adoptAmeSessionId(S: var AmeSession, next: uint64) {.role: actor,
+    tag: "ame|protocol".} =
+  ## S/next: the new label taken up, with the old one kept for arrivals only.
+  if next == 0'u64:
+    raise newException(ValueError, "AME session id must be positive")
+  if next == S.sessionId:
+    raise newException(ValueError, "AME session id did not change")
+  S.previousSessionId = S.sessionId
+  S.previousSessionIdFramesLeft = ameSessionIdGraceFrames
+  S.sessionId = next
+
+proc beginAmeSessionIdRotation*(S: var AmeSession,
+    carrier: AmeCarrier = acrDac): ByteSeq {.role: orchestrator,
+    tag: "appApi|ame|protocol".} =
+  ## S/carrier: ask the other side for a new label. Nothing changes here yet;
+  ## this side keeps sealing under the id it has until the answer arrives.
+  result = sealControlFrame(S, ampkSessionIdRequest, carrier, @[])
+
+proc answerAmeSessionIdRotation*(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier = acrDac, assigned: uint64 = 0'u64): ByteSeq {.
+    role: orchestrator, tag: "appApi|ame|protocol".} =
+  ## S/frame/carrier: the request, opened and answered.
+  ## assigned: the id to hand out. Zero means "derive one", which is right for
+  ##   a single session; a server holding many at once passes its own choice
+  ##   so it can be sure the id is free.
+  ##
+  ## The answer is sealed BEFORE this side switches, so it travels under the
+  ## id the requester still knows.
+  var
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (false, @[], "")
+    next: uint64 = assigned
+    body: ByteSeq = @[]
+  opened = openControlFrame(S, frame, ampkSessionIdRequest, carrier)
+  if not opened.ok:
+    raise newException(ValueError, opened.err)
+  if next == 0'u64:
+    next = deriveAmeSessionIdCandidate(S)
+  appendAmeU64(body, next)
+  result = sealControlFrame(S, ampkSessionIdAssign, carrier, body)
+  adoptAmeSessionId(S, next)
+
+proc finishAmeSessionIdRotation*(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier = acrDac): uint64 {.role: orchestrator,
+    tag: "appApi|ame|protocol".} =
+  ## S/frame/carrier: the assignment, opened and taken up. Returns the id this
+  ## side now answers to.
+  var
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (false, @[], "")
+    i: int = 0
+  opened = openControlFrame(S, frame, ampkSessionIdAssign, carrier)
+  if not opened.ok:
+    raise newException(ValueError, opened.err)
+  if opened.payload.len != 8:
+    raise newException(ValueError, "AME session id assignment is malformed")
+  while i < 8:
+    result = result or (uint64(opened.payload[i]) shl (8 * i))
+    i = i + 1
+  adoptAmeSessionId(S, result)

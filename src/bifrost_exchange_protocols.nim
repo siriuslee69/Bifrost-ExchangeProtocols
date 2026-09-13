@@ -41,6 +41,7 @@ import ./protocols/dac/level0/package_commit as dac_package_commit
 import ./protocols/dac/level1/path_switch as dac_path_switch
 import ./protocols/dac/level1/drift_payload as dac_drift_payload
 import ./protocols/dac/level0/protocols as dac_protocols
+import ./protocols/relay/udp_forward as relay_udp_forward
 
 when dacAdaptiveBuilt:
   ## The adaptive layer: everything that watches a connection and changes how
@@ -56,6 +57,7 @@ when dacAdaptiveBuilt:
   export dac_ack_policy, dac_scramble, dac_path_policy
   export dac_package_transfer, dac_link, dac_link_table
 
+export relay_udp_forward
 export core_types
 export bifrost_config
 export transport_types

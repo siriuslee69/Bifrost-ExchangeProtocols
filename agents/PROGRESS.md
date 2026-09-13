@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Measure the reorder window instead of fixing it, and drop the ratchet nothing drove
+Commit Message: Mask the frame counter, rotate the session id, and add the blind UDP relay
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -52,7 +52,7 @@ Features (Done):
 - `discardFomkeSkipped` / `discardAmeSessionSkipped`: the way out of a
   session that can neither receive across a gap nor rekey.
 - Pragmas come from the shared `Rune-Pragmas` repo; tags are strings.
-- 514 of 514 evaluation routines declare a `testKind`.
+- 542 of 542 evaluation routines declare a `testKind`.
 - The twelve `*DacDefaults` presets are one enum plus one data table.
 - `AmeSession.pathLane` is read, and the wall against link conditions
   moving a protection parameter is tested.
@@ -63,6 +63,11 @@ Features (Done):
   the derive-before-you-check amplifier a forged datagram can aim at a peer.
 - One retiring epoch, kept for stored packages and replaced by the next
   rotation rather than by a count of unrelated live traffic.
+- Header protection: the frame counter is masked on the wire, so a relay no
+  longer leaks that traffic in and traffic out are the same conversation.
+- Session id rotation, three frames, changing only the wire label and no key.
+- A blind UDP forwarder for the VPS: address mapping, NAS keepalive, a tiny
+  overflow buffer, and no key material anywhere in it.
 - A fresh clone builds. `Rune-Pragmas` is a submodule, and the pinned
   `Tyr-Crypto` is at Tyr `main` 1585636, the first Tyr commit that imports
   `runePragmas` instead of the `metaPragmas` that no longer exists. Both
@@ -171,3 +176,52 @@ Notes:
   `androidx.tracing:tracing:1.1.0` and it is not in the offline cache. The
   JVM unit tests run and pass. Set `ANDROID_HOME` to the repo's
   `.android-sdk` before any gradle task.
+- Header protection lives in `ame/level1/header_protection.nim` and is NOT
+  optional. Both ends must produce the same mask and there is nothing to
+  negotiate, so it cannot depend on a primitive `-d:bifrostSymmetric=` may
+  have left out of one of the two builds. BLAKE3 is the only primitive always
+  compiled, so it is the only honest choice. `blake3AmeMac` refuses to emit
+  fewer than 16 bytes -- correctly, it cannot know this caller wants a mask
+  and not a tag -- so 16 are drawn and 4 are used.
+
+  Two traps to not re-learn:
+
+    the epoch-ready frame is sealed as the FIRST frame of an epoch the
+      RECEIVER has not committed to, so it is masked with a key
+      `auth.current` cannot produce. `recvHeaderKey(S, useCandidate)` derives
+      it from `pendingIncoming.candidate` instead.
+    `refreshAmeHeaderKeys` must be called wherever `auth.current` changes --
+      three places today. A stale pair fails loudly (every frame refuses),
+      which is the right way for a missed call to show up.
+- Session id rotation keeps TWO ids apart, and collapsing them would be a
+  silent disaster:
+
+    auth.sessionId   the cryptographic identity, in every derived key, never
+                     rotated
+    sessionId        the header label, for routing and demux, rotated
+
+  Rotating the label re-derives nothing. If they were one field, a rotation
+  would change every traffic key and the session would go deaf.
+- The session-id grace window IS reachable, unlike the epoch one that was just
+  deleted, and for a reason worth keeping straight: it bounds frames already
+  in the air, which is what a frame count is actually a good clock for, and
+  DAC datagrams genuinely reorder past the assign message. It holds one
+  integer, not a second set of keys.
+- `src/protocols/relay/udp_forward.nim` is the VPS side and holds no key by
+  design -- the VPS is the weakest CPU in the picture and authenticating there
+  would cost a key derivation per datagram AND let the relay read everything.
+  It is pure logic: no sockets, time passed in, same split as the DAC link
+  modules.
+
+  `ame/level3/dac_relay.nim` was NOT deleted. It is the authenticating
+  endpoint relay, a different job from the blind forwarder, and it has its own
+  suite. Worth a decision, not a guess.
+- A test caught a real bug in the forwarder worth remembering: keepalive
+  pacing keyed on "have we heard from the NAS" instead of "have we poked it"
+  makes a DOWN NAS look permanently overdue, so the relay pokes on every
+  single tick -- a poke storm from the weakest machine at the worst moment.
+  `nasPoked` is a separate flag from `nasStarted` for exactly that reason.
+- OPEN: the relay keepalive PAYLOAD is the caller's to supply. The relay holds
+  no keys so it cannot produce anything the NAS would accept as authentic;
+  what it sends must be something the NAS will answer or ignore cheaply from
+  an unauthenticated source. Not yet decided what that datagram should be.

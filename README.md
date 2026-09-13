@@ -1001,6 +1001,108 @@ are **not** the old formats — keys now come from one derivation over the whole
 slot block, each cipher gets its own nonce slice, and the tag is whatever
 length the session agreed. Nothing sealed by the old code opens under these,
 and nothing should: the old formats are not in the library any more.
+## Relaying Through A VPS 🌊
+
+The problem is reachability, not trust. A home NAS has no address the world
+can reach; a small rented VPS does. So the VPS forwards:
+
+```text
+clients            a small VPS                a home NAS
+(many, anywhere)   (weak CPU, public IP)      (strong, no public IP)
+     |                    |                        |
+     +---- datagram ----->|                        |
+                          +---- same datagram ---->|
+                          |<--- answer ------------+
+     |<--- answer --------+
+```
+
+**Def. — the relay.** The VPS process. It holds no key, opens no frame, and
+does not know a session id from a sequence number. It moves bytes.
+
+### Why it must not authenticate ⌜guide⌟
+
+Authenticating would mean running the exchange, holding keys, and paying a key
+derivation per datagram **on the weakest machine in the picture**. It would
+also mean the relay could read everything. Both are the wrong trade.
+
+Cheap filtering that needs no secrets is welcome there — refusing an address
+range, refusing an oversized datagram. Anything needing a key belongs on the
+NAS.
+
+### How an answer finds its way back
+
+The relay gives each client a **tag**, and uses a different local socket
+toward the NAS per tag. The NAS answers to whichever socket it was addressed
+from, so the tag comes back with the answer and names the client:
+
+```text
+client A --> [ tag 1 ] --> NAS      NAS --> [ tag 1 ] --> client A
+client B --> [ tag 2 ] --> NAS      NAS --> [ tag 2 ] --> client B
+```
+
+This is exactly what a home router does, and it is why **neither end has to
+know the relay is there**. Nothing is added to the datagram, so the bytes the
+NAS sees are the bytes the client sent, and the frame the client sealed is the
+frame the NAS opens.
+
+A late answer whose slot has already been released is **dropped**, never sent
+to whoever holds the tag now. Guessing there would hand one client another
+client's bytes, which is the single worst thing a relay can do.
+
+### When the NAS goes away
+
+A home line reboots, changes address, or drops off. While the NAS is silent,
+datagrams for it go into a small buffer rather than into a hole:
+
+```text
+NAS answering    -> forward straight through, buffer stays empty
+NAS silent       -> hold the most recent few, keep listening
+buffer full      -> drop the OLDEST and count it
+NAS returns      -> drain in order, then carry on
+```
+
+The buffer is **overflow protection, not a mailbox**: it covers a reboot, not
+an outage. Everything in it is a datagram the real transport can ask for again
+— DAC rebuilds a missing frame from repair shards or re-requests it — so
+holding more would spend memory to save something already recoverable.
+
+The relay follows the NAS to a new address when it reappears, because
+insisting on the configured one means a relay that never recovers.
+
+### The numbers, and why each one is a ceiling
+
+| setting | default | what it bounds |
+|---|---:|---|
+| `udpForwardMaxClients` | 512 | slots a stranger can make the VPS allocate |
+| `udpForwardClientIdleMs` | 120 000 | how long an unused slot holds its tag |
+| `udpForwardNasKeepaliveMs` | 20 000 | how often the NAS is poked when quiet |
+| `udpForwardNasSilentMs` | 60 000 | silence before the NAS counts as away |
+| `udpForwardBufferDatagrams` | 64 | datagrams held for an absent NAS |
+| `udpForwardBufferBytes` | 262 144 | and the same limit in bytes |
+
+Anyone who can send a datagram gets a slot, so the table must have a top or a
+stranger sending from many addresses grows it until the VPS runs out of
+memory. When it is full the **newcomer is refused** — evicting somebody to
+make room would let the stranger push out the clients really using the relay.
+
+A nonsensical setting is an error rather than something quietly corrected,
+because each one is a bound on memory a stranger can make the process spend.
+
+### No sockets in the module
+
+`src/protocols/relay/udp_forward.nim` is the decision-making half only. It
+takes "a datagram arrived from here at this time" and answers "send these
+bytes there"; the caller owns the sockets. That is the same split the DAC link
+modules use, and it is what makes every rule above testable without a network.
+
+```nim
+var
+  F: UdpForwarder = initUdpForwarder(initUdpAddress("10.0.0.2", 9000'u16))
+  step: UdpForwardStep = fromClient(F, client, datagram, nowMs)
+## step.send is what to put on the wire, in order. step.send[i].tag names the
+## local socket to send from; step.send[i].peer is where it goes.
+```
+
 ## Layout
 
 | Path | Purpose |
@@ -1010,6 +1112,7 @@ and nothing should: the old formats are not in the library any more.
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
 | `src/protocols/dac/` | Framing, ACK, repair, path control, drift payloads |
 | `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O and relay helpers |
+| `src/protocols/relay/` | The blind VPS forwarder: address mapping, NAS keepalive, overflow buffer |
 | `src/protocols/tls13/` | Pure-Nim TLS 1.3 records, handshake, and client/server sessions |
 | `src/protocols/bfx2/` | Tagged binary envelopes |
 | `evaluation/tests/` | Unit and protocol tests |
@@ -1146,7 +1249,108 @@ unknown flag bit is refused rather than ignored, so a flag added later can
 never be silently dropped by a peer that would not honour it.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
-`0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records.
+`0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
+`0x10` SessionIdRequest, `0x11` SessionIdAssign.
+
+#### The one masked field: **Seq** at offset 22 ⌜guide⌟
+
+Authenticated is not the same as private, and one field in that header is a
+privacy problem on its own. The sequence counts up by one per frame, forever:
+
+```text
+watching one link              watching two links
+-----------------              -------------------------------------------
+how much you sent              "these two flows count up together, so they
+when you were idle              are the same conversation"
+when you restarted
+```
+
+The second column is what matters for a relay. The whole point of forwarding
+through one is that traffic going in and traffic coming out should not
+obviously be the same traffic, and a counter in the clear on both sides undoes
+that by itself. So the four bytes at offset 22 are masked:
+
+```text
+offset 0          22        26        39            55
+       +----------+---------+---------+-------------+-------------+
+       | AME ...  |   Seq   | FOMKE   |  sample     | ciphertext  |
+       |          | masked  | 13 B    |  16 B       |             |
+       +----------+----|----+---------+------|------+-------------+
+                       |                     |
+                       |     BLAKE3-MAC(headerKey, sample) -> 4 B
+                       |                     |
+                       +<------- XOR --------+
+```
+
+The mask input is 16 bytes of the **authentication tag**, which is a different
+unpredictable value on every frame — so the mask is too. If it were drawn from
+the sequence instead, the same counter value would always produce the same
+bytes and the counter would be back in the clear one step removed.
+
+Reading it back is the same operation. XOR is its own inverse, and the sample
+sits in the part of the frame the mask never touches, so a receiver can take
+it before it has unmasked anything. There is no pair of routines to get the
+wrong way round.
+
+Three things worth being exact about:
+
+- **This is not a second layer of encryption.** It hides one counter from
+  someone *watching*. It buys nothing against someone *editing* — and needs
+  to buy nothing, because the real sequence was always covered by the tag. A
+  flipped bit here changes the sequence the receiver recovers, that number
+  goes into the tag input, and the frame fails to open exactly as before.
+- **The header key is per epoch and per direction**, derived once when the
+  epoch is built — never per frame. Deriving it runs every switched-on KDF
+  slot; masking a frame is one keyed BLAKE3 call over 16 bytes.
+- **BLAKE3, not Gimli.** Both ends must produce the same mask or every frame
+  fails, and there is no way to negotiate it, so it cannot depend on a
+  primitive `-d:bifrostSymmetric=` might have left out of one of the two
+  builds. BLAKE3 is the only primitive always compiled.
+
+#### Rotating the session id ⌜guide⌟
+
+With the counter masked, the session id becomes the last field that links a
+conversation to itself — eight bytes, identical on every frame. So it rotates,
+in three frames:
+
+```text
+requester                             responder
+---------                             ---------
+SessionIdRequest  ------------------>
+                                      picks an id nothing else is using
+                  <------------------ SessionIdAssign (new id inside)
+adopts the new id                     adopts the new id
+```
+
+Both frames are sealed under the **old** id, because that is the only id both
+sides share while the exchange is in flight. Each side switches only after the
+assign frame is safely sealed or safely opened.
+
+There are two session ids and the difference is the whole reason this is
+cheap:
+
+| | what it is | rotates? |
+|---|---|---|
+| `auth.sessionId` | the **cryptographic** identity, mixed into every derived key | never |
+| `sessionId` | the **label** written into the header, for routing and demux | yes |
+
+Rotating the label therefore re-derives nothing. Every traffic key, both
+header keys, and any sealed package stay exactly as they were. The label is
+still authenticated — it is part of the header, and the header is part of the
+tag — so nobody can edit it in flight either.
+
+The receiver answers to the previous id as well, for `ameSessionIdGraceFrames`
+(100) arriving frames. That window exists for one carrier only:
+
+```text
+TCP   order is guaranteed, so every frame after the assign already carries
+      the new id and the window never fires
+DAC   datagrams reorder, so a frame sealed before the assign can easily
+      land after it
+```
+
+What the window holds is one integer, not a second set of keys — forgetting it
+early costs a dropped datagram the transport re-sends, never a lost secret.
 
 ### Padding
 

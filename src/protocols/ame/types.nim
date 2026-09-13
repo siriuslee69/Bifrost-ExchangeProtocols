@@ -54,7 +54,9 @@ type
     ampkClientHello = 0x0C'u8,
     ampkHelloRetry = 0x0D'u8,
     ampkServerHello = 0x0E'u8,
-    ampkClientFinish = 0x0F'u8
+    ampkClientFinish = 0x0F'u8,
+    ampkSessionIdRequest = 0x10'u8,
+    ampkSessionIdAssign = 0x11'u8
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,
