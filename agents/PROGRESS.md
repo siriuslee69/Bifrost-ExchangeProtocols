@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Delete four words DAC never spoke, and make the five ACK modes real
+Commit Message: Split the handshake into the questions it was answering at once
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -581,3 +581,50 @@ Notes:
     README.md "The numbered folders"  what level0..level3 actually mean
     ame/README.md "What is in this folder"  four questions, and which file
                                   answers each
+- `ame/level3/handshake.nim` was 1835 lines and is now six files. It was
+  already sectioned by `╭⟢` banners, and every cut landed exactly on one --
+  which is the tell that the file had been several files for a while:
+
+    handshake.nim             1835 -> 797   the four steps, and the four
+                                            calls a caller makes
+    handshake_identity.nim           793    who someone is, and whether you
+                                            believe them
+    handshake_transcript.nim         240    the running record both sides
+                                            sign, and the AM1M proofs over it
+    handshake_records.nim            108    the SHAPE of the four messages
+    handshake_cookie.nim             144    proving you can receive where you
+                                            claim to be
+    (handshake_wire.nim              283    unchanged -- those four as bytes)
+
+  Two things this fixed beyond the size:
+
+    the three `AmeAuthentication` constructors were 1500 lines apart. PSK sat
+      near the top with the PSK proofs; pinned and certificate sat at the very
+      bottom under a banner saying "three authentication inputs" that held
+      two of them. All three are together now, in identity, where the choice
+      is one glance.
+    `handshake_wire.nim` imported the whole 1000-line handshake to learn what
+      a client hello contains. It imports `handshake_records.nim` now, which
+      is 108 lines of types and nothing else.
+- `ameCookieValid` and `issueAmeCookie` took an `AmeClientHello` and read two
+  fields of it. They now take those two fields, which is what makes
+  `handshake_cookie.nim` readable on its own: a cookie is about an ADDRESS,
+  and it needs to know nothing about what a hello is.
+
+    ameCookieValid(secret, peerId, nowUnix, hello)
+      -> ameCookieValid(secret, peerId, nowUnix, sessionId, cookie)
+
+  A comment at the test site claimed the cookie was bound to the hello's
+  nonce and had to be replayed with it. It never was -- `cookieSubject`
+  covers the address, the timestamp and the session id, deliberately NOT the
+  nonce, so a client may retry with fresh key material without paying for a
+  second round trip. The comment and the line it justified are gone, and
+  there is a new check that a cookie cannot be carried to another session.
+- NOT split further, on purpose: the certificate's byte form stays inside
+  `handshake_identity.nim` rather than becoming a `_wire` file of its own.
+  The whole point of that encoding is that there is ONE canonical form, used
+  both as the thing the authority signs and as the thing that travels sealed.
+  Putting the bytes in a different file from the signing is how a second form
+  gets introduced by accident, which is the trap the design exists to avoid.
+- Each of the five new files re-exports what it sits on, so one `import
+  ./handshake` still gives a caller everything. The split is for reading.

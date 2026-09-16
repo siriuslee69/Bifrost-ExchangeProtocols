@@ -247,9 +247,9 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
   ## this is the only thing standing between the responder and a stranger who
   ## can make it do post-quantum key exchanges by spoofing a source address.
   if c.requireCookie and
-      not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
+      not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello.sessionId, hello.cookie):
     retry.sessionId = hello.sessionId
-    retry.cookie = issueAmeCookie(c.cookieSecret, peerId, nowUnix, hello)
+    retry.cookie = issueAmeCookie(c.cookieSecret, peerId, nowUnix, hello.sessionId)
     try:
       sendRecord(sock, result.remote, encodeAmeHelloRetryFrame(retry),
         maxDatagramBytes)
@@ -267,7 +267,7 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     except CatchableError as e:
       result.outcome.err = e.msg
       return
-    if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
+    if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello.sessionId, hello.cookie):
       result.outcome.err = "AME hello retry cookie is invalid"
       return
   answered = answerAmeHandshake(hello, c.supported, c.authentication, c.descriptor,

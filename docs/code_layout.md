@@ -30,8 +30,14 @@ src/protocols
 │   │                              and the AME/DAC seam
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
-│   └── level3/  <- handshake, its wire and transport, the TCP handshake
-│                    driver, secure package, and the DAC relay that
+│   └── level3/  <- handshake.nim   the four messages, and the four calls
+│                    _identity.nim  who someone is, and whether you believe
+│                    _cookie.nim    proving you can receive where you claim
+│                    _records.nim   the shape of the four messages
+│                    _wire.nim      those same four, byte for byte
+│                    _transcript.nim  the record both sides sign
+│                    _tcp/_dac/_transport.nim  running one over a socket
+│                    plus secure package, and the DAC relay that
 │                    assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim

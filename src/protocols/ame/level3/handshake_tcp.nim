@@ -98,9 +98,9 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
   ## The cookie round trip happens before ANY key work, so a flood of holds
   ## from forged addresses costs one small tag computation each.
   if c.requireCookie and
-      not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
+      not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello.sessionId, hello.cookie):
     retry.sessionId = hello.sessionId
-    retry.cookie = issueAmeCookie(c.cookieSecret, peerId, nowUnix, hello)
+    retry.cookie = issueAmeCookie(c.cookieSecret, peerId, nowUnix, hello.sessionId)
     try:
       sendTcpFrame(sock, encodeAmeHelloRetryFrame(retry))
     except CatchableError as e:
@@ -117,7 +117,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     except CatchableError as e:
       result.err = e.msg
       return
-    if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello):
+    if not ameCookieValid(c.cookieSecret, peerId, nowUnix, hello.sessionId, hello.cookie):
       result.err = "AME hello retry cookie is invalid"
       return
   answered = answerAmeHandshake(hello, c.supported, c.authentication, c.descriptor,

@@ -17,8 +17,10 @@ them, and the folder it sits in tells you which:
   WHAT DO I SEND?       level2/framing.nim
                                   sealing a payload into a frame, opening one
                                   again, and the AME/DAC seam
-  HOW DO I START?       level3/handshake*.nim
-                                  proving who you are, over TCP or over DAC
+  HOW DO I START?       level3/handshake.nim  and its five neighbours
+                                  one question each -- who someone is, the
+                                  anti-flood cookie, the four message shapes,
+                                  their bytes, and the transcript they sign
 ```
 
 | Path | What it holds |
@@ -34,7 +36,13 @@ them, and the folder it sits in tells you which:
 | **`level2/session.nim`** | **what a connection IS** — keys, epoch, exchange, settings |
 | **`level2/framing.nim`** | **what a message LOOKS LIKE** — seal, open, and the DAC seam |
 | `level2/carriers/` | the two things that own a socket: `tcp.nim`, `dac.nim` |
-| `level3/handshake*.nim` | the handshake, its wire format, and one driver per carrier |
+| `level3/handshake.nim` | the four messages, and the four calls you make |
+| `level3/handshake_identity.nim` | who someone is, and whether you believe them |
+| `level3/handshake_cookie.nim` | proving you can receive where you claim to be |
+| `level3/handshake_records.nim` | the shape of the four messages. Types only |
+| `level3/handshake_wire.nim` | those same four, byte for byte |
+| `level3/handshake_transcript.nim` | the running record both sides sign |
+| `level3/handshake_{tcp,dac,transport}.nim` | running one over a real socket |
 | `level3/secure_package.nim` | sealing something once, to be stored and opened later |
 | `level3/dac_relay.nim` | many peers, each with a session and a DAC loop |
 | `level3/dac_endpoint.nim` | the one file in the DAC path that holds a socket |

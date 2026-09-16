@@ -45,7 +45,7 @@
 
 from ../../types import ByteSeq
 import ../types
-import ./handshake
+import ./handshake_records
 import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites

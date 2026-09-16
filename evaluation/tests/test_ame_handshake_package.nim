@@ -534,20 +534,28 @@ suite "AME anti-flood cookie":
       client: AmeClientHandshake = beginAmeHandshake(4'u64, p.layout, p.tier)
       cookie: ByteSeq = @[]
       retried: AmeClientHandshake
-    check not ameCookieValid(secret, here, nowUnix, client.hello)
-    cookie = issueAmeCookie(secret, here, nowUnix, client.hello)
+    check not ameCookieValid(secret, here, nowUnix, client.hello.sessionId,
+      client.hello.cookie)
+    cookie = issueAmeCookie(secret, here, nowUnix, client.hello.sessionId)
     retried = beginAmeHandshake(4'u64, p.layout, p.tier, 1'u32, cookie)
-    ## The cookie is bound to the hello it was minted for, so it has to be
-    ## replayed with that same nonce.
-    retried.hello.nonce = client.hello.nonce
-    check ameCookieValid(secret, here, nowUnix, retried.hello)
-    check not ameCookieValid(secret, elsewhere, nowUnix, retried.hello)
+    check ameCookieValid(secret, here, nowUnix, retried.hello.sessionId,
+      retried.hello.cookie)
+    ## Wrong address, too late, wrong secret, edited bytes: four ways to be
+    ## refused, and the caller is told apart from none of them, because every
+    ## one means the same thing -- do the cheap retry, not the expensive work.
+    check not ameCookieValid(secret, elsewhere, nowUnix,
+      retried.hello.sessionId, retried.hello.cookie)
     check not ameCookieValid(secret, here,
-      nowUnix + ameCookieLifetimeSeconds + 1'i64, retried.hello)
+      nowUnix + ameCookieLifetimeSeconds + 1'i64, retried.hello.sessionId,
+      retried.hello.cookie)
     check not ameCookieValid(initAmeCookieSecret(), here, nowUnix,
-      retried.hello)
+      retried.hello.sessionId, retried.hello.cookie)
+    ## The session id is bound in, so a cookie cannot be carried to another.
+    check not ameCookieValid(secret, here, nowUnix, 5'u64,
+      retried.hello.cookie)
     retried.hello.cookie[9] = retried.hello.cookie[9] xor 0xFF'u8
-    check not ameCookieValid(secret, here, nowUnix, retried.hello)
+    check not ameCookieValid(secret, here, nowUnix, retried.hello.sessionId,
+      retried.hello.cookie)
 
 suite "AME handshake transport":
   # {.testKind: tkUnit.}
