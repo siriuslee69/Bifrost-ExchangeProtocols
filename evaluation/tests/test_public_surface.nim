@@ -26,7 +26,6 @@ import ../../src/protocols/http/level0/header_ops
 import ../../src/protocols/http/level1/response_ops
 import ../../src/protocols/transport/protocols as transport_protocols
 import ../../src/protocols/mail/dkim_crypto
-import ../../src/protocols/dac/level1/path_probe
 import ../../src/protocols/tls13/connection
 import runePragmas
 
@@ -154,13 +153,6 @@ suite "DKIM signing and verifying":
     ## caller might catch and treat as "probably fine".
     check not dkimVerifyRsaSha256("data", "!!!not base64!!!", "alsonot")
     check not dkimVerifyRsaSha256("", "", "")
-
-suite "DAC probe and repair defaults":
-  # {.testKind: tkUnit.}
-  test "a path is probed more often than it needs replies to be accepted":
-    ## Otherwise a single lost probe would keep a working path out.
-    check defaultDacProbeCount() > defaultDacProbeAcceptCount()
-    check defaultDacProbeAcceptCount() > 0'u8
 
 suite "TLS connection counters":
   ## A `Tls13Connection` is public and constructible on its own, for a caller

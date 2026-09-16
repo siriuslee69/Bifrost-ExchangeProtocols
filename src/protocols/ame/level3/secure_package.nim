@@ -4,7 +4,7 @@
 
 import ../../types
 import ../types
-import ../level2/session
+import ../level2/framing
 import ../level1/compression
 import ../level0/bytes
 import ../level1/exchange_paths

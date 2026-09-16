@@ -8,7 +8,7 @@ import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/ame/level3/dac_relay
 import ../../src/protocols/ame/level3/secure_package
 import ../../src/protocols/dac/types
@@ -275,31 +275,33 @@ suite "AME DAC relay bounds":
     check step.kind == adrDropped
     check step.err == "DAC relay has no session for that peer"
 
-suite "DAC admission and dispatch agree":
-  ## There used to be TWO admission rules here and a test that they agreed:
-  ## `dacFrameOpensLink` decided whether a bare, unauthenticated DAC1 frame
-  ## from a stranger could claim a slot, and `dacLinkHandlesKind` decided
-  ## whether the loop had a branch for that kind. Two rules that had to be
-  ## kept in step, and had already drifted once -- `dmkPathProbe` was on the
+suite "every word DAC has is a word the loop acts on":
+  ## This used to be a test that TWO lists agreed. `dacFrameOpensLink` decided
+  ## whether a bare, unauthenticated DAC1 frame from a stranger could claim a
+  ## slot, and `dacLinkHandlesKind` decided whether the loop had a branch for
+  ## that kind. They had already drifted once -- `dmkPathProbe` was on the
   ## first list and not the second, so 40 probes from 40 addresses filled a
   ## 4-slot table with entries the loop then ignored.
   ##
-  ## The bare framing is gone, so the first rule is gone with it. A kind is
-  ## only ever seen after `openAmeDacControl` has checked the tag, which means
-  ## a stranger cannot present a kind at all. One rule, nothing to drift.
+  ## Both halves of that trap are gone now. The bare framing went first, so a
+  ## kind is only ever seen after `openAmeDacControl` has checked the tag.
+  ## Then the four kinds the loop had no branch for went too, so the enum and
+  ## the handled set are the same list and cannot disagree.
 
-  # {.testKind: tkRegression, covers: "dacLinkHandlesKind", pins: "an unauthenticated kind could claim a link slot".}
-  test "the loop acts on a fixed set of kinds and nothing else":
+  # {.testKind: tkRegression, covers: "dacLinkHandlesKind", pins: "a message kind the loop silently ignores".}
+  test "the enum IS the list of kinds the loop acts on":
     var
       handled: int = 0
+      total: int = 0
       k: DacMessageKind
     for k in DacMessageKind:
+      total = total + 1
       if dacLinkHandlesKind(k):
         handled = handled + 1
+    ## Nine words, eight of them real. Only `dmkUnknown` -- the byte no kind
+    ## claims -- is unhandled, and that is the whole difference.
+    check total == 9
     check handled == 8
-    ## A path probe is still not one of them. The loop has no branch for it,
-    ## and a kind the loop cannot act on must never reach the link.
-    check not dacLinkHandlesKind(dmkPathProbe)
     check not dacLinkHandlesKind(dmkUnknown)
 
 suite "secure package over the relay":
@@ -513,7 +515,7 @@ suite "when the relay cannot seal what it wants to say":
   test "abandoning a package is idempotent and frees the slot":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      S: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
+      S: DacLink = initDacLink(d, 11'u64)
     discard beginDacPackage(S, 1'u64, rampBytes(3_000), 0'u32)
     check S.outgoing.active
     check abandonDacPackage(S)

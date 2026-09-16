@@ -14,7 +14,7 @@ import ../../dac/level1/scramble
 import ../../dac/level2/package_transfer
 import ../../dac/level3/link
 import ../../dac/level3/link_table
-import ../level2/session
+import ../level2/framing
 import runePragmas
 
 const
@@ -95,7 +95,7 @@ proc admitAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey, S: AmeSession,
   ## whether an unknown datagram deserves memory.
   var
     a: tuple[admit: DacLinkAdmit, slot: int] = (dlaExisting, -1)
-  a = admitDacLink(R.table, key, S.sessionId, S.laneId, nowMs)
+  a = admitDacLink(R.table, key, nowMs)
   if a.slot < 0:
     result.slot = -1
     result.err = "DAC relay is full of live links"

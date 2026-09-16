@@ -50,7 +50,7 @@ import ../level1/symmetric
 import ../level1/tier_aead
 import ../level1/padding
 import ../level1/path_triggers
-import ../level2/session
+import ../level2/framing
 import ../../fomke/level0/gb3hkdf
 import runePragmas
 

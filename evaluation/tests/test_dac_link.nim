@@ -66,8 +66,8 @@ proc runLink(payload: ByteSeq, d: DacScenarioDefaults, P: var Pipe,
   ## P: pipe the frames cross.
   ## maxTicks: give-up bound so a broken loop fails instead of hanging.
   var
-    sender: DacLink = initDacLink(9'u64, 1'u32, d, 0xABCDEF'u64)
-    receiver: DacLink = initDacLink(9'u64, 1'u32, d, 0x123456'u64)
+    sender: DacLink = initDacLink(d, 0xABCDEF'u64)
+    receiver: DacLink = initDacLink(d, 0x123456'u64)
     toReceiver: seq[DacTaggedMessage] = @[]
     toSender: seq[DacTaggedMessage] = @[]
     step: DacLinkStep = default(DacLinkStep)
@@ -126,8 +126,8 @@ suite "DAC link on a clean pipe":
   test "the sender learns the package was committed":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(4'u64, 2'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(4'u64, 2'u32, d, 2'u64)
+      sender: DacLink = initDacLink(d, 1'u64)
+      receiver: DacLink = initDacLink(d, 2'u64)
       payload: ByteSeq = rampBytes(6_000)
       step: DacLinkStep = default(DacLinkStep)
       back: seq[DacTaggedMessage] = @[]
@@ -151,7 +151,7 @@ suite "DAC link on a clean pipe":
   test "a second package cannot start while one is in flight":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(4'u64, 2'u32, d, 1'u64)
+      sender: DacLink = initDacLink(d, 1'u64)
     discard beginDacPackage(sender, 1'u64, rampBytes(4_000), 0'u32)
     expect ValueError:
       discard beginDacPackage(sender, 2'u64, rampBytes(4_000), 0'u32)
@@ -219,8 +219,8 @@ suite "DAC link gives up cleanly":
   test "a link that can never complete reports failure instead of hanging":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
+      sender: DacLink = initDacLink(d, 1'u64)
+      receiver: DacLink = initDacLink(d, 2'u64)
       frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
       step: DacLinkStep = default(DacLinkStep)
@@ -247,8 +247,8 @@ suite "DAC link gives up cleanly":
   test "the round budget is spent, not looped forever":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(1'u64, 1'u32, d, 2'u64)
+      sender: DacLink = initDacLink(d, 1'u64)
+      receiver: DacLink = initDacLink(d, 2'u64)
       frames: seq[DacTaggedMessage] = (
         beginDacPackage(sender, 3'u64, rampBytes(20_000), 0'u32))
       hints: int = 0
@@ -275,7 +275,7 @@ suite "DAC link refuses rubbish":
     ## holds the keys can send nonsense, and nonsense must not end the loop.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      S: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
+      S: DacLink = initDacLink(d, 1'u64)
       step: DacLinkStep = default(DacLinkStep)
     step = feedDacMessage(S, dmkPackageManifest, @[byte 0, 1, 2, 3], 0'u32)
     check step.kind == dlkIgnored
@@ -284,12 +284,15 @@ suite "DAC link refuses rubbish":
     check step.kind == dlkIgnored
     check step.err.len > 0
 
-  # {.testKind: tkUnit.}
-  test "a kind the loop has no branch for is ignored":
+  # {.testKind: tkEdgeCase.}
+  test "the byte no kind claims is ignored":
+    ## `dmkUnknown` is what `dacMessageKindFromId` answers for a first byte
+    ## outside the enum. It is the only kind the loop has no branch for, and
+    ## after four unhandled kinds were deleted it is the only one there can be.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      S: DacLink = initDacLink(1'u64, 1'u32, d, 1'u64)
-      step: DacLinkStep = feedDacMessage(S, dmkPathProbe, @[byte 1], 0'u32)
+      S: DacLink = initDacLink(d, 1'u64)
+      step: DacLinkStep = feedDacMessage(S, dmkUnknown, @[byte 1], 0'u32)
     check step.kind == dlkIgnored
 
 ## The test that used to sit here -- "a frame for another session or lane is

@@ -8,7 +8,7 @@
 
 import ../../types
 import ../../../dac/level0/transport as dac_transport
-import ../session
+import ../framing
 import runePragmas
 
 type

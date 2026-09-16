@@ -24,7 +24,11 @@ src/protocols
 │   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
 │   │   └── symmetric/  <- one file per symmetric primitive
 │   │       (each folder has a flag-gated dispatcher beside it)
-│   ├── level2/  <- agreement, at-rest protection, trust, AME wire, session
+│   ├── level2/  <- session.nim  WHAT a connection knows: epoch, keys,
+│   │                              the exchange that replaces them, settings
+│   │                framing.nim  WHAT one message looks like: seal, open,
+│   │                              and the AME/DAC seam
+│   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
 │   └── level3/  <- handshake, its wire and transport, the TCP handshake
 │                    driver, secure package, and the DAC relay that

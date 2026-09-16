@@ -62,21 +62,27 @@ type
     host*: string
     port*: uint16
 
-  ## DacMessageKind: data adaptive transport message kind.
+  ## DacMessageKind: the nine words DAC can say.
+  ##
+  ## Every one of them except `dmkUnknown` has a branch in `feedDacMessage`.
+  ## That is the whole list and there is nothing else to look up: if a kind is
+  ## in this enum, the loop acts on it.
+  ##
+  ## Four kinds used to sit here that the loop had no branch for -- a path
+  ## probe, a path-switch request and its ack, and a realtime pose packet.
+  ## They had encoders, decoders and fuzz tests, and a caller could seal one
+  ## and watch the peer ignore it. See `dac/README.md`, "Four words DAC used
+  ## to have", for why each one went.
   DacMessageKind* = enum
     dmkUnknown = 0x00'u8,
-    dmkPathProbe = 0x01'u8,
-    dmkPathStats = 0x02'u8,
-    dmkPackageManifest = 0x03'u8,
-    dmkPackageChunk = 0x04'u8,
-    dmkParityShard = 0x05'u8,
-    dmkAckRange = 0x06'u8,
-    dmkRepairHint = 0x07'u8,
-    dmkRepairChunk = 0x08'u8,
-    dmkPackageCommit = 0x09'u8,
-    dmkPathSwitchRequest = 0x0A'u8,
-    dmkPathSwitchAck = 0x0B'u8,
-    dmkDriftPayload = 0x0C'u8
+    dmkPathStats = 0x01'u8,
+    dmkPackageManifest = 0x02'u8,
+    dmkPackageChunk = 0x03'u8,
+    dmkParityShard = 0x04'u8,
+    dmkAckRange = 0x05'u8,
+    dmkRepairHint = 0x06'u8,
+    dmkRepairChunk = 0x07'u8,
+    dmkPackageCommit = 0x08'u8
 
   ## DacPathLane: horizontal path condition profile.
   DacPathLane* = enum
@@ -96,32 +102,6 @@ type
     dtcArchive = 0x03'u8,
     dtcRecovery = 0x04'u8,
     dtcRealtime = 0x05'u8
-
-  ## DacDriftScalar: compact scalar type for realtime pose drift bodies.
-  DacDriftScalar* = float32
-
-  ## DacDriftVector3: realtime 3D vector.
-  DacDriftVector3* {.role: truthState.} = object
-    x*: DacDriftScalar
-    y*: DacDriftScalar
-    z*: DacDriftScalar
-
-  ## DacDriftPose: compact position and rotation body.
-  DacDriftPose* {.role: truthState.} = object
-    position*: DacDriftVector3
-    rotation*: DacDriftVector3
-
-  ## DacDriftPayloadKind: realtime drift body kind.
-  DacDriftPayloadKind* = enum
-    ddpkSnapshot,
-    ddpkDelta
-
-  ## DacDriftPacket: salvaged realtime pose body carried by DAC, then AME if
-  ## encrypted. It has no separate legacy frame and no local Gimli tag.
-  DacDriftPacket* {.role: truthState.} = object
-    kind*: DacDriftPayloadKind
-    tick*: uint32
-    pose*: DacDriftPose
 
   ## DacRepairMode: package repair strategy.
   DacRepairMode* = enum
@@ -213,14 +193,6 @@ type
     repairCount*: uint16
     status*: DacCommitStatus
 
-  ## DacPathProbe: sender probe and receiver echo schema.
-  DacPathProbe* {.role: truthState.} = object
-    probeId*: uint32
-    pathLane*: DacPathLane
-    udpPort*: uint16
-    tcpPort*: uint16
-    nonce*: array[9, uint8]
-
   ## DacPackageManifest: sender package declaration and receiver plan input.
   DacPackageManifest* {.role: truthState.} = object
     packageId*: uint64
@@ -282,7 +254,16 @@ type
     source*: DacRepairSource
     payload*: ByteSeq
 
-  ## DacPathSwitchReason: reason for horizontal path lane switch.
+  ## DacPathSwitchReason: why a side decided to change its own lane.
+  ##
+  ## This never travels. It is the word `recommendDacPathFromStats` hands back
+  ## with its suggestion, so a caller reading `DacPathRecommendation.reason`
+  ## can see WHY the loop wants to move rather than only where to.
+  ##
+  ## There used to be a `DacPathSwitch` message carrying it, asking a peer to
+  ## move with you. That is the one shape this protocol refuses: a message is
+  ## a fact about the speaker, never an instruction for the listener. See
+  ## `dac/README.md`.
   DacPathSwitchReason* = enum
     dpsrLoss = 0x00'u8,
     dpsrMetered = 0x01'u8,
@@ -291,10 +272,14 @@ type
     dpsrReceiverPressure = 0x04'u8,
     dpsrBatterySaver = 0x05'u8
 
-  ## DacPathSwitch: request or ACK body for path epoch transition.
-  DacPathSwitch* {.role: truthState.} = object
-    oldEpoch*: uint16
-    newEpoch*: uint16
-    oldPath*: DacPathLane
-    newPath*: DacPathLane
-    reason*: DacPathSwitchReason
+proc dacMessage*(k: DacMessageKind, body: ByteSeq): DacTaggedMessage {.
+    role: configurator.} =
+  ## k: which of the nine words this is.
+  ## body: the bytes that say it.
+  ##
+  ## There is nothing else to put on a DAC message, which is the point. The
+  ## link used to build these through a helper that took the link itself and
+  ## then discarded it -- left over from when a link stamped its own identity
+  ## into a DAC header that no longer exists.
+  result.kind = k
+  result.body = body

@@ -23,9 +23,6 @@ import ../../src/protocols/dac/level1/package_chunk
 import ../../src/protocols/dac/level1/parity_shard
 import ../../src/protocols/dac/level1/repair_hint
 import ../../src/protocols/dac/level1/repair_chunk
-import ../../src/protocols/dac/level1/path_probe
-import ../../src/protocols/dac/level1/path_switch
-import ../../src/protocols/dac/level1/drift_payload
 import ../../src/protocols/dac/level3/link
 import ../../src/protocols/dac/level3/link_table
 import ./fuzz_support
@@ -58,7 +55,7 @@ suite "DAC message fuzz":
       if dacMessageKindFromId(uint8(i)) != dmkUnknown:
         known = known + 1
       i = i + 1
-    check known == 12
+    check known == 8
 
 suite "DAC body decoder fuzz":
   # {.testKind: tkFuzz.}
@@ -126,38 +123,13 @@ suite "DAC body decoder fuzz":
         1400'u16, 4'u16, 600'u16))):
       discard decodeDacPathStats(data)
 
-  # {.testKind: tkFuzz.}
-  test "path probe":
-    var
-      nonce: array[9, uint8] = [1'u8, 2, 3, 4, 5, 6, 7, 8, 9]
-    fuzzBody("decodeDacPathProbe", 11'u64,
-        encodeDacPathProbe(initDacPathProbe(9'u32, dplMobilePath, 48374'u16,
-        48375'u16, nonce))):
-      discard decodeDacPathProbe(data)
-
-  # {.testKind: tkFuzz.}
-  test "path switch":
-    fuzzBody("decodeDacPathSwitch", 12'u64,
-        encodeDacPathSwitch(initDacPathSwitch(2'u16, 3'u16, dplCleanPath,
-        dplLossyPath, dpsrLoss))):
-      discard decodeDacPathSwitch(data)
-
-  # {.testKind: tkFuzz.}
-  test "drift payload":
-    var
-      p: DacDriftPacket
-      got: DacDriftPacket
-    p.kind = ddpkSnapshot
-    p.tick = 42'u32
-    fuzzBody("decodeDacDriftPacket", 13'u64, encodeDacDriftPacket(p)):
-      discard decodeDacDriftPacket(data, got)
 
 suite "DAC link fuzz":
   # {.testKind: tkFuzz.}
   test "the loop survives an arbitrary body without raising":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      S: DacLink = initDacLink(7'u64, 2'u32, d, 99'u64)
+      S: DacLink = initDacLink(d, 99'u64)
       R: Rng = Rng(seed: 4242'u64)
       sample: ByteSeq = sampleChunkBody()
       data: ByteSeq = @[]
@@ -201,8 +173,7 @@ suite "DAC link fuzz":
       data = mutate(R, sample)
       try:
         a = admitDacLink(T, initDacLinkKey("10.9.9." & $(round mod 251),
-          uint16(1024 + (round mod 4096)), dlcDatagram), uint64(round),
-          1'u32, uint32(round))
+          uint16(1024 + (round mod 4096)), dlcDatagram), uint32(round))
         if a.slot >= 0:
           discard feedDacMessage(T.slots[a.slot].link, dmkPackageChunk, data,
             uint32(round))
@@ -225,8 +196,8 @@ suite "DAC link fuzz":
   test "a real package interleaved with rubbish still completes":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
-      sender: DacLink = initDacLink(7'u64, 2'u32, d, 1'u64)
-      receiver: DacLink = initDacLink(7'u64, 2'u32, d, 2'u64)
+      sender: DacLink = initDacLink(d, 1'u64)
+      receiver: DacLink = initDacLink(d, 2'u64)
       R: Rng = Rng(seed: 77'u64)
       payload: ByteSeq = rampBytes(9_000)
       frames: seq[DacTaggedMessage] = beginDacPackage(sender, 5'u64,

@@ -37,7 +37,7 @@ import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/level1/compression
 import ../../src/protocols/ame/level1/header_protection
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level3/secure_package
 import ../../src/protocols/fomke/types

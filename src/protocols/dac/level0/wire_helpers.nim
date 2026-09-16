@@ -50,34 +50,18 @@ proc readDacU64(A: openArray[uint8], o: int): uint64 {.role: parser.} =
     i = i + 1
 
 proc dacMessageKindFromId*(id: uint8): DacMessageKind {.role: parser.} =
-  ## id: raw message kind id.
-  case id
-  of 0x01'u8:
-    result = dmkPathProbe
-  of 0x02'u8:
-    result = dmkPathStats
-  of 0x03'u8:
-    result = dmkPackageManifest
-  of 0x04'u8:
-    result = dmkPackageChunk
-  of 0x05'u8:
-    result = dmkParityShard
-  of 0x06'u8:
-    result = dmkAckRange
-  of 0x07'u8:
-    result = dmkRepairHint
-  of 0x08'u8:
-    result = dmkRepairChunk
-  of 0x09'u8:
-    result = dmkPackageCommit
-  of 0x0A'u8:
-    result = dmkPathSwitchRequest
-  of 0x0B'u8:
-    result = dmkPathSwitchAck
-  of 0x0C'u8:
-    result = dmkDriftPayload
-  else:
-    result = dmkUnknown
+  ## id: the first byte of a DAC body, exactly as it came off the wire.
+  ##
+  ## An id no kind claims reads as `dmkUnknown`. It does NOT raise: this runs
+  ## on a byte a peer chose, and the caller's answer to "I do not know this
+  ## word" is to drop the message, not to unwind.
+  ##
+  ## The enum states every value, so the byte IS the kind and there is nothing
+  ## to keep in step. This used to be a twenty-two line case that listed each
+  ## id a second time, and it had already drifted from the enum once.
+  if id > uint8(ord(high(DacMessageKind))):
+    return dmkUnknown
+  result = DacMessageKind(id)
 
 proc dacPathLaneName*(p: DacPathLane): string {.role: truthBuilder.} =
   ## p: path lane to render.

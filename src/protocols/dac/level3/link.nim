@@ -87,6 +87,12 @@ type
   ## sentMs: when each chunk last left, for measuring receipt latency.
   ## acked: chunks the peer has confirmed.
   ## waitingMs: when the last frame of the package left.
+  ## peerCommitsAtStart: what the peer's commit count read when this package
+  ## began. A `damVerified` receiver reports that count in every receipt, so a
+  ## DIFFERENT number coming back means it committed something since -- and
+  ## with one package in flight per direction, that something is this one.
+  ## Every other mode reports zero, so the comparison never fires and this
+  ## costs nothing.
   DacOutgoing* {.role: truthState.} = object
     active*: bool
     plan*: DacPackagePlan
@@ -96,6 +102,7 @@ type
     rounds*: uint8
     timer*: DacRepairTimer
     scramble*: DacScrambleState
+    peerCommitsAtStart*: uint8
 
   ## DacIncoming: one package this side is receiving.
   ## parity: shards held for the group they belong to, keyed by group id.
@@ -119,52 +126,42 @@ type
   ## it will ever state as fact.
   ## pathMoves: how many times the peer's report moved this side's lane, so a
   ## caller can see the loop adapting rather than having to infer it.
+  ## committed: packages this side has received whole and verified. Only a
+  ## `damVerified` receiver says it out loud, in every receipt.
+  ## peerCommits: the last commit count the PEER reported.
   DacLink* {.role: truthState.} = object
-    sessionId*: uint64
-    laneId*: uint32
-    epochId*: uint16
     defaults*: DacScenarioDefaults
     policy*: DacScramblePolicy
     limits*: DacPackageLimits
     observed*: DacPathStats
     pathMoves*: uint16
+    committed*: uint8
+    peerCommits*: uint8
     outgoing*: DacOutgoing
     incoming*: DacIncoming
 
-proc initDacLink*(sessionId: uint64, laneId: uint32,
-    d: DacScenarioDefaults, seed: uint64, epochId: uint16 = 0'u16,
+proc initDacLink*(d: DacScenarioDefaults, seed: uint64,
     policy: DacScramblePolicy = initDacScramblePolicy(),
     limits: DacPackageLimits = defaultDacPackageLimits()): DacLink {.
     role: configurator.} =
-  ## sessionId/laneId/epochId: identity stamped into every frame this link emits.
   ## d: scenario defaults seeding chunk size, repair mode and ACK pacing.
   ## seed: sender-local randomness for send delay and chunk order; feed it
   ## something a peer cannot guess.
   ## policy/limits: scrambling policy and receiver resource bounds.
+  ##
+  ## A link carries no identity of its own. It used to hold a session id, a
+  ## lane id and a path epoch, stamped into the DAC header it no longer
+  ## writes; nothing ever read them back. WHO a link belongs to is the peer
+  ## table's question, answered by the address it was admitted on, and WHAT
+  ## authenticates is the AME session beside it.
   if not validateDacDefaults(d):
     raise newException(ValueError, "DAC link defaults are invalid")
-  result.sessionId = sessionId
-  result.laneId = laneId
-  result.epochId = epochId
   result.defaults = d
   result.policy = policy
   result.limits = limits
   result.outgoing.timer = initDacRepairTimer()
   result.outgoing.scramble = initDacScrambleState(seed)
   result.incoming.ack = initDacAckPolicy(d, not policy.shuffleChunks)
-
-proc tagDacBody(S: var DacLink, k: DacMessageKind,
-    body: ByteSeq): DacTaggedMessage {.role: truthBuilder.} =
-  ## S: link the message comes from. Unused now, and kept so the call reads
-  ##    the same at every site if ordering ever needs to come back here.
-  ## k: message kind this body answers to.
-  ## body: encoded body bytes.
-  ##
-  ## Order is the AME sequence's job, not DAC's. This used to stamp a second
-  ## counter that advanced in lockstep with it and that nothing read.
-  discard S
-  result.kind = k
-  result.body = body
 
 proc appendDacParityFrames(S: var DacLink, F: var seq[DacTaggedMessage],
     groupId: uint32) {.role: dataWriter.} =
@@ -175,7 +172,7 @@ proc appendDacParityFrames(S: var DacLink, F: var seq[DacTaggedMessage],
     shards: seq[DacParityShard] = groupParityShards(S.outgoing.plan, groupId)
     i: int = 0
   while i < shards.len:
-    F.add(tagDacBody(S, dmkParityShard, encodeDacParityShard(shards[i])))
+    F.add(dacMessage(dmkParityShard, encodeDacParityShard(shards[i])))
     i = i + 1
 
 proc beginDacPackage*(S: var DacLink, packageId: uint64,
@@ -200,19 +197,20 @@ proc beginDacPackage*(S: var DacLink, packageId: uint64,
   S.outgoing.rounds = 0'u8
   S.outgoing.sentMs = newSeq[uint32](S.outgoing.plan.chunks.len)
   S.outgoing.acked = newSeq[bool](S.outgoing.plan.chunks.len)
-  result.add(tagDacBody(S, dmkPackageManifest,
+  result.add(dacMessage(dmkPackageManifest,
     encodeDacPackageManifest(S.outgoing.plan.manifest)))
   order = dacChunkSendOrder(S.outgoing.scramble, S.policy,
     S.outgoing.plan.chunks.len)
   while i < order.len:
     S.outgoing.sentMs[int(order[i])] = nowMs
-    result.add(tagDacBody(S, dmkPackageChunk,
+    result.add(dacMessage(dmkPackageChunk,
       encodeDacPackageChunk(S.outgoing.plan.chunks[int(order[i])])))
     i = i + 1
   while g < uint32(S.outgoing.plan.repairs.len):
     appendDacParityFrames(S, result, g)
     g = g + 1'u32
   S.outgoing.waitingMs = nowMs
+  S.outgoing.peerCommitsAtStart = S.peerCommits
 
 proc dacSendDelayMs*(S: var DacLink): uint16 {.role: math.} =
   ## S: link drawing one send delay.
@@ -357,7 +355,7 @@ proc emitDacPathStats(S: var DacLink, F: var seq[DacTaggedMessage],
   ## F: outbox the report is appended to.
   ## nowMs: caller's millisecond clock.
   measureDacPath(S, nowMs)
-  F.add(tagDacBody(S, dmkPathStats, encodeDacPathStats(S.observed)))
+  F.add(dacMessage(dmkPathStats, encodeDacPathStats(S.observed)))
 
 proc finishDacIncoming(S: var DacLink, R: var DacLinkStep,
     nowMs: uint32) {.role: orchestrator.} =
@@ -372,7 +370,11 @@ proc finishDacIncoming(S: var DacLink, R: var DacLinkStep,
     return
   R.kind = dlkPackageComplete
   R.payload = outcome.payload
-  R.messages.add(tagDacBody(S, dmkPackageCommit,
+  ## One more package received whole and verified. A `damVerified` receiver
+  ## puts this count in every receipt from here on, so a sender whose commit
+  ## message is lost still learns the package landed.
+  S.committed = S.committed + 1'u8
+  R.messages.add(dacMessage(dmkPackageCommit,
     encodeDacPackageCommit(outcome.commit)))
   ## The commit is the honest moment to report the path: the package is done,
   ## so how much of it had to be repaired is a settled number rather than a
@@ -397,10 +399,10 @@ proc emitDacAck(S: var DacLink, F: var seq[DacTaggedMessage], nowMs: uint32) {.
   ## S: link closing its open ACK batch.
   ## F: outbox the receipt is appended to.
   ## nowMs: caller's millisecond clock.
-  if S.incoming.ack.pending == 0'u16:
+  if not dacAckSpeaks(S.incoming.ack) or S.incoming.ack.pending == 0'u16:
     return
-  F.add(tagDacBody(S, dmkAckRange,
-    encodeDacAckRange(closeDacAckBatch(S.incoming.ack, 0'u8, nowMs))))
+  F.add(dacMessage(dmkAckRange, encodeDacAckRange(closeDacAckBatch(
+    S.incoming.ack, dacAckCommitCount(S.incoming.ack, S.committed), nowMs))))
   noteDacAckEvidence(S, false)
 
 proc feedDacManifest(S: var DacLink, body: openArray[uint8], nowMs: uint32,
@@ -469,8 +471,19 @@ proc feedDacAck(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     a: DacAckRange = decodeDacAckRange(body)
     i: int = 0
     delta: uint32 = 0'u32
+  S.peerCommits = a.commitCount
   if not S.outgoing.active:
     R.kind = dlkIgnored
+    return
+  ## A `damVerified` receiver reports its running commit count in every
+  ## receipt. A count that has MOVED since this package began means the peer
+  ## committed something, and with one package in flight per direction that
+  ## something is this one -- so the package is done even if the commit
+  ## message never arrived. Every other mode reports a fixed zero, so this
+  ## never fires for them and costs one comparison.
+  if a.commitCount != S.outgoing.peerCommitsAtStart:
+    clearDacOutgoing(S)
+    R.kind = dlkCommitReceived
     return
   while i < S.outgoing.acked.len:
     if not S.outgoing.acked[i] and dacAckIncludesSeq(a, uint32(i)):
@@ -493,7 +506,7 @@ proc feedDacRepairHint(S: var DacLink, body: openArray[uint8],
     return
   answers = answerDacRepairHint(S.outgoing.plan, h)
   while i < answers.len:
-    R.messages.add(tagDacBody(S, dmkRepairChunk,
+    R.messages.add(dacMessage(dmkRepairChunk,
       encodeDacRepairChunk(answers[i])))
     i = i + 1
   R.kind = dlkRepairRequested
@@ -655,7 +668,7 @@ proc requestDacRepair(S: var DacLink, F: var seq[DacTaggedMessage]): bool {.role
   if not S.incoming.active or missingChunkCount(S.incoming.receiver) == 0:
     return true
   try:
-    F.add(tagDacBody(S, dmkRepairHint,
+    F.add(dacMessage(dmkRepairHint,
       encodeDacRepairHint(buildDacRepairHint(S.incoming.receiver))))
   except CatchableError:
     return false

@@ -11,7 +11,7 @@ import std/net
 import ../../../transport/types as transport_types
 import ../../../transport/tcp_ops
 import ../../types
-import ../session
+import ../framing
 import runePragmas
 
 type

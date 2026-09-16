@@ -55,6 +55,21 @@ type
   ## cleanRuns: consecutive loss-free batches, used to relax slowly.
   ## started: set once the first frame has been seen, so a closed batch keeps
   ## its advanced base instead of silently re-basing onto the next arrival.
+  ## mode: WHETHER and WHEN this receiver answers, straight from the profile.
+  ## The two levers below say how big a batch gets and how long it may wait;
+  ## the mode says whether a batch is the right idea at all:
+  ##
+  ##   damSilent    never answers. The sender learns a package landed from the
+  ##                commit and from nothing else. For a link where an uplink
+  ##                byte costs more than a wasted parity shard.
+  ##   damNackOnly  answers only when it KNOWS something is missing. On a
+  ##                metered uplink, silence is the message.
+  ##   damBatch     closes on the count or the deadline, whichever trips.
+  ##   damExplicit  one receipt per chunk. Most receipts, least latency.
+  ##   damVerified  like damBatch, and every receipt also carries how many
+  ##                packages this side has committed, so the sender can let a
+  ##                package go even when the commit message itself was lost.
+  ##
   ## windowChunks: how many identifiers the open batch may span at once. Zero
   ## lets the batch ceiling decide, which is all a policy watching an endless
   ## sequence can do. A caller that knows the whole range -- a DAC package
@@ -91,6 +106,7 @@ type
     started*: bool
     holesMeanLoss*: bool
     windowChunks*: uint16
+    mode*: DacAckMode
 
   ## DacRepairTimer: sender-side repair timing state for one connection.
   ## The sender never reads a receiver-advertised hold time. It measures how
@@ -116,6 +132,7 @@ proc initDacAckPolicy*(d: DacScenarioDefaults,
   result.ceilingChunks = d.ackBatchChunks
   result.ceilingMs = d.ackMaxDelayMs
   result.holesMeanLoss = holesMeanLoss
+  result.mode = d.ackMode
   result.arrivals = @[]
 
 proc dacAckWindowLimit(S: DacAckPolicy): int {.role: math.} =
@@ -158,6 +175,25 @@ proc openDacAckBatchAt*(S: var DacAckPolicy, base: uint32, window: uint16,
   S.windowChunks = window
   S.started = true
 
+proc dacAckSpeaks*(S: DacAckPolicy): bool {.role: parser.} =
+  ## S: policy asked whether this receiver answers at all.
+  ##
+  ## A silent receiver is not a broken one. The sender still learns its
+  ## package landed, from the commit; what it loses is the running receipt
+  ## that lets it free chunks early, and what it saves is every uplink byte.
+  result = S.mode != damSilent
+
+proc dacAckCommitCount*(S: DacAckPolicy, committed: uint8): uint8 {.
+    role: parser.} =
+  ## S: policy deciding whether a receipt carries the commit count.
+  ## committed: how many packages this side has committed so far.
+  ## Only `damVerified` says it out loud. Every other mode sends zero, which
+  ## a sender reads as "this peer does not report commits" rather than as
+  ## "this peer has committed nothing".
+  if S.mode != damVerified:
+    return 0'u8
+  result = committed
+
 proc dacAckGapsPending*(S: DacAckPolicy): uint16 {.role: parser.} =
   ## S: policy whose observed gap count in the open batch is returned.
   result = S.span - S.pending
@@ -190,15 +226,32 @@ proc observeDacArrival*(S: var DacAckPolicy, seq: uint32,
 proc dacAckDue*(S: DacAckPolicy, nowMs: uint32): bool {.role: parser.} =
   ## S: policy holding the open batch.
   ## nowMs: caller's millisecond clock.
-  ## A gap ends the batch at once; otherwise whichever bound trips first does.
+  ## The profile's `ackMode` decides the shape of the answer and the two
+  ## levers decide its size:
+  ##
+  ##   damSilent    never
+  ##   damExplicit  as soon as anything has arrived -- one receipt per chunk
+  ##   damNackOnly  only on a hole this side can trust to be real
+  ##   damBatch     a hole, the count, or the deadline
+  ##   damVerified  the same, with the commit count riding along
   ##
   ## Where the sender reorders on purpose there is a hole after almost every
   ## arrival -- the shuffle guarantees it -- so closing on holes turns one
-  ## receipt for a 40-chunk package into twenty-seven. Such a receiver waits
-  ## for the count or the deadline, and its loop flushes the batch on purpose
-  ## the moment the stream stalls, which is when the sender needs the truth.
+  ## receipt for a 40-chunk package into twenty-seven, and a NACK-only link
+  ## into a chattering one. Such a receiver waits for the count or the
+  ## deadline, and its loop flushes the batch on purpose the moment the stream
+  ## stalls: silence with holes in it is the one hole that is always real.
   if S.pending == 0'u16:
     return false
+  case S.mode
+  of damSilent:
+    return false
+  of damExplicit:
+    return true
+  of damNackOnly:
+    return S.holesMeanLoss and dacAckGapsPending(S) > 0'u16
+  of damBatch, damVerified:
+    discard
   if S.holesMeanLoss and dacAckGapsPending(S) > 0'u16:
     return true
   if S.pending >= S.batchChunks:

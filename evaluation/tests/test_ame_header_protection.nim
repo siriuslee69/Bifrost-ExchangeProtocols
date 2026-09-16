@@ -32,7 +32,7 @@ import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/header_protection
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/ame/level2/wire
 import runePragmas
 

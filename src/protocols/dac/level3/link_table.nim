@@ -207,26 +207,25 @@ proc stalestDacLinkSlot(T: DacLinkTable, nowMs: uint32): int {.role: parser.} =
   result = best
 
 proc placeDacLink(T: var DacLinkTable, i: int, k: DacLinkKey,
-    sessionId: uint64, laneId: uint32, epochId: uint16, nowMs: uint32) {.
-    role: actor.} =
+    nowMs: uint32) {.role: actor.} =
   ## T/i: table and the slot being filled.
-  ## k/sessionId/laneId/epochId: peer key and the identity the link answers to.
+  ## k: the peer key this slot answers to. It is the whole identity: a link
+  ##    carries none of its own, and the AME session beside it is what
+  ##    authenticates.
   ## nowMs: caller's millisecond clock, recorded as first contact.
   if T.slots[i].used:
     T.live = T.live - 1
   T.slots[i].used = true
   T.slots[i].key = k
   T.slots[i].lastSeenMs = nowMs
-  T.slots[i].link = initDacLink(sessionId, laneId, T.defaults,
-    dacKeySeed(T.seed, k), epochId, T.policy, T.limits)
+  T.slots[i].link = initDacLink(T.defaults, dacKeySeed(T.seed, k),
+    T.policy, T.limits)
   T.live = T.live + 1
 
-proc admitDacLink*(T: var DacLinkTable, k: DacLinkKey, sessionId: uint64,
-    laneId: uint32, nowMs: uint32,
-    epochId: uint16 = 0'u16): tuple[admit: DacLinkAdmit, slot: int] {.
+proc admitDacLink*(T: var DacLinkTable,
+    k: DacLinkKey, nowMs: uint32): tuple[admit: DacLinkAdmit, slot: int] {.
     role: orchestrator.} =
   ## T/k: table and the peer asking for a slot.
-  ## sessionId/laneId/epochId: identity the new link will answer to.
   ## nowMs: caller's millisecond clock.
   ## An existing link is returned unchanged. Otherwise a free slot is used, or
   ## a slot whose link finished and went quiet. With neither available the peer
@@ -239,13 +238,13 @@ proc admitDacLink*(T: var DacLinkTable, k: DacLinkKey, sessionId: uint64,
     return
   i = freeDacLinkSlot(T)
   if i >= 0:
-    placeDacLink(T, i, k, sessionId, laneId, epochId, nowMs)
+    placeDacLink(T, i, k, nowMs)
     result.admit = dlaAdmitted
     result.slot = i
     return
   i = stalestDacLinkSlot(T, nowMs)
   if i >= 0:
-    placeDacLink(T, i, k, sessionId, laneId, epochId, nowMs)
+    placeDacLink(T, i, k, nowMs)
     result.admit = dlaReplacedIdle
     result.slot = i
     return
@@ -256,12 +255,15 @@ proc admitDacLink*(T: var DacLinkTable, k: DacLinkKey, sessionId: uint64,
 proc dacLinkHandlesKind*(k: DacMessageKind): bool {.role: parser.} =
   ## k: message kind asked whether the link loop has a branch for it at all.
   ##
-  ## Every kind here arrives inside an AME frame, authenticated, so the loop
-  ## is never handed one it has not already been told to trust. There is no
-  ## longer a bare-frame admission rule beside this to drift away from it.
-  result = k in {dmkPackageManifest, dmkPackageChunk, dmkParityShard,
-    dmkAckRange, dmkRepairHint, dmkRepairChunk, dmkPackageCommit,
-    dmkPathStats}
+  ## The answer is yes for every kind DAC has a word for. `DacMessageKind`
+  ## listed four the loop could not act on -- a path probe, a path-switch
+  ## request and its ack, a pose packet -- and keeping this list in step with
+  ## that one was a job somebody had to remember. They are gone, so the list
+  ## IS the enum and this cannot drift from it.
+  ##
+  ## Every kind arrives inside an AME frame, authenticated, so the loop is
+  ## never handed one it has not already been told to trust.
+  result = k != dmkUnknown
 
 proc tickDacLinkTable*(T: var DacLinkTable, nowMs: uint32): seq[DacLinkRoute] {.
     role: orchestrator.} =

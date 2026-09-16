@@ -18,7 +18,7 @@ import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/level1/signatures
 import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level3/handshake
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/ame/level1/compression

@@ -115,10 +115,6 @@ proc dacEnumFromId[T: enum](id: uint8, what: string): T {.role: parser,
     raise newException(ValueError, "DAC " & what & " id mismatch")
   result = T(id)
 
-proc dacPathLaneFromId*(id: uint8): DacPathLane {.role: parser.} =
-  ## id: raw DAC path lane byte.
-  result = dacEnumFromId[DacPathLane](id, "path lane")
-
 proc dacTransferClassFromId*(id: uint8): DacTransferClass {.role: parser.} =
   ## id: raw DAC transfer class byte.
   result = dacEnumFromId[DacTransferClass](id, "transfer class")
@@ -138,8 +134,3 @@ proc dacRepairSourceFromId*(id: uint8): DacRepairSource {.role: parser.} =
 proc dacCommitStatusFromId*(id: uint8): DacCommitStatus {.role: parser.} =
   ## id: raw DAC commit status byte.
   result = dacEnumFromId[DacCommitStatus](id, "commit status")
-
-proc dacPathSwitchReasonFromId*(id: uint8): DacPathSwitchReason {.
-    role: parser.} =
-  ## id: raw DAC path-switch reason byte.
-  result = dacEnumFromId[DacPathSwitchReason](id, "path switch reason")

@@ -29,7 +29,6 @@ import ./protocols/dac/types as dac_types
 import ./protocols/dac/level0/transport as dac_transport
 import ./protocols/dac/level0/wire_helpers as dac_wire_helpers
 import ./protocols/dac/level0/defaults as dac_defaults
-import ./protocols/dac/level1/path_probe as dac_path_probe
 import ./protocols/dac/level0/path_stats as dac_path_stats
 import ./protocols/dac/level1/package_manifest as dac_package_manifest
 import ./protocols/dac/level1/package_chunk as dac_package_chunk
@@ -38,8 +37,6 @@ import ./protocols/dac/level0/ack_range as dac_ack_range
 import ./protocols/dac/level1/repair_hint as dac_repair_hint
 import ./protocols/dac/level1/repair_chunk as dac_repair_chunk
 import ./protocols/dac/level0/package_commit as dac_package_commit
-import ./protocols/dac/level1/path_switch as dac_path_switch
-import ./protocols/dac/level1/drift_payload as dac_drift_payload
 import ./protocols/dac/level0/protocols as dac_protocols
 import ./protocols/relay/udp_forward as relay_udp_forward
 
@@ -85,7 +82,6 @@ export dac_types
 export dac_transport
 export dac_wire_helpers
 export dac_defaults
-export dac_path_probe
 export dac_path_stats
 export dac_package_manifest
 export dac_package_chunk
@@ -94,6 +90,4 @@ export dac_ack_range
 export dac_repair_hint
 export dac_repair_chunk
 export dac_package_commit
-export dac_path_switch
-export dac_drift_payload
 export dac_protocols

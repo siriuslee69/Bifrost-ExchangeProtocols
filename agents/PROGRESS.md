@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Measure the path instead of guessing at it, and stop the loop adapting backwards
+Commit Message: Delete four words DAC never spoke, and make the five ACK modes real
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -68,6 +68,12 @@ Features (Done):
 - Session id rotation, three frames, changing only the wire label and no key.
 - A blind UDP forwarder for the VPS: address mapping, NAS keepalive, a tiny
   overflow buffer, and no key material anywhere in it.
+- The five ACK modes are real behaviour, not a table nobody read. One payload
+  on one flawless wire now gets five measurably different answers.
+- DacMessageKind is nine words and the loop has a branch for all but
+  `dmkUnknown`. There is no list to keep in step with the enum any more.
+- `ame/level2/session.nim` split in two at the obvious question: `session.nim`
+  is WHAT a connection knows, `framing.nim` is WHAT one message looks like.
 - The adaptive loop adapts in the right direction. A clean link stays clean;
   a lossy one walks down one step per package and settles. It used to reach
   the recovery lane in four packages on a flawless LAN.
@@ -462,3 +468,116 @@ Notes:
   `agents/`. The nimble file still has `findIronOverrideFile` looking for
   `.iron/.local.gitmodules.toml` -- dead, since nobody may create that
   directory, but it is build machinery and deleting it was not this task.
+- DELETED, and each one for its own reason. `dmkPathProbe`,
+  `dmkPathSwitchRequest`, `dmkPathSwitchAck` and `dmkDriftPayload` had bodies,
+  encoders, decoders, fuzz tests and umbrella exports -- and no branch in
+  `feedDacMessage`. A caller could build one, seal it and watch the peer
+  answer `dlkIgnored`, which is worse than the feature being absent.
+
+    PathProbe    "can I reach you on UDP port X?" -- and it could only travel
+                 inside a sealed AME frame, so a session already existed and
+                 the peer was already reachable. The question's precondition
+                 was its answer. What is left of the job: the handshake
+                 completes or it does not; PathStats measures quality;
+                 recommendDacPathFromFailures walks the lane down on retries
+                 and auth failures; dplBlockedUdpPath is chosen by config.
+    PathSwitch   not merely redundant -- it is the one shape this protocol
+                 refuses. Every DAC message is a fact about the SPEAKER; a
+                 switch request is an instruction for the LISTENER, and
+                 `newPath` is arbitrary, so one message could drop a peer from
+                 clean to recovery in a single step. `feedDacPathStats` moves
+                 a lane ONE step and only its own. `DacPathSwitchReason` stays
+                 -- the vocabulary was useful, the message was not.
+    DriftPayload a 29-byte pose packet whose own doc comment called it
+                 "salvaged". Nothing in Bifrost is about poses.
+
+  Kind bytes renumbered densely, 0x00..0x08. `dacMessageKindFromId` went from
+  a 22-line case that listed every id a second time to a bounds check and a
+  cast, so it cannot drift from the enum -- which it already had, once.
+  `dacLinkHandlesKind` is now `k != dmkUnknown`.
+- ackMode was a five-word vocabulary the loop ignored: every profile batched
+  by count and deadline, so the table promised a metered link sent only NACKs
+  and the recovery lane verified, and neither was true. Now each word does
+  something the others measurably do not:
+
+    damSilent    emits nothing at all. The sender learns a package landed from
+                 the commit and from nowhere else.
+    damNackOnly  emits only on a hole it can trust -- which, with a shuffling
+                 sender, means the stall flush and not a mid-package gap. On a
+                 clean 34-chunk delivery it sends ZERO receipts.
+    damBatch     unchanged: count or deadline.
+    damExplicit  one receipt per chunk.
+    damVerified  batch pacing, plus the running commit count in every receipt.
+
+  `damVerified` earns its keep in one specific way, and it is why the commit
+  count stopped being a hardcoded zero: a PackageCommit is one datagram and
+  can die like any other, so a receiver that reports "I have committed N" lets
+  the sender release its package even when the commit never arrived.
+  `DacOutgoing.peerCommitsAtStart` snapshots the last count seen; a DIFFERENT
+  number coming back means the peer committed something, and with one package
+  in flight that something is this one. Every other mode reports a fixed zero,
+  so the comparison never fires for them -- that self-disabling is the guard,
+  and there is a test pinning it.
+- `ame/level2/session.nim` was 1796 lines and is now two files that answer two
+  different questions:
+
+    session.nim  1796 -> 932   WHAT a connection knows: the epoch, its keys,
+                               the exchange that replaces them, the ratchet,
+                               the settings
+    framing.nim         953    WHAT one message looks like: seal, open, the
+                               header protection wiring, replay, control
+                               frames, and the AME/DAC seam
+
+  The cut was verified before it was made: nothing in the first half
+  referenced anything in the second. `framing.nim` re-exports `session`, so a
+  module that seals frames imports one file and gets both halves, and
+  `carriers.nim` exports framing upward for the umbrella. Two things had to
+  move with the framing: the private `AmeSendRollback` type (only sealing ever
+  undoes itself) and `readU32`. One private had to be exported --
+  `restoreConfiguredAmeFomkeCache` -- because the exchange is genuinely split
+  across the seam: the STATE half lives in session, the FRAME half in framing.
+- `DacLink` carried `sessionId`, `laneId` and `epochId`, all written and never
+  read -- the last of the "identity stamped into every frame" fields the DAC
+  header deletion orphaned, and `epochId` was specifically the path-epoch
+  counter PathSwitch would have incremented. Gone, which simplifies two public
+  signatures a long way:
+
+    initDacLink(sessionId, laneId, d, seed, epochId, policy, limits)
+      -> initDacLink(d, seed, policy, limits)
+    admitDacLink(T, key, sessionId, laneId, nowMs, epochId)
+      -> admitDacLink(T, key, nowMs)
+
+  WHO a link belongs to is the table's question, answered by the address it
+  was admitted on; WHAT authenticates is the AME session beside it. A field
+  that LOOKS like a binding and enforces nothing is worse than no field.
+  `tagDacBody(S, kind, body)` -- which took the link only to `discard` it --
+  became `dacMessage(kind, body)` in types.nim.
+- The `.iron` machinery is out of the nimble file: `findIronOverrideFile`,
+  `parseironOverrides`, `unquoteValue` and the overrides parameter threaded
+  through `resolveDepSrc`. It read `.iron/.local.gitmodules.toml`, a file in a
+  directory the conventions forbid recreating, so the TOML reader behind it
+  was ~50 lines nothing could ever reach. Sibling checkouts do the same job
+  with no file to write, and `resolveDepSrc` now says its three-step search
+  out loud. 43 lines lighter, and `std/tables` came off the import line.
+- dplSuperCleanPath is CONFIGURATION ONLY and that is correct, not a gap.
+  Promotion needs `mtuHint >= 4096`, and the hint a receiver reports is the
+  chunk size that actually got through -- a sender on the clean lane sends
+  1200-byte chunks, so 1200 is all anyone can observe. You do not discover a
+  32 KB path by only ever sending small pieces down it. Adaptation can still
+  walk DOWN from it the moment the path disagrees. Written down in README.md
+  under "The top lane is chosen, never discovered".
+- Where the AME/DAC seam is now explained, for the next person who asks:
+
+    README.md                     "The nine words DAC can say" -- the whole
+                                  vocabulary as a table, byte by byte
+                                  "How one word gets from DAC to the wire and
+                                  back" -- four files, one job each, both
+                                  directions
+                                  "What DAC is allowed to change, and what it
+                                  is not"
+    ame/level2/framing.nim        the module header draws one frame and the
+                                  seam, in the file that implements it
+    dac/README.md                 "Four words DAC used to have"
+    README.md "The numbered folders"  what level0..level3 actually mean
+    ame/README.md "What is in this folder"  four questions, and which file
+                                  answers each

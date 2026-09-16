@@ -35,13 +35,11 @@ check after package repair.
 +----------------------+                          +----------------------+
 | DAC Sender           |                          | DAC Receiver         |
 +----------------------+                          +----------------------+
-| path lane selector   | -- PathProbe ----------> | probe echo actor     |
-| path truth cache     | <- PathStats ----------- | path stats actor     |
-| receive budget cache | <- ReceiveBudget ------- | memory budget actor  |
 | package scheduler    | -- Manifest/Chunks ----> | package receive map  |
 | parity/repair writer | -- Parity/RepairChunk -> | gap repair builder   |
 | ack/repair reader    | <- Ack/RepairHint ------ | gap repair builder   |
 | commit receipt cache | <- PackageCommit ------- | digest/commit actor  |
+| path truth cache     | <- PathStats ----------- | path stats actor     |
 +----------------------+                          +----------------------+
 ```
 
@@ -109,9 +107,7 @@ runtime memory views built from messages that already arrived.
 +----------------------+--------------------+--------------------------------+
 | Message/body         | Usual direction    | Plain meaning                  |
 +----------------------+--------------------+--------------------------------+
-| PathProbe            | Sender -> Receiver | Can this path/lane work?       |
 | PathStats            | Receiver -> Sender | This path currently looks like |
-| ReceiveBudget        | Receiver -> Sender | You may send up to this much   |
 | PackageManifest      | Sender -> Receiver | A package is about to arrive   |
 | PackageChunk         | Sender -> Receiver | Original data bytes            |
 | ParityShard          | Sender -> Receiver | Extra repair/ECC bytes         |
@@ -119,29 +115,73 @@ runtime memory views built from messages that already arrived.
 | RepairHint           | Receiver -> Sender | I need these missing bytes     |
 | RepairChunk          | Sender -> Receiver | Here are the requested bytes   |
 | PackageCommit        | Receiver -> Sender | Package verified/finished      |
-| PathSwitch           | Either direction   | Move to another path lane      |
-| DriftPayload         | Sender -> Receiver | Realtime pose snapshot/delta   |
 +----------------------+--------------------+--------------------------------+
 ```
+
+Eight words, and `feedDacMessage` has a branch for every one of them. There
+is no ninth row to look up and no kind that arrives and is quietly ignored.
 
 Concrete transfer:
 
 ```text
-1. Sender -> Receiver: PathProbe {probeId=9, pathLane=SuperCleanPath}
-2. Receiver -> Sender: PathStats + ReceiveBudget
-3. Sender -> Receiver: PackageManifest {packageId=7001, totalLen=131072}
-4. Sender -> Receiver: PackageChunk seq=10..13 carrying secure-package bytes
-5. Receiver -> Sender: AckRange {ranges=[10..13]}
-6. Receiver -> Sender: PackageCommit {status=Committed}
+1. Sender -> Receiver: PackageManifest {packageId=7001, totalLen=131072}
+2. Sender -> Receiver: PackageChunk  the package's pieces, in shuffled order
+3. Sender -> Receiver: ParityShard   spare maths for each repair group
+4. Receiver -> Sender: AckRange {ranges=[0..33]}
+5. Receiver -> Sender: PackageCommit {status=Committed}
+6. Receiver -> Sender: PathStats    what this delivery actually looked like
 7. AME authenticates/decrypts the delivered package; Eir then decompresses it.
 ```
 
-Compact realtime transfer:
+Nothing precedes step 1. A DAC message can only travel inside an AME frame,
+so a session already exists by the time DAC has anything to say — which is
+also why there is no longer a reachability probe: reaching the peer is a
+precondition for asking whether you can reach it.
+
+## Four words DAC used to have ꒰ঌ ໒꒱
+
+Four message kinds were defined, encoded, decoded and fuzz-tested, and
+`feedDacMessage` had a branch for none of them. A caller could build one,
+seal it through AME, send it, and watch the peer answer `dlkIgnored`. They
+are gone. Each one is written down here rather than just deleted, because
+"why is this not here" is a harder question than "what is this".
+
+**PathProbe** — *"can I reach you on UDP port X or TCP port Y?"*
+
+Answered by the fact that it was asked. A probe can only travel inside a
+sealed AME frame, which means a session already exists, which means the peer
+is already reachable. The question's own precondition is its answer. What
+remains of the job is covered:
 
 ```text
-1. AME protects DacDriftPacket when the lane requires encryption/auth.
-2. DAC carries it as Kind=DriftPayload on a low-latency path lane.
-3. Receiver parses DAC first, opens AME if present, then decodes DacDriftPacket.
+  can I reach this peer at all?     the handshake completes, or it does not
+  is this path any good?            PathStats, measured, once per package
+  is something badly wrong?         recommendDacPathFromFailures(retries,
+                                    authFailures) walks the lane down
+  UDP does not work here            dplBlockedUdpPath, chosen by config
+```
+
+**PathSwitchRequest / PathSwitchAck** — *"let us both move to lane B at epoch N."*
+
+This one is not merely redundant, it is the one shape this protocol refuses.
+Every DAC message is a **fact about the speaker**; a switch request is an
+**instruction for the listener**, and it hands a peer a lever on your
+parameters — `newPath` is arbitrary, so one message could drop you from the
+clean lane to recovery in a single step. The measured path cannot do that:
+
+```text
+  PathStats arrives  ->  recommendDacPathFromStats  ->  ONE step, my lane only
+```
+
+`DacPathSwitchReason` survives, because the *vocabulary* was useful even
+though the message was not: it is what a recommendation hands back so a caller
+can see why the loop wants to move.
+
+**DriftPayload** — a 29-byte position-and-rotation packet for a realtime pose
+stream. Its own doc comment called it "salvaged". Nothing in Bifrost is about
+poses; an application that wants to send one sends it as payload bytes like
+anything else.
+
 ```
 
 ## Anti-Oracle Guard
@@ -288,19 +328,6 @@ owes a random delay.
 +------------------------------------------------------------------------+
 ```
 
-### PathProbe
-
-PathProbe asks whether a path lane is usable.
-The nonce is caller-supplied and must not be all zero; replayable default probes
-are rejected by the constructor.
-
-```text
-+------------------------------ PathProbe -------------------------------+
-| ProbeId=9 | Path=SuperCleanPath | UdpPort=48373 | TcpPort=48371        |
-| Nonce=00 01 02 03 04 05 06 07 08                                  |
-+------------------------------------------------------------------------+
-```
-
 ### PathStats
 
 PathStats reports what the receiver saw on the path. It is sent once, when a
@@ -436,25 +463,6 @@ PackageChunk carries original data bytes.
 | PackageId=7001 | GroupId=1 | ChunkId=0 | Offset=0                     |
 | PayloadLen=32768 | Payload=secure package bytes [0..32767]            |
 +------------------------------------------------------------------------+
-```
-
-### DacDriftPacket
-
-DacDriftPacket is a compact realtime body for pose snapshots and deltas. It is
-not a standalone protocol frame and has no local authTag; DAC carries it, and
-AME protects it when encryption or verification is required.
-
-```text
-+--------------------------- DriftPayload Body ---------------------------+
-| Kind=Delta | Tick=90125                                                 |
-| Position=(x=12.500, y=0.000, z=-3.250)                                  |
-| Rotation=(x=0.000, y=1.570, z=0.000)                                    |
-+------+-------+------+------+------+------+------+------+
-| Kind | Tick  | PosX | PosY | PosZ | RotX | RotY | RotZ |
-| u8   | u32   | f32  | f32  | f32  | f32  | f32  | f32  |
-+------+-------+------+------+------+------+------+------+
-| Body = 29 bytes | TransferClass=Realtime | DAC Kind=DriftPayload       |
-+--------------------------------------------------------------------------+
 ```
 
 ### ParityShard
@@ -593,18 +601,6 @@ PackageCommit is the receiver's final package receipt.
 +------------------------------------------------------------------------+
 ```
 
-### PathSwitch
-
-PathSwitch moves the session to a new horizontal path lane and starts a new
-path epoch.
-
-```text
-+------------------------------ PathSwitch ------------------------------+
-| OldEpoch=2 | NewEpoch=3 | OldPath=SuperCleanPath | NewPath=CleanPath  |
-| Reason=AddressChanged                                                   |
-+------------------------------------------------------------------------+
-```
-
 ## Path Profiles
 
 - `SuperCleanPath`: same-room or same-rack servers, up to
@@ -640,18 +636,23 @@ path epoch.
 | level1/path_meter.nim       | what the receiver measures as chunks land     |
 | level1/path_policy.nim      | turning a report into at most one lane step   |
 | level1/scramble.nim         | send delay and chunk-order shuffling          |
-| level1/path_probe.nim       | reachability probing -- codec only, see below |
-| level1/path_switch.nim      | path-lane epoch changes -- codec only         |
-| level1/drift_payload.nim    | compact realtime drift packet -- codec only   |
 | level2/package_transfer.nim | planning, receiving, repairing one package    |
 | level3/link.nim             | the loop: one connection's whole state        |
 | level3/link_table.nim       | many connections, bounded                     |
 +-----------------------------+-----------------------------------------------+
 ```
 
-**Codec only** means exactly that: the message has a body, an encoder, a
-decoder and fuzz tests, and `feedDacMessage` has no branch for its kind. Four
-of the twelve kinds are in that state — `PathProbe`, `PathSwitchRequest`,
-`PathSwitchAck` and `DriftPayload`. They are exported from the umbrella module,
-so a caller can build one and seal it, and the peer's loop will answer
-`dlkIgnored`. Do not reach for them expecting the loop to act.
+These 22 files, and every one of them is reachable from `level3/link.nim`.
+There used to be three more -- `path_probe`, `path_switch` and
+`drift_payload` -- holding codecs for kinds the loop had no branch for. See
+*Four words DAC used to have* above.
+
+Reading order, if you want the whole thing:
+
+```text
+  types.nim                     what the shapes are
+  level0/defaults.nim           the twelve profiles, as one table
+  level1/package_manifest.nim   what a package announces about itself
+  level2/package_transfer.nim   cutting one up, and putting it back together
+  level3/link.nim               the loop that decides when to do any of it
+```

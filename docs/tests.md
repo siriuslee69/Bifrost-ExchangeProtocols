@@ -9,7 +9,7 @@
 | nimble test               | full Nim suite                               |
 | nimble testFomke          | GB3HKDF, standalone AEADs, the FOMKE ratchet, its forward-secrecy properties, and AME session composition |
 | nimble testChunkyAead    | CHUNKYAEAD chunk encryption, authentication, and hash tree |
-| nimble testDac            | DAC defaults, wire codecs, ACK pacing, repair, scramble, link loop, link table, fuzz |
+| nimble testDac            | DAC defaults, wire codecs, ACK pacing and the five ACK modes, repair, scramble, path adaptation, link loop, link table, fuzz |
 | nimble testDacFlag        | -d:bifrostDac=off keeps the wire and refuses the adaptive layer |
 | nimble testFuzz           | every wire decoder under mutated frames: DAC, AME, BFX2, TLS 1.3 |
 | nimble testTls            | TLS-enabled transport + AME TCP endpoint coverage; uses host OpenSSL or Nix fallback |
@@ -145,7 +145,17 @@ DAC
   -> loss past it recovers through exact repair; reordering and duplication too
   -> a link that cannot finish reports failure instead of hanging forever
   -> the repair-round budget is spent, not looped
-  -> drift payload encode/decode
+
+DAC ACK modes
+  -> one payload, one flawless wire, five receivers, five different answers:
+     silent sends nothing, NACK-only sends nothing, batch sends a handful,
+     explicit sends one per chunk, verified paces like batch
+  -> a NACK-only receiver stays quiet on a clean run and speaks the moment a
+     chunk is really missing -- past the parity budget, not merely reordered
+  -> only damVerified puts its commit count on the wire
+  -> a verified receiver lets the sender release a package even when the
+     commit message itself was lost
+  -> a batching peer's fixed zero is never mistaken for a fresh commit
 
 DAC path adaptation
   -> five flawless packages move the lane not at all -- the whole point of the
@@ -178,7 +188,7 @@ AME DAC relay
   -> the relay path carries no package seal, because it needs none
   -> a package that leaves through a file still carries its own seal
   -> every kind that opens a link is a kind the loop acts on
-  -> a path probe no longer takes a slot the loop cannot use
+  -> the enum IS the list of kinds the loop acts on: nine words, eight real
   -> a completed package reports what this side measured
   -> a peer's report moves this side's lane, one step at a time
   -> a report cannot move a lane out from under a package in flight

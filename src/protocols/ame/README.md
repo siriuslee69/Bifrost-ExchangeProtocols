@@ -3,7 +3,47 @@
 AME separates immutable algorithm placement from active epoch selections.
 There is no in-session algorithm replacement, reordering, or negotiation shim.
 
-## Layout
+## What is in this folder ୨୧
+
+Fifty-odd files, but only four questions. Every file answers exactly one of
+them, and the folder it sits in tells you which:
+
+```text
+  WHICH ALGORITHMS?     level1/   one file per primitive, plus the tables
+                                  that say which are switched on
+  WHAT DO I KNOW?       level2/session.nim
+                                  the epoch, its keys, the exchange that
+                                  replaces them, the ratchet, the settings
+  WHAT DO I SEND?       level2/framing.nim
+                                  sealing a payload into a frame, opening one
+                                  again, and the AME/DAC seam
+  HOW DO I START?       level3/handshake*.nim
+                                  proving who you are, over TCP or over DAC
+```
+
+| Path | What it holds |
+|---|---|
+| `types.nim` | every shape AME uses, including `AmeSession`'s fields |
+| `level0/bytes.nim` | append and read a number; nothing else |
+| `level1/symmetric/`, `kems/`, `sigs/` | one file per primitive. A build flag can drop any of them |
+| `level1/suites.nim` | which slots exist, and which are switched on this epoch |
+| `level1/exchange_paths.nim` | the four-step transaction that rotates an epoch |
+| `level1/header_protection.nim` | masking the frame counter so a watcher cannot count frames |
+| `level1/padding.nim` | making every frame an uninteresting size |
+| `level1/path_triggers.nim` | when to move to a stronger tier, by bytes or by clock |
+| **`level2/session.nim`** | **what a connection IS** — keys, epoch, exchange, settings |
+| **`level2/framing.nim`** | **what a message LOOKS LIKE** — seal, open, and the DAC seam |
+| `level2/carriers/` | the two things that own a socket: `tcp.nim`, `dac.nim` |
+| `level3/handshake*.nim` | the handshake, its wire format, and one driver per carrier |
+| `level3/secure_package.nim` | sealing something once, to be stored and opened later |
+| `level3/dac_relay.nim` | many peers, each with a session and a DAC loop |
+| `level3/dac_endpoint.nim` | the one file in the DAC path that holds a socket |
+
+The two names to remember are `session.nim` and `framing.nim`. They used to be
+one 1800-line file, and the split is the obvious question a reader has:
+*what do I know* versus *what do I send*.
+
+## Algorithm Layout
 
 `AmeSuiteLayout` fixes six ordered slot families for the whole session:
 

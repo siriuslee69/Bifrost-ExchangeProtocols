@@ -11,39 +11,27 @@ import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level0/path_stats
 import ../../src/protocols/dac/level0/ack_range
 import ../../src/protocols/dac/level0/package_commit
-import ../../src/protocols/dac/level1/path_probe
 import ../../src/protocols/dac/level1/package_manifest
 import ../../src/protocols/dac/level1/package_chunk
 import ../../src/protocols/dac/level1/parity_shard
 import ../../src/protocols/dac/level1/repair_hint
 import ../../src/protocols/dac/level1/repair_chunk
-import ../../src/protocols/dac/level1/path_switch
 
 suite "DAC wire":
   # {.testKind: tkIntegration.}
   test "fixed-width bodies roundtrip and validate reserved bytes":
     var
       digest: array[32, uint8]
-      nonce: array[9, uint8]
       stats: DacPathStats
       commit: DacPackageCommit
-      probe: DacPathProbe
-      switchReq: DacPathSwitch
       body: ByteSeq
       decodedStats: DacPathStats
       decodedCommit: DacPackageCommit
-      decodedProbe: DacPathProbe
-      decodedSwitch: DacPathSwitch
     digest[0] = 0xAA'u8
-    nonce = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
     stats = initDacPathStats(120'u32, 15'u16, 3'u16, 1'u16, 1400'u16,
       4'u16, 600'u16)
     commit = initDacPackageCommit(71'u64, digest, 4'u16, 1'u16,
       dcsCommittedWithRepair)
-    probe = initDacPathProbe(9'u32, dplMobilePath, 48374'u16, 48371'u16,
-      nonce)
-    switchReq = initDacPathSwitch(2'u16, 3'u16, dplCleanPath,
-      dplLossyPath, dpsrLoss)
 
     body = encodeDacPathStats(stats)
     check body.len == dacPathStatsLen
@@ -60,22 +48,6 @@ suite "DAC wire":
     body[^1] = 0xFF'u8
     expect ValueError:
       discard decodeDacPackageCommit(body)
-
-    body = encodeDacPathProbe(probe)
-    check body.len == dacPathProbeLen
-    decodedProbe = decodeDacPathProbe(body)
-    check decodedProbe == probe
-    body[4] = 0xFF'u8
-    expect ValueError:
-      discard decodeDacPathProbe(body)
-
-    body = encodeDacPathSwitch(switchReq)
-    check body.len == dacPathSwitchLen
-    decodedSwitch = decodeDacPathSwitch(body)
-    check decodedSwitch == switchReq
-    body[^1] = 1'u8
-    expect ValueError:
-      discard decodeDacPathSwitch(body)
 
   # {.testKind: tkEdgeCase.}
   test "ack ranges roundtrip and reject malformed shapes":

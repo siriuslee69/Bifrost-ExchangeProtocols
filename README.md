@@ -165,7 +165,7 @@ the answer is **different for a live frame and for a stored package**.
 A DAC message rides *inside* that ciphertext, its kind as the first byte:
 
 ```text
-AME frame, kind = 0x0B DacControl
+AME frame, kind = 0x0B DacControl        <- ampkDacControl
   -> sealed payload -> [ DacKind u8 | DAC body ]
 ```
 
@@ -216,6 +216,107 @@ Which layer does what:
 | **DAC** | chunking, parity, ACK pacing, repair timing, path | no, for frames; yes, for packages |
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
+
+### The nine words DAC can say ୨୧
+
+DAC never invents bytes on the wire. It has a **vocabulary** — nine words —
+and AME is what speaks them. Here is the whole list, which is also the whole
+of `DacMessageKind`:
+
+| byte | word | who says it | what it means |
+|---|---|---|---|
+| `0x00` | Unknown | nobody | a first byte no word claims; the message is dropped |
+| `0x01` | PathStats | receiver | "here is what I measured about this path" |
+| `0x02` | PackageManifest | sender | "a package is coming: this many pieces, this big, this digest" |
+| `0x03` | PackageChunk | sender | one piece of it |
+| `0x04` | ParityShard | sender | spare maths, so a lost piece can be rebuilt without asking |
+| `0x05` | AckRange | receiver | "these pieces arrived" |
+| `0x06` | RepairHint | receiver | "these pieces did not; send them again" |
+| `0x07` | RepairChunk | sender | a piece, sent again |
+| `0x08` | PackageCommit | receiver | "it is all here and the digest matches" |
+
+Eight real words and one non-word. **Every one of the eight has a branch in
+`feedDacMessage`** — there is no list to cross-check and no kind that arrives
+and is quietly ignored. If it is in the enum, the loop acts on it.
+
+> There used to be four more: a path probe, a path-switch request and its ack,
+> and a realtime pose packet. All four had encoders, decoders and fuzz tests,
+> and none of them had a branch in the loop. See `src/protocols/dac/README.md`,
+> *Four words DAC used to have*, for why each one went and what covers it now.
+
+### How one word gets from DAC to the wire and back ❮💕❯
+
+This is the seam. Four files, and each one does exactly one thing:
+
+```text
+  SENDING                                        module
+  ------------------------------------------     ---------------------------
+  1. the loop decides what to say                dac/level3/link.nim
+       "ack, and here is the receipt body"
+       -> DacTaggedMessage(kind, body)
+                    |
+  2. the relay finds this peer's session         ame/level3/dac_relay.nim
+       one address -> one slot -> one session
+                    |
+  3. the seal puts the kind in FRONT of the      ame/level2/framing.nim
+     body and encrypts the pair                    sealAmeDacControl()
+       [ kind u8 | body ]  ->  AME frame
+                    |
+  4. the socket sends it                         ame/level3/dac_endpoint.nim
+
+
+  RECEIVING                                      module
+  ------------------------------------------     ---------------------------
+  1. a datagram arrives from some address        ame/level3/dac_endpoint.nim
+                    |
+  2. no session for that address? DROPPED        ame/level3/dac_relay.nim
+       nothing is parsed, nothing is allocated
+                    |
+  3. the tag is checked, the frame opened,       ame/level2/framing.nim
+     and ONLY THEN is the kind read                openAmeDacControl()
+       AME frame -> [ kind u8 | body ]
+                    |
+  4. the loop acts on a kind it can trust        dac/level3/link.nim
+       feedDacMessage(link, kind, body)
+```
+
+Read step 3 twice, because it is the whole security argument:
+
+```text
+  the kind is INSIDE the encryption, not in a header
+
+    an observer  cannot tell an ACK from a repair hint, because the byte
+                 that says which one is encrypted with everything else
+    a stranger   cannot present a kind at all, because a frame that does
+                 not authenticate never reaches step 4
+    a peer       cannot rewrite one, because the tag covers it
+```
+
+### What DAC is allowed to change, and what it is not ⟡
+
+DAC sets AME's parameters. It does this by choosing a **lane**, and the lane
+is a row of numbers:
+
+```text
+  a peer's PathStats arrives
+        |
+  recommendDacPathFromStats()   one step, never a jump
+        |
+  a new DacPathLane  ->  dacDefaultsFor()  ->  chunk size, parity width,
+                                               ACK batch, ACK deadline,
+                                               repair wait, repair rounds
+```
+
+Every one of those is about **how bytes are cut up and paced**. Not one of
+them touches a key, an algorithm, a tag length or a padding policy. That wall
+is deliberate and there is a test that fails if it is ever crossed: link
+conditions must never be able to talk this side into weaker protection.
+
+```text
+  DAC may say            "send smaller pieces, send more parity, answer sooner"
+  DAC may NEVER say      "use a weaker cipher, a shorter tag, no padding"
+```
+
 
 ## Quick Start
 
@@ -782,6 +883,57 @@ un-acknowledged frame is retransmit state the sender cannot free yet. Long
 deadlines are for battery radios, where what is being saved is a wake-up
 rather than bandwidth.
 
+### How a receiver answers — the five modes ꒰ঌ ໒꒱
+
+`ackMode` is the sixth number in that row and it is not a size, it is a
+**habit**. The two levers above say how big a receipt gets and how long it may
+wait; the mode says whether a receipt is the right idea at all:
+
+| mode | when it answers | what it is for |
+|---|---|---|
+| `damSilent` | never | an uplink byte costs more than a wasted parity shard |
+| `damNackOnly` | only when something really is missing | a metered link, where silence is the message |
+| `damBatch` | on the count or the deadline | the ordinary case |
+| `damExplicit` | every single chunk | lowest latency, most receipts |
+| `damVerified` | like batch, plus "I have committed N packages" | a barely-working path, where the commit itself may be lost |
+
+The last one earns its keep in one specific way. A `PackageCommit` is one
+datagram and it can die like any other; a `damVerified` receiver puts its
+running commit count in **every** receipt, so the sender learns the package
+landed even when the commit never arrived:
+
+```text
+  receiver commits package 1          its count goes 0 -> 1
+        |
+  every receipt from now on says 1
+        |
+  sender started this package when the count read 0
+        -> the number MOVED -> the peer committed something
+        -> with one package in flight, that something is this one
+        -> release it
+```
+
+Every other mode reports a fixed zero, which a sender reads as *"this peer
+does not report commits"* — never as *"this peer has committed nothing"*. That
+distinction is the whole guard, and it is why the count is floored rather than
+left to mean two things at once.
+
+### The top lane is chosen, never discovered ⌜guide⌟
+
+`dplSuperCleanPath` — 32 KB chunks, no repair at all — is **configuration
+only**. Nothing measures its way into it, and that is correct rather than a
+gap: promotion needs an MTU hint of 4096 or more, and the hint a receiver
+reports is the chunk size that actually got through. A sender on the clean
+lane sends 1200-byte chunks, so 1200 is all anyone can ever observe. You do
+not discover a 32 KB path by only ever sending small pieces down it.
+
+```nim
+## Ask for it when you KNOW the two machines share a rack or a switch.
+var d = dacDefaultsFor(dscSameRoom)      # dplSuperCleanPath
+```
+
+Adaptation can still walk *down* from it the moment the path disagrees.
+
 ### One sentence that costs more than it looks ⌜guide⌟
 
 > A zero in a path report means "I did not measure this".
@@ -1183,19 +1335,49 @@ var
 
 ## Layout
 
+Three protocols do the work and the rest are tools they use or things that
+happen to live here too:
+
 | Path | Purpose |
 |---|---|
-| `src/protocols/ame/` | Suite/KEM/protect, AME wire, session, handshake, secure package |
-| `src/protocols/fomke/` | GB3HKDF, directional ratchets, upgrade commits, and FOMKE envelope wire |
+| `src/protocols/ame/` | **Who you are talking to, and how a message is wrapped.** Algorithms, epochs, the handshake, framing, the carriers |
+| `src/protocols/fomke/` | **A fresh key for every single message.** GB3HKDF, the two directional ratchets, the 13-byte envelope |
+| `src/protocols/dac/` | **How bytes are cut up, paced and repaired.** Chunking, parity, receipts, path lanes |
+| `src/protocols/relay/` | The blind VPS forwarder: address mapping, NAS keepalive, overflow buffer. Holds no key |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
-| `src/protocols/dac/` | Framing, ACK, repair, path control, drift payloads |
-| `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O and relay helpers |
-| `src/protocols/relay/` | The blind VPS forwarder: address mapping, NAS keepalive, overflow buffer |
+| `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O |
 | `src/protocols/tls13/` | Pure-Nim TLS 1.3 records, handshake, and client/server sessions |
 | `src/protocols/bfx2/` | Tagged binary envelopes |
 | `evaluation/tests/` | Unit and protocol tests |
 | `evaluation/benchmarks/` | Performance measurements |
 | `evaluation/statistics/` | Repository and code statistics |
+
+### The numbered folders ⌜guide⌟
+
+Inside each protocol the folders are numbered, and the number means exactly
+one thing: **what a file is allowed to import.**
+
+```text
+  types.nim   the shapes. Imports almost nothing.
+  level0/     may use types.        the alphabet: read a number, write a number
+  level1/     may use level0.       one idea each: one message body, one policy
+  level2/     may use level1.       one whole job: a session, a package
+  level3/     may use level2.       the loop that runs it all
+```
+
+So a file can only ever reach *downward*, and reading a folder in order takes
+you from bytes to behaviour. If you want to know what something does, start at
+`level3/` and read backwards; if you want to know how it is built, start at
+`level0/` and read forwards.
+
+The two files most people are looking for:
+
+```text
+  src/protocols/dac/level3/link.nim        the DAC loop -- every decision
+  src/protocols/ame/level2/framing.nim     the seam -- every seal and open
+```
+
+Each protocol folder has its own `README.md` with a one-line-per-file table.
 
 ## Tasks
 

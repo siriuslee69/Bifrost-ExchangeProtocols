@@ -99,8 +99,8 @@ suite "a clean path is left alone":
     ##        gave was "receiver pressure" on a receiver that was idle.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
       done: int = 0
     done = runPackages(sender, receiver, rampBytes(4_000), 5, 0)
     check done == 5
@@ -113,8 +113,8 @@ suite "a clean path is left alone":
     ## meaning "not measured". Nothing in between.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
     discard runPackages(sender, receiver, rampBytes(4_000), 1, 0)
     check receiver.observed.lossPpm == 0'u32
     check receiver.observed.mtuHint == d.chunkBytes
@@ -132,8 +132,8 @@ suite "a path that really is bad gets treated as bad":
     ## settles there instead of sliding on to the bottom.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
     discard runPackages(sender, receiver, rampBytes(4_000), 5, 5)
     check receiver.observed.lossPpm > 50_000'u32
     check sender.defaults.pathLane == dplLossyPath
@@ -188,8 +188,8 @@ suite "the sender's own shuffling is not the path's fault":
     ## package. The receiver now declines to report a number it cannot know.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
       payload: ByteSeq = rampBytes(40_000)
     discard runPackages(sender, receiver, payload, 1, 0)
     check receiver.incoming.receiver.manifest.dataCount > 16'u16
@@ -278,8 +278,8 @@ suite "a lane move does not disturb a receive in progress":
     ## sender re-sends parity for chunks that are sitting here.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
       payload: ByteSeq = rampBytes(40_000)
       msgs: seq[DacTaggedMessage] = @[]
       i: int = 0
@@ -312,8 +312,8 @@ suite "the receipt tells the sender what really arrived":
     ## re-sent parity for the other 20, which were already in hand.
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
       payload: ByteSeq = rampBytes(40_000)
       msgs: seq[DacTaggedMessage] = @[]
       chunks: int = 0
@@ -361,8 +361,8 @@ suite "the receipt tells the sender what really arrived":
   test "a flawless delivery leaves the ACK levers at the profile":
     var
       d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
-      sender: DacLink = initDacLink(7'u64, 1'u32, d, 11'u64)
-      receiver: DacLink = initDacLink(7'u64, 1'u32, d, 22'u64)
+      sender: DacLink = initDacLink(d, 11'u64)
+      receiver: DacLink = initDacLink(d, 22'u64)
     discard runPackages(sender, receiver, rampBytes(40_000), 1, 0)
     check receiver.incoming.ack.batchChunks == d.ackBatchChunks
     check receiver.incoming.ack.deadlineMs == d.ackMaxDelayMs

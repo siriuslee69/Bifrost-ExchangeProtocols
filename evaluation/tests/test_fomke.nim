@@ -15,7 +15,7 @@ import ../../src/protocols/ame/level1/tier_aead
 import ../../src/protocols/ame/level1/presets
 import ../../src/protocols/ame/level2/protection
 import ../../src/protocols/ame/level1/path_triggers
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level0/gb3hkdf
 import ../../src/protocols/fomke/level0/protocols

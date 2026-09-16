@@ -1,4 +1,4 @@
-import std/[os, strutils, sequtils, tables, hashes]
+import std/[os, strutils, sequtils, hashes]
 
 const
   LibsodiumTaskShellEnv = "BIFROST_NIMBLE_IN_NIX_SHELL"
@@ -234,64 +234,22 @@ proc ensureDir(path: string) =
   if not dirExists(dir):
     mkDir(dir)
 
-proc unquoteValue(v: string): string =
-  ## Remove one layer of matching quote characters around a parsed value.
-  result = v.strip()
-  if result.len >= 2 and result[0] == '"' and result[^1] == '"':
-    result = result[1 .. ^2]
-  if result.len >= 2 and result[0] == '\'' and result[^1] == '\'':
-    result = result[1 .. ^2]
-
-proc findIronOverrideFile(repoRoot: string): string =
-  ## Pick the current `.iron` override file first, then the legacy fallback.
-  var
-    candidates: seq[string] = @[
-      joinPath(repoRoot, ".iron", ".local.gitmodules.toml"),
-      joinPath(repoRoot, "iron", ".gitmodules.local")
-    ]
-  for path in candidates:
-    if fileExists(path):
-      return path
-  result = ""
-
-proc parseironOverrides(path: string): Table[string, string] =
-  ## Parse a local `.iron` submodule-override file and map repo tail -> local path.
-  result = initTable[string, string]()
-  if not fileExists(path):
-    return
-  var
-    repoTail: string = ""
-    key: string = ""
-    value: string = ""
-  for raw in readFile(path).splitLines:
-    let line = raw.strip()
-    if line.len == 0 or line.startsWith("#"):
-      continue
-    if line.startsWith("[") and line.endsWith("]"):
-      repoTail = ""
-      continue
-    key = ""
-    value = ""
-    if line.contains("="):
-      let parts = line.split("=", maxsplit = 1)
-      if parts.len == 2:
-        key = parts[0].strip()
-        value = unquoteValue(parts[1])
-    if key.len == 0:
-      continue
-    if key == "name":
-      repoTail = splitPath(value).tail
-    elif key == "path":
-      repoTail = splitPath(value).tail
-    elif key == "url" and repoTail.len > 0:
-      result[repoTail] = value
-      repoTail = ""
-
-proc resolveDepSrc(repoRoot: string; dep: string; overrides: Table[string, string]): string =
-  ## Resolve a dependency src directory and fail with explicit message.
+proc resolveDepSrc(repoRoot: string; dep: string): string =
+  ## repoRoot: this repo's root.
+  ## dep: the dependency whose src/ directory is wanted.
+  ##
+  ## Looked for in this order, and the first one that exists wins:
+  ##
+  ##   ../<dep>/src        a sibling checkout, for working on both at once
+  ##   submodules/<dep>/src the pinned submodule, what a fresh clone uses
+  ##   <dep>/src            a copy dropped in the repo root
+  ##
+  ## This used to consult a `.iron/.local.gitmodules.toml` override file
+  ## first. That directory was removed from the layout and may not be
+  ## recreated, so the file could never exist and the TOML reader behind it
+  ## was fifty lines nothing could reach. A sibling checkout does the same
+  ## job with no file to write.
   var roots: seq[string] = @[]
-  if overrides.hasKey(dep):
-    roots.add(overrides[dep])
   if dep == "Tyr-Crypto":
     ## AME lower tiers require the companion pure Ed25519 implementation. When
     ## Tyr is checked out beside Bifrost, keep both projects on that same
@@ -336,7 +294,6 @@ proc resolveNimSimdPath(): string =
 
 proc depPaths(repoRoot: string): seq[string] =
   ## Build `--path` compiler arguments for local sibling dependency layout.
-  let overrides = parseironOverrides(findIronOverrideFile(repoRoot))
   let deps = @[
     "Fylgia-Utils",
     "Tyr-Crypto",
@@ -345,7 +302,7 @@ proc depPaths(repoRoot: string): seq[string] =
   ]
   var paths: seq[string] = @[]
   for dep in deps:
-    let src = resolveDepSrc(repoRoot, dep, overrides)
+    let src = resolveDepSrc(repoRoot, dep)
     paths.add("--path:" & normalizePath(src))
     if dep == "Tyr-Crypto":
       let root = normalizePath(parentDir(src))
@@ -582,6 +539,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_dac_defaults.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_wire.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_ack_policy.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_ack_modes.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
@@ -589,7 +547,6 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
     runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
     runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
-    runNim("c", "evaluation/tests/test_dac_drift_payload.nim", @["-r"])
     runNim("c", "evaluation/tests/test_transport_ops.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_async_stream_ops.nim", @["-r"])
     runNim("c", "evaluation/tests/test_bfx2_wire.nim", @["-r"])
@@ -666,6 +623,7 @@ task testDac, "Run DAC transport schema/default tests":
   runNim("c", "evaluation/tests/test_dac_defaults.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_wire.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_ack_policy.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_ack_modes.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
@@ -681,7 +639,6 @@ task testDac, "Run DAC transport schema/default tests":
   runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
 
   runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
-  runNim("c", "evaluation/tests/test_dac_drift_payload.nim", @["-r"])
 
 task testFuzz, "Run every wire decoder against mutated frames":
   ## The parser surface an attacker reaches first: DAC datagrams and the link

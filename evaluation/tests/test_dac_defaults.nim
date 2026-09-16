@@ -9,13 +9,11 @@ import ../../src/protocols/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/wire_helpers
 import ../../src/protocols/dac/level0/defaults
-import ../../src/protocols/dac/level1/path_probe
 import ../../src/protocols/dac/level0/path_stats
 import ../../src/protocols/dac/level1/package_manifest
 import ../../src/protocols/dac/level0/ack_range
 import ../../src/protocols/dac/level0/package_commit
 import ../../src/protocols/dac/level1/repair_hint
-import ../../src/protocols/dac/level1/path_switch
 import ../../src/protocols/dac/level1/path_policy
 import ../../src/protocols/dac/level0/protocols
 
@@ -76,23 +74,17 @@ suite "DAC defaults":
   # {.testKind: tkUnit.}
   test "message schemas initialize with defaults":
     var
-      p: DacPathProbe
       stats: DacPathStats
       manifest: DacPackageManifest
       ack: DacAckRange
       commit: DacPackageCommit
       repair: DacRepairHint
-      switch: DacPathSwitch
       defaults: DacScenarioDefaults
       digest: array[32, uint8]
       gapMap: ByteSeq
-      nonce: array[9, uint8]
     defaults = dacDefaultsFor(dscBadSignal)
     digest[0] = 1'u8
     gapMap = @[0b00010000'u8]
-    nonce = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
-    p = initDacPathProbe(9'u32, dplMobilePath, 48374'u16, 48375'u16,
-      nonce)
     stats = initDacPathStats(60000'u32, 120'u16, 40'u16, 4'u16,
       1200'u16, 20'u16, 30'u16)
     manifest = initDacPackageManifest(7'u64, dtcUserData, defaults, 2048'u64,
@@ -102,19 +94,13 @@ suite "DAC defaults":
       dcsCommittedWithRepair)
     repair = initDacRepairHint(7'u64, 1'u32, 1'u16, 0'u16, 1'u16, gapMap,
       drmReedSolomon, drrMissing)
-    switch = initDacPathSwitch(2'u16, 3'u16, dplMobilePath, dplLossyPath,
-      dpsrLoss)
     addDacAckRange(ack, initDacAckRangeEntry(1'u32, 4'u16))
-    check p.probeId == 9'u32
-    check p.nonce == nonce
     check dacShouldEnterLossyPath(stats)
     check manifest.dataCount == 3'u16
     check manifest.groupSize == 20'u16
     check commit.digest == digest
     check repair.gapMap == gapMap
-    check validateDacPathSwitch(switch)
     check ack.ranges.len == 1
-    check dacPathProbeAscii.contains("Common DAC1 Envelope")
     check dacDefaultsAscii.len > 0
     expect ValueError:
       discard initDacPackageManifest(8'u64, dtcUserData, defaults, 2048'u64,
@@ -134,9 +120,6 @@ suite "DAC defaults":
     expect ValueError:
       discard initDacRepairHint(7'u64, 1'u32, 1'u16, 0'u16, 1'u16,
         drmReedSolomon, drrMissing)
-    expect ValueError:
-      discard initDacPathSwitch(2'u16, 2'u16, dplMobilePath, dplLossyPath,
-        dpsrLoss)
 
   # {.testKind: tkUnit.}
   test "path policy recommends one-step switches from stats and failures":

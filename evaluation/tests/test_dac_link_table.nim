@@ -49,8 +49,7 @@ proc admitAndFeed(T: var DacLinkTable, k: DacLinkKey, kind: DacMessageKind,
   ## claim a slot by sending the right kind. That is gone: a slot comes from
   ## the handshake now, never from a datagram.
   var
-    a: tuple[admit: DacLinkAdmit, slot: int] = admitDacLink(T, k, sessionId,
-      laneId, nowMs)
+    a: tuple[admit: DacLinkAdmit, slot: int] = admitDacLink(T, k, nowMs)
   result.admit = a.admit
   result.slot = a.slot
   if a.slot < 0:
@@ -162,11 +161,11 @@ suite "DAC link table bounds":
       first: DacLinkKey = peerKey(1)
       second: DacLinkKey = peerKey(2)
       a: tuple[admit: DacLinkAdmit, slot: int]
-    a = admitDacLink(T, first, 5'u64, 1'u32, 0'u32)
+    a = admitDacLink(T, first, 0'u32)
     check a.admit == dlaAdmitted
-    a = admitDacLink(T, second, 6'u64, 1'u32, 10'u32)
+    a = admitDacLink(T, second, 10'u32)
     check a.admit == dlaRefusedFull
-    a = admitDacLink(T, second, 6'u64, 1'u32, 60'u32)
+    a = admitDacLink(T, second, 60'u32)
     check a.admit == dlaReplacedIdle
     check dacLinkTableLive(T) == 1
     check findDacLinkSlot(T, first) < 0
@@ -180,7 +179,7 @@ suite "DAC link table bounds":
       busy: DacLinkKey = peerKey(99)
       i: int = 0
     while i < 4:
-      discard admitDacLink(T, peerKey(i), uint64(i), 1'u32, 0'u32)
+      discard admitDacLink(T, peerKey(i), 0'u32)
       i = i + 1
     discard admitAndFeed(T, busy, dmkPackageManifest, manifestBody(3'u64),
       70'u64, 1'u32, 0'u32)
@@ -221,7 +220,7 @@ suite "DAC link table transfer":
       r: DacLinkRoute = default(DacLinkRoute)
       done: bool = false
       i: int = 0
-    discard admitDacLink(A, kb, 31'u64, 1'u32, 0'u32)
+    discard admitDacLink(A, kb, 0'u32)
     messages = beginDacPackage(dacLinkFor(A, kb)[], 5'u64, payload, 0'u32)
     check messages.len > 0
     while i < messages.len:
@@ -244,8 +243,8 @@ suite "DAC link table transfer":
       two: seq[DacTaggedMessage] = @[]
       differ: bool = false
       i: int = 0
-    discard admitDacLink(T, peerKey(1), 5'u64, 1'u32, 0'u32)
-    discard admitDacLink(T, peerKey(2), 5'u64, 1'u32, 0'u32)
+    discard admitDacLink(T, peerKey(1), 0'u32)
+    discard admitDacLink(T, peerKey(2), 0'u32)
     one = beginDacPackage(dacLinkFor(T, peerKey(1))[], 9'u64, payload, 0'u32)
     two = beginDacPackage(dacLinkFor(T, peerKey(2))[], 9'u64, payload, 0'u32)
     check one.len == two.len

@@ -38,10 +38,12 @@ import std/strutils
 
 import ../../types
 import ../types
-import ./session
+import ./framing
 import runePragmas
 
-export session
+## `framing` re-exports `session`, so one line here hands a caller both
+## halves: what a connection knows, and what one message looks like.
+export framing
 
 const
   bifrostCarriers* {.strdefine.}: string = ""

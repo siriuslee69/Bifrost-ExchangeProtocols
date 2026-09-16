@@ -15,7 +15,7 @@ import ../../src/protocols/ame/level2/protection
 import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level2/wire
 import ../../src/protocols/fomke/level1/chain
-import ../../src/protocols/ame/level2/session
+import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/ame/level2/wire
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/dac/types
