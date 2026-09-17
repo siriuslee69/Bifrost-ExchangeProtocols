@@ -129,11 +129,14 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
-- A forty-six minute run with all of it in: 626,122 packages verified byte for
-  byte, 15.08 GB, 22.8 million datagrams, 12,729 handshakes, 12,053 slots
-  reclaimed, zero mismatches, zero escaped exceptions. Server memory grew 1.6
-  MB in its first six minutes and 1.1 MB over the thirty-eight after that -- a
-  curve flattening, not a line rising.
+- A twenty-five minute run with every fix in: 472,051 packages verified byte
+  for byte, 11.40 GB, 16.95 million datagrams, 8,993 handshakes, 7,695 slots
+  reclaimed, zero mismatches, zero escaped exceptions, zero FOMKE window
+  refusals. 315 packages and 7.6 MB a second of sealed, ratcheted, chunked,
+  verified traffic; the same run before the socket queue was sized managed 227
+  and 5.5 MB. Server memory grew 584 KB in its first interval and 32 KB in its
+  last, while serving five hundred more handshakes in that last one -- a curve
+  flattening, not a line rising.
 - The soak reaches a part of the code nothing else did. `sweepAmeDacRelay`
   had never been called by anything before it; the reclamation rule itself
   turned out to be right, and what was wrong was that a link could stay

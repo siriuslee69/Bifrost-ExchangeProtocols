@@ -73,6 +73,8 @@ type
     churn: int
     lane: string
     binDir: string
+    dumpSlots: int
+    recvBufferBytes: int
 
 proc planFromArgs(): SoakRunPlan {.role: configurator.} =
   ## Every knob, with defaults that make a short run useful on one machine.
@@ -91,6 +93,8 @@ proc planFromArgs(): SoakRunPlan {.role: configurator.} =
   result.churn = soakArgInt("churn", 40)
   result.lane = soakArg("lane", "cleanLan")
   result.binDir = soakArg("bin", getAppDir())
+  result.dumpSlots = soakArgInt("dump-slots", 0)
+  result.recvBufferBytes = soakArgInt("recv-buffer", -1)
 
 proc soakBinary(P: SoakRunPlan, name: string): string {.role: parser.} =
   ## P/name: where the runner expects to find one of the two programs. They
@@ -116,8 +120,13 @@ proc serverArgs(P: SoakRunPlan, i: int): seq[string] {.role: truthBuilder.} =
     "--idle=" & $P.idleMs,
     "--lane=" & P.lane,
     "--report=" & $P.reportEvery,
+    "--dump-slots=" & $P.dumpSlots,
     "--seconds=" & $(P.seconds + 8)
   ]
+  ## -1 means "not asked for", so the server keeps its own default rather than
+  ## being handed a zero that would mean "use the operating system's".
+  if P.recvBufferBytes >= 0:
+    result.add("--recv-buffer=" & $P.recvBufferBytes)
 
 proc clientArgs(P: SoakRunPlan, j: int): seq[string] {.role: truthBuilder.} =
   ## P/j: the command line for one client process, aimed at the server it

@@ -1249,11 +1249,17 @@ afterwards, even if the network does eventually deliver them.
 `reorderWindow`** is still refused, and a refusal advances nothing -- so every
 message after it sits further ahead still, and that lane cannot recover. This
 is the deliberate half: letting a gap that wide through is exactly the
-amplifier a forged datagram wants. Measured on a soak at 2% loss it fired 24
-times in 205,000 datagrams, and the peer recovers by building a new session,
-which is what DTLS does in the same situation. Narrowing is floored at the
-number of keys the lane is holding, so a lane that has recently seen gaps no
-longer shrinks its way into one.
+amplifier a forged datagram wants.
+
+It is rarer than it sounds, because bursts that wide are rarer than they
+sound. A soak hit it steadily until the SOCKET QUEUE was sized -- the bursts
+were the kernel emptying a full receive buffer, not the path losing runs of
+datagrams -- and then stopped hitting it at all. See "The one socket setting a
+server must not leave alone" further down. When it does happen the peer
+recovers by building a new session, which is what DTLS does in the same
+situation. Narrowing is also floored at the number of keys the lane is
+holding, so a lane that has recently seen gaps no longer shrinks its way into
+one.
 
 ### Preparing ahead, and what it costs ₊˚⊹♡
 
@@ -1508,9 +1514,12 @@ nimble soak --loss=0 --churn=0 --peers=8      # throughput, nothing induced
 ```
 
 It ends with `soak: every process finished clean` when no payload arrived
-wrong and nothing escaped a loop. `docs/soak.md` explains every switch, how to
-read a report line, and what the soak has found so far -- two faults that no
-unit test could have reached, both fixed.
+wrong and nothing escaped a loop. A twenty-five minute run verifies about
+half a million packages and eleven gigabytes byte for byte.
+
+`docs/soak.md` explains every switch, how to read a report line, and what the
+soak has found so far -- four faults that no unit test could have reached, all
+fixed, and three design gaps it deliberately did not.
 
 ## Wire Formats: Low-Level View
 
