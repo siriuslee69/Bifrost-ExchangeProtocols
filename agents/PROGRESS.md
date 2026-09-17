@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Split the handshake into the questions it was answering at once
+Commit Message: Soak it until two things that could never end, ended
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -44,6 +44,25 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- A soak: `nimble soak`. Separate processes on separate loopback addresses,
+  real UDP, real handshakes, induced loss, peer churn and a payload that
+  carries its own name so the receiver can verify it without sharing memory
+  with the sender. `docs/soak.md` is the whole story; it found two faults no
+  unit test could have.
+- FOMKE no longer dies on a lossy path. A held key whose message can no longer
+  arrive is erased, the cache is capped by the ceiling rather than by the
+  window that moves, and a full cache gives up its oldest key instead of
+  refusing. Same run, same settings: 170 packages and everything dead after
+  ten seconds -> 1,114 packages and still climbing after forty-five.
+- `applyLinkStep` gives up held keys when a package ends. That is the moment
+  it becomes knowable that nothing outstanding can still be useful, and the
+  relay is the only thing that knows it. It also unblocks rekeying, which
+  refuses to run while any skipped key is outstanding.
+- A DAC sender gives up. `dacSenderGaveUp` is the half of the sentence the
+  receiver already spoke: rounds spent, twice the repair wait passed, nothing
+  acknowledged. Without it one reply to a peer that had gone pinned a relay
+  slot for the life of the process -- a soak filled all sixty-four in two
+  minutes and then refused every new peer.
 - AM1M works end to end on both endpoints, over the core API and the real
   TCP driver. One `AmeAuthentication` drives all three modes.
 - AM1M mixes a binder from the provisioned secret into the handshake key
@@ -92,6 +111,28 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- The soak reaches a part of the code nothing else did. `sweepAmeDacRelay`
+  had never been called by anything before it; the reclamation rule itself
+  turned out to be right, and what was wrong was that a link could stay
+  active forever so the rule never got a chance to fire.
+- Two things the soak found and did NOT fix, both design decisions rather
+  than bugs, both written up in `docs/soak.md`:
+
+    a reclaimed slot is SILENT. The peer is never told, so it cannot tell
+      "my session is gone" from "the path got worse", and all it can do is
+      wait out its own timeout once per package. Dropping in silence is the
+      right default -- replying to a datagram from an address with no session
+      is a reflection vector -- but the usual answer is a stateless reset
+      token, and Bifrost has none.
+    one socket cannot carry both a handshake and live traffic, because
+      `ameDacServerHandshake` consumes and discards whatever it is not
+      waiting for. Any real server must split the ports, as the soak server
+      does, or grow a demultiplexer that reads the frame kind first.
+- The idle window and the client package timeout are COUPLED and nothing in
+  the code says so. A sender that has spent its repair rounds goes quiet while
+  still believing it is connected, so an `idleMs` shorter than that silence
+  reclaims live peers. With the defaults that is roughly four seconds; the
+  soak defaults to fifteen.
 - `Rune-Pragmas` is now a real submodule (`submodules/Rune-Pragmas`), not
   just a sibling path. 126 of 134 files under `src/` import `runePragmas`,
   so before this the repository compiled only on a machine that happened to

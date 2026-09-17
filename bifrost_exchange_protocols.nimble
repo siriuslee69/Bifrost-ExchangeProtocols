@@ -543,6 +543,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_dac_link_giveup.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_path_adaptation.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
     runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
@@ -627,6 +628,7 @@ task testDac, "Run DAC transport schema/default tests":
   runNim("c", "evaluation/tests/test_dac_package_repair.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_scramble.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_link.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_dac_link_giveup.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_path_adaptation.nim", @["-r"])
   runNim("c", "evaluation/tests/test_dac_link_table.nim", @["-r"])
 
@@ -646,6 +648,79 @@ task testFuzz, "Run every wire decoder against mutated frames":
   ## and the TLS 1.3 record and handshake decoders.
   runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
   runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
+
+
+proc soakRunnerPath(): string =
+  ## Where the soak task builds its runner. Named here rather than repeated,
+  ## because the task builds to this path and then executes it.
+  var
+    name: string = "soak_run"
+  when defined(windows):
+    name.add(".exe")
+  result = normalizePath(joinPath(getCurrentDir(), "build", "soak", name))
+
+proc soakSwitch(text: string): string =
+  ## text: one command-line word turned into the `--name=value` the runner
+  ## reads, or an empty string when it is not one.
+  ##
+  ## Nimble rewrites what was typed: `--seconds=600` reaches a task as
+  ## `--seconds:600`. Both separators are accepted here and both come out as
+  ## `=`, so the runner has one shape to parse and the person typing has two.
+  var
+    body: string = ""
+    cut: int = -1
+    i: int = 0
+  if text.len < 4 or text[0] != '-' or text[1] != '-':
+    return ""
+  body = text[2 .. ^1]
+  while i < body.len:
+    if body[i] == ':' or body[i] == '=':
+      cut = i
+      break
+    i = i + 1
+  if cut <= 0 or cut >= body.len - 1:
+    return ""
+  result = "--" & body[0 ..< cut] & "=" & body[cut + 1 .. ^1]
+
+proc soakForwardedArgs(): seq[string] =
+  ## Every switch typed AFTER the task name, handed on to the runner.
+  ##
+  ## Nimble does not forward a task's arguments, so they are read back off the
+  ## command line here. Taking only what follows the task name is what keeps
+  ## nimble's own switches -- `--hints:off`, `--define:...` and the rest, which
+  ## come before it -- out of the runner's way.
+  var
+    args: seq[string] = commandLineParams()
+    switch: string = ""
+    seen: bool = false
+    i: int = 0
+  while i < args.len:
+    if seen:
+      switch = soakSwitch(args[i])
+      if switch.len > 0:
+        result.add(switch)
+    elif args[i] == "soak":
+      seen = true
+    i = i + 1
+
+task soak, "Run the AME+DAC soak: separate processes, real sockets, induced loss":
+  ## Not part of `nimble test`, deliberately. A test answers in seconds; this
+  ## one runs for as long as it is told to and is meant to be watched.
+  ##
+  ##   nimble soak                                  two minutes, default shape
+  ##   nimble soak --seconds=3600 --clients=4       an hour, four client processes
+  ##   nimble soak --loss=0 --churn=0 --peers=8     throughput, nothing induced
+  ##
+  ## Every knob is listed at the top of evaluation/soak/soak_run.nim. A run
+  ## that ends with "every process finished clean" saw no payload mismatch and
+  ## no escaped exception on any process.
+  runNim("c", "evaluation/soak/soak_server.nim",
+    @["--threads:on", "-d:release", "--outdir:build/soak"])
+  runNim("c", "evaluation/soak/soak_client.nim",
+    @["--threads:on", "-d:release", "--outdir:build/soak"])
+  runNim("c", "evaluation/soak/soak_run.nim",
+    @["-d:release", "--outdir:build/soak"])
+  runCommand(soakRunnerPath(), soakForwardedArgs())
 
 task testFomke, "Run GB3HKDF, AEAD preset, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):

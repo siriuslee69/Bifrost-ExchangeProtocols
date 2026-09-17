@@ -13,6 +13,10 @@ bifrost_exchange_protocols_*
 src/bifrost_exchange_protocols
 src/libbifrost_exchange_protocols.*
 evaluation/tests/test_*
+evaluation/tests/dac_link_support
+evaluation/soak/soak_server
+evaluation/soak/soak_client
+evaluation/soak/soak_run
 !evaluation/tests/test_*.nim
 evaluation/tests/output/
 evaluation/tests/outputs/

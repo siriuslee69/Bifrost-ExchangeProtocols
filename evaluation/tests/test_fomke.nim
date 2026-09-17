@@ -552,8 +552,20 @@ suite "FOMKE":
     opened = openFomkeMessage(bob, lost)
     check not opened.ok
 
-  # {.testKind: tkEdgeCase.}
-  test "a full skip cache stops receiving, and giving up starts it again":
+  # {.testKind: tkRegression, covers: "acquireFomkeInboundKey", pins: "a full skipped-key cache used to end the session".}
+  test "a full skip cache gives up its oldest key instead of refusing":
+    ## What this pins.
+    ##
+    ## A key is held for every message the chain had to jump over, so that one
+    ## arriving late still opens. Reordering takes those keys back out again.
+    ## LOSS never does: a lost message is re-sent at a NEW position, so the old
+    ## key waits for something that no longer exists.
+    ##
+    ## The cache used to refuse once it was full, and nothing emptied it, so a
+    ## handful of permanent losses ended the session for good:
+    ##
+    ##   before   4 losses  ->  cache full  ->  every later gap refused
+    ##   now      4 losses  ->  cache full  ->  oldest key given up, carry on
     var
       initial: AmeExchangeState = initialExchangeState()
       alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
@@ -562,6 +574,7 @@ suite "FOMKE":
         fomkeInitialTier(), frResponder, reorderCeiling = 4'u32)
       message: FomkeMessage
       opened: FomkeOpenResult
+      held: int = 0
       i: int = 0
     ## Four messages are lost, then the fifth arrives: the cache is now full.
     while i < 4:
@@ -571,18 +584,104 @@ suite "FOMKE":
     opened = openFomkeMessage(bob, message)
     check opened.ok
     check fomkeSkippedMessages(bob) == 4
-    ## One more loss, and the receiver has nowhere to put the keys.
+    ## One more loss. The cache is at its ceiling, so room is made rather than
+    ## the message being refused.
     discard sealFomkeMessage(alice, @[byte 10])
     message = sealFomkeMessage(alice, @[byte 11])
     opened = openFomkeMessage(bob, message)
-    check not opened.ok
-    check opened.err == "FOMKE skipped-key cache is full"
-    ## The refusal changed nothing, so giving up is enough to recover.
-    check fomkeSkippedMessages(bob) == 4
-    check discardFomkeSkipped(bob) == 4
-    opened = openFomkeMessage(bob, message)
     check opened.ok
     check opened.payload == @[byte 11]
+    ## Never more than the ceiling, which is the memory bound the lane was
+    ## built with -- and the keys that went are the ones furthest behind.
+    check fomkeSkippedMessages(bob) <= 4
+    ## Giving up on the rest is still the caller's to do, and still works.
+    held = fomkeSkippedMessages(bob)
+    check discardFomkeSkipped(bob) == held
+    check fomkeSkippedMessages(bob) == 0
+
+  # {.testKind: tkRegression, covers: "forgetUnreachableFomkeSkipped", pins: "steady loss used to kill a long-lived session".}
+  test "steady loss never stops the ratchet receiving":
+    ## The soak found this: a lossy datagram path killed an AME session within
+    ## a few hundred frames, permanently, with no way for either side to tell.
+    ## One message in five is dropped here for two hundred messages, which is a
+    ## far worse path than anything real, and the session must still be working
+    ## at the end with its cache inside the bound it was given.
+    var
+      initial: AmeExchangeState = initialExchangeState()
+      alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
+        fomkeInitialTier(), frInitiator, reorderCeiling = 32'u32)
+      bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
+        fomkeInitialTier(), frResponder, reorderCeiling = 32'u32)
+      message: FomkeMessage
+      opened: FomkeOpenResult
+      delivered: int = 0
+      worst: int = 0
+      i: int = 0
+    while i < 200:
+      message = sealFomkeMessage(alice, @[byte uint8(i and 0xFF)])
+      i = i + 1
+      if i mod 5 == 0:
+        continue
+      opened = openFomkeMessage(bob, message)
+      check opened.ok
+      delivered = delivered + 1
+      worst = max(worst, fomkeSkippedMessages(bob))
+    ## Every message that was not dropped opened, all the way to the end.
+    check delivered == 160
+    ## And the held keys stayed inside the ceiling rather than piling up.
+    check worst <= 32
+    check fomkeSkippedMessages(bob) <= 32
+
+  # {.testKind: tkRegression, covers: "narrowFomkeReorderWindow", pins: "a narrowed window used to refuse the gap its own held keys predicted".}
+  test "the window never narrows below the keys the lane is holding":
+    ## What this pins.
+    ##
+    ## The window narrows on evidence that the path is behaving. Held keys are
+    ## evidence of the opposite, and the two were not talking to each other: a
+    ## lane holding sixteen keys could still narrow past that number, and the
+    ## next gap wider than the new window would be refused.
+    ##
+    ## That refusal is not recoverable. A refused message advances nothing, so
+    ## every message after it sits further ahead still, and the lane is dead
+    ## with neither end told.
+    ##
+    ## The ceiling is wide here on purpose. Held keys are erased once their
+    ## message is further behind than the ceiling -- so with a narrow one they
+    ## are gone before enough in-order messages have arrived to narrow the
+    ## window twice, and there is nothing left for the floor to hold.
+    var
+      initial: AmeExchangeState = initialExchangeState()
+      alice: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
+        fomkeInitialTier(), frInitiator, reorderCeiling = 256'u32)
+      bob: FomkeState = initFomkeFromAme(initial, fomkeLayout(),
+        fomkeInitialTier(), frResponder, reorderCeiling = 256'u32)
+      message: FomkeMessage
+      opened: FomkeOpenResult
+      widened: uint32 = 0'u32
+      i: int = 0
+    ## Lose sixteen in a row, then deliver: the lane holds sixteen keys for
+    ## messages that are never coming, and widens to cover the jump it saw.
+    while i < 16:
+      discard sealFomkeMessage(alice, @[byte i])
+      i = i + 1
+    message = sealFomkeMessage(alice, @[byte 9])
+    check openFomkeMessage(bob, message).ok
+    check fomkeSkippedMessages(bob) == 16
+    widened = fomkeReorderWindow(bob)
+    check widened > 16'u32
+    ## Now behave perfectly for long enough to narrow twice over. Every one of
+    ## these arrives exactly where it is expected.
+    i = 0
+    while i < int(fomkeReorderRelaxRuns) * 2:
+      message = sealFomkeMessage(alice, @[byte uint8(i and 0xFF)])
+      opened = openFomkeMessage(bob, message)
+      check opened.ok
+      i = i + 1
+    ## It narrowed -- but only down to the number of keys it is still holding,
+    ## and no further. Halving twice from thirty-two would have reached eight.
+    check fomkeSkippedMessages(bob) == 16
+    check fomkeReorderWindow(bob) < widened
+    check fomkeReorderWindow(bob) == 16'u32
 
   # {.testKind: tkUnit.}
   test "message wire and descriptor are strict":

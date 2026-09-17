@@ -74,6 +74,11 @@ type
     table*: DacLinkTable
     sessions*: seq[AmeSession]
     dropped*: uint32
+    forgotten*: uint32
+      ## How many held frame keys this relay has given up on, across every
+      ## peer. It is the loss the ratchet SAW, counted where nothing else
+      ## counts it: DAC reports chunks, and one lost chunk is one lost frame
+      ## only until repair starts sending chunks a second time.
 
 proc initAmeDacRelay*(d: DacScenarioDefaults, seed: uint64,
     capacity: int = dacLinkTableCapacity,
@@ -134,6 +139,33 @@ proc sealRelayMessages(R: var AmeDacRelay, slot: int,
       return
     i = i + 1
 
+proc forgetSkippedFrames(R: var AmeDacRelay, slot: int) {.role: actor.} =
+  ## R/slot: tell the session that the frames it is still holding keys for are
+  ## not coming.
+  ##
+  ## FOMKE keeps the key of any frame it had to jump over, so that a frame
+  ## which merely arrived late still opens. Over DAC a frame that is missing is
+  ## usually not late but LOST, and DAC does not re-send a frame -- it re-sends
+  ## the CHUNK, inside a new frame at a new position. The key for the old one
+  ## then waits for something that will never exist.
+  ##
+  ##   package starts  ──▶  frames 100..130 sealed
+  ##                        104 and 117 lost on the path
+  ##                        their keys are held, waiting
+  ##   package ends    ──▶  every chunk is either here or given up on
+  ##                        so those two keys are waiting on nothing
+  ##
+  ## The end of a package is the moment that becomes knowable, and this is the
+  ## only place that knows it. FOMKE says so itself: giving up is the caller's
+  ## decision, because only the caller can tell a slow path from a lost frame.
+  ## Leaving it undecided used to cost the link its ability to REKEY, because a
+  ## KEM upgrade refuses to run while any skipped key is outstanding.
+  if slot < 0 or slot >= R.sessions.len:
+    return
+  if ameSessionSkippedMessages(R.sessions[slot]) == 0:
+    return
+  R.forgotten = R.forgotten + uint32(discardAmeSessionSkipped(R.sessions[slot]))
+
 proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
     step: var AmeDacRelayStep) {.role: orchestrator.} =
   ## R/slot/inner: relay, slot, and what the link loop produced.
@@ -153,9 +185,11 @@ proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
   of dlkPackageComplete:
     step.kind = adrPackageComplete
     step.payload = inner.payload
+    forgetSkippedFrames(R, slot)
   of dlkPackageFailed:
     step.kind = adrPackageFailed
     step.err = inner.err
+    forgetSkippedFrames(R, slot)
   of dlkIgnored, dlkNone:
     step.kind = adrNone
   else:

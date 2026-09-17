@@ -1150,26 +1150,66 @@ candidates are erased and epoch `n` continues.
 ### When a message is not late but gone ⌜guide⌟
 
 Steps 5 and 6 above hold on to the keys for messages that were jumped over, so
-a datagram that turns up late still opens. Nothing takes those keys back out
-of the cache except the message itself arriving. That is fine on a link where
-everything eventually arrives, and it is a trap on one where it does not:
+a datagram that turns up late still opens. The message arriving is what takes
+its key back out of the cache.
+
+**Loss is not lateness, and that is the whole difficulty.** A lost datagram is
+never re-sent by DAC. DAC re-sends the CHUNK, inside a **new frame at a new
+position**, so the key for the old frame waits for something that will never
+exist:
 
 ```text
-  a message is lost for good
+  frames 100..130 sealed and sent
         |
-        v
-  its key stays in the cache forever
+        +--> 104 and 117 are lost on the path
+        |      their keys are held, waiting
         |
-        +--> after a window of them, the cache is full
-        |      -> the next gap is refused: "skipped-key cache is full"
-        |
-        +--> and a rekey refuses to run at all while any are outstanding
-               -> "skipped messages must be resolved before a KEM upgrade"
+        +--> DAC re-sends those two chunks as frames 131 and 132
+               nothing will ever claim 104 or 117 again
 ```
 
-Both rules are deliberate — a rekey with keys still outstanding would silently
-strand them — but together they leave a lossy session with nowhere to go. So
-there is one way out, and the caller has to ask for it by name:
+Left alone, that cache fills with keys for messages that are not coming, and
+a session on a 2% path used to stop receiving **permanently** within a few
+hundred frames. Three rules now stop it, and all three run on their own:
+
+```text
+  too far behind    a held key whose message is further behind than
+                    reorderCeiling is erased. Further behind than the widest
+                    reordering this lane will ever agree to is not late.
+
+  capped by the     the cache holds at most reorderCeiling keys -- the memory
+  ceiling           bound the lane was built with -- not reorderWindow, which
+                    moves, and used to shrink below what was already held.
+
+  room is made,     a cache at its ceiling gives up its OLDEST key rather than
+  never refused     refusing the message. Giving a key up costs one datagram
+                    the carrier re-sends; refusing cost the whole session.
+```
+
+The bound that stops a stranger making this side derive without limit is
+**untouched**: a message claiming a position further ahead than
+`reorderWindow` is still refused before any key is derived.
+
+On top of that, the DAC relay gives up whatever is still held **when a package
+ends**. That is the moment it becomes knowable that nothing outstanding can
+still be useful, and the relay is the only thing that knows it:
+
+```text
+  package completes or fails
+        |
+        v
+  every chunk is either here or given up on
+        |
+        v
+  so anything still held is waiting on nothing -- let it go
+```
+
+It matters for a second reason: a rekey refuses to run while any held key is
+outstanding, so without this a long-lived lossy session could never rotate its
+epoch.
+
+**Asking by hand.** A caller that is not using the DAC relay -- or one that
+simply knows a gap is dead -- still has the same door:
 
 ```nim
 if ameSessionSkippedMessages(connection) > 0:
@@ -1178,9 +1218,17 @@ if ameSessionSkippedMessages(connection) > 0:
 ```
 
 This erases those keys. The messages behind them can never be opened
-afterwards, even if the network does eventually deliver them — which is
-exactly why nothing calls it for you. Only the caller knows whether a gap
-means a slow path or a dead one.
+afterwards, even if the network does eventually deliver them.
+
+**The one refusal that remains.** A burst of losses **wider than
+`reorderWindow`** is still refused, and a refusal advances nothing -- so every
+message after it sits further ahead still, and that lane cannot recover. This
+is the deliberate half: letting a gap that wide through is exactly the
+amplifier a forged datagram wants. Measured on a soak at 2% loss it fired 24
+times in 205,000 datagrams, and the peer recovers by building a new session,
+which is what DTLS does in the same situation. Narrowing is floored at the
+number of keys the lane is holding, so a lane that has recently seen gaps no
+longer shrinks its way into one.
 
 ### Preparing ahead, and what it costs ₊˚⊹♡
 
@@ -1387,6 +1435,7 @@ Each protocol folder has its own `README.md` with a one-line-per-file table.
 | Run tests | `nimble test` |
 | Run examples | `nimble examples` |
 | Run benchmarks | `nimble benchmarks` |
+| Soak AME+DAC over real sockets | `nimble soak` |
 | Run AVX2 server benchmarks | `nimble benchmarksServerSimd` |
 | Test native TLS | `nimble testNativeTls` |
 | Test FOMKE | `nimble testFomke` |
@@ -1395,6 +1444,22 @@ Each protocol folder has its own `README.md` with a one-line-per-file table.
 | Test native TLS against OpenSSL | `nimble testNativeTlsInterop` |
 | Check generated files | `nimble releaseHygiene` |
 | Remove generated files | `nimble cleanGenerated` |
+
+`nimble soak` is the odd one out and is deliberately not part of `nimble
+test`. It starts separate server and client PROCESSES on separate loopback
+addresses, gives them real UDP sockets, drops datagrams on purpose and churns
+peers, for as long as it is told to:
+
+```sh
+nimble soak                                   # two minutes, default shape
+nimble soak --seconds=3600 --clients=4        # an hour, four client processes
+nimble soak --loss=0 --churn=0 --peers=8      # throughput, nothing induced
+```
+
+It ends with `soak: every process finished clean` when no payload arrived
+wrong and nothing escaped a loop. `docs/soak.md` explains every switch, how to
+read a report line, and what the soak has found so far -- two faults that no
+unit test could have reached, both fixed.
 
 ## Wire Formats: Low-Level View
 

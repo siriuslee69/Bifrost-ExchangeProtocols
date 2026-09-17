@@ -621,7 +621,24 @@ proc narrowFomkeReorderWindow(S: var FomkeState) {.role: actor,
   if S.orderedRun < fomkeReorderRelaxRuns:
     return
   S.orderedRun = 0'u32
-  S.reorderWindow = max(S.reorderWindow div 2'u32, fomkeMinReorderWindow)
+  ## Never narrow below the number of keys this lane is HOLDING. A held key is
+  ## evidence that this lane recently had a gap, and the window is what lets
+  ## the next one through:
+  ##
+  ##   12 keys held, window narrowed to 4  ->  the next gap of 5 is refused,
+  ##                                           and a refused message advances
+  ##                                           nothing, so every message after
+  ##                                           it sits further ahead still
+  ##
+  ## That is a lane that cannot recover. The floor cannot be driven by a
+  ## stranger either: a key only enters the cache from a message whose tag
+  ## verified, on the clone that is kept only if it did.
+  ##
+  ## The `min` is what keeps this a NARROWING. A floor above the current
+  ## window must leave the window alone, never raise it -- widening is the
+  ## other routine's job and it has evidence this one does not.
+  S.reorderWindow = min(S.reorderWindow, max(S.reorderWindow div 2'u32,
+    max(fomkeMinReorderWindow, uint32(S.skipped.len))))
 
 proc widenFomkeReorderWindow(S: var FomkeState, distance: uint64) {.
     role: actor, tag: "fomke", inline.} =
@@ -641,6 +658,56 @@ proc widenFomkeReorderWindow(S: var FomkeState, distance: uint64) {.
     return
   S.reorderWindow = min(target, S.reorderCeiling)
 
+proc forgetUnreachableFomkeSkipped(S: var FomkeState, lane: FomkeLane,
+    nextIndex: uint64) {.role: actor, tag: "cryptoBoundary|fomke".} =
+  ## S/lane/nextIndex: erase the keys of messages that can no longer turn up.
+  ##
+  ## A skipped key is only worth anything while the message it belongs to
+  ## might still arrive. `reorderCeiling` is the widest this lane will ever
+  ## agree a path reorders, so a message further behind than that is not late
+  ## -- it is gone:
+  ##
+  ##   nextIndex 900, ceiling 64
+  ##       index 880   still plausible   keep
+  ##       index 830   70 behind         gone, erase
+  ##
+  ## Without this the cache only ever grows. Reordering takes keys back out of
+  ## it; LOSS never does, because a lost message is replaced by a re-send at a
+  ## NEW index, and the old key waits for something that no longer exists. A
+  ## few hundred lost datagrams then fill the cache with keys for messages
+  ## that will never come, and the session stops receiving for good.
+  var
+    i: int = 0
+  while i < S.skipped.len:
+    if S.skipped[i].lane == lane and S.skipped[i].epoch == S.epoch and
+        nextIndex > S.skipped[i].index and
+        nextIndex - S.skipped[i].index > uint64(S.reorderCeiling):
+      secureClearAmeBytes(S.skipped[i].keyMaterial)
+      S.skipped.delete(i)
+    else:
+      i = i + 1
+
+proc dropOldestFomkeSkipped(S: var FomkeState) {.role: actor,
+    tag: "cryptoBoundary|fomke".} =
+  ## S: erase the one held key whose message has been missing longest.
+  ##
+  ## The backstop for the rule above. Distance clears keys that are provably
+  ## gone; this one makes room when the cache is at its ceiling and every
+  ## entry is still inside the window. The oldest is chosen because it is the
+  ## one least likely to arrive, and giving it up costs at most one dropped
+  ## message on a carrier that re-sends anyway.
+  var
+    i: int = 0
+    oldest: int = -1
+  while i < S.skipped.len:
+    if oldest < 0 or S.skipped[i].index < S.skipped[oldest].index:
+      oldest = i
+    i = i + 1
+  if oldest < 0:
+    return
+  secureClearAmeBytes(S.skipped[oldest].keyMaterial)
+  S.skipped.delete(oldest)
+
 proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
     lane: FomkeLane): ByteSeq {.role: actor,
     tag: "cryptoBoundary|fomke|kdf".} =
@@ -649,6 +716,12 @@ proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
   ## are cached, so a datagram that arrives late still opens; anything further
   ## ahead is refused rather than letting a peer make this side derive without
   ## bound.
+  ##
+  ## The cache never refuses. It holds at most `reorderCeiling` keys and gives
+  ## up the least useful one to make room -- first anything further behind
+  ## than the ceiling, which cannot arrive any more, then the oldest. Giving a
+  ## key up costs one message that a carrier re-sends; REFUSING cost the whole
+  ## session, because nothing ever took a lost message's key back out again.
   ##
   ## The window moves with what this lane actually sees:
   ##
@@ -679,15 +752,20 @@ proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
   if distance > uint64(S.reorderWindow):
     clearFomkeChain(C)
     raise newException(ValueError, "FOMKE message gap exceeds the reorder window")
+  forgetUnreachableFomkeSkipped(S, lane, index)
   while C.nextIndex <= index:
     key = advanceFomkeChain(C, lane, S.epoch, S.kdf)
     if key.index == index:
       result = key.keyMaterial
       break
-    if uint32(S.skipped.len) >= S.reorderWindow:
-      secureClearAmeBytes(key.keyMaterial)
-      clearFomkeChain(C)
-      raise newException(ValueError, "FOMKE skipped-key cache is full")
+    ## The cache is capped by the CEILING, not by the window that moves.
+    ## Those are different quantities: the ceiling is the memory bound this
+    ## lane was built with, the window is how far ahead a message may sit.
+    ## Capping held keys with the moving window meant a path that went quiet
+    ## -- narrowing the window towards four -- could no longer hold the keys
+    ## it was already holding, and refused instead.
+    if uint32(S.skipped.len) >= S.reorderCeiling:
+      dropOldestFomkeSkipped(S)
     skipped.epoch = S.epoch
     skipped.index = key.index
     skipped.lane = lane

@@ -622,6 +622,38 @@ proc dacSenderRepairDue(S: DacLink, nowMs: uint32): bool {.role: parser.} =
   result = (nowMs - S.outgoing.waitingMs) >=
     uint32(dacRepairWaitMs(S.outgoing.timer, S.defaults))
 
+proc dacSenderGaveUp(S: DacLink, nowMs: uint32): bool {.role: parser.} =
+  ## S: link whose outgoing package has run out of things to try.
+  ## nowMs: caller's millisecond clock.
+  ##
+  ## The receiver has always been able to give up: when its repair rounds are
+  ## spent and chunks are still missing, it says so and closes the receive.
+  ## The SENDER had no such rule. Once its rounds were spent it simply stopped
+  ## speaking, and `outgoing.active` stayed true forever:
+  ##
+  ##   peer stops answering  ──▶  rounds spent  ──▶  nothing more is sent
+  ##                                                 nothing clears outgoing
+  ##                                                 the link is never idle
+  ##                                                 its relay slot is never
+  ##                                                   reclaimed
+  ##
+  ## A server echoing a receipt to a peer that has gone therefore pinned a slot
+  ## for the life of the process, and a table of them filled up and stayed
+  ## full. So this is the sender's half of the same sentence: every round was
+  ## spent, twice the repair wait has passed since the last one, and nobody has
+  ## acknowledged anything. The package is lost.
+  ##
+  ## Twice the wait, not once, because the last round still has to be answered:
+  ## the parity has to arrive, be used, and the receipt has to come back. The
+  ## wait itself is measured receipt latency, so two of them is comfortably
+  ## more than one round trip on whatever path this actually is.
+  if not S.outgoing.active:
+    return false
+  if S.outgoing.rounds < S.limits.maxRepairRounds:
+    return false
+  result = (nowMs - S.outgoing.waitingMs) >=
+    2'u32 * uint32(dacRepairWaitMs(S.outgoing.timer, S.defaults))
+
 proc dacReceiverRepairDue(S: DacLink, nowMs: uint32): bool {.role: parser.} =
   ## S: link whose incoming package has stalled with gaps still open.
   ## nowMs: caller's millisecond clock.
@@ -690,6 +722,14 @@ proc tickDacLink*(S: var DacLink, nowMs: uint32): DacLinkStep {.
     S.outgoing.rounds = S.outgoing.rounds + 1'u8
     S.outgoing.waitingMs = nowMs
     resendDacParity(S, result.messages)
+  elif dacSenderGaveUp(S, nowMs):
+    ## Rounds spent and still nothing back. Releasing the package is what lets
+    ## this link go idle, and going idle is what lets its slot be handed to
+    ## somebody else. Nothing is told: the peer never acknowledged anything, so
+    ## there is nobody listening to tell.
+    discard abandonDacPackage(S)
+    result.kind = dlkPackageFailed
+    result.err = "DAC package was never acknowledged after every repair round"
   if not dacReceiverRepairDue(S, nowMs):
     return
   S.incoming.lastProgressMs = nowMs
