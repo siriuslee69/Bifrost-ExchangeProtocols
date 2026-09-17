@@ -328,6 +328,30 @@ proc slideDacAckBatch(S: var DacAckPolicy, nowMs: uint32) {.role: actor.} =
   S.arrivals = rest
   S.openedMs = nowMs
 
+proc resetDacAckPolicy*(S: var DacAckPolicy) {.role: actor.} =
+  ## S: policy emptied of a batch that has nothing left to report.
+  ##
+  ## An open batch belongs to ONE incoming package. `slideDacAckBatch`
+  ## deliberately refuses to move the base past a hole, so a package that
+  ## ended with a hole still in the window -- which is every package repaired
+  ## from parity, the normal case under loss -- leaves `pending` non-zero with
+  ## nothing left that could ever fill it:
+  ##
+  ##   base                    the package is complete, and yet
+  ##    |  X  .  X  X          pending = 2, so dacAckDue stays true
+  ##          ^                -> a receipt every deadline
+  ##          the hole that       -> and the batch slides nowhere
+  ##          parity filled       -> so it happens again, forever
+  ##
+  ## The levers STAY. `batchChunks` and `deadlineMs` are what this link has
+  ## learned about the path, and the path does not change because a package
+  ## ended.
+  S.base = 0'u32
+  S.span = 0'u16
+  S.pending = 0'u16
+  S.arrivals = @[]
+  S.openedMs = 0'u32
+  S.started = false
 proc closeDacAckBatch*(S: var DacAckPolicy, commitCount: uint8,
     nowMs: uint32): DacAckRange {.role: orchestrator.} =
   ## S: policy whose open batch becomes one wire receipt and then slides on.

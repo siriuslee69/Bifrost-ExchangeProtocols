@@ -195,10 +195,15 @@ suite "a verified receiver reports what it has committed":
       st: DacLinkStep = default(DacLinkStep)
       back: seq[DacTaggedMessage] = @[]
       acks: int = 0
+    ## Thirty milliseconds a chunk, so the batch deadline really expires while
+    ## the package is still arriving. A receipt has to be EARNED here: a batch
+    ## left over after the package finished is not one, and does not go out.
     for m in beginDacPackage(sender, 1'u64, payload, clock):
-      clock = clock + 5'u32
+      clock = clock + 30'u32
       st = feedDacMessage(receiver, m.kind, m.body, clock)
       for reply in st.messages:
+        back.add(reply)
+      for reply in tickDacLink(receiver, clock).messages:
         back.add(reply)
     clock = clock + 5_000'u32
     for reply in tickDacLink(receiver, clock).messages:

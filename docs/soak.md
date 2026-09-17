@@ -41,6 +41,7 @@ and `--name=value` and `--name:value` both work.
 | `--idle` | milliseconds of quiet before a slot may be reclaimed | 15000 |
 | `--lane` | which scenario the links start in | cleanLan |
 | `--report` | seconds between report lines | 15 |
+| `--dump-slots` | server only: print every slot's state each second | 0 |
 
 Total peer slots is `servers × workers × capacity`. Total peers wanting them
 is `clients × peers`. Making the second bigger than the first is how slot
@@ -48,6 +49,26 @@ reclamation is put under pressure; the runner prints both numbers when it
 starts so the shape of a run is in its own log.
 
 ---
+
+
+**`--dump-slots=1`** is how finding 3 was caught, and it is worth knowing
+about. `live=32` is a number, not an explanation: a relay full because it is
+busy and a relay full because nothing will let go look identical from outside.
+The dump prints four readings per slot instead:
+
+```
+w0 slots  0:out-- rnd2 age148  1:----- rnd0 age28  2:----- rnd0 age97 ...
+          ^ ^^^   ^^^^ ^^^^^^
+          | |     |    milliseconds since anything was HEARD from this peer
+          | |     repair rounds spent on the outgoing package
+          | out = still sending, in = still receiving, - = idle
+          slot index
+```
+
+A slot with `out` set and `age` far past the idle window is a link that cannot
+let go. A slot that is idle in BOTH directions and whose `age` never grows
+past a hundred milliseconds is a link talking to itself, which is exactly what
+finding 3 turned out to be.
 
 ## ╭⟢ What the processes are 🐦‍🔥
 
@@ -254,7 +275,75 @@ Pinned by two tests in `evaluation/tests/test_dac_link_giveup.nim`: one that a
 sender whose peer vanished lets go, and one that a sender being acknowledged
 normally never does.
 
-### 3. A reclaimed slot is silent — still open
+### 3. A finished package left its receipt still asking to be sent, for ever
+
+**The one that was actually stopping the servers.** The other two findings made
+the run survivable; this one is why it stopped anyway. It took a per-slot dump
+to see, because from outside it looked exactly like health: every slot
+occupied, memory flat, nothing raised.
+
+The ACK window slides over ARRIVALS only, never over a hole. That is
+deliberate and right -- a sequence pushed below the base can never appear in a
+receipt again, and the sender would spend repair rounds on chunks already
+delivered. But the window belonged to one package, and the package used to end
+without it:
+
+```
+  base                    the package is complete, and yet
+   |  X  .  X  X          pending = 2, so the batch is still due
+         ^                -> a receipt every deadline
+         the hole that       -> the batch slides nowhere
+         parity filled       -> so it happens again, and again
+```
+
+Every package repaired from parity -- the **normal** case under loss -- ends
+with a hole somewhere in its window. So every such package left a batch that
+would ask to be sent every `ackMaxDelayMs`, about ten sealed datagrams a
+second per link, for the life of the process, to a peer that had usually
+stopped listening.
+
+It cost far more than bandwidth. `tickAmeDacRelay` refreshes a slot's
+`lastSeenMs` whenever its link produced anything, so a link talking to itself
+kept looking alive:
+
+```
+  receipt emitted  ──▶  step has messages  ──▶  lastSeenMs = now
+                                                 |
+                              dacSlotReclaimable needs quiet
+                                                 |
+                              so the slot is never quiet
+                              never reclaimed, never reused
+```
+
+Both servers reached all sixty-four slots held by peers that had gone, refused
+every peer that was still there, and sat there sending nine hundred and
+sixty-seven datagrams a second into nothing. The report line said `live=32`,
+`rss` flat, no errors.
+
+`endDacIncoming` ends the two things together. One last receipt still goes out
+and that one is load-bearing -- a `damVerified` receiver carries its commit
+count in every receipt, which is how a sender whose commit message was lost
+still learns the package landed. No other mode gets one, because no other mode
+has a reason: they have all just sent a commit, and a NACK-only receiver that
+saw a clean run must stay silent.
+
+Same run, same settings, before and after:
+
+| | before | after |
+|---|---|---|
+| packages verified | 2,878, frozen at t=135 | **17,159, still climbing at t=270** |
+| bytes verified | 70 MB | **414 MB** |
+| handshakes served | 73, frozen | **521** |
+| slots reclaimed | 22, frozen | **319** |
+| datagrams sent | 288,548 and accelerating | **85,969** |
+| datagrams received | 127,485, frozen | **870,121** |
+
+The send-to-receive ratio is the tell. A receiver that sends twice what it
+reads is not a receiver.
+
+Pinned by "a package repaired from parity leaves nothing still asking to be
+sent" in `evaluation/tests/test_dac_link_giveup.nim`.
+### 4. A reclaimed slot is silent — still open
 
 When `sweepAmeDacRelay` reclaims a slot, the peer is never told. It keeps
 sending into a relay that has no session for it, and every datagram is dropped
@@ -276,7 +365,7 @@ triggered it so it amplifies nothing. Bifrost has no such thing. **This is a
 design decision, not a bug, and it has not been made.** The soak client works
 around it by giving up on a session after two packages time out in a row.
 
-### 4. A handshake could finish and then find no room
+### 5. A handshake could finish and then find no room
 
 `admitAmeDacPeer` can refuse -- the relay holds a fixed number of live links,
 which is the point of it. But by then the handshake has already run: two round
@@ -291,14 +380,14 @@ no answer retries, which is the behaviour it already has for a lost record.
 With the gate in: `admit-fail` 22 → 11, `relay-drop` roughly halved, packages
 per run 1,114 → 1,398 on identical settings.
 
-### 5. Two sockets, because there is no demultiplexer
+### 6. Two sockets, because there is no demultiplexer
 
 Noted above and worth stating plainly: one socket cannot carry both a
 handshake and live traffic, because the handshake driver consumes and discards
 whatever it is not waiting for. Any real server has to either split the ports,
 as this one does, or grow a demultiplexer that reads the frame kind first.
 
-### 6. Things that held up
+### 7. Things that held up
 
 - **No payload ever arrived wrong.** Not once, across every run.
 - **Nothing escaped a loop.** No exception reached a thread boundary, across
@@ -353,10 +442,15 @@ about every 30 seconds, `idleMs` of 20000.
   48  +  48 x (20 / 30)  =  48 + 32  =  80 slots, for 48 peers
 ```
 
-That run was given 64. It sat permanently full, with about sixty of those
-slots holding peers that had gone, and locked out the peers that were still
-there -- 800 refused handshakes per client in four minutes. Nothing was
-broken; the table was simply sized for the wrong number.
+That run was given 64. It sat permanently full, with most of those slots
+holding peers that had gone, and turned away the peers that were still there.
+
+Finding 3 was making this far worse than the arithmetic says -- a slot whose
+link was still chattering never became reclaimable at all -- but the
+arithmetic is real on its own, and stays true with that fixed. The same run
+after the fix reclaimed 319 slots instead of 22 and served 521 handshakes
+instead of 73, and STILL ran at capacity: the table was also sized for the
+wrong number.
 
 Three ways out, and the third is the real one:
 

@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Soak it until two things that could never end, ended
+Commit Message: End the receipt with the package it was about
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -47,8 +47,20 @@ Features (Done):
 - A soak: `nimble soak`. Separate processes on separate loopback addresses,
   real UDP, real handshakes, induced loss, peer churn and a payload that
   carries its own name so the receiver can verify it without sharing memory
-  with the sender. `docs/soak.md` is the whole story; it found two faults no
+  with the sender. `docs/soak.md` is the whole story; it found three faults no
   unit test could have.
+- A finished package no longer leaves its receipt asking to be sent. The ACK
+  window slides over arrivals only and never past a hole -- right, and the
+  window belonged to ONE package while the package ended without it. Every
+  delivery repaired from parity, which is the normal case under loss, left a
+  batch that asked to go out every deadline for the life of the process: ten
+  sealed datagrams a second per link to a peer that had stopped listening, and
+  each one refreshed `lastSeenMs` so the slot never looked quiet and was never
+  reclaimed. `endDacIncoming` ends both together, with one last receipt for
+  `damVerified` only -- that one carries the commit count a lost commit
+  message would otherwise take with it. Same run, same settings: 2,878
+  packages frozen at two minutes, to 17,159 and still climbing; 70 MB verified
+  to 414 MB; 22 slots reclaimed to 319.
 - FOMKE no longer dies on a lossy path. A held key whose message can no longer
   arrive is erased, the cache is capped by the ceiling rather than by the
   window that moves, and a full cache gives up its oldest key instead of
@@ -115,8 +127,15 @@ Notes:
   had never been called by anything before it; the reclamation rule itself
   turned out to be right, and what was wrong was that a link could stay
   active forever so the rule never got a chance to fire.
-- Two things the soak found and did NOT fix, both design decisions rather
-  than bugs, both written up in `docs/soak.md`:
+- Three things the soak found and did NOT fix, all design decisions rather
+  than bugs, all written up in `docs/soak.md`:
+
+    a peer that leaves POLITELY still costs a slot for the whole idle
+      window. `releaseAmeDacPeer` frees the slot on the side that calls it and
+      nothing crosses the wire, so a server sizing its table by peer count
+      sizes it wrong: slots needed is live peers PLUS live peers times
+      idleMs over the seconds between reconnects. 48 peers reconnecting every
+      30 seconds with a 20-second idle window need 80 slots, not 48.
 
     a reclaimed slot is SILENT. The peer is never told, so it cannot tell
       "my session is gone" from "the path got worse", and all it can do is

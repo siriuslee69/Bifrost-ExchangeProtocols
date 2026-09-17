@@ -97,6 +97,7 @@ type
     seconds: int
     scenario: DacScenario
     echoBack: bool
+    dumpSlots: bool
 
 ## Neither an `Atomic` nor a `Lock` may be given a starting value where it is
 ## declared -- both refuse to be copied, which is the whole point of them. Nim
@@ -291,6 +292,34 @@ proc tickAll(E: var AmeDacEndpoint, echoBack: bool,
     absorbStep(E, steps[i], echoBack, nowMs, worker)
     i = i + 1
 
+proc describeSlots(E: AmeDacEndpoint, nowMs: uint32, worker: int) {.
+    role: parser.} =
+  ## E/nowMs/worker: say what every occupied slot is actually doing.
+  ##
+  ## "live=12" is a number, not an explanation. A relay that is full because it
+  ## is busy and a relay that is full because nothing will let go look exactly
+  ## alike from outside, and the difference is four readings per slot:
+  ##
+  ##   out   this side is still sending a package nobody has acknowledged
+  ##   in    this side is still receiving one that is not complete
+  ##   rnd   repair rounds spent on the outgoing package
+  ##   age   milliseconds since anything was HEARD from this peer
+  ##
+  ## A slot with `out` set and `age` far past the idle window is the shape of a
+  ## link that cannot let go.
+  var
+    i: int = 0
+    parts: seq[string] = @[]
+  while i < E.relay.table.slots.len:
+    if E.relay.table.slots[i].used:
+      parts.add($i & ":" &
+        (if E.relay.table.slots[i].link.outgoing.active: "out" else: "---") &
+        (if E.relay.table.slots[i].link.incoming.active: "in" else: "--") &
+        " rnd" & $E.relay.table.slots[i].link.outgoing.rounds &
+        " age" & $(nowMs - E.relay.table.slots[i].lastSeenMs))
+    i = i + 1
+  if parts.len > 0:
+    echo "w", worker, " slots  ", parts.join("  ")
 proc soakServeThread(a: SoakServerArgs) {.thread.} =
   ## a: the worker whose data socket, relay and clock this thread owns.
   var
@@ -343,6 +372,8 @@ proc soakServeThread(a: SoakServerArgs) {.thread.} =
     lastSent = E.sent
     lastRecv = E.received
     setSoak(scSendFailures, uint64(E.sendFailures))
+    if a.dumpSlots:
+      describeSlots(E, nowMs, a.index)
   setSoakLevel(a.index, 0'u64)
   closeAmeDacEndpoint(E)
 
@@ -356,6 +387,7 @@ proc buildArgs(index: int): SoakServerArgs {.role: configurator.} =
   result.seconds = soakArgInt("seconds", 120)
   result.scenario = soakScenario(soakArg("lane", "cleanLan"))
   result.echoBack = soakArgInt("echo", 1) != 0
+  result.dumpSlots = soakArgInt("dump-slots", 0) != 0
 
 proc runSoakServer() {.role: metaOrchestrator.} =
   ## Start every worker, print a line every `--report` seconds, and stop when

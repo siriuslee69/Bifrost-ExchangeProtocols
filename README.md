@@ -866,6 +866,7 @@ to send with. Pure arithmetic; no socket touches it:
 **Def. — the transport.** The link loop, the chunking, the ACK bookkeeping and
 the repair maths that act on those numbers. It has a socket and state.
 
+
 ### The scenario table
 
 Twelve rows, one enum, one table. Several scenarios share a lane on purpose:
@@ -917,6 +918,30 @@ Every other mode reports a fixed zero, which a sender reads as *"this peer
 does not report commits"* — never as *"this peer has committed nothing"*. That
 distinction is the whole guard, and it is why the count is floored rather than
 left to mean two things at once.
+
+**One more thing that ends with the package.** The receipt does too, and it
+used not to. The ACK window slides over arrivals only and never past a hole --
+which is right, because a sequence pushed below the base could never be
+reported again -- but the window belongs to ONE package, and the package used
+to end without it:
+
+```text
+  base                    the package is complete, and yet
+   |  X  .  X  X          pending = 2, so the batch is still due
+         ^                -> a receipt every ackMaxDelayMs
+         the hole that       -> the batch slides nowhere
+         parity filled       -> so it happens again, and again
+```
+
+Every delivery repaired from parity ends that way, which under loss is most of
+them. The link then sent about ten sealed receipts a second, for ever, to a
+peer that had usually stopped listening -- and each one made the link look
+alive, so its relay slot was never reclaimed.
+
+One last receipt still goes out, for `damVerified` only: that mode carries its
+commit count in every receipt, and that count is what a sender learns from
+when the commit message itself is lost. The other four modes have just sent a
+commit, which says everything a receipt could.
 
 ### The top lane is chosen, never discovered ⌜guide⌟
 

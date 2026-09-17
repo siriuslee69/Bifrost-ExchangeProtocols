@@ -357,6 +357,73 @@ proc emitDacPathStats(S: var DacLink, F: var seq[DacTaggedMessage],
   measureDacPath(S, nowMs)
   F.add(dacMessage(dmkPathStats, encodeDacPathStats(S.observed)))
 
+proc noteDacAckEvidence(S: var DacLink, lost: bool) {.role: actor, inline.} =
+  ## S: link whose ACK levers move on evidence it actually has.
+  ## lost: whether this side has just caught the path losing something.
+  ##
+  ## Only for a stream whose holes say nothing -- one this side's own sender
+  ## policy tells it is shuffled. Where holes DO mean loss, `closeDacAckBatch`
+  ## has already read them and a second verdict here would double-count.
+  if S.incoming.ack.holesMeanLoss:
+    return
+  adaptDacAckPolicy(S.incoming.ack, if lost: 1'u16 else: 0'u16)
+
+proc emitDacAck(S: var DacLink, F: var seq[DacTaggedMessage], nowMs: uint32) {.
+    role: dataWriter.} =
+  ## S: link closing its open ACK batch.
+  ## F: outbox the receipt is appended to.
+  ## nowMs: caller's millisecond clock.
+  if not dacAckSpeaks(S.incoming.ack) or S.incoming.ack.pending == 0'u16:
+    return
+  F.add(dacMessage(dmkAckRange, encodeDacAckRange(closeDacAckBatch(
+    S.incoming.ack, dacAckCommitCount(S.incoming.ack, S.committed), nowMs))))
+  noteDacAckEvidence(S, false)
+
+proc endDacIncoming(S: var DacLink, F: var seq[DacTaggedMessage],
+    nowMs: uint32) {.role: actor.} =
+  ## S: link whose receive is over, whichever way it ended.
+  ## F: outbox the last receipt is appended to.
+  ## nowMs: caller's millisecond clock.
+  ##
+  ## Two things end together, and they used to end one at a time. The receive
+  ## closed; the ACK batch describing it did not.
+  ##
+  ## `slideDacAckBatch` deliberately refuses to move the base past a hole, so
+  ## a package that ended with a hole still in the window -- which is every
+  ## package repaired from parity, the normal case under loss -- left
+  ## `pending` non-zero with nothing that could ever fill it:
+  ##
+  ##   base                    the package is complete, and yet
+  ##    |  X  .  X  X          pending = 2, so dacAckDue stays true
+  ##          ^                -> a receipt every deadline
+  ##          the hole that       -> and the batch slides nowhere
+  ##          parity filled       -> so it happens again, forever
+  ##
+  ## That receipt was a sealed datagram to a peer that had stopped listening,
+  ## about ten a second per link, for the life of the process. It cost more
+  ## than bandwidth: every one refreshed the link's `lastSeenMs`, so the slot
+  ## never looked quiet, was never reclaimed, and a relay full of them refused
+  ## every new peer for good.
+  ##
+  ## ONE last receipt still goes out, and that one is load-bearing. A
+  ## `damVerified` receiver carries its commit count in every receipt, which is
+  ## how a sender whose commit message was lost still learns the package
+  ## landed. The count has already been raised by the time this runs, so the
+  ## last receipt is the one that says so.
+  ##
+  ## No other mode gets one, because no other mode has a reason. They have all
+  ## just sent a commit, and the commit says everything a receipt could:
+  ##
+  ##   damVerified  the receipt carries the commit COUNT, which survives the
+  ##                commit message being lost -- so it is sent
+  ##   damExplicit  the sender already knows; a receipt adds nothing
+  ##   damBatch     the same
+  ##   damNackOnly  a clean run is silence, and the flush must not break that
+  ##   damSilent    silence, always
+  if S.incoming.ack.mode == damVerified:
+    emitDacAck(S, F, nowMs)
+  S.incoming.active = false
+  resetDacAckPolicy(S.incoming.ack)
 proc finishDacIncoming(S: var DacLink, R: var DacLinkStep,
     nowMs: uint32) {.role: orchestrator.} =
   ## S: link whose complete package is verified and committed.
@@ -381,29 +448,7 @@ proc finishDacIncoming(S: var DacLink, R: var DacLinkStep,
   ## guess mid-flight. The peer may move its own lane on the strength of it,
   ## or ignore it entirely.
   emitDacPathStats(S, R.messages, nowMs)
-  S.incoming.active = false
-
-proc noteDacAckEvidence(S: var DacLink, lost: bool) {.role: actor, inline.} =
-  ## S: link whose ACK levers move on evidence it actually has.
-  ## lost: whether this side has just caught the path losing something.
-  ##
-  ## Only for a stream whose holes say nothing -- one this side's own sender
-  ## policy tells it is shuffled. Where holes DO mean loss, `closeDacAckBatch`
-  ## has already read them and a second verdict here would double-count.
-  if S.incoming.ack.holesMeanLoss:
-    return
-  adaptDacAckPolicy(S.incoming.ack, if lost: 1'u16 else: 0'u16)
-
-proc emitDacAck(S: var DacLink, F: var seq[DacTaggedMessage], nowMs: uint32) {.
-    role: dataWriter.} =
-  ## S: link closing its open ACK batch.
-  ## F: outbox the receipt is appended to.
-  ## nowMs: caller's millisecond clock.
-  if not dacAckSpeaks(S.incoming.ack) or S.incoming.ack.pending == 0'u16:
-    return
-  F.add(dacMessage(dmkAckRange, encodeDacAckRange(closeDacAckBatch(
-    S.incoming.ack, dacAckCommitCount(S.incoming.ack, S.committed), nowMs))))
-  noteDacAckEvidence(S, false)
+  endDacIncoming(S, R.messages, nowMs)
 
 proc feedDacManifest(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -747,7 +792,7 @@ proc tickDacLink*(S: var DacLink, nowMs: uint32): DacLinkStep {.
   if requestDacRepair(S, result.messages):
     result.kind = dlkRepairRequested
     return
-  S.incoming.active = false
+  endDacIncoming(S, result.messages, nowMs)
   result.kind = dlkPackageFailed
   result.err = "DAC package exhausted its repair rounds with chunks missing"
 

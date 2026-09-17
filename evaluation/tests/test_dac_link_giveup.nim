@@ -165,3 +165,63 @@ suite "DAC link gives up cleanly":
     check not lost
     check not sender.outgoing.active
 
+
+suite "DAC link goes quiet when it is done":
+  # {.testKind: tkRegression, covers: "endDacIncoming", pins: "a finished package left its ACK batch open and the link chattered for ever".}
+  test "a package repaired from parity leaves nothing still asking to be sent":
+    ## What this pins.
+    ##
+    ## The ACK window slides over ARRIVALS only, never over a hole -- that is
+    ## deliberate, because a sequence pushed below the base can never appear in
+    ## a receipt again. But the window belonged to one package, and the package
+    ## used to end without it:
+    ##
+    ##   base                    the package is complete, and yet
+    ##    |  X  .  X  X          pending = 2, so the batch is still due
+    ##          ^                -> a receipt every deadline
+    ##          the hole that       -> the batch slides nowhere
+    ##          parity filled       -> so it happens again, and again
+    ##
+    ## Every one of those was a sealed datagram to a peer that had stopped
+    ## listening, about ten a second per link, for the life of the process --
+    ## and each refreshed the link's `lastSeenMs`, so the relay slot never
+    ## looked quiet and was never reclaimed. A soak filled every slot on two
+    ## servers this way and then refused every peer that was still there.
+    var
+      d: DacScenarioDefaults = dacDefaultsFor(dscCleanLan)
+      sender: DacLink = initDacLink(d, 5'u64)
+      receiver: DacLink = initDacLink(d, 6'u64)
+      frames: seq[DacTaggedMessage] = (
+        beginDacPackage(sender, 4'u64, rampBytes(24_000), 0'u32))
+      step: DacLinkStep = default(DacLinkStep)
+      nowMs: uint32 = 0'u32
+      done: bool = false
+      after: int = 0
+      i: int = 1
+    ## The manifest, then everything except the FIRST chunk. That puts the hole
+    ## at the very front of the window -- the one position the batch can never
+    ## slide past. Parity fills it and the package completes anyway, which is
+    ## the ordinary shape of a repaired delivery.
+    step = feedDacMessage(receiver, frames[0].kind, frames[0].body, nowMs)
+    while i < frames.len:
+      nowMs = nowMs + 5'u32
+      if i != 1:
+        step = feedDacMessage(receiver, frames[i].kind, frames[i].body, nowMs)
+      if step.kind == dlkPackageComplete:
+        done = true
+      i = i + 1
+    while not done and i < 400:
+      nowMs = nowMs + 200'u32
+      step = tickDacLink(receiver, nowMs)
+      if step.kind == dlkPackageComplete:
+        done = true
+      i = i + 1
+    check done
+    check dacLinkIdle(receiver)
+    ## Now let a great deal of time pass. A finished link says nothing.
+    i = 0
+    while i < 200:
+      nowMs = nowMs + 250'u32
+      after = after + tickDacLink(receiver, nowMs).messages.len
+      i = i + 1
+    check after == 0
