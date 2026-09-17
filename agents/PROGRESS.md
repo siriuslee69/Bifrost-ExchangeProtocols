@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: End the receipt with the package it was about
+Commit Message: Size the queue the kernel was quietly emptying
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -70,6 +70,12 @@ Features (Done):
   it becomes knowable that nothing outstanding can still be useful, and the
   relay is the only thing that knows it. It also unblocks rekeying, which
   refuses to run while any skipped key is outstanding.
+- `openDacListener` takes a receive-buffer size, and `setUdpReceiveBuffer`
+  explains why a server needs one. The default queue is 208 KB here, which is
+  generous for one conversation and small for a listener carrying forty-eight
+  peers: a run lost 2,787 datagrams to socket-buffer overflow in 72 seconds,
+  in BURSTS, which is the one shape of loss the ratchet cannot absorb. With 4
+  MB the same run lost 2, and did a third more work.
 - A DAC sender gives up. `dacSenderGaveUp` is the half of the sentence the
   receiver already spoke: rounds spent, twice the repair wait passed, nothing
   acknowledged. Without it one reply to a peer that had gone pinned a relay
@@ -123,6 +129,11 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- A forty-six minute run with all of it in: 626,122 packages verified byte for
+  byte, 15.08 GB, 22.8 million datagrams, 12,729 handshakes, 12,053 slots
+  reclaimed, zero mismatches, zero escaped exceptions. Server memory grew 1.6
+  MB in its first six minutes and 1.1 MB over the thirty-eight after that -- a
+  curve flattening, not a line rising.
 - The soak reaches a part of the code nothing else did. `sweepAmeDacRelay`
   had never been called by anything before it; the reclamation rule itself
   turned out to be right, and what was wrong was that a link could stay

@@ -1406,6 +1406,32 @@ var
 ## local socket to send from; step.send[i].peer is where it goes.
 ```
 
+### The one socket setting a server must not leave alone ⟡
+
+A UDP socket has one queue, and when it is full the kernel throws the next
+datagram away silently — no error, no signal, nothing on the wire. The default
+is 208 KB on Linux (`net.core.rmem_default`), which is generous for one
+conversation and small for a listener carrying dozens of peers:
+
+```nim
+# 4 MB of kernel queue for this listener. The kernel may give less: Linux
+# doubles the value for its own bookkeeping and caps it at net.core.rmem_max.
+var sock = openDacListener(initDacAddress("0.0.0.0", 9000), 4 * 1024 * 1024)
+```
+
+It matters more than the raw loss rate suggests, because a full queue drops
+everything until it drains — so the losses arrive in RUNS, and a run is the
+one shape of loss the ratchet cannot absorb. Two places count them, and they
+are the only two:
+
+```text
+  /proc/net/snmp   the RcvbufErrors column, for the whole machine
+  /proc/net/udp    the last column, per socket
+```
+
+A soak measured this directly: 2,787 kernel drops in seventy-two seconds with
+the default, 2 with four megabytes, and a third more work done.
+
 ## Layout
 
 Three protocols do the work and the rest are tools they use or things that
@@ -1511,6 +1537,7 @@ ASP1  -> secure package, for bytes that sit still somewhere
 
 All multi-byte integers below are little-endian. `u8/u16/u32/u64` are unsigned
 integers of 1/2/4/8 bytes. Offsets start at 0 for that layer.
+
 
 ### One layer of encryption, not two
 

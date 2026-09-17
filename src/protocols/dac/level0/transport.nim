@@ -213,9 +213,13 @@ proc formatDacAddress*(a: DacAddress): string {.role: truthBuilder.} =
   ## a: DAC endpoint to render.
   result = "dac://" & udp_ops.formatUdpAddress(carrierAddressFromDac(a))
 
-proc openDacListener*(a: DacAddress): DacSocket {.role: truthBuilder.} =
+proc openDacListener*(a: DacAddress,
+    recvBufferBytes: int = 0): DacSocket {.role: truthBuilder.} =
   ## a: local DAC endpoint to bind for inbound frames.
-  result = udp_ops.bindUdp(carrierAddressFromDac(a))
+  ## recvBufferBytes: how much the kernel should queue for this socket, or 0
+  ## for its default. A server with many peers wants more than the default;
+  ## `setUdpReceiveBuffer` explains what is lost without it, and how to see it.
+  result = udp_ops.bindUdp(carrierAddressFromDac(a), recvBufferBytes)
 
 proc openDacPeer*(a: DacAddress, timeoutMs: int = 4000): DacSocket {.
     role: orchestrator.} =

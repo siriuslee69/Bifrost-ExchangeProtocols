@@ -523,3 +523,43 @@ suite "when the relay cannot seal what it wants to say":
     check not abandonDacPackage(S)
     ## And the link takes a new package, which is the whole point.
     check beginDacPackage(S, 2'u64, rampBytes(3_000), 0'u32).len > 0
+
+suite "AME DAC relay reclaims what has gone":
+  # {.testKind: tkRegression, covers: "tickAmeDacRelay", pins: "a link talking to a peer that had gone refreshed its own lastSeenMs".}
+  test "a peer that never answers is reclaimed on the clock it was last heard on":
+    ## What this pins.
+    ##
+    ## `lastSeenMs` means "when this peer was last heard from". Ticking is this
+    ## side SPEAKING, and it used to refresh that timestamp -- so a link
+    ## sending repair rounds at a peer that had closed its socket kept looking
+    ## alive because WE were alive, and its slot was never reclaimed.
+    ##
+    ##   this side sends  ->  lastSeenMs = now  ->  the slot looks alive
+    ##                                              on no evidence at all
+    ##
+    ## Here nobody ever answers, so the only honest reading of "last heard
+    ## from" is the moment the peer was admitted.
+    var
+      P = peerSessions()
+      relay: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan),
+        9'u64, capacity = 4, idleMs = 5_000'u32)
+      payload: ByteSeq = rampBytes(9_000)
+      nowMs: uint32 = 0'u32
+      i: int = 0
+    check admitAmeDacPeer(relay, keyB(), P.a, nowMs).ok
+    check ameDacRelayLive(relay) == 1
+    discard sendAmeDacPackage(relay, keyB(), 41'u64, payload, nowMs)
+    ## Four seconds of ticking, and every one of them is this side talking.
+    ## The peer has said nothing, so nothing here may look like it did.
+    while i < 40:
+      nowMs = nowMs + 100'u32
+      discard tickAmeDacRelay(relay, nowMs)
+      i = i + 1
+    check sweepAmeDacRelay(relay, nowMs) == 0
+    check ameDacRelayLive(relay) == 1
+    ## Past the idle window measured from ADMISSION, which is the last moment
+    ## anything was actually heard.
+    nowMs = nowMs + 2_000'u32
+    discard tickAmeDacRelay(relay, nowMs)
+    check sweepAmeDacRelay(relay, nowMs) == 1
+    check ameDacRelayLive(relay) == 0

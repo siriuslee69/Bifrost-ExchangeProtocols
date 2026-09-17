@@ -63,6 +63,12 @@ const
     ## drop is a one-line fact -- "this datagram did not open, and here is
     ## why" -- and the first few are worth far more than a count, because a
     ## count cannot tell a stranger from a session that stopped working.
+  soakServerRecvBufferBytes = 4 * 1024 * 1024
+    ## What the kernel should queue for one data socket. The default is
+    ## generous for one conversation and small for a server: a run without
+    ## this lost tens of thousands of datagrams to receive-buffer overflow,
+    ## in bursts, which is the one shape of loss the ratchet cannot absorb.
+    ## Watch `/proc/net/udp`'s last column to see whether it was enough.
   soakServerAcceptTimeoutMs = 300
   soakServerFullWaitMs = 100
     ## How long an accept thread waits before looking again at a relay that
@@ -98,6 +104,7 @@ type
     scenario: DacScenario
     echoBack: bool
     dumpSlots: bool
+    recvBufferBytes: int
 
 ## Neither an `Atomic` nor a `Lock` may be given a starting value where it is
 ## declared -- both refuse to be copied, which is the whole point of them. Nim
@@ -332,7 +339,7 @@ proc soakServeThread(a: SoakServerArgs) {.thread.} =
     lastRecv: uint64 = 0'u64
   try:
     sock = openDacListener(initDacAddress(host,
-      uint16(a.basePort + a.index * 2 + 1)))
+      uint16(a.basePort + a.index * 2 + 1)), a.recvBufferBytes)
   except CatchableError as e:
     echo "worker ", a.index, " could not bind its data port: ", e.msg
     bumpSoak(scExceptions)
@@ -388,6 +395,7 @@ proc buildArgs(index: int): SoakServerArgs {.role: configurator.} =
   result.scenario = soakScenario(soakArg("lane", "cleanLan"))
   result.echoBack = soakArgInt("echo", 1) != 0
   result.dumpSlots = soakArgInt("dump-slots", 0) != 0
+  result.recvBufferBytes = soakArgInt("recv-buffer", soakServerRecvBufferBytes)
 
 proc runSoakServer() {.role: metaOrchestrator.} =
   ## Start every worker, print a line every `--report` seconds, and stop when

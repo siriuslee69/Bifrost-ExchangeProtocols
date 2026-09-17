@@ -56,6 +56,10 @@ const
     ## 127.0.0.0/8 is local, so these are real, different IP addresses that
     ## the kernel routes separately -- not one address wearing many ports.
   soakClientRecvBurst = 32
+  soakClientRecvBufferBytes = 1024 * 1024
+    ## Smaller than the server's: one peer reads one conversation. Still well
+    ## above the default, because a package arrives as a burst of chunks and
+    ## the whole point of the burst is that it does not wait for this side.
   soakClientSettleMs = 25
     ## How long to wait after a handshake before sending anything. See
     ## `openPeer` -- this closes a race that exists only because the handshake
@@ -244,7 +248,8 @@ proc openPeer(P: var SoakPeer, a: SoakClientArgs): bool {.
   P.server = initDacAddress(serverHost, uint16(a.basePort + worker * 2 + 1))
   P.key = dacKeyFromAddress(P.server)
   try:
-    P.sock = openDacListener(initDacAddress(bindHost, 0'u16))
+    P.sock = openDacListener(initDacAddress(bindHost, 0'u16),
+      soakClientRecvBufferBytes)
   except CatchableError as e:
     bumpSoak(scExceptions)
     echo "peer ", a.index, " could not bind ", bindHost, ": ", e.msg

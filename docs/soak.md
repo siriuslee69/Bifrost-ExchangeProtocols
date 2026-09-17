@@ -42,6 +42,7 @@ and `--name=value` and `--name:value` both work.
 | `--lane` | which scenario the links start in | cleanLan |
 | `--report` | seconds between report lines | 15 |
 | `--dump-slots` | server only: print every slot's state each second | 0 |
+| `--recv-buffer` | server only: bytes the kernel queues per socket | 4194304 |
 
 Total peer slots is `servers × workers × capacity`. Total peers wanting them
 is `clients × peers`. Making the second bigger than the first is how slot
@@ -343,7 +344,52 @@ reads is not a receiver.
 
 Pinned by "a package repaired from parity leaves nothing still asking to be
 sent" in `evaluation/tests/test_dac_link_giveup.nim`.
-### 4. A reclaimed slot is silent — still open
+### 4. The worst loss was the one nobody induced
+
+The soak drops 2% of datagrams on purpose. The kernel was quietly dropping
+more than that, in a far more damaging shape, and nothing in the program could
+see it.
+
+A UDP socket has ONE queue. Everything that arrives while the program is busy
+elsewhere waits in it, and when it is full the kernel throws the next datagram
+away without telling anybody — no error, no signal, nothing on the wire. It is
+counted, and only in two places:
+
+```
+  /proc/net/snmp   the RcvbufErrors column, for the whole machine
+  /proc/net/udp    the last column, per socket
+```
+
+Reading them mid-run: **295,324** receive-buffer errors on the machine, and
+every one of the soak's data sockets climbing. The default queue is 208 KB
+here (`net.core.rmem_default`) — generous for one conversation, small for one
+listener carrying forty-eight peers' chunked packages.
+
+**Why a burst is worse than the same loss scattered.** A full queue drops
+everything until it drains, so the losses arrive in runs. The ratchet refuses
+a gap wider than the reordering it has measured, and a run of losses is
+exactly such a gap — so socket-buffer overflow, not the induced loss, was what
+produced nearly every FOMKE window refusal in a run.
+
+`openDacListener` takes `recvBufferBytes` now, and `setUdpReceiveBuffer`
+explains the arithmetic. The kernel may give less than asked: Linux doubles
+the value for its own bookkeeping and then caps it at `net.core.rmem_max`, so
+a four-megabyte request on a machine capped at four megabytes gives four. That
+is not an error and is not reported — a smaller queue is still a queue.
+
+Measured, same 72-second run, same peers, same induced loss:
+
+| | 208 KB, the default | 4 MB |
+|---|---|---|
+| kernel drops, 8 sockets | **2,787** | **2** |
+| packages verified | 10,707 | **14,363** |
+| bytes verified | 258 MB | **345 MB** |
+| packages failed | 235 | **146** |
+
+A third more work done, from one socket option. Worth saying plainly: this is
+not a protocol fix, it is a deployment one. Any server built on this needs to
+size its queue, and the library now lets it.
+### 5. A reclaimed slot is silent — still open
 
 When `sweepAmeDacRelay` reclaims a slot, the peer is never told. It keeps
 sending into a relay that has no session for it, and every datagram is dropped
@@ -365,7 +411,7 @@ triggered it so it amplifies nothing. Bifrost has no such thing. **This is a
 design decision, not a bug, and it has not been made.** The soak client works
 around it by giving up on a session after two packages time out in a row.
 
-### 5. A handshake could finish and then find no room
+### 6. A handshake could finish and then find no room
 
 `admitAmeDacPeer` can refuse -- the relay holds a fixed number of live links,
 which is the point of it. But by then the handshake has already run: two round
@@ -380,14 +426,14 @@ no answer retries, which is the behaviour it already has for a lost record.
 With the gate in: `admit-fail` 22 → 11, `relay-drop` roughly halved, packages
 per run 1,114 → 1,398 on identical settings.
 
-### 6. Two sockets, because there is no demultiplexer
+### 7. Two sockets, because there is no demultiplexer
 
 Noted above and worth stating plainly: one socket cannot carry both a
 handshake and live traffic, because the handshake driver consumes and discards
 whatever it is not waiting for. Any real server has to either split the ports,
 as this one does, or grow a demultiplexer that reads the frame kind first.
 
-### 7. Things that held up
+### 8. Things that held up
 
 - **No payload ever arrived wrong.** Not once, across every run.
 - **Nothing escaped a loop.** No exception reached a thread boundary, across
@@ -417,6 +463,50 @@ as this one does, or grow a demultiplexer that reads the frame kind first.
   table is under. Every sweep observed was of a link that really had stopped.
 
 ---
+
+
+## ╭⟢ What forty-six minutes looks like 🍣
+
+Two server processes, three client processes, 48 peers over eight loopback
+addresses, 112 peer slots, 2% induced loss each way, a fresh handshake every
+sixty packages, packages of 256 to 48,000 bytes.
+
+```sh
+nimble soak --seconds=2700 --servers=2 --clients=3 --workers=4 \
+            --peers=16 --capacity=14 --loss=20000 --size=48000 \
+            --churn=60 --idle=12000 --report=120
+```
+
+```
+  packages verified byte for byte    626,122
+  bytes verified                      15.08 GB
+  datagrams received                  22.8 million
+  datagrams sent                       3.08 million
+  handshakes served                   12,729
+  relay slots reclaimed               12,053
+  payload mismatches                  0
+  escaped exceptions                  0
+```
+
+Ending with `soak: every process finished clean`.
+
+### Memory, which is the whole reason to run it this long
+
+```
+  minutes:      2      8     14     22     30     38     46
+  server 0:  15.9   17.5   17.7   18.0   18.4   18.4   18.6   MB
+  server 1:  14.9   16.9   17.1   17.3   17.6   17.7   17.8   MB
+  client 0:  33.1   40.4   44.3   46.6   48.4   49.2   49.4   MB
+```
+
+Read the DIFFERENCES rather than the values. Server 0 grew 1.6 MB in its first
+six minutes and 1.1 MB over the thirty-eight after that; in its last eight
+minutes it grew 172 KB, while opening and tearing down hundreds more sessions.
+That is a curve flattening, not a line rising — the shape of an allocator
+settling into its working set, not of something being kept.
+
+Nim's own heap reading stays at one or two kilobytes throughout, on both
+sides, because none of this traffic outlives the routine that made it.
 
 ## ╭⟢ Two numbers worth writing down 🌊
 

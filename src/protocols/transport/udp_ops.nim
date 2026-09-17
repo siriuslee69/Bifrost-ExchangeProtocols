@@ -168,14 +168,53 @@ proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.
   result.a.port = p.port
   result.ok = true
 
-proc bindUdp*(a: UdpAddress): Socket {.role: truthBuilder.} =
-  ## bindUdp: build bind UDP.
+proc setUdpReceiveBuffer*(sock: Socket, bytes: int): bool {.role: actor.} =
+  ## sock: an already-bound UDP socket.
+  ## bytes: how much the kernel should hold for it. Zero leaves the default.
+  ##
+  ## Why a datagram server needs this, and a client usually does not.
+  ##
+  ## A UDP socket has ONE queue. Everything that arrives while the program is
+  ## busy elsewhere waits in it, and when it is full the kernel throws the next
+  ## datagram away without telling anybody -- no error, no signal, nothing on
+  ## the wire. It is counted, and only there:
+  ##
+  ##   /proc/net/snmp   the RcvbufErrors column, for the whole machine
+  ##   /proc/net/udp    the last column, per socket
+  ##
+  ## The default is generous for one conversation and small for a server. A
+  ## soak with forty-eight peers sending chunked packages at one listener lost
+  ## tens of thousands of datagrams that way, in BURSTS -- a full queue drops
+  ## everything until it drains -- and a burst is far more damaging than the
+  ## same number of scattered losses: the ratchet on the far side refuses a gap
+  ## wider than the reordering it has measured, and a burst is exactly such a
+  ## gap.
+  ##
+  ## The kernel may give less than asked. Linux doubles the value for its own
+  ## bookkeeping and then caps it at `net.core.rmem_max`, so asking for four
+  ## megabytes on a machine capped at two gives two. That is not an error and
+  ## is not reported here: a smaller queue is still a queue.
+  ##
+  ## Returns false only where the option could not be set at all.
+  if bytes <= 0:
+    return true
+  try:
+    setSockOptInt(sock.getFd(), int(SOL_SOCKET), int(SO_RCVBUF), bytes)
+    result = true
+  except CatchableError:
+    result = false
+proc bindUdp*(a: UdpAddress, recvBufferBytes: int = 0): Socket {.
+    role: truthBuilder.} =
+  ## a: local address to bind.
+  ## recvBufferBytes: how much the kernel should queue for this socket, or 0
+  ## for its default. See `setUdpReceiveBuffer` for why a server wants more.
   var
-    host: string
+    host: string = ""
   host = normalizeUdpHost(a.host)
   result = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
   result.setSockOpt(OptReuseAddr, true)
   maybeEnableDualStackWildcard(result, host)
+  discard setUdpReceiveBuffer(result, recvBufferBytes)
   result.bindAddr(Port(a.port), host)
 
 proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestrator.} =
