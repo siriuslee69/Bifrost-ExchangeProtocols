@@ -406,7 +406,10 @@ suite "AME mask-tier sessions":
     step = connection.recordTransferredBytes(199'u64 * ameBytesPerMiB)
     check not step.available
     step = connection.recordTransferredBytes(1'u64 * ameBytesPerMiB)
-    check step.exchangeMask == 0b01000000'u8
+    ## Slot 1 because the tier adds it, slot 0 because it was already on: a
+    ## triggered rotation re-exchanges what was established, so every stack it
+    ## touches goes one deeper.
+    check step.exchangeMask == 0b11000000'u8
 
   # {.testKind: tkRegression, covers: "cloneEpoch", pins: "a retiring epoch kept no padding policy of its own".}
   test "a retiring epoch keeps the padding policy it was used with":
@@ -1060,6 +1063,57 @@ suite "the session-level skip and cache controls":
   ## can neither receive across a gap nor rekey. It was reachable only
   ## through its FOMKE-level half until now, so the session wrapper -- which
   ## also has to rebuild the send cache -- went unexercised.
+
+  # {.testKind: tkRegression, covers: "ameSessionStackDepth", pins: "a full rotation has to deepen BOTH endpoints by the same amount or nothing opens".}
+  test "a full rotation deepens what was on, and adds a slot at depth one":
+    ## The end-to-end version of the stacking story. Two sessions rotate onto a
+    ## tier using both KEM slots, with the default rekey mask -- so every slot
+    ## runs a new exchange -- and both sides must come out with the same stacks.
+    ## If they did not, the first frame after the rotation would fail to open.
+    var
+      A: AmeSession = exactUpgradeSession(aerInitiator)
+      B: AmeSession = exactUpgradeSession(aerResponder)
+      target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
+        0b11000000'u8)
+      step: AmeTierStep
+      offer: AmeExchangeOffer
+      reply: AmeExchangeReply
+      commit: FomkeUpgradeCommit
+      before: uint32 = 0'u32
+    installSignaturePeers(A, B)
+    before = ameSessionStackDepth(A)
+    check before == ameSessionStackDepth(B)
+    ## No mask named, so every slot the tier uses is exchanged: the one it adds
+    ## AND the one that was already established.
+    step = requestAmeTier(A, 2'u32)
+    check step.exchangeMask == 0b11000000'u8
+    offer = beginAmeSessionExchange(A, step.request)
+    reply = answerAmeSessionExchange(B, offer)
+    stageAmeSessionFomkeUpgrade(B)
+    finishAmeSessionExchange(A, reply)
+    commit = A.fomke.pending.commit
+    confirmFomkeUpgrade(A.fomke, commit)
+    confirmAmeSessionExchange(B, offer.requestId,
+      B.pendingIncoming.candidate.epochId, target, commit)
+    ## Same epoch and the same stacks on both sides. If these differed by one
+    ## bit the next frame would fail to open.
+    check A.auth.current.epochId == B.auth.current.epochId
+    check A.auth.current.exchange.stackedSecrets[0] ==
+      B.auth.current.exchange.stackedSecrets[0]
+    check A.auth.current.exchange.stackedSecrets[1] ==
+      B.auth.current.exchange.stackedSecrets[1]
+    ## The slot that was already established really did go one deeper -- that
+    ## is the default rekey mask doing its job.
+    check A.auth.current.exchange.generation[0] == before + 1'u32
+    check B.auth.current.exchange.generation[0] == before + 1'u32
+    ## And yet the SESSION is still one deep, because the slot this rotation
+    ## added has run exactly once. That is what "shallowest" means and why it
+    ## is the honest number: bringing in another algorithm does not deepen a
+    ## session, it hands an attacker a shallower slot to aim at. Depth comes
+    ## back up by rotating again on the tier now in force.
+    check A.auth.current.exchange.generation[1] == 1'u32
+    check ameSessionStackDepth(A) == 1'u32
+    check ameSessionStackDepth(B) == 1'u32
   # {.testKind: tkRegression.}
   test "giving up on skipped messages clears them and says how many":
     var

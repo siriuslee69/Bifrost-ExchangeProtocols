@@ -241,7 +241,10 @@ suite "rotation triggers driven by the clock":
     step = connection.feedAmeElapsedMs(5000'u64)
     check step.available
     check step.targetTier.tierId == 2'u32
-    check step.exchangeMask == 0b01000000'u8
+    ## Slot 1 because the tier adds it, slot 0 because it was already on. The
+    ## clock firing is a reason to want fresh key material, not a reason to
+    ## leave the established slot where it was.
+    check step.exchangeMask == 0b11000000'u8
     check connection.lastTrigger.available
 
   # {.testKind: tkEdgeCase.}

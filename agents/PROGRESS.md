@@ -58,9 +58,22 @@ Features (Done):
   into every slot's stack on every exchange. AM1C and AM1S carry an empty
   binder -- they have no such secret, and inventing one would look like
   protection while resting on public values.
+- `requestTier` re-exchanges every KEM slot the current tier already uses,
+  unless told otherwise. It used to default to rekeying NOTHING, which was
+  backwards: a rotation with no new KEM still changes every traffic key, so it
+  looks like it did the work and did not. The expensive, honest thing happens
+  when nobody says otherwise; `rekeyMask = 0` asks for the cheap one by name.
+  Triggered rotations -- bytes moved, time elapsed -- do the same, for the same
+  reason: the trigger firing is what says fresh key material is wanted.
+- The cost is real and worth knowing before it surprises someone. An exchange
+  carries a public key and a ciphertext per slot: one or two kilobytes for
+  X25519, Saber, Kyber and NTRU, and HUNDREDS of kilobytes for Classic
+  McEliece. A layout using McEliece re-ships that on every rotation now. The
+  `rekeyMask` knob is per rotation, so a thin link can name a smaller one
+  without deciding anything for the whole session.
 - `ameStackDepth` reports how deep the SHALLOWEST chosen slot is, because an
-  attacker picks the slot to work on. Depth only grows with fresh key
-  material, so stacking rotations means rotating with `rekeyMask` set.
+  attacker picks the slot to work on. Asking for the tier already in force is
+  the ordinary way to deepen without changing anything else.
 - `ame/level1/secret_stack.nim` owns the whole life of those bytes -- what
   goes in (`applyAmeExchange`), what comes back out for a key to be built from
   (`buildAmeExchangeSeed`), and how deep it is. Those two used to sit in

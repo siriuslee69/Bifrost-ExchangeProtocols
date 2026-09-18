@@ -158,13 +158,31 @@ proc transitionExchangeMask(S: AmeTierPath, target: AmeMaskTier,
     raise newException(ValueError, "AME rekey mask is outside the target tier")
   result = (target.masks.kem and not current.masks.kem) or rekeyMask
 
+proc carriedRekeyMask(S: AmeTierPath, i: int): uint8 {.role: parser.} =
+  ## S/i: the KEM slots that are established NOW and still selected at the
+  ## target tier -- "whatever was on, goes again".
+  ##
+  ## This is what a rotation re-exchanges when the caller did not say
+  ## otherwise, and it applies to the triggered rotations as much as the asked
+  ## ones. A rotation that fires because enough bytes have moved is exactly the
+  ## moment fresh key material is wanted; leaving the established slots alone
+  ## there would advance the tier and deepen nothing.
+  if i < 0:
+    return 0'u8
+  result = currentTier(S).masks.kem and S.tiers[i].masks.kem
 proc pathStep(S: AmeTierPath, i: int,
-    rekeyMask: uint8 = 0'u8): AmeTierStep {.role: truthBuilder.} =
-  ## S/i/rekeyMask: configured target tier and independent rekey selection.
+    rekeyMask: int = -1): AmeTierStep {.role: truthBuilder.} =
+  ## S/i: configured target tier.
+  ## rekeyMask: which already-active slots run a new KEM. Negative -- which is
+  ## what every caller that does not care passes -- means `carriedRekeyMask`:
+  ## everything that is on now and still on at the target.
   var m: uint8 = 0'u8
   if i < 0:
     return
-  m = transitionExchangeMask(S, S.tiers[i], rekeyMask)
+  if rekeyMask < 0:
+    m = transitionExchangeMask(S, S.tiers[i], carriedRekeyMask(S, i))
+  else:
+    m = transitionExchangeMask(S, S.tiers[i], uint8(rekeyMask))
   result.available = true
   result.targetTier = S.tiers[i]
   result.exchangeMask = m
@@ -207,28 +225,47 @@ proc feedElapsedMs*(S: var AmeTierPath,
   result = pathStep(S, nextDueTier(S))
 
 proc requestTier*(S: var AmeTierPath, tierId: uint32,
-    rekeyMask: uint8 = 0'u8): AmeTierStep {.role: orchestrator.} =
-  ## S/tierId/rekeyMask: exact target tier and selected active KEM rekeys.
+    rekeyMask: int = -1): AmeTierStep {.role: orchestrator.} =
+  ## S/tierId: exact target tier.
+  ## rekeyMask: which already-active KEM slots must run a NEW exchange.
   ##
-  ## The returned exchange mask covers only the KEM slots the target tier adds
-  ## on top of the current one, plus whatever `rekeyMask` names. If the target
-  ## tier selects the same KEM slots as the current tier, the mask is zero:
+  ## ╭─ ❧ what the default does, and why it is that 🌊
+  ##
+  ## Left alone, every KEM slot the current tier already uses is re-exchanged.
+  ## So if the last exchange had all its algorithm bits on, all of them run
+  ## again, and the secret stack under each of them goes one deeper:
+  ##
+  ##   requestTier(path, id)               rekey everything that was on
+  ##   requestTier(path, id, 0)            rekey nothing already active
+  ##   requestTier(path, id, 0b0100_0000)  rekey exactly slot 1
+  ##
+  ## It used to default to zero, and that was the wrong way round. A rotation
+  ## with no new KEM still changes every traffic key -- the fresh transcript
+  ## salt sees to that -- so it LOOKS like it did the work. It did not: an
+  ## attacker holding the current KEM secrets keeps reading, and the stack is
+  ## no deeper than it was, because re-hashing a value is something they can do
+  ## just as easily. The expensive, honest thing is what happens when nobody
+  ## says otherwise, and the cheap thing has to be asked for by name.
+  ##
+  ## The returned exchange mask is the slots the target tier ADDS on top of the
+  ## current one, plus whatever this resolves to:
   ##
   ##   current tier kem = 1000_0000
-  ##   target  tier kem = 1000_0000   rekeyMask = 0  ->  exchange mask = 0
-  ##   target  tier kem = 1100_0000   rekeyMask = 0  ->  exchange mask = 0100_0000
+  ##   target  tier kem = 1000_0000   default   ->  exchange mask = 1000_0000
+  ##   target  tier kem = 1100_0000   default   ->  exchange mask = 1100_0000
+  ##   target  tier kem = 1100_0000   mask 0    ->  exchange mask = 0100_0000
   ##
-  ## A zero mask still rotates the epoch and still changes every traffic key,
-  ## because the new epoch mixes in a fresh transcript salt. It does NOT run a
-  ## new KEM, so it does not advance forward secrecy: an attacker holding the
-  ## current KEM secrets keeps reading traffic. Pass `rekeyMask` to force fresh
-  ## key agreement on slots that are already active.
-  var i: int = tierIndex(S, tierId)
-  var current: int = tierIndex(S, S.currentTierId)
+  ## Asking for the tier already in force is allowed and is the ordinary way to
+  ## deepen the stack without changing anything else about the connection.
+  var
+    i: int = tierIndex(S, tierId)
+    current: int = tierIndex(S, S.currentTierId)
   if i < 0:
     raise newException(ValueError, "AME requested tier is outside the tier path")
   if current >= 0 and i < current:
     raise newException(ValueError, "AME tier path cannot move backward")
+  if rekeyMask > int(high(uint8)):
+    raise newException(ValueError, "AME rekey mask does not fit in one byte")
   S.dueMask = S.dueMask or slotMask(i)
   result = pathStep(S, i, rekeyMask)
 

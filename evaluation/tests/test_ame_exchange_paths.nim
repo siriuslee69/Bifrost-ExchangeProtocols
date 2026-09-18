@@ -163,7 +163,7 @@ suite "AME immutable layouts and mask tiers":
     check opened == sender.sharedSecrets
 
   # {.testKind: tkUnit.}
-  test "ordered tier path emits newly activated KEM masks":
+  test "a triggered rotation rekeys the slots that were on, plus the new one":
     var
       L: AmeSuiteLayout = exactLayout()
       t1: AmeMaskTier = exactTier(L, 10'u32, 0b10000000'u8,
@@ -181,10 +181,17 @@ suite "AME immutable layouts and mask tiers":
     step = path.feedTransferredBytes(1'u64 * ameBytesPerMiB)
     check step.available
     check step.targetTier.tierId == 20'u32
-    check step.exchangeMask == 0b01000000'u8
+    ## Slot 1 because the target tier adds it, slot 0 because it was already
+    ## on. A rotation that fires because enough bytes have moved is exactly the
+    ## moment fresh key material is wanted, so the established slot runs again
+    ## and its stack goes one deeper. It used to emit 0100_0000 and leave slot
+    ## 0 exactly as deep as it was.
+    check step.exchangeMask == 0b11000000'u8
     path.claimAmeTier(step)
     path.completeAmeTier(t2)
-    step = path.requestTier(30'u32, 0b10000000'u8)
+    ## An explicit mask is still exactly what was asked for, plus the slot the
+    ## tier adds: slot 0 named here, slot 2 added by tier 30.
+    step = path.requestTier(30'u32, 0b10000000)
     check step.exchangeMask == 0b10100000'u8
 
   # {.testKind: tkUnit.}
@@ -245,6 +252,67 @@ suite "AME immutable layouts and mask tiers":
     expect ValueError:
       discard initVerifiedAmePeerTrust("", "peer-a", [asaEd25519])
 
+
+  # {.testKind: tkRegression, covers: "requestTier", pins: "the obvious rotation used to rekey nothing and deepen nothing".}
+  test "a rotation re-exchanges what was already on, unless told otherwise":
+    ## What this pins.
+    ##
+    ## Depth only grows when fresh KEM material arrives. `requestTier` used to
+    ## default its rekey mask to zero, so the obvious call rotated the epoch,
+    ## changed every traffic key, and left every stack exactly as deep as it
+    ## was -- work that LOOKS like it bought something and did not.
+    ##
+    ## Now the default is every slot the current tier is using. The cheap
+    ## version is still there; it has to be asked for.
+    var
+      L: AmeSuiteLayout = exactLayout()
+      t1: AmeMaskTier = exactTier(L, 1'u32, 0b11000000'u8, 0b10000000'u8)
+      t2: AmeMaskTier = exactTier(L, 2'u32, 0b11100000'u8, 0b10000000'u8)
+      path: AmeTierPath = initAmeTierPath(L, [t1, t2])
+      step: AmeTierStep
+    setCurrentAmeTier(path, t1)
+    ## Staying on the same tier: nothing is being ADDED, so everything the mask
+    ## says is a rekey. Both slots run again.
+    step = path.requestTier(1'u32)
+    check step.exchangeMask == 0b11000000'u8
+    ## Moving up a tier: the slot being added, plus the two already on.
+    step = path.requestTier(2'u32)
+    check step.exchangeMask == 0b11100000'u8
+    ## Asked for the cheap one by name: only the slot the tier adds runs a KEM,
+    ## and the two that were already established are left alone.
+    step = path.requestTier(2'u32, 0)
+    check step.exchangeMask == 0b00100000'u8
+    ## And an exact mask is still exact.
+    step = path.requestTier(2'u32, 0b01000000)
+    check step.exchangeMask == 0b01100000'u8
+
+  # {.testKind: tkRegression, covers: "requestTier", pins: "a rotation that deepened nothing looked identical to one that did".}
+  test "rotating in place on the same tier deepens every slot it uses":
+    ## The end of the sentence: the mask above turns into generations here.
+    ## Three rotations on the tier already in force, and every slot it uses is
+    ## three exchanges deeper than it started.
+    var
+      L: AmeSuiteLayout = exactLayout()
+      t1: AmeMaskTier = exactTier(L, 1'u32, 0b11000000'u8, 0b10000000'u8)
+      path: AmeTierPath = initAmeTierPath(L, [t1])
+      state: AmeExchangeState = initAmeExchangeState(L.kems)
+      step: AmeTierStep
+      i: int = 0
+    setCurrentAmeTier(path, t1)
+    while i < 3:
+      step = path.requestTier(1'u32)
+      check step.exchangeMask == 0b11000000'u8
+      applyAmeExchange(state, L, step.request,
+        [@[byte uint8(i), 1], @[byte uint8(i), 2]])
+      i = i + 1
+    check ameStackDepth(state, 0b11000000'u8) == 3'u32
+    ## Now the cheap one, three more times. The epoch would move and the keys
+    ## would change, but no KEM runs, so the stack stays exactly where it was.
+    i = 0
+    while i < 3:
+      check path.requestTier(1'u32, 0).exchangeMask == 0'u8
+      i = i + 1
+    check ameStackDepth(state, 0b11000000'u8) == 3'u32
 suite "AME secrets stack instead of being replaced":
   # {.testKind: tkRegression, covers: "stackAmeSecret", pins: "a rotation used to throw away everything the slot had agreed before".}
   test "a slot keeps everything it has agreed, not just the last thing":

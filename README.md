@@ -817,21 +817,56 @@ local endpoint is the initiator with its own exchange outstanding.
 ### Rekeying Versus Rotating
 
 A tier change always rotates the epoch and always changes every traffic key,
-because each epoch mixes in a fresh transcript salt. It only runs a new KEM for
-the slots named by the exchange mask:
+because each epoch mixes in a fresh transcript salt. Whether it runs a **new
+KEM** is a separate question, and that is the one that matters:
 
 ```text
-  current kem 1000_0000 -> target kem 1100_0000   exchange mask 0100_0000
-      new KEM on slot 1, forward secrecy advances
-
-  current kem 1000_0000 -> target kem 1000_0000   exchange mask 0000_0000
-      keys change, but no new KEM: forward secrecy does NOT advance
+  keys change      every rotation, always, from the fresh transcript salt
+  KEM runs again   only for the slots in the exchange mask
+  stack deepens    only for the slots in the exchange mask
 ```
 
-Pass `rekeyMask` to `requestAmeTier` to force fresh key agreement on slots that
-are already active.
+**The default re-exchanges everything that was already on.** If the last
+exchange had all its algorithm bits set, all of them run again:
 
+```nim
+requestAmeTier(session, tierId)              # rekey everything that was on
+requestAmeTier(session, tierId, 0)           # rekey nothing already active
+requestAmeTier(session, tierId, 0b0100_0000) # rekey exactly slot 1
+```
 
+```text
+  current kem 1000_0000 -> target kem 1100_0000   default -> mask 1100_0000
+      both slots run a KEM; both stacks go one deeper
+
+  current kem 1000_0000 -> target kem 1100_0000   mask 0  -> mask 0100_0000
+      only the ADDED slot runs a KEM; slot 0's stack stays where it was
+
+  current kem 1000_0000 -> target kem 1000_0000   mask 0  -> mask 0000_0000
+      keys change and nothing else does
+```
+
+It used to default the other way, and that was backwards. A rotation with no
+new KEM still changes every traffic key, so it **looks** like it did the work —
+and it did not: an attacker holding the current KEM secrets keeps reading, and
+no stack is deeper than it was. The expensive, honest thing happens when nobody
+says otherwise; the cheap thing has to be asked for by name.
+
+Asking for the tier already in force is allowed, and is the ordinary way to
+deepen the stack without changing anything else about the connection.
+
+**Triggered rotations do the same.** A rotation that fires because enough bytes
+have moved, or enough time has passed, is exactly the moment fresh key material
+is wanted — so it re-exchanges the established slots too, not only the slot the
+next tier adds.
+
+> 💸 **This costs real bytes, and one KEM family makes it expensive.** An
+> exchange carries a public key and a ciphertext per slot. For X25519, Saber,
+> Kyber and NTRU that is one or two kilobytes each — nothing. Classic McEliece
+> public keys are **hundreds of kilobytes**, so a layout using one re-ships
+> that on every rotation under this default. On a metered or thin link, name a
+> smaller `rekeyMask`, or `0`, and accept that those slots stop getting deeper.
+> The knob is per rotation; nothing is decided for the whole session.
 
 ### Every exchange stacks on the one before it ⟡
 
@@ -900,38 +935,48 @@ AM1C and AM1S carry an empty binder. They are trusted through signatures, have
 no secret shared beforehand, and inventing one would look like protection while
 resting on values both sides already send in the clear.
 
-**Stacking on purpose.** A server that wants a deeper stack runs the rotation
-it already has, several times, each carrying a real exchange. One round trip
-per rotation — this is a two-party agreement, not something one side can
-deepen alone:
+**Stacking on purpose.** Ask for the tier already in force, as many times as
+the traffic is worth. Every KEM slot that tier uses is re-exchanged, and every
+one of their stacks goes one deeper:
 
 ```text
   for each rotation the server wants:
 
-    requestAmeTier(session, tierId, rekeyMask = 0b1100_0000)
-        ^ names the slots that must run a NEW KEM, not just change keys
+    requestAmeTier(session, session.auth.current.tier.tierId)
+        ^ no mask needed: the default is everything that was already on
 
     beginAmeSessionExchange   ->  offer   ->  answerAmeSessionExchange
     finishAmeSessionExchange  <-  reply   <-
     confirmAmeSessionExchange <-> epoch-ready
 
-    every selected slot is now one deeper
+    every slot the tier uses is now one deeper
 ```
+
+One round trip per rotation. This is a two-party agreement — no side can
+deepen the stack alone, because the whole point is that the new term comes
+from a KEM both of them ran.
 
 ```nim
 ## What that bought, read back from the session itself.
-echo ameStackDepth(session.auth.current.exchange,
-                   session.auth.current.tier.masks.kem)
+echo ameSessionStackDepth(session)
 ```
 
-It reports the **shallowest** chosen slot, because an attacker picks which
-slot to work on and the defender does not.
+It reports the **shallowest** slot the tier uses, because an attacker picks
+which slot to work on and the defender does not. A tier running a slot six
+exchanges deep beside one that has run once is one deep.
 
-> ⚠️ Depth only grows with FRESH key material. A tier change with an empty
-> rekey mask still changes every traffic key — the transcript salt sees to
-> that — but it does not deepen the stack, because hashing a value again is
-> something an attacker can do just as easily. Stack rotations with
-> `rekeyMask` set, or they cost a round trip and buy nothing.
+Which has a consequence worth knowing before it surprises you: **adding an
+algorithm lowers the number.** Rotating onto a tier that brings in a new KEM
+slot deepens every slot that was already on, and then puts a brand new slot
+beside them at depth one -- so the session reads one. Nothing was lost; there
+is simply a shallower place to aim at now. It comes back up by rotating again
+on the tier now in force.
+
+> ⚠️ Depth grows only with fresh key material. Passing `rekeyMask = 0` asks
+> for the cheap rotation — new traffic keys, no new KEM — and that one deepens
+> nothing, because re-hashing a value is something an attacker can do just as
+> easily. It is there for callers who know what they are giving up, and it is
+> not what you get by default.
 
 ## What DAC actually decides ꒰ঌ ໒꒱
 

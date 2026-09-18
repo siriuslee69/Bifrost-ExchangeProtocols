@@ -854,11 +854,30 @@ proc feedAmeElapsedMs*(S: var AmeSession, elapsedMs: uint64): AmeTierStep {.
   S.lastTrigger = result
 
 proc requestAmeTier*(S: var AmeSession, tierId: uint32,
-    rekeyMask: uint8 = 0'u8): AmeTierStep {.
-    role: actor.} =
-  ## S/tierId/rekeyMask: exact target tier and selected active KEM rekeys.
+    rekeyMask: int = -1): AmeTierStep {.
+    role: actor, tag: "appApi|exchange".} =
+  ## S/tierId: exact target tier.
+  ## rekeyMask: which already-active KEM slots must run a NEW exchange. Left
+  ## alone it is every slot the current tier uses, which is what makes the
+  ## secret stack deeper; see `requestTier` for the three cases and for why the
+  ## expensive one is the default.
   result = requestTier(S.path, tierId, rekeyMask)
   S.lastTrigger = result
+
+proc ameSessionStackDepth*(S: AmeSession): uint32 {.role: parser,
+    tag: "appApi|exchange".} =
+  ## S: how many exchanges the SHALLOWEST KEM slot this session's tier uses has
+  ## absorbed. One rotation with the default rekey mask raises it by one.
+  ##
+  ## The shallowest, not the average and not the deepest, because an attacker
+  ## picks which slot to work on and the defender does not. A tier running a
+  ## slot six exchanges deep beside one that has run once is one deep.
+  ##
+  ## Takes no mask, deliberately. `ameStackDepth` takes one because it has to,
+  ## and handing it the wrong one gives a confident wrong answer rather than an
+  ## error -- which is the wrong shape for a number somebody is going to trust.
+  result = ameStackDepth(S.auth.current.exchange,
+    S.auth.current.tier.masks.kem)
 
 ## ╭⟢ runtime parameters
 ##
