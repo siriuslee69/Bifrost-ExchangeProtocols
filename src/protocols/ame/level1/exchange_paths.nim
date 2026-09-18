@@ -268,48 +268,6 @@ proc initAmeExchangeState*(A: AmeKemAlgorithms): AmeExchangeState {.
     raise newException(ValueError, "AME exchange state layout is invalid")
   result.algorithms = A
 
-proc applyAmeExchange*(S: var AmeExchangeState, r: AmeExchangeRequest,
-    sharedSecrets: openArray[ByteSeq]) {.role: actor.} =
-  ## S/r/sharedSecrets: selected slots added or rekeyed; other secrets remain.
-  var
-    i: int = 0
-    j: int = 0
-  discard initAmeExchangeRequest(S.algorithms, r.targetTier, r.exchangeMask)
-  if sharedSecrets.len != selectedAlgorithmCount(r):
-    raise newException(ValueError, "AME exchange shared-secret count mismatch")
-  while i < int(S.algorithms.length):
-    if algorithmSlotSelected(r.exchangeMask, i):
-      if sharedSecrets[j].len == 0:
-        raise newException(ValueError, "AME exchange shared secret is empty")
-      if S.generation[i] == high(uint32):
-        raise newException(ValueError, "AME exchange generation is exhausted")
-      secureClearAmeBytes(S.sharedSecrets[i])
-      S.sharedSecrets[i] = @sharedSecrets[j]
-      S.generation[i] = S.generation[i] + 1'u32
-      S.activeMask = S.activeMask or slotMask(i)
-      j = j + 1
-    i = i + 1
-
-proc buildAmeExchangeSeed*(S: AmeExchangeState,
-    selectedMask: uint8): ByteSeq {.role: truthBuilder.} =
-  ## S/selectedMask: chosen established KEM slots bound by position/generation.
-  var i: int = 0
-  if selectedMask == 0'u8 or (selectedMask and not S.activeMask) != 0'u8:
-    raise newException(ValueError, "AME selected KEM secret is unavailable")
-  appendAmeLabel(result, "AME-EXCHANGE-SELECTION-v2")
-  result.add(S.algorithms.length)
-  result.add(selectedMask)
-  while i < int(S.algorithms.length):
-    if algorithmSlotSelected(selectedMask, i):
-      if S.generation[i] == 0'u32 or S.sharedSecrets[i].len == 0:
-        raise newException(ValueError, "AME selected KEM secret is unavailable")
-      result.add(uint8(i))
-      result.add(uint8(ord(S.algorithms[i])))
-      appendAmeU32(result, S.generation[i])
-      appendAmeU32(result, uint32(S.sharedSecrets[i].len))
-      appendAmeBytes(result, S.sharedSecrets[i])
-    i = i + 1
-
 proc readPathU32(A: openArray[uint8], cursor: var int,
     what: string): uint32 {.role: parser.} =
   ## A/cursor/what: source, cursor, and field label for a little-endian u32.

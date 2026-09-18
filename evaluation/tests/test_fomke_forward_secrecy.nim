@@ -24,6 +24,8 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/tier_aead
 import ../../src/protocols/fomke/types
@@ -49,7 +51,7 @@ proc fsExchange(mask: uint8 = 0b11000000'u8,
     secrets: openArray[ByteSeq] = [@[byte 1, 2, 3, 4], @[byte 5, 6, 7, 8]]):
     AmeExchangeState {.role: configurator.} =
   result = initAmeExchangeState(fsKems)
-  applyAmeExchange(result, initAmeExchangeRequest(fsKems, fsTier(mask), mask),
+  applyAmeExchange(result, defaultAmeLayout(fsKems), initAmeExchangeRequest(fsKems, fsTier(mask), mask),
     secrets)
 
 proc fsPair(): tuple[a: FomkeState, b: FomkeState] {.role: configurator.} =

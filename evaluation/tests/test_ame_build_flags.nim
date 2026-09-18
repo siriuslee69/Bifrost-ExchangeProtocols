@@ -33,7 +33,7 @@ proc tagLenSession(n: AmeAuthTagLen,
     L: AmeSuiteLayout = defaultAmeLayout(minimalKems)
     tier: AmeMaskTier = fullAmeMaskTier(L)
     st: AmeExchangeState = initAmeExchangeState(minimalKems)
-  applyAmeExchange(st, initAmeExchangeRequest(minimalKems, tier, tier.masks.kem),
+  applyAmeExchange(st, defaultAmeLayout(minimalKems), initAmeExchangeRequest(minimalKems, tier, tier.masks.kem),
     [@[byte 9, 8, 7, 6, 5, 4, 3, 2], @[byte 1, 2, 3, 4, 5, 6, 7, 8]])
   result = initAmeSession(initAmeAuthPackage(L, tier, st,
     endpointRole = role, params = AmeRuntimeParams(authTagLen: n)),

@@ -26,6 +26,8 @@ import ../../transport/types as transport_types
 import ../types
 import ../level0/bytes
 import ../level1/exchange_paths
+import ../level1/derivation
+import ../level1/secret_stack
 import ../level1/suites
 import ../level1/symmetric
 import ../level1/path_triggers
@@ -135,7 +137,7 @@ proc clearExchangeState(E: var AmeExchangeState) {.role: actor.} =
   var
     i: int = 0
   while i < ameMaxAlgorithmSlots:
-    secureClearAmeBytes(E.sharedSecrets[i])
+    secureClearAmeBytes(E.stackedSecrets[i])
     i = i + 1
   E = default(AmeExchangeState)
 
@@ -174,7 +176,7 @@ proc cloneExchangeState(E: AmeExchangeState): AmeExchangeState {.
   result.activeMask = E.activeMask
   result.generation = E.generation
   while i < ameMaxAlgorithmSlots:
-    result.sharedSecrets[i] = copyBytes(E.sharedSecrets[i])
+    result.stackedSecrets[i] = copyBytes(E.stackedSecrets[i])
     i = i + 1
 
 proc cloneEpoch(E: AmeEpochKeySet): AmeEpochKeySet {.role: helper.} =
@@ -327,7 +329,8 @@ proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
     raise newException(ValueError, "AME epoch id is exhausted")
   validateAmeTierTransition(next.layout, next.tier, r.targetTier,
     r.exchangeMask, next.exchange.activeMask)
-  applyAmeExchange(next.exchange, r, sharedSecrets)
+  applyAmeExchange(next.exchange, next.layout, r, sharedSecrets,
+    S.auth.exchangeBinder)
   next.tier = r.targetTier
   next.params = r.params
   next.epochId = S.auth.current.epochId + 1'u32
@@ -574,8 +577,9 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   S.pendingIncoming.requestId = o.requestId
   S.pendingIncoming.request = o.request
   S.pendingIncoming.candidate = cloneEpoch(S.auth.current)
-  applyAmeExchange(S.pendingIncoming.candidate.exchange, o.request,
-    answer.sharedSecrets)
+  applyAmeExchange(S.pendingIncoming.candidate.exchange,
+    S.auth.current.layout, o.request, answer.sharedSecrets,
+    S.auth.exchangeBinder)
   S.pendingIncoming.candidate.tier = o.request.targetTier
   S.pendingIncoming.candidate.params = o.request.params
   S.pendingParams = o.request.params
@@ -632,7 +636,8 @@ proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     S.pendingExchange.offer, r)
   clearFomkeSendCache(S.fomkeSendCache)
   candidate = cloneEpoch(S.auth.current)
-  applyAmeExchange(candidate.exchange, r.request, secrets)
+  applyAmeExchange(candidate.exchange, S.auth.current.layout, r.request,
+    secrets, S.auth.exchangeBinder)
   candidate.tier = r.request.targetTier
   candidate.epochId = S.auth.current.epochId + 1'u32
   discard prepareFomkeUpgrade(S.fomke, r.requestId, candidate.epochId,

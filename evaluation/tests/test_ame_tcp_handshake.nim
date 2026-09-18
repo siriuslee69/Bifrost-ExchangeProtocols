@@ -27,6 +27,8 @@ import std/[atomics, net, os, unittest]
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/signatures
 import ../../src/protocols/ame/level1/path_triggers
@@ -402,7 +404,7 @@ proc carrierAuth(role: AmeEndpointRole): AmeAuthPackage =
         occupiedAmeMask(layout.signatures.length),
         occupiedAmeMask(layout.kdfs.length)))
     state: AmeExchangeState = initAmeExchangeState(carrierKems)
-  applyAmeExchange(state, initAmeExchangeRequest(carrierKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(carrierKems), initAmeExchangeRequest(carrierKems, tier,
     0b10000000'u8), [@[byte 3, 1, 4, 1, 5, 9, 2, 6]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 

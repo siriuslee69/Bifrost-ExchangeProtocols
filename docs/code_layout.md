@@ -18,8 +18,9 @@ src/protocols
 ├── ame/
 │   ├── types.nim
 │   ├── level0/  <- bits, bytes, protocol descriptor
-│   ├── level1/  <- algorithms, paths, suites, derivation, triggers, compression,
-│   │                and tier_aead: the one cipher-XOR + MAC-XOR construction
+│   ├── level1/  <- algorithms, paths, suites, derivation, the secret stack,
+│   │                triggers, compression, and tier_aead: the one
+│   │                cipher-XOR + MAC-XOR construction
 │   │   ├── kems/       <- one file per KEM family
 │   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
 │   │   └── symmetric/  <- one file per symmetric primitive

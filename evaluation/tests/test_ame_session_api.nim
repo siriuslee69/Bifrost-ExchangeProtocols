@@ -24,6 +24,8 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/signatures
 import ../../src/protocols/ame/level1/path_triggers
@@ -52,7 +54,7 @@ proc apiAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
     layout: AmeSuiteLayout = apiLayout()
     tier: AmeMaskTier = apiTier(layout, 1'u32, 0b10000000'u8)
     state: AmeExchangeState = initAmeExchangeState(apiKems)
-  applyAmeExchange(state, initAmeExchangeRequest(apiKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(apiKems), initAmeExchangeRequest(apiKems, tier,
     0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
@@ -221,8 +223,8 @@ suite "carrier chosen while running":
         beginAmeExchangeFrame(client, acrDac, upgradeRequest(client))))
     confirmAmeExchangeFrame(server, acrDac, readyFrame)
     check server.auth.current.epochId == 2'u32
-    check client.auth.current.exchange.sharedSecrets[1] ==
-      server.auth.current.exchange.sharedSecrets[1]
+    check client.auth.current.exchange.stackedSecrets[1] ==
+      server.auth.current.exchange.stackedSecrets[1]
 
 suite "rotation triggers driven by the clock":
   # {.testKind: tkUnit.}

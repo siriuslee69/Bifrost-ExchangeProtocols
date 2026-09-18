@@ -33,6 +33,8 @@ import std/[strutils, unittest]
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/level1/compression
@@ -74,7 +76,7 @@ proc atAuth(role: AmeEndpointRole, seed: byte = 7'u8,
     layout: AmeSuiteLayout = atLayout()
     tier: AmeMaskTier = atTier(layout)
     state: AmeExchangeState = initAmeExchangeState(atKems)
-  applyAmeExchange(state, initAmeExchangeRequest(atKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(atKems), initAmeExchangeRequest(atKems, tier,
     0b11000000'u8), [@[seed, 2'u8, 3'u8, 4'u8], @[seed, 6'u8, 7'u8, 8'u8]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role,
     params = params)

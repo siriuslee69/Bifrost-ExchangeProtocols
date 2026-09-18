@@ -352,14 +352,14 @@ proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
   while i < int(E.algorithms.length):
     if algorithmSlotSelected(t.masks.kem, i):
       if not algorithmSlotSelected(E.activeMask, i) or
-          E.generation[i] == 0'u32 or E.sharedSecrets[i].len == 0:
+          E.generation[i] == 0'u32 or E.stackedSecrets[i].len == 0:
         raise newException(ValueError,
           "FOMKE initial tier selects a KEM slot with no secret")
       row = @[]
       row.add(uint8(i))
       row.add(uint8(ord(E.algorithms.algorithms[i])))
       appendAmeU32(row, E.generation[i])
-      appendFomkeField(row, E.sharedSecrets[i])
+      appendFomkeField(row, E.stackedSecrets[i])
       secrets.add(row)
     i = i + 1
   result = initFomke(secrets, E.algorithms, L, t, role, context, c,
@@ -883,7 +883,7 @@ proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
   while i < int(E.algorithms.length):
     if algorithmSlotSelected(r.exchangeMask, i):
       if not algorithmSlotSelected(E.activeMask, i) or
-          E.generation[i] == 0'u32 or E.sharedSecrets[i].len == 0:
+          E.generation[i] == 0'u32 or E.stackedSecrets[i].len == 0:
         raise newException(ValueError,
           "FOMKE upgrade selected an unavailable AME secret")
       generations[i] = E.generation[i]
@@ -891,7 +891,7 @@ proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
       row.add(uint8(i))
       row.add(uint8(ord(E.algorithms.algorithms[i])))
       appendAmeU32(row, E.generation[i])
-      appendFomkeField(row, E.sharedSecrets[i])
+      appendFomkeField(row, E.stackedSecrets[i])
       result.add(row)
     i = i + 1
 

@@ -63,6 +63,8 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ../level1/exchange_paths
+import ../level1/derivation
+import ../level1/secret_stack
 import ../level1/suites
 import ../level1/symmetric
 import ../level1/tier_aead
@@ -387,6 +389,38 @@ proc exchangeAuthenticationKey(a: AmeAuthentication,
   result = ameMacTag(amaBlake3, a.psk, subject, 32)
   secureClearAmeBytes(subject)
 
+proc exchangeBinderKey(a: AmeAuthentication,
+    transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
+    tag: "cryptoBoundary|kdf".} =
+  ## a/transcript: what the PROVISIONED secret contributes to every key this
+  ## session will ever derive.
+  ##
+  ## AM1M is handed a secret out of band, and until now that secret only ever
+  ## proved who was speaking -- it never went anywhere near a traffic key. So a
+  ## broken KEM took the whole session, and the secret the two sides had gone
+  ## to the trouble of sharing beforehand did nothing to stop it.
+  ##
+  ## This is that secret's contribution. It is mixed into every KEM slot's
+  ## accumulated stack, on the first exchange and on every rotation after it,
+  ## so following the session forward needs the provisioned secret as well as
+  ## every exchange.
+  ##
+  ## Bound to the transcript, so it is different in every session and says
+  ## nothing about the secret behind it. Derived under its own label, so it is
+  ## not the same bytes as `exchangeAuthenticationKey` -- one secret doing two
+  ## jobs is how a proof about one of them quietly stops being a proof about
+  ## the other.
+  ##
+  ## Empty in AM1C and AM1S. Those modes have no provisioned secret, and an
+  ## empty binder changes nothing about the stack they build.
+  var subject: ByteSeq = @[]
+  if a.mode != atmPskMac:
+    return
+  appendAmeLabel(subject, "AME-PROVISIONED-BINDER-v1")
+  appendHandshakeString(subject, a.pskId)
+  appendHandshakeBytes(subject, transcript)
+  result = ameMacTag(amaBlake3, a.psk, subject, 32)
+  secureClearAmeBytes(subject)
 proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
     request: AmeExchangeRequest,
     sharedSecrets: openArray[ByteSeq], transcript: openArray[uint8],
@@ -399,12 +433,18 @@ proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
   ## handshakes that agreed different things can never share a key.
   var
     exchange: AmeExchangeState = initAmeExchangeState(L.kems)
-  applyAmeExchange(exchange, request, sharedSecrets)
+    binder: ByteSeq = exchangeBinderKey(a, transcript)
+  ## The binder is built BEFORE the exchange is absorbed, because the very
+  ## first stack has to contain it. A provisioned secret that only joined from
+  ## the second rotation onward would leave the opening epoch resting on the
+  ## KEM alone.
+  applyAmeExchange(exchange, L, request, sharedSecrets, binder)
   result = initAmeAuthPackage(L, initialTier, exchange,
     hashAmeTier(L, initialTier, transcript, 32), 1'u32, sessionId,
     endpointRole, params)
   result.authenticationMode = ameAuthenticationModeOf(a.mode)
   result.exchangeAuthenticationKey = exchangeAuthenticationKey(a, transcript)
+  result.exchangeBinder = binder
 
 proc serverHelloPolicyError(S: AmeClientHandshake,
     h: AmeServerHello): string {.role: parser.} =

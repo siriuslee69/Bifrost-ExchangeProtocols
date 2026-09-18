@@ -192,7 +192,7 @@ proc exactBenchAuth(seed: openArray[uint8],
     state: AmeExchangeState = initAmeExchangeState(K)
     secret: ByteSeq = @seed
   tier.masks.kem = 0b10000000'u8
-  applyAmeExchange(state, initAmeExchangeRequest(K, tier,
+  applyAmeExchange(state, defaultAmeLayout(K), initAmeExchangeRequest(K, tier,
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
@@ -431,7 +431,7 @@ proc layeredBenchAuth(seed: openArray[uint8],
     state: AmeExchangeState = initAmeExchangeState(K)
     secret: ByteSeq = @seed
   tier.masks.kem = 0b10000000'u8
-  applyAmeExchange(state, initAmeExchangeRequest(K, tier,
+  applyAmeExchange(state, defaultAmeLayout(K), initAmeExchangeRequest(K, tier,
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 

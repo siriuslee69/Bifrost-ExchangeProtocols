@@ -190,8 +190,8 @@ suite "AME private handshake":
     check clientDone.auth.endpointRole == aerInitiator
     check serverDone.auth.sessionId == 42'u64
     check serverDone.auth.endpointRole == aerResponder
-    check clientDone.auth.current.exchange.sharedSecrets[0] ==
-      serverDone.auth.current.exchange.sharedSecrets[0]
+    check clientDone.auth.current.exchange.stackedSecrets[0] ==
+      serverDone.auth.current.exchange.stackedSecrets[0]
     check clientDone.auth.current.transcriptSalt ==
       serverDone.auth.current.transcriptSalt
     check clientDone.peerTrust.subjectKeyId == "example-server"
@@ -622,7 +622,45 @@ suite "AME handshake transport":
     check clientDone.auth.exchangeAuthenticationKey ==
       serverDone.auth.exchangeAuthenticationKey
     check clientDone.auth.exchangeAuthenticationKey != secret
+    ## And so is the binder, which is the OTHER thing the provisioned secret
+    ## now does: it goes into every key rather than only into the proof. Both
+    ## sides must reach the same one or nothing they seal will open.
+    check clientDone.auth.exchangeBinder.len == 32
+    check clientDone.auth.exchangeBinder == serverDone.auth.exchangeBinder
+    check clientDone.auth.exchangeBinder != secret
+    ## Two jobs, two values. One secret doing both is how a proof about one of
+    ## them quietly stops being a proof about the other.
+    check clientDone.auth.exchangeBinder !=
+      clientDone.auth.exchangeAuthenticationKey
 
+
+  # {.testKind: tkRegression, covers: "exchangeBinderKey", pins: "a certificate handshake must not invent a provisioned secret it was never given".}
+  test "a mode with no provisioned secret carries no binder":
+    ## AM1C and AM1S are trusted through signatures, not through a secret
+    ## shared beforehand. There is nothing for them to bind, and inventing
+    ## something would be worse than nothing: it would look like protection
+    ## while resting on values both sides already send in the clear.
+    var
+      p: Pair = newPair("binder-absent")
+      client: AmeClientHandshake = beginAmeHandshake(72'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+        p.tier)], p.auth, p.serverCert, p.serverKey)
+      clientDone: AmeHandshakeResult
+      serverDone: AmeHandshakeResult
+    check server.ok
+    clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
+      p.clientCert, p.clientKey, nowUnix)
+    check clientDone.ok
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+      nowUnix)
+    check serverDone.ok
+    check clientDone.auth.authenticationMode == am1c
+    check clientDone.auth.exchangeBinder.len == 0
+    check serverDone.auth.exchangeBinder.len == 0
+    ## Which changes nothing about the two sides agreeing: the stack they
+    ## build from the exchange alone is still the same on both.
+    check clientDone.auth.current.exchange.stackedSecrets[0] ==
+      serverDone.auth.current.exchange.stackedSecrets[0]
   # {.testKind: tkEdgeCase.}
   test "a wrong shared secret, a wrong name, and a mode mismatch fail closed":
     var

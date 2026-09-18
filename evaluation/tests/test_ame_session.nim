@@ -9,6 +9,7 @@ import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level2/protection
@@ -39,7 +40,7 @@ proc exactAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
     layout: AmeSuiteLayout = exactLayout()
     tier: AmeMaskTier = exactTier(layout, 1'u32, 0b10000000'u8)
     state: AmeExchangeState = initAmeExchangeState(exactKems)
-  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(exactKems), initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8),
     [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
   ## The role has to be settled before the session is built: the session
@@ -58,7 +59,7 @@ proc layeredAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
       initAmeTierMasks(0b10000000'u8, 0b10000000'u8, 0b10000000'u8,
         0b10000000'u8, 0b10000000'u8, 0b10000000'u8))
     state: AmeExchangeState = initAmeExchangeState(layout.kems)
-  applyAmeExchange(state, initAmeExchangeRequest(layout.kems, tier,
+  applyAmeExchange(state, layout, initAmeExchangeRequest(layout.kems, tier,
     tier.masks.kem), [@[byte 9, 8, 7, 6]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
@@ -73,7 +74,7 @@ proc paddedUpgradeSession(role: AmeEndpointRole = aerInitiator): AmeSession =
     auth: AmeAuthPackage = default(AmeAuthPackage)
     target: AmeMaskTier = default(AmeMaskTier)
     path: AmeTierPath = default(AmeTierPath)
-  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(exactKems), initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
   auth = initAmeAuthPackage(layout, tier, state, endpointRole = role,
     params = AmeRuntimeParams(authTagLen: aatl32, padding: apadBlock64))
@@ -458,8 +459,8 @@ suite "AME mask-tier sessions":
     confirmAmeTcpExchangeFrame(server, readyFrame)
     check server.auth.current.epochId == 2'u32
     check server.auth.current.tier.masks.kem == 0b11000000'u8
-    check client.auth.current.exchange.sharedSecrets[1] ==
-      server.auth.current.exchange.sharedSecrets[1]
+    check client.auth.current.exchange.stackedSecrets[1] ==
+      server.auth.current.exchange.stackedSecrets[1]
     check client.auth.current.transcriptSalt == server.auth.current.transcriptSalt
 
   # {.testKind: tkUnit.}
@@ -487,14 +488,14 @@ suite "AME mask-tier sessions":
       target: AmeMaskTier = client.auth.current.tier
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
         target, 0b10000000'u8)
-      before: ByteSeq = server.auth.current.exchange.sharedSecrets[0] & @[]
+      before: ByteSeq = server.auth.current.exchange.stackedSecrets[0] & @[]
       offerFrame: ByteSeq = @[]
       replyFrame: ByteSeq = @[]
     installSignaturePeers(client, server)
     offerFrame = beginAmeTcpExchangeFrame(client, request)
     replyFrame = answerAmeTcpExchangeFrame(server, offerFrame)
-    check server.auth.current.exchange.sharedSecrets[0] == before
-    check server.pendingIncoming.candidate.exchange.sharedSecrets[0] != before
+    check server.auth.current.exchange.stackedSecrets[0] == before
+    check server.pendingIncoming.candidate.exchange.stackedSecrets[0] != before
     discard finishAmeTcpExchangeFrame(client, replyFrame)
 
   # {.testKind: tkFuzz.}
@@ -507,7 +508,7 @@ suite "AME mask-tier sessions":
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
         target, 0b01000000'u8)
       offer: AmeExchangeOffer
-      before: ByteSeq = server.auth.current.exchange.sharedSecrets[0] & @[]
+      before: ByteSeq = server.auth.current.exchange.stackedSecrets[0] & @[]
     installSignaturePeers(client, server)
     offer = beginAmeSessionExchange(client, request)
     check offer.signatures.len == 2
@@ -516,7 +517,7 @@ suite "AME mask-tier sessions":
       discard answerAmeSessionExchange(server, offer)
     check not server.pendingIncoming.active
     check server.auth.current.epochId == 1'u32
-    check server.auth.current.exchange.sharedSecrets[0] == before
+    check server.auth.current.exchange.stackedSecrets[0] == before
 
   # {.testKind: tkEdgeCase.}
   test "initiator rejects KEM reply signature before epoch rotation":
@@ -590,7 +591,7 @@ suite "AME mask-tier sessions":
           0b11000000'u8, 0b11000000'u8, 0b11000000'u8))
       request: AmeExchangeRequest = initAmeExchangeRequest(layout.kems,
         target, 0'u8)
-      secret: ByteSeq = client.auth.current.exchange.sharedSecrets[0] & @[]
+      secret: ByteSeq = client.auth.current.exchange.stackedSecrets[0] & @[]
       offerFrame: ByteSeq = @[]
       replyFrame: ByteSeq = @[]
       readyFrame: ByteSeq
@@ -601,11 +602,11 @@ suite "AME mask-tier sessions":
     check server.pendingIncoming.candidate.tier.tierId == 2'u32
     readyFrame = finishAmeTcpExchangeFrame(client, replyFrame)
     check client.auth.current.tier.masks.cipher == 0b11000000'u8
-    check client.auth.current.exchange.sharedSecrets[0] == secret
+    check client.auth.current.exchange.stackedSecrets[0] == secret
     check server.auth.current.tier.tierId == 1'u32
     confirmAmeTcpExchangeFrame(server, readyFrame)
     check server.auth.current.tier.masks.kdf == 0b11000000'u8
-    check server.auth.current.exchange.sharedSecrets[0] == secret
+    check server.auth.current.exchange.stackedSecrets[0] == secret
     check client.fomke.epoch == 2'u32
     check server.fomke.epoch == 2'u32
 
@@ -768,8 +769,8 @@ suite "AME mask-tier sessions":
     check A.fomke.lane1.chainKey == B.fomke.lane1.chainKey
     # both land on one epoch built from one set of KEM secrets
     check A.auth.current.epochId == B.auth.current.epochId
-    check A.auth.current.exchange.sharedSecrets[1] ==
-      B.auth.current.exchange.sharedSecrets[1]
+    check A.auth.current.exchange.stackedSecrets[1] ==
+      B.auth.current.exchange.stackedSecrets[1]
 
   # {.testKind: tkEdgeCase.}
   test "outgoing exchange is refused while a candidate epoch is pending":
@@ -819,7 +820,7 @@ proc paddedAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
     layout: AmeSuiteLayout = exactLayout()
     tier: AmeMaskTier = exactTier(layout, 1'u32, 0b10000000'u8)
     state: AmeExchangeState = initAmeExchangeState(exactKems)
-  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(exactKems), initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8),
     [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role,

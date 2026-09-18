@@ -75,6 +75,7 @@ import ./ame/level1/symmetric as ame_symmetric
 import ./ame/level1/exchange_paths as ame_exchange_paths
 import ./ame/level1/suites as ame_suites
 import ./ame/level1/derivation as ame_derivation
+import ./ame/level1/secret_stack as ame_secret_stack
 import ./ame/level1/tier_aead as ame_tier_aead
 import ./ame/level1/padding as ame_padding
 import ./ame/level1/header_protection as ame_header_protection
@@ -98,6 +99,7 @@ export ame_symmetric
 export ame_exchange_paths
 export ame_suites
 export ame_derivation
+export ame_secret_stack
 export ame_tier_aead
 export ame_header_protection
 export ame_padding

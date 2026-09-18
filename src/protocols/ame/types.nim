@@ -255,11 +255,35 @@ type
     envelopes*: seq[AmeKemEnvelope]
     signatures*: seq[ByteSeq]
 
+  ## AmeExchangeState: what each KEM slot has accumulated, not what it last
+  ## agreed.
+  ##
+  ## `stackedSecrets[i]` is NOT the shared secret slot i most recently
+  ## produced. It is that secret hashed together with everything the slot
+  ## produced before it, so the slot's contribution to the key schedule only
+  ## ever gets deeper:
+  ##
+  ##   first exchange   stack = H( binder, slot, algorithm, 1, secret1 )
+  ##   rotation         stack = H( H(stack), binder, slot, algorithm, 2, secret2 )
+  ##   rotation         stack = H( H(stack), binder, slot, algorithm, 3, secret3 )
+  ##
+  ## What that buys: breaking ONE exchange is no longer enough. An attacker
+  ## who recovers `secret3` outright -- a broken KEM, a bad random number, a
+  ## future machine -- still holds nothing, because the key hangs off the whole
+  ## stack and the rest of it is unreachable from `secret3` alone.
+  ##
+  ## What it costs nothing of: forward secrecy. The old value is erased the
+  ## moment the new one is built, and the new one is a one-way image of it, so
+  ## a machine seized today still cannot read yesterday.
+  ##
+  ## `generation[i]` is how deep slot i's stack is -- one per exchange it has
+  ## absorbed. It is bound into every key, so two sessions that reached the
+  ## same bytes by different routes never share a key.
   AmeExchangeState* {.role: truthState.} = object
     algorithms*: AmeKemAlgorithms
     activeMask*: uint8
     generation*: array[ameMaxAlgorithmSlots, uint32]
-    sharedSecrets*: array[ameMaxAlgorithmSlots, ByteSeq]
+    stackedSecrets*: array[ameMaxAlgorithmSlots, ByteSeq]
 
   AmeProtectedMessage* {.role: truthState.} = object
     payload*: ByteSeq
@@ -426,6 +450,23 @@ type
     authenticationMode*: AmeAuthenticationMode
     exchangeAuthenticationKey*: ByteSeq
       ## Session-derived AM1M proof key; never the provisioned PSK.
+    exchangeBinder*: ByteSeq
+      ## What the PROVISIONED secret contributes to every key this session
+      ## will ever derive. Derived once from the AM1M shared secret and the
+      ## finished transcript, and empty in AM1C and AM1S, which have no
+      ## provisioned secret to contribute.
+      ##
+      ## It is mixed into the accumulated secret of every KEM slot, on the
+      ## first exchange and on every rotation after it. So an attacker who
+      ## breaks a KEM outright -- and even one who reads the whole state off a
+      ## machine -- still cannot follow the session forward without the secret
+      ## that was handed over out of band.
+      ##
+      ## Separate from `exchangeAuthenticationKey` on purpose. That one is a
+      ## MAC key for offers and replies; this one is key-schedule input. One
+      ## secret doing two jobs is how a proof about one of them stops being a
+      ## proof about the other, so they are derived under different labels and
+      ## never substituted for each other.
     localSignatureSecretKeys*: seq[ByteSeq]
     peerSignaturePublicKeys*: seq[ByteSeq]
 

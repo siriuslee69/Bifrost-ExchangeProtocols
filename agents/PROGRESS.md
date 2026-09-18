@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Size the queue the kernel was quietly emptying
+Commit Message: Make every exchange stand on the ones before it
 
 Features (Planned):
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
@@ -44,6 +44,28 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- A KEM slot holds everything it has ever agreed, not the last thing it
+  agreed. `stackAmeSecret` folds the fresh shared secret into the slot's
+  accumulated stack -- previous hashed, then hashed together with the new KEM
+  output -- so recovering ONE exchange is no longer enough to read the epoch it
+  belongs to. Each rotation adds a term and none ever removes one. Forward
+  secrecy is unchanged: the old stack is erased as the new one is built and the
+  new one is a one-way image of it.
+- The provisioned AM1M secret reaches the key schedule. It used to prove who
+  was speaking and go nowhere near a traffic key, so a broken KEM took the
+  whole session and the out-of-band secret did nothing. `exchangeBinder` is
+  derived from it and the finished transcript, under its own label, and mixed
+  into every slot's stack on every exchange. AM1C and AM1S carry an empty
+  binder -- they have no such secret, and inventing one would look like
+  protection while resting on public values.
+- `ameStackDepth` reports how deep the SHALLOWEST chosen slot is, because an
+  attacker picks the slot to work on. Depth only grows with fresh key
+  material, so stacking rotations means rotating with `rekeyMask` set.
+- `ame/level1/secret_stack.nim` owns the whole life of those bytes -- what
+  goes in (`applyAmeExchange`), what comes back out for a key to be built from
+  (`buildAmeExchangeSeed`), and how deep it is. Those two used to sit in
+  different files, which is how the meaning of a field can change on one side
+  without the other noticing.
 - A soak: `nimble soak`. Separate processes on separate loopback addresses,
   real UDP, real handshakes, induced loss, peer churn and a payload that
   carries its own name so the receiver can verify it without sharing memory

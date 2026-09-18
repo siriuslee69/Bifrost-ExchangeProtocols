@@ -11,6 +11,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./exchange_paths
+import ./secret_stack
 import ./suites
 import runePragmas
 

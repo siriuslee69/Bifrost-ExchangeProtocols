@@ -832,6 +832,107 @@ Pass `rekeyMask` to `requestAmeTier` to force fresh key agreement on slots that
 are already active.
 
 
+
+### Every exchange stacks on the one before it ⟡
+
+A KEM slot does not hold the secret it last agreed. It holds **everything it
+has ever agreed**, folded together, so each exchange makes the next one harder
+to unpick rather than simply replacing what came before.
+
+**Def. — the stack.** What `AmeExchangeState.stackedSecrets[i]` holds for slot
+`i`. Not a shared secret; the accumulated image of every shared secret that
+slot has produced, with the provisioned secret underneath all of them.
+
+```text
+  first exchange   stack = H( binder, slot, algorithm, 1, secret1 )
+  rotation         stack = H( H(stack), binder, slot, algorithm, 2, secret2 )
+  rotation         stack = H( H(stack), binder, slot, algorithm, 3, secret3 )
+```
+
+`H` here is the tier's hash overlay — every switched-on hash slot, XORed
+together — so breaking one hash primitive is not enough here either.
+
+**Why it is built that way.** Before, a slot kept only its latest secret and a
+rotation threw the old one away:
+
+```text
+  epoch 1   key = KDF( ... secret1 ... )
+  epoch 2   key = KDF( ... secret2 ... )      secret1 gone, and irrelevant
+```
+
+An attacker who recovered `secret2` alone — a KEM broken ten years from now, a
+bad random number, a flawed machine — read epoch 2, and every exchange before
+it had protected nothing. Now the key hangs off the whole stack, and `secret2`
+on its own reaches none of it:
+
+```text
+  to read epoch 3 you now need
+    secret3   AND   secret2   AND   secret1   AND   the provisioned secret
+```
+
+Each rotation adds a term. None of them ever removes one.
+
+**What it costs nothing of.** Forward secrecy is exactly what it was. The old
+stack is erased the instant the new one is built, and the new one is a one-way
+image of it, so a machine seized today still cannot read yesterday. What
+changed is only what an attacker needs in order to read **tomorrow**.
+
+**The provisioned secret finally does something.** In AM1M both sides are
+handed a secret out of band. It used to prove who was speaking and then go
+nowhere near a traffic key, so a broken KEM took the whole session and the
+secret the two sides had gone to the trouble of sharing beforehand did nothing
+to stop it. It is now the `binder` in the diagram above — mixed into every
+slot's stack, on the first exchange and on every rotation after it:
+
+```nim
+## Both sides reach the same binder, and it is not the provisioned secret.
+check clientDone.auth.exchangeBinder == serverDone.auth.exchangeBinder
+check clientDone.auth.exchangeBinder != secret
+```
+
+It is derived from the provisioned secret and the finished transcript, under
+its own label — deliberately **not** the same bytes as
+`exchangeAuthenticationKey`, which is the MAC key that tags offers and
+replies. One secret doing two jobs is how a proof about one of them quietly
+stops being a proof about the other.
+
+AM1C and AM1S carry an empty binder. They are trusted through signatures, have
+no secret shared beforehand, and inventing one would look like protection while
+resting on values both sides already send in the clear.
+
+**Stacking on purpose.** A server that wants a deeper stack runs the rotation
+it already has, several times, each carrying a real exchange. One round trip
+per rotation — this is a two-party agreement, not something one side can
+deepen alone:
+
+```text
+  for each rotation the server wants:
+
+    requestAmeTier(session, tierId, rekeyMask = 0b1100_0000)
+        ^ names the slots that must run a NEW KEM, not just change keys
+
+    beginAmeSessionExchange   ->  offer   ->  answerAmeSessionExchange
+    finishAmeSessionExchange  <-  reply   <-
+    confirmAmeSessionExchange <-> epoch-ready
+
+    every selected slot is now one deeper
+```
+
+```nim
+## What that bought, read back from the session itself.
+echo ameStackDepth(session.auth.current.exchange,
+                   session.auth.current.tier.masks.kem)
+```
+
+It reports the **shallowest** chosen slot, because an attacker picks which
+slot to work on and the defender does not.
+
+> ⚠️ Depth only grows with FRESH key material. A tier change with an empty
+> rekey mask still changes every traffic key — the transcript salt sees to
+> that — but it does not deepen the stack, because hashing a value again is
+> something an attacker can do just as easily. Stack rotations with
+> `rekeyMask` set, or they cost a round trip and buy nothing.
+
 ## What DAC actually decides ꒰ঌ ໒꒱
 
 DAC is two things wearing one name, and it is worth keeping them apart.

@@ -23,6 +23,8 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/padding
 import ../../src/protocols/ame/level1/compression
@@ -74,7 +76,7 @@ proc mitmAuth(role: AmeEndpointRole,
     layout: AmeSuiteLayout = mitmLayout()
     tier: AmeMaskTier = mitmTier(layout)
     state: AmeExchangeState = initAmeExchangeState(mitmKems)
-  applyAmeExchange(state, initAmeExchangeRequest(mitmKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(mitmKems), initAmeExchangeRequest(mitmKems, tier,
     0b11000000'u8), [@[seed, 2'u8, 3'u8, 4'u8], @[seed, 6'u8, 7'u8, 8'u8]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role,
     params = params)
@@ -359,9 +361,9 @@ suite "MITM against the handshake":
     check serverDone.ok
     ## None of what the handshake PRODUCED may be visible in what it sent.
     check not windowFound(captured,
-      clientDone.auth.current.exchange.sharedSecrets[0], 8)
+      clientDone.auth.current.exchange.stackedSecrets[0], 8)
     check not windowFound(captured,
-      clientDone.auth.current.exchange.sharedSecrets[1], 8)
+      clientDone.auth.current.exchange.stackedSecrets[1], 8)
     check not windowFound(captured, clientDone.auth.current.transcriptSalt, 8)
     ## Nor may either private signing key.
     check not windowFound(captured, clientKey.secretKeys[0], 8)

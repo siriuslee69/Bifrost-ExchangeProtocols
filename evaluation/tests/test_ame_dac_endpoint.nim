@@ -11,6 +11,8 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level3/dac_relay
@@ -36,7 +38,7 @@ proc exactAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
         occupiedAmeMask(layout.signatures.length),
         occupiedAmeMask(layout.kdfs.length)))
     state: AmeExchangeState = initAmeExchangeState(exactKems)
-  applyAmeExchange(state, initAmeExchangeRequest(exactKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(exactKems), initAmeExchangeRequest(exactKems, tier,
     0b10000000'u8), [@[byte 9, 8, 7, 6, 5, 4, 3, 2]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 

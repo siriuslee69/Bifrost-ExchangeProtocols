@@ -30,6 +30,8 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/header_protection
 import ../../src/protocols/ame/level2/framing
@@ -55,7 +57,7 @@ proc hpAuth(role: AmeEndpointRole, seed: byte = 7'u8): AmeAuthPackage =
     layout: AmeSuiteLayout = hpLayout()
     tier: AmeMaskTier = hpTier(layout)
     state: AmeExchangeState = initAmeExchangeState(hpKems)
-  applyAmeExchange(state, initAmeExchangeRequest(hpKems, tier,
+  applyAmeExchange(state, defaultAmeLayout(hpKems), initAmeExchangeRequest(hpKems, tier,
     0b11000000'u8), [@[seed, 2'u8, 3'u8, 4'u8], @[seed, 6'u8, 7'u8, 8'u8]])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 

@@ -10,6 +10,8 @@ import ../../src/protocols/types
 import ../../src/protocols/config
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
+import ../../src/protocols/ame/level1/derivation
+import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/tier_aead
 import ../../src/protocols/ame/level1/presets
@@ -47,7 +49,7 @@ proc initialExchangeState(): AmeExchangeState =
   result = initAmeExchangeState(fomkeKems)
   request = initAmeExchangeRequest(fomkeKems,
     fomkeTier(1'u32, 0b10000000'u8), 0b10000000'u8)
-  applyAmeExchange(result, request,
+  applyAmeExchange(result, fomkeLayout(), request,
     [@[byte 1, 3, 3, 7, 9, 11, 13, 17, 19, 23, 29, 31]])
 
 proc upgradedExchangeState(swapped: bool = false): AmeExchangeState =
@@ -59,9 +61,9 @@ proc upgradedExchangeState(swapped: bool = false): AmeExchangeState =
   request = initAmeExchangeRequest(fomkeKems,
     fomkeTier(3'u32, 0b11100000'u8), 0b01100000'u8)
   if swapped:
-    applyAmeExchange(result, request, [second, first])
+    applyAmeExchange(result, fomkeLayout(), request, [second, first])
   else:
-    applyAmeExchange(result, request, [first, second])
+    applyAmeExchange(result, fomkeLayout(), request, [first, second])
 
 proc fomkeAmeAuth(role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
   var
