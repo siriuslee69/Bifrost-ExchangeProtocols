@@ -7,9 +7,10 @@
 ## blocks. These tests check that, and check what happens when each of the
 ## things that could go wrong does.
 
-import std/unittest
+import std/[strutils, unittest]
 
 import ../../src/protocols/types
+import ../../src/protocols/config
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
@@ -92,10 +93,10 @@ suite "AME private handshake":
       identitySeeds: seq[ByteSeq] = @[]
       algorithms: AmeSignatureAlgorithms = initAmeSignatureAlgorithms(
         defaultAmeSigSlots())
-      authority0: AmeAuthorityKey
-      authority1: AmeAuthorityKey
-      identity0: AmeIdentityKey
-      identity1: AmeIdentityKey
+      authority0: AmeAuthorityKey = default(AmeAuthorityKey)
+      authority1: AmeAuthorityKey = default(AmeAuthorityKey)
+      identity0: AmeIdentityKey = default(AmeIdentityKey)
+      identity1: AmeIdentityKey = default(AmeIdentityKey)
       seed: ByteSeq = @[]
       i: int = 0
       j: int = 0
@@ -132,7 +133,7 @@ suite "AME private handshake":
       helloWire: ByteSeq = @[]
       serverWire: ByteSeq = @[]
       finishWire: ByteSeq = @[]
-      clientDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
       subject: ByteSeq = @[]
       i: int = 0
       found: bool = false
@@ -164,8 +165,8 @@ suite "AME private handshake":
       client: AmeClientHandshake = beginAmeHandshake(42'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
       helloWire: ByteSeq = @[]
       serverWire: ByteSeq = @[]
       finishWire: ByteSeq = @[]
@@ -209,12 +210,12 @@ suite "AME private handshake":
       client: AmeClientHandshake = beginAmeHandshake(7'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
-      clientSession: AmeSession
-      serverSession: AmeSession
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      clientSession: AmeSession = default(AmeSession)
+      serverSession: AmeSession = default(AmeSession)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
     serverDone = acceptAmeHandshake(server.state, clientDone.finish,
@@ -251,12 +252,12 @@ suite "AME private handshake":
       bareServer = answerAmeHandshake(client.hello,
         [handshakePath(p.layout, p.tier)], p.auth,
         p.serverCert, p.serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
-      clientSession: AmeSession
-      serverSession: AmeSession
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      clientSession: AmeSession = default(AmeSession)
+      serverSession: AmeSession = default(AmeSession)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     check server.ok and bareServer.ok
     ## The responder names the tunables; they travel in the clear so the
     ## client can open the sealed block, and the tag over that block covers
@@ -313,7 +314,7 @@ suite "AME private handshake":
     var
       p: Pair = newPair("hybrid")
       forged: AmeIdentityCertificate = p.serverCert
-      trust: AmePeerTrustResult
+      trust: AmePeerTrustResult = default(AmePeerTrustResult)
     check p.serverCert.authorityProofs.len == p.root.signingKeys.len
     check p.serverCert.authorityProofs.len >= 2
     ## Keep the first proof valid and destroy the second. An implementation
@@ -333,8 +334,8 @@ suite "AME private handshake":
   test "a revoked serial is refused while the same subject can be reissued":
     var
       p: Pair = newPair("revoke")
-      replacement: AmeIdentityCertificate
-      trust: AmePeerTrustResult
+      replacement: AmeIdentityCertificate = default(AmeIdentityCertificate)
+      trust: AmePeerTrustResult = default(AmePeerTrustResult)
     trust = verifyAmeIdentityCertificate(p.serverCert, p.root, nowUnix,
       [22'u64])
     check not trust.ok
@@ -352,7 +353,7 @@ suite "AME private handshake":
   test "certificate validity and a wildly wrong clock both fail closed":
     var
       p: Pair = newPair("clock")
-      trust: AmePeerTrustResult
+      trust: AmePeerTrustResult = default(AmePeerTrustResult)
     trust = verifyAmeIdentityCertificate(p.serverCert, p.root, 50'i64)
     check not trust.ok
     check trust.err == "identity is outside its validity period"
@@ -375,7 +376,7 @@ suite "AME private handshake":
       descriptor: AmeIdentityCertificate = pinnedIdentityDescriptor(identity,
         validFrom, validUntil)
       pin: AmePinnedPeerIdentity = pinnedPeerIdentity(identity)
-      trust: AmePeerTrustResult
+      trust: AmePeerTrustResult = default(AmePeerTrustResult)
     trust = verifyPinnedPeerIdentity(descriptor, pin, nowUnix)
     check trust.ok
     check trust.authority == "pinned-peer"
@@ -402,8 +403,8 @@ suite "AME private handshake":
         a = initAmePinnedAuthentication(serverPin))
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         initAmePinnedAuthentication(clientPin), serverDesc, serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
     check server.ok
     clientDone = finishAmeHandshake(client, server.state.serverHello,
       initAmePinnedAuthentication(serverPin), clientDesc, clientKey, nowUnix)
@@ -435,7 +436,7 @@ suite "AME private handshake":
       clientPin: AmePinnedPeerIdentity = pinnedPeerIdentity(clientKey)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         initAmePinnedAuthentication(clientPin), serverDesc, serverKey)
-      clientDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
       certified: Pair = newPair("mixed")
     ## Same subject name, different keys. The name is not what is checked.
     clientDone = finishAmeHandshake(client, server.state.serverHello,
@@ -457,8 +458,8 @@ suite "AME private handshake":
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
       saved: AmeClientHandshake = client
-      hello: AmeServerHello
-      done: AmeHandshakeResult
+      hello: AmeServerHello = default(AmeServerHello)
+      done: AmeHandshakeResult = default(AmeHandshakeResult)
     hello = server.state.serverHello
     hello.nonce[0] = hello.nonce[0] xor 0x01'u8
     client = saved
@@ -478,16 +479,54 @@ suite "AME private handshake":
       p.clientKey, nowUnix)
     check not done.ok
 
-  # {.testKind: tkEdgeCase.}
-  test "an unsupported layout or tier is refused before any key work":
+  # {.testKind: tkIntegration, covers: "ameLayoutFitsInside".}
+  test "a client layout that fits inside the offered one is accepted":
+    ## The server offers more than the client lists; the session runs the
+    ## client's layout. Order and the server's own tier play no part.
     var
-      p: Pair = newPair("policy")
-      other: AmeMaskTier = handshakeTier(p.layout, 0b10000000'u8)
+      p: Pair = newPair("fits")
+      offered: AmeSuiteLayout = defaultAmeLayout(
+        [akaX25519, akaKyber768, akaFireSaber])
       client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello,
-        [handshakePath(p.layout, other)], p.auth, p.serverCert, p.serverKey)
+        [handshakePath(offered, fullAmeMaskTier(offered))], p.auth,
+        p.serverCert, p.serverKey)
+    check server.ok
+
+  # {.testKind: tkEdgeCase, covers: "ameLayoutFitsInside".}
+  test "a layout naming an algorithm the server does not offer is refused":
+    var
+      p: Pair = newPair("policy")
+      offered: AmeSuiteLayout = defaultAmeLayout([akaX25519])
+      client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
+      server = answerAmeHandshake(client.hello,
+        [handshakePath(offered, fullAmeMaskTier(offered))], p.auth,
+        p.serverCert, p.serverKey)
     check not server.ok
-    check server.err == "client exact AME layout and initial tier are not supported"
+    check server.err ==
+      "client AME layout lists an algorithm this side does not offer"
+
+  # {.testKind: tkEdgeCase, covers: "ameTierPolicyError".}
+  test "a selection below the server's post-quantum minimum is refused":
+    ## Layout [FireSaber, X25519] in wire-id order: 0b01000000 switches on
+    ## X25519 alone, which keeps no post-quantum KEM.
+    var
+      p: Pair = newPair("minimum")
+      saved: BifrostConfig = currentBifrostConfig()
+      strict: BifrostConfig = currentBifrostConfig()
+      classicOnly: AmeMaskTier = handshakeTier(p.layout, 0b01000000'u8)
+      client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout,
+        classicOnly)
+      server: tuple[ok: bool, state: AmeServerHandshake, err: string] = (
+        ok: false, state: default(AmeServerHandshake), err: "")
+    strict.ameMinPqKems = 1
+    applyBifrostConfig(strict)
+    server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
+      p.tier)], p.auth, p.serverCert,
+      p.serverKey)
+    applyBifrostConfig(saved)
+    check not server.ok
+    check server.err.contains("requires 1")
 
   # {.testKind: tkEdgeCase.}
   test "a zero session id is refused rather than raising":
@@ -510,8 +549,8 @@ suite "AME private handshake":
       client: AmeClientHandshake = beginAmeHandshake(8'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
     check client.secretKeys.len > 0
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
@@ -533,7 +572,7 @@ suite "AME anti-flood cookie":
       elsewhere: ByteSeq = @[byte 10, 0, 0, 2]
       client: AmeClientHandshake = beginAmeHandshake(4'u64, p.layout, p.tier)
       cookie: ByteSeq = @[]
-      retried: AmeClientHandshake
+      retried: AmeClientHandshake = default(AmeClientHandshake)
     check not ameCookieValid(secret, here, nowUnix, client.hello.sessionId,
       client.hello.cookie)
     cookie = issueAmeCookie(secret, here, nowUnix, client.hello.sessionId)
@@ -562,10 +601,10 @@ suite "AME handshake transport":
   test "AM1P proof binds the provisioned identity and transcript":
     var
       secret: ByteSeq = newSeq[byte](32)
-      auth: AmeAuthentication
+      auth: AmeAuthentication = default(AmeAuthentication)
       transcript: ByteSeq = @[byte 1, 2, 3]
-      proof: ByteSeq
-      altered: ByteSeq
+      proof: ByteSeq = default(ByteSeq)
+      altered: ByteSeq = default(ByteSeq)
     for i in 0 ..< secret.len:
       secret[i] = byte(i + 1)
     auth = initAmePskAuthentication("peer-a", secret)
@@ -597,8 +636,8 @@ suite "AME handshake transport":
         a = auth)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
     check server.err == ""
     check server.ok
     clientDone = finishAmeHandshake(client, server.state.serverHello, auth)
@@ -645,8 +684,8 @@ suite "AME handshake transport":
       client: AmeClientHandshake = beginAmeHandshake(72'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
     check server.ok
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
@@ -677,7 +716,7 @@ suite "AME handshake transport":
       saved: AmeClientHandshake = client
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
-      done: AmeHandshakeResult
+      done: AmeHandshakeResult = default(AmeHandshakeResult)
       certified: Pair = newPair("am1p-mismatch")
       certClient: AmeClientHandshake = beginAmeHandshake(73'u64,
         certified.layout, certified.tier)
@@ -711,15 +750,15 @@ suite "AME handshake transport":
         a = auth)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
-      clientDone: AmeHandshakeResult
-      serverDone: AmeHandshakeResult
-      a: AmeSession
-      b: AmeSession
-      offer: AmeExchangeOffer
-      reply: AmeExchangeReply
+      clientDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      serverDone: AmeHandshakeResult = default(AmeHandshakeResult)
+      a: AmeSession = default(AmeSession)
+      b: AmeSession = default(AmeSession)
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
+      reply: AmeExchangeReply = default(AmeExchangeReply)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
-      commit: FomkeUpgradeCommit
+      opened: AmeOpenResult = default(AmeOpenResult)
+      commit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
     check server.ok
     clientDone = finishAmeHandshake(client, server.state.serverHello, auth)
     serverDone = acceptAmeHandshake(server.state, clientDone.finish)
@@ -781,7 +820,7 @@ suite "AME handshake transport":
       client: AmeClientHandshake = beginAmeHandshake(77'u64, p.layout, p.tier)
       frame: ByteSeq = encodeAmeClientHelloFrame(client.hello)
       decoded: AmeHandshakeFrame = decodeAmeHandshakeFrame(frame)
-      retry: AmeHelloRetry
+      retry: AmeHelloRetry = default(AmeHelloRetry)
     check decoded.kind == ampkClientHello
     check decoded.sessionId == 77'u64
     check decoded.step == ameHandshakeStepHello
@@ -817,16 +856,16 @@ suite "AME secure package":
       client: AmeClientHandshake = beginAmeHandshake(99'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      sender: AmeHandshakeResult
-      receiver: AmeHandshakeResult
+      sender: AmeHandshakeResult = default(AmeHandshakeResult)
+      receiver: AmeHandshakeResult = default(AmeHandshakeResult)
       plaintext: ByteSeq = newSeq[byte](20_000)
-      plan: AmeSecurePackagePlan
-      packageReceiver: DacPackageReceiver
-      repairReport: DacGroupRepairReport
-      hint: DacRepairHint
+      plan: AmeSecurePackagePlan = default(AmeSecurePackagePlan)
+      packageReceiver: DacPackageReceiver = default(DacPackageReceiver)
+      repairReport: DacGroupRepairReport = default(DacGroupRepairReport)
+      hint: DacRepairHint = default(DacRepairHint)
       exactRepairs: seq[DacRepairChunk] = @[]
-      packageResult: DacPackageResult
-      restored: AmeSecurePackageResult
+      packageResult: DacPackageResult = default(DacPackageResult)
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
       i: int = 0
     while i < plaintext.len:
       plaintext[i] = uint8(i mod 251)
@@ -927,9 +966,9 @@ suite "AME secure package":
   test "one missing chunk is recovered from the group XOR shard":
     var
       data: ByteSeq = newSeq[byte](5000)
-      plan: DacPackagePlan
-      receiver: DacPackageReceiver
-      outcome: DacPackageResult
+      plan: DacPackagePlan = default(DacPackagePlan)
+      receiver: DacPackageReceiver = default(DacPackageReceiver)
+      outcome: DacPackageResult = default(DacPackageResult)
       i: int = 0
     while i < data.len:
       data[i] = uint8(i mod 251)
@@ -983,7 +1022,7 @@ suite "a half-built authentication must not authenticate anybody":
       client: AmeClientHandshake = beginAmeHandshake(81'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
         p.tier)], p.auth, p.serverCert, p.serverKey)
-      done: AmeHandshakeResult
+      done: AmeHandshakeResult = default(AmeHandshakeResult)
     check server.ok
     check empty.mode == atmAuthorityCertificate
     done = finishAmeHandshake(client, server.state.serverHello, empty,

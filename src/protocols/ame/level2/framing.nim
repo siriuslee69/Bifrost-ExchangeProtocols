@@ -198,6 +198,24 @@ proc decodeProtectedFrame(S: AmeSession, frame: openArray[uint8],
   result.header.sequence = unmaskedAmeFrameSequence(frame,
     recvHeaderKey(S, useCandidate))
 
+proc requireAmeMaySend(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
+  ## S/kind: refuses a frame while this side must stay silent:
+  ##
+  ##   this side's state                     may send
+  ##   ------------------------------------  --------------------------------
+  ##   its own request is out, no answer     the request itself, nothing else
+  ##   it replied to a request (switching)   nothing until epoch-ready is in
+  ##   otherwise                             anything
+  ##
+  ## Anything else would be sealed with the old algorithms or the new ones,
+  ## and which of the two the peer expects is not settled yet.
+  if S.pendingExchange.active and kind != ampkExchangeKeys:
+    raise newException(ValueError, "AME waits for the answer to its " &
+      "exchange request before sending anything else")
+  if S.pendingIncoming.active and S.fomke.pending.active:
+    raise newException(ValueError, "AME waits for the peer's epoch-ready " &
+      "before sending anything else")
+
 proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator,
     tag: "cryptoBoundary|fomke|protocol".} =
@@ -205,6 +223,7 @@ proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
   var
     aad: ByteSeq = buildAad(carrier, h)
     message: FomkeMessage = default(FomkeMessage)
+  requireAmeMaySend(S, h.packetKind)
   try:
     if fomkePreparedMessages(S.fomkeSendCache) > 0:
       message = sealFomkeMessagePrepared(S.fomke, S.fomkeSendCache, payload,
@@ -453,6 +472,7 @@ proc sealControlFrame(S: var AmeSession, kind: AmePacketKind,
   requireAmeAuth(S.auth)
   requireAmePeerTrust(S)
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady,
+      ampkExchangeDeny,
       ampkSessionIdRequest, ampkSessionIdAssign}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
@@ -656,35 +676,121 @@ proc decodeEpochReady(L: AmeSuiteLayout,
   if commitLen > 0:
     result.fomkeCommit = decodeFomkeUpgradeCommit(A.toOpenArray(23, A.len - 1))
 
-proc beginAmeTcpExchangeFrame*(S: var AmeSession,
-    r: AmeExchangeRequest): ByteSeq {.role: orchestrator.} =
-  ## S/r: initiator and exact request sealed under the current epoch.
+## ╭⟢ the four exchange steps, one body each
+##
+## TCP and DAC carry the same four steps; only the carrier differs, so each
+## step is written once and the carrier is a parameter. The public names
+## below (`beginAmeTcpExchangeFrame`, `...Dac...`) are one-line wrappers.
+##
+##   step      who         sends / reads                      frame kind
+##   --------  ----------  ---------------------------------  --------------
+##   begin     requester   request (offer)                    ExchangeKeys
+##   answer    responder   reply, or a deny                   ExchangeEnvelopes
+##                                                            / ExchangeDeny
+##   finish    requester   reads the answer; on a reply it    EpochReady
+##                         switches and sends epoch-ready;
+##                         on a deny it sends nothing
+##   confirm   responder   reads epoch-ready, switches        -
+##
+## Deny body:  requestId u32 | baseEpoch u32 | reason length u16 | reason
+##             (UTF-8, at most 256 bytes)
+
+const
+  ameDenyReasonMax: int = 256
+    ## Longest reason a deny carries; longer ones are cut.
+
+proc encodeExchangeDeny(requestId, baseEpoch: uint32,
+    reason: string): ByteSeq {.role: dataWriter.} =
+  ## requestId/baseEpoch/reason: the refused request and why.
+  var
+    text: string = reason[0 ..< min(reason.len, ameDenyReasonMax)]
+  appendAmeU32(result, requestId)
+  appendAmeU32(result, baseEpoch)
+  result.add(uint8(text.len and 0xff))
+  result.add(uint8(text.len shr 8))
+  for c in text:
+    result.add(uint8(ord(c)))
+
+proc decodeExchangeDeny(A: openArray[uint8]): tuple[requestId,
+    baseEpoch: uint32, reason: string] {.role: parser.} =
+  ## A: deny body -> its fields; a malformed body is refused.
+  var
+    n: int = 0
+  if A.len < 10:
+    raise newException(ValueError, "AME exchange deny is truncated")
+  result.requestId = readU32(A, 0)
+  result.baseEpoch = readU32(A, 4)
+  n = int(A[8]) or (int(A[9]) shl 8)
+  if n > ameDenyReasonMax or A.len != 10 + n:
+    raise newException(ValueError, "AME exchange deny length mismatch")
+  for b in A[10 ..< 10 + n]:
+    result.reason.add(char(b))
+
+proc controlFrameKind(S: AmeSession, frame: openArray[uint8]): AmePacketKind {.
+    role: parser.} =
+  ## S/frame: the packet kind in a frame's header, read without opening its
+  ## body (and without changing S), so an answer can be told apart.
+  result = decodeProtectedFrame(S, frame).header.packetKind
+
+proc beginAmeExchangeFrameVia(S: var AmeSession, r: AmeExchangeRequest,
+    carrier: AmeCarrier): ByteSeq {.role: orchestrator.} =
+  ## S/r/carrier: requester seals its request under the current epoch. From
+  ## here until the answer, this side sends nothing else.
   var
     o: AmeExchangeOffer = beginAmeSessionExchange(S, r)
-  result = sealControlFrame(S, ampkExchangeKeys, acrTcp,
+  S.lastExchangeDenial = ""
+  result = sealControlFrame(S, ampkExchangeKeys, carrier,
     encodeAmeExchangeOffer(o))
 
-proc answerAmeTcpExchangeFrame*(S: var AmeSession,
-    frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
-  ## S/frame: responder opens an offer and seals its candidate reply.
+proc answerAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier): ByteSeq {.role: orchestrator.} =
+  ## S/frame/carrier: responder answers a request -- a reply that stages the
+  ## switch, or a deny that changes nothing. Check `S.pendingIncoming.active`
+  ## afterwards: true means a reply went out and epoch-ready will follow.
   var
-    opened = openControlFrame(S, frame, ampkExchangeKeys, acrTcp)
+    opened = openControlFrame(S, frame, ampkExchangeKeys, carrier)
+    offer: AmeExchangeOffer = default(AmeExchangeOffer)
     reply: AmeExchangeReply = default(AmeExchangeReply)
+    reason: string = ""
   if not opened.ok:
     raise newException(ValueError, opened.err)
-  reply = answerAmeSessionExchange(S,
-    decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload))
-  result = sealControlFrame(S, ampkExchangeEnvelopes, acrTcp,
+  offer = decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload)
+  reason = ameExchangeDenyReason(S, offer)
+  if reason.len > 0:
+    return sealControlFrame(S, ampkExchangeDeny, carrier,
+      encodeExchangeDeny(offer.requestId, offer.baseEpochId, reason))
+  reply = answerAmeSessionExchange(S, offer)
+  result = sealControlFrame(S, ampkExchangeEnvelopes, carrier,
     encodeAmeExchangeReply(reply))
   stageAmeSessionFomkeUpgrade(S)
 
-proc finishAmeTcpExchangeFrame*(S: var AmeSession,
-    frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
-  ## S/frame: initiator opens the reply and seals epoch-ready under the new key.
+proc finishDeniedExchange(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier) {.role: orchestrator.} =
+  ## S/frame/carrier: requester reads a deny and drops its request.
   var
-    opened = openControlFrame(S, frame, ampkExchangeEnvelopes, acrTcp)
+    opened = openControlFrame(S, frame, ampkExchangeDeny, carrier)
+    deny: tuple[requestId, baseEpoch: uint32, reason: string] = (
+      requestId: 0'u32, baseEpoch: 0'u32, reason: "")
+  if not opened.ok:
+    raise newException(ValueError, opened.err)
+  deny = decodeExchangeDeny(opened.payload)
+  denyAmeSessionExchange(S, deny.requestId, deny.reason)
+
+proc finishAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier): ByteSeq {.role: orchestrator.} =
+  ## S/frame/carrier: requester reads the answer. A reply: switch, and return
+  ## epoch-ready -- the first message under the new algorithms. A deny:
+  ## return nothing (empty), stay on the old algorithms; the reason is in
+  ## `S.lastExchangeDenial`. Either way this side may send again afterwards.
+  var
+    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (ok: false,
+      payload: @[], err: "")
     requestId: uint32 = 0'u32
     fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
+  if controlFrameKind(S, frame) == ampkExchangeDeny:
+    finishDeniedExchange(S, frame, carrier)
+    return
+  opened = openControlFrame(S, frame, ampkExchangeEnvelopes, carrier)
   if not opened.ok:
     raise newException(ValueError, opened.err)
   requestId = S.pendingExchange.offer.requestId
@@ -700,87 +806,67 @@ proc finishAmeTcpExchangeFrame*(S: var AmeSession,
   ## longer states one, so the ratchet has to be moved onto it here or the
   ## two sides would split the tag at different offsets.
   S.fomke.tagLen = S.auth.current.params.authTagLen
-  result = sealControlFrame(S, ampkEpochReady, acrTcp,
+  result = sealControlFrame(S, ampkEpochReady, carrier,
     encodeEpochReady(requestId, S.auth.current.epochId,
       S.auth.current.tier, fomkeCommit))
   restoreConfiguredAmeFomkeCache(S)
+
+proc confirmAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
+    carrier: AmeCarrier) {.role: orchestrator.} =
+  ## S/frame/carrier: responder authenticates epoch-ready with its candidate
+  ## key and switches.
+  var
+    opened = openControlFrame(S, frame, ampkEpochReady, carrier,
+      useCandidate = true)
+    ready: tuple[requestId, epochId: uint32, targetTier: AmeMaskTier,
+      fomkeCommit: FomkeUpgradeCommit] = (requestId: 0'u32, epochId: 0'u32,
+      targetTier: default(AmeMaskTier),
+      fomkeCommit: default(FomkeUpgradeCommit))
+  if not opened.ok:
+    raise newException(ValueError, opened.err)
+  ready = decodeEpochReady(S.auth.current.layout, opened.payload)
+  confirmAmeSessionExchange(S, ready.requestId, ready.epochId,
+    ready.targetTier, ready.fomkeCommit)
+
+proc beginAmeTcpExchangeFrame*(S: var AmeSession,
+    r: AmeExchangeRequest): ByteSeq {.role: orchestrator.} =
+  ## S/r: requester, TCP. See `beginAmeExchangeFrameVia`.
+  result = beginAmeExchangeFrameVia(S, r, acrTcp)
+
+proc answerAmeTcpExchangeFrame*(S: var AmeSession,
+    frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
+  ## S/frame: responder, TCP. See `answerAmeExchangeFrameVia`.
+  result = answerAmeExchangeFrameVia(S, frame, acrTcp)
+
+proc finishAmeTcpExchangeFrame*(S: var AmeSession,
+    frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
+  ## S/frame: requester, TCP. See `finishAmeExchangeFrameVia`.
+  result = finishAmeExchangeFrameVia(S, frame, acrTcp)
 
 proc confirmAmeTcpExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]) {.role: orchestrator.} =
-  ## S/frame: responder authenticates epoch-ready with its candidate key.
-  var
-    opened = openControlFrame(S, frame, ampkEpochReady, acrTcp,
-      useCandidate = true)
-    ready: tuple[requestId, epochId: uint32, targetTier: AmeMaskTier,
-      fomkeCommit: FomkeUpgradeCommit] = (requestId: 0'u32, epochId: 0'u32,
-      targetTier: default(AmeMaskTier),
-      fomkeCommit: default(FomkeUpgradeCommit))
-  if not opened.ok:
-    raise newException(ValueError, opened.err)
-  ready = decodeEpochReady(S.auth.current.layout, opened.payload)
-  confirmAmeSessionExchange(S, ready.requestId, ready.epochId,
-    ready.targetTier, ready.fomkeCommit)
+  ## S/frame: responder, TCP. See `confirmAmeExchangeFrameVia`.
+  confirmAmeExchangeFrameVia(S, frame, acrTcp)
 
 proc beginAmeDacExchangeFrame*(S: var AmeSession,
     r: AmeExchangeRequest): ByteSeq {.role: orchestrator.} =
-  ## S/r: initiator and exact request sealed through DAC under the current epoch.
-  var
-    o: AmeExchangeOffer = beginAmeSessionExchange(S, r)
-  result = sealControlFrame(S, ampkExchangeKeys, acrDac,
-    encodeAmeExchangeOffer(o))
+  ## S/r: requester, DAC. See `beginAmeExchangeFrameVia`.
+  result = beginAmeExchangeFrameVia(S, r, acrDac)
 
 proc answerAmeDacExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
-  ## S/frame: responder opens a DAC offer and seals its candidate reply.
-  var
-    opened = openControlFrame(S, frame, ampkExchangeKeys, acrDac)
-    reply: AmeExchangeReply = default(AmeExchangeReply)
-  if not opened.ok:
-    raise newException(ValueError, opened.err)
-  reply = answerAmeSessionExchange(S,
-    decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload))
-  result = sealControlFrame(S, ampkExchangeEnvelopes, acrDac,
-    encodeAmeExchangeReply(reply))
-  stageAmeSessionFomkeUpgrade(S)
+  ## S/frame: responder, DAC. See `answerAmeExchangeFrameVia`.
+  result = answerAmeExchangeFrameVia(S, frame, acrDac)
 
 proc finishAmeDacExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]): ByteSeq {.role: orchestrator.} =
-  ## S/frame: initiator opens the DAC reply and returns candidate epoch-ready.
-  var
-    opened = openControlFrame(S, frame, ampkExchangeEnvelopes, acrDac)
-    requestId: uint32 = 0'u32
-    fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
-  if not opened.ok:
-    raise newException(ValueError, opened.err)
-  requestId = S.pendingExchange.offer.requestId
-  finishAmeSessionExchange(S,
-    decodeAmeExchangeReply(S.auth.current.layout.kems, opened.payload))
-  fomkeCommit = S.fomke.pending.commit
-  confirmFomkeUpgrade(S.fomke, fomkeCommit)
-  ## The new epoch may have agreed a different tag length. The envelope no
-  ## longer states one, so the ratchet has to be moved onto it here or the
-  ## two sides would split the tag at different offsets.
-  S.fomke.tagLen = S.auth.current.params.authTagLen
-  result = sealControlFrame(S, ampkEpochReady, acrDac,
-    encodeEpochReady(requestId, S.auth.current.epochId,
-      S.auth.current.tier, fomkeCommit))
-  restoreConfiguredAmeFomkeCache(S)
+  ## S/frame: requester, DAC. See `finishAmeExchangeFrameVia`.
+  result = finishAmeExchangeFrameVia(S, frame, acrDac)
 
 proc confirmAmeDacExchangeFrame*(S: var AmeSession,
     frame: openArray[uint8]) {.role: orchestrator.} =
-  ## S/frame: responder authenticates DAC epoch-ready with its candidate key.
-  var
-    opened = openControlFrame(S, frame, ampkEpochReady, acrDac,
-      useCandidate = true)
-    ready: tuple[requestId, epochId: uint32, targetTier: AmeMaskTier,
-      fomkeCommit: FomkeUpgradeCommit] = (requestId: 0'u32, epochId: 0'u32,
-      targetTier: default(AmeMaskTier),
-      fomkeCommit: default(FomkeUpgradeCommit))
-  if not opened.ok:
-    raise newException(ValueError, opened.err)
-  ready = decodeEpochReady(S.auth.current.layout, opened.payload)
-  confirmAmeSessionExchange(S, ready.requestId, ready.epochId,
-    ready.targetTier, ready.fomkeCommit)
+  ## S/frame: responder, DAC. See `confirmAmeExchangeFrameVia`.
+  confirmAmeExchangeFrameVia(S, frame, acrDac)
 
 proc captureAmeSendRollback(S: AmeSession): AmeSendRollback {.role: helper.} =
   ## S: connection whose send-mutable counters are snapshotted before a write.

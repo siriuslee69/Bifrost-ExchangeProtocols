@@ -58,15 +58,13 @@ description = "Full library, portable scalar code, every mode and family."
 #      client / device  speaks ONE layout -> exactly its algorithms. A
 #                       pinned layout is compiled automatically, so the
 #                       lines below may just repeat it.
-#      server           answerAmeHandshake(hello, [pathA, pathB, ...])
-#                       accepts SEVERAL layouts in one process -> compile
-#                       the union of them. No second process is needed.
+#      server           offers a layout; any client layout that FITS INSIDE
+#                       it is accepted and the session runs the client's.
+#                       Compile what the server offers.
 #
-#    One big layout (say 8 KEMs) with tier masks switching different
-#    subsets on also works, but a layout is compared whole and decoding it
-#    needs every algorithm in it compiled: EVERY peer, tiny devices
-#    included, would carry all 8. Separate small layouts, all accepted by
-#    the server, keep the small peers small.
+#    So a server offering [LightSaber, Kyber768, X25519] talks to a device
+#    that only has [LightSaber, X25519], and the device compiles only its
+#    two. Order never matters: every layout is kept in wire-id order.
 #
 #    KEMs (bifrostKems)
 #    family    slot word      parameter set               wire id  level
@@ -179,3 +177,7 @@ fomkeReorderCeiling = 64
 # Tier masks: KEM, cipher, MAC, hash, signature, KDF, each MSB-first.
 ameLayoutHex = ""
 ameInitialTierHex = ""
+# The fewest post-quantum KEMs (anything but X25519) any selection must keep
+# switched on: a client's hello, and every later change request from either
+# side. A request below it is answered with a deny. 0 = no minimum.
+ameMinPqKems = 0

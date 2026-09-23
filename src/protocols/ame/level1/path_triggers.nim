@@ -68,8 +68,9 @@ proc ameInitTierPath*(A: AmeKemAlgorithms): AmeTierPath {.role: truthBuilder.} =
   ## A: immutable KEM layout expanded into progressive default mask tiers.
   var
     L: AmeSuiteLayout = defaultAmeLayout(A)
-    T: array[ameMaxAlgorithmSlots, AmeMaskTier]
-    masks: AmeTierMasks
+    T: array[ameMaxAlgorithmSlots, AmeMaskTier] = default(
+      array[ameMaxAlgorithmSlots, AmeMaskTier])
+    masks: AmeTierMasks = default(AmeTierMasks)
     i: int = 0
   masks = initAmeTierMasks(0'u8, occupiedAmeMask(L.ciphers.length),
     occupiedAmeMask(L.macs.length), occupiedAmeMask(L.hashes.length),
@@ -83,9 +84,13 @@ proc ameInitTierPath*(A: AmeKemAlgorithms): AmeTierPath {.role: truthBuilder.} =
 proc setCurrentAmeTier*(S: var AmeTierPath, t: AmeMaskTier) {.
     role: actor.} =
   ## S/t: path synchronized to the exact tier installed in the current epoch.
+  ## Either side may ask for any selection, so the installed tier need not be
+  ## one of the path's: then the path only notes that the session is off its
+  ## schedule (current tier id 0) and fires no trigger.
   var i: int = tierIndex(S, t.tierId)
   if i < 0 or not tiersEquivalent(S.tiers[i], t):
-    raise newException(ValueError, "AME current tier is not in the tier path")
+    S.currentTierId = 0'u32
+    return
   S.currentTierId = t.tierId
   S.triggers[i].fired = true
 

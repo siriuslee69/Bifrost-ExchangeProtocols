@@ -883,6 +883,19 @@ proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
     clearFomkeState(pending)
     result.err = exc.msg
 
+proc fomkeKdfFor(S: FomkeState, t: AmeMaskTier): XhkdfConfig {.
+    role: parser, tag: "fomke|kdf".} =
+  ## S/t: the XHKDF settings an epoch with selection t runs: this state's
+  ## rounds and mode, and the branches t's KDF slots switch on. An upgrade
+  ## derives the new epoch with these, and confirming installs them -- in the
+  ## same step as the new ciphers and MACs, so nothing switches early:
+  ##
+  ##   epoch n    KDF slots BLAKE3          -> branches {BLAKE3}
+  ##   upgrade    target switches Gimli on  -> derived with {BLAKE3, Gimli}
+  ##   epoch n+1  every step from here      -> {BLAKE3, Gimli}
+  result = S.kdf
+  result.branches = xhkdfBranchesOf(S.layout, t)
+
 proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
     A: AmeKemAlgorithms, L: AmeSuiteLayout): ByteSeq {.
     role: truthBuilder,
@@ -987,7 +1000,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
   keys = deriveXhkdfInputs(S.nextSecret, secretRows, metadata,
-    fomkeEpochKeyBytes + fomkeConfirmKeyBytes, S.kdf)
+    fomkeEpochKeyBytes + fomkeConfirmKeyBytes, fomkeKdfFor(S, r.targetTier))
   S.pending.active = true
   S.pending.commit = result
   takeFomkeEpochKeys(keys, S.pending.candidateLane1,
@@ -1052,6 +1065,7 @@ proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
   S.lane2 = lane2
   S.nextSecret = move(nextSecret)
   S.epoch = targetEpoch
+  S.kdf = fomkeKdfFor(S, targetTier)
   S.tier = targetTier
   validateFomkeState(S)
 

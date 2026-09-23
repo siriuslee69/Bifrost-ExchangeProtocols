@@ -163,8 +163,8 @@ suite "AEAD presets":
       t: AmeMaskTier = presetAmeTier(L)
     check L.ciphers.length == 3'u8
     check L.ciphers.algorithms[0] == acaXChaCha20
-    check L.ciphers.algorithms[1] == acaAesCtr
-    check L.ciphers.algorithms[2] == acaGimli
+    check L.ciphers.algorithms[1] == acaGimli      # wire-id order: 0x02
+    check L.ciphers.algorithms[2] == acaAesCtr     # before 0x03
     check L.macs.length == 2'u8
     check L.macs.algorithms[0] == amaGimli
     check L.macs.algorithms[1] == amaPoly1305

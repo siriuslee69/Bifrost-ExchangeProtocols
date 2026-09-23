@@ -5,6 +5,7 @@
 import std/[strutils, unittest]
 
 import ../../src/protocols/types
+import ../../src/protocols/config
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
@@ -129,7 +130,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 1, 2, 3, 4]
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     frame = sealAmeTcpFrame(sender, payload)
     opened = openAmeTcpFrame(receiver, frame)
     check opened.ok
@@ -145,7 +146,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       tcpFrame: ByteSeq = @[]
       dacFrame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     tcpFrame = sealAmeTcpFrame(sender, @[byte 1, 2])
     opened = openAmeTcpFrame(sender, tcpFrame)
     check not opened.ok
@@ -194,7 +195,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 5, 6, 7]
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     frame = sealAmeDacFrame(sender, payload)
     opened = openAmeDacFrame(receiver, frame)
     check opened.ok
@@ -212,8 +213,8 @@ suite "AME mask-tier sessions":
       receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      decoded: AmeDecodedFrame
-      opened: AmeOpenResult
+      decoded: AmeDecodedFrame = default(AmeDecodedFrame)
+      opened: AmeOpenResult = default(AmeOpenResult)
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
     decoded = decodeAmeFrame(frame)
     check decoded.header.sessionId == sender.sessionId
@@ -236,8 +237,8 @@ suite "AME mask-tier sessions":
       receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      body: FomkeMessage
-      opened: AmeOpenResult
+      body: FomkeMessage = default(FomkeMessage)
+      opened: AmeOpenResult = default(AmeOpenResult)
     frame = sealAmeDacFrame(sender, @[byte 5, 6, 7])
     body = decodeFomkeMessage(decodeAmeFrame(frame).payload, sender.fomke.tagLen)
     check body.epoch == sender.fomke.epoch
@@ -259,7 +260,7 @@ suite "AME mask-tier sessions":
       receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     sender.auth.current.epochId = uint32(high(uint16)) + 7'u32
     receiver.auth.current.epochId = sender.auth.current.epochId
     frame = sealAmeDacFrame(sender, @[byte 5])
@@ -272,10 +273,10 @@ suite "AME mask-tier sessions":
     var
       lanes: seq[DacPathLane] = @[dplSuperCleanPath, dplCleanPath, dplThinPath]
       payload: ByteSeq = newSeq[byte](70_000)
-      sender: AmeSession
-      receiver: AmeSession
+      sender: AmeSession = default(AmeSession)
+      receiver: AmeSession = default(AmeSession)
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
       i: int = 0
     payload[0] = 1'u8
     payload[^1] = 2'u8
@@ -399,7 +400,7 @@ suite "AME mask-tier sessions":
       tier2: AmeMaskTier = exactTier(layout, 2'u32, 0b11000000'u8)
       path: AmeTierPath = initAmeTierPath(layout,
         [connection.auth.current.tier, tier2])
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     connection = initAmeSession(connection.auth, path,
       peerTrustRequired = false)
     connection.path.setTrigger(1, 200'u64)
@@ -510,7 +511,7 @@ suite "AME mask-tier sessions":
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
         target, 0b01000000'u8)
-      offer: AmeExchangeOffer
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
       before: ByteSeq = server.auth.current.exchange.stackedSecrets[0] & @[]
     installSignaturePeers(client, server)
     offer = beginAmeSessionExchange(client, request)
@@ -531,8 +532,8 @@ suite "AME mask-tier sessions":
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
         target, 0b01000000'u8)
-      offer: AmeExchangeOffer
-      reply: AmeExchangeReply
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
+      reply: AmeExchangeReply = default(AmeExchangeReply)
     installSignaturePeers(client, server)
     offer = beginAmeSessionExchange(client, request)
     reply = answerAmeSessionExchange(server, offer)
@@ -571,7 +572,10 @@ suite "AME mask-tier sessions":
     check authorization.masks.signature == 0b11000000'u8
 
   # {.testKind: tkEdgeCase.}
-  test "session rejects valid masks outside its configured tier path":
+  test "any valid selection may be requested; only the minimum refuses one":
+    ## The tier path schedules automatic steps; it no longer limits what
+    ## either side may ask for. Layout [FireSaber, FireSaber, X25519] in
+    ## wire-id order: 0b11000000 keeps both FireSabers (2 post-quantum KEMs).
     var
       connection: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
@@ -579,9 +583,16 @@ suite "AME mask-tier sessions":
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
         target, 0b01000000'u8)
+      saved: BifrostConfig = currentBifrostConfig()
+      strict: BifrostConfig = currentBifrostConfig()
     installLoopbackSignatures(connection)
+    strict.ameMinPqKems = 3
+    applyBifrostConfig(strict)
     expect ValueError:
       discard beginAmeSessionExchange(connection, request)
+    applyBifrostConfig(saved)
+    discard beginAmeSessionExchange(connection, request)
+    check connection.pendingExchange.active
 
   # {.testKind: tkUnit.}
   test "non-KEM masks rotate atomically without replacing KEM secrets":
@@ -597,7 +608,7 @@ suite "AME mask-tier sessions":
       secret: ByteSeq = client.auth.current.exchange.stackedSecrets[0] & @[]
       offerFrame: ByteSeq = @[]
       replyFrame: ByteSeq = @[]
-      readyFrame: ByteSeq
+      readyFrame: ByteSeq = default(ByteSeq)
     installSignaturePeers(client, server)
     offerFrame = beginAmeTcpExchangeFrame(client, request)
     replyFrame = answerAmeTcpExchangeFrame(server, offerFrame)
@@ -664,7 +675,7 @@ suite "AME mask-tier sessions":
       tier2: AmeMaskTier = exactTier(layout, 2'u32, 0b11000000'u8)
       path: AmeTierPath = initAmeTierPath(layout,
         [connection.auth.current.tier, tier2])
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     connection = initAmeSession(connection.auth, path,
       peerTrustRequired = false)
     connection.path.setTrigger(1, 1'u64)
@@ -686,7 +697,7 @@ suite "AME mask-tier sessions":
         peerTrustRequired = false)
       first: ByteSeq = @[]
       second: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     first = sealAmeDacFrame(sender, @[byte 1])
     second = sealAmeDacFrame(sender, @[byte 2])
     opened = openAmeDacFrame(receiver, second)
@@ -706,7 +717,7 @@ suite "AME mask-tier sessions":
       connection: AmeSession = initAmeSession(exactAuth(),
         peerTrustRequired = false)
       envelope: ByteSeq = @[]
-      decoded: FomkeMessage
+      decoded: FomkeMessage = default(FomkeMessage)
       i: int = 0
     ## The envelope used to carry a ciphertext length, and this test used to
     ## check that a header claiming eight megabytes on a short datagram was
@@ -742,11 +753,11 @@ suite "AME mask-tier sessions":
       B: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
         0b11000000'u8)
-      request: AmeExchangeRequest
-      offerA: AmeExchangeOffer
-      offerB: AmeExchangeOffer
-      replyB: AmeExchangeReply
-      commit: FomkeUpgradeCommit
+      request: AmeExchangeRequest = default(AmeExchangeRequest)
+      offerA: AmeExchangeOffer = default(AmeExchangeOffer)
+      offerB: AmeExchangeOffer = default(AmeExchangeOffer)
+      replyB: AmeExchangeReply = default(AmeExchangeReply)
+      commit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
     installSignaturePeers(A, B)
     request = initAmeExchangeRequest(A.auth.current.layout.kems, target,
       0b01000000'u8)
@@ -782,8 +793,8 @@ suite "AME mask-tier sessions":
       B: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
         0b11000000'u8)
-      request: AmeExchangeRequest
-      offer: AmeExchangeOffer
+      request: AmeExchangeRequest = default(AmeExchangeRequest)
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
     installSignaturePeers(A, B)
     request = initAmeExchangeRequest(A.auth.current.layout.kems, target,
       0b01000000'u8)
@@ -799,7 +810,7 @@ suite "AME mask-tier sessions":
       auth: AmeAuthPackage = exactAuth()
       sealed = protectAmeMessage(auth.current.layout, auth.current.tier,
         auth.current.exchange, @[byte 1, 2, 3, 4])
-      forged: AmeProtectedMessage
+      forged: AmeProtectedMessage = default(AmeProtectedMessage)
       accepted: int = 0
       i: int = 0
     forged.payload = sealed.message.payload
@@ -915,7 +926,7 @@ suite "AME payload padding":
         peerTrustRequired = false)
       short: ByteSeq = sealAmeTcpFrame(sender, @[byte 1])
       longer: ByteSeq = sealAmeTcpFrame(sender, newSeq[byte](40))
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     ## One byte and forty bytes leave the same size frame.
     check short.len == longer.len
     check ameFrameOverheadBytes(sender) ==
@@ -938,7 +949,7 @@ suite "AME payload padding":
       bare: ByteSeq = sealAmeTcpFrame(plain, @[byte 1, 2, 3])
       receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
         peerTrustRequired = false)
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     check (decodeAmeFrameHeader(padded).flags and ameFrameFlagPadded) != 0'u8
     check decodeAmeFrameHeader(bare).flags == 0'u8
     ## An endpoint that did not agree to padding refuses the frame instead of
@@ -967,7 +978,7 @@ suite "AME payload padding":
         0b01000000'u8, AmeRuntimeParams(authTagLen: aatl16,
         padding: apadBlock64))
       encoded: ByteSeq = encodeAmeExchangeRequest(request)
-      decoded: AmeExchangeRequest
+      decoded: AmeExchangeRequest = default(AmeExchangeRequest)
     check encoded.len == ameExchangeRequestLen
     decoded = decodeAmeExchangeRequest(exactKems, encoded)
     check decoded.params.padding == apadBlock64
@@ -984,12 +995,12 @@ suite "AME payload padding":
       server: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
-      request: AmeExchangeRequest
+      request: AmeExchangeRequest = default(AmeExchangeRequest)
       offerFrame: ByteSeq = @[]
       replyFrame: ByteSeq = @[]
       readyFrame: ByteSeq = @[]
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     installSignaturePeers(client, server)
     ## Nothing changes on the wire yet: the live epoch's tags are bound to
     ## the values it was created with.
@@ -1075,10 +1086,10 @@ suite "the session-level skip and cache controls":
       B: AmeSession = exactUpgradeSession(aerResponder)
       target: AmeMaskTier = exactTier(A.auth.current.layout, 2'u32,
         0b11000000'u8)
-      step: AmeTierStep
-      offer: AmeExchangeOffer
-      reply: AmeExchangeReply
-      commit: FomkeUpgradeCommit
+      step: AmeTierStep = default(AmeTierStep)
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
+      reply: AmeExchangeReply = default(AmeExchangeReply)
+      commit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
       before: uint32 = 0'u32
     installSignaturePeers(A, B)
     before = ameSessionStackDepth(A)
@@ -1123,7 +1134,7 @@ suite "the session-level skip and cache controls":
         peerTrustRequired = false)
       lost: ByteSeq = @[]
       arrived: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     ## The datagram carrier is where this arises: the TCP carrier requires
     ## an exact sequence, so a gap there is refused outright, while DAC uses
     ## a replay window and lets a later frame through.

@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: configs/ presets are the one source; single-slot KEM/signature selection; pinned layouts always compile
+Commit Message: Change requests from either side with deny and wait; layouts in wire-id order; hello accepts fitting layouts
 
 Features (Planned):
 - PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
@@ -77,6 +77,30 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- Change requests (2026-09-24). Wire format changed; old and new builds do
+  not talk to each other.
+  * Every layout list is kept in wire-id order (sortedByWireId in the
+    init*Algorithms builders); decoders refuse out-of-order bytes. Bit n =
+    n-th algorithm in wire-id order; KEM secrets reach FOMKE in that order.
+    Repeated algorithms stay independent instances with their own keys.
+  * Hello: a client layout that FITS INSIDE an offered one is accepted
+    (ameLayoutFitsInside) and the session runs the client's layout.
+  * Either side may request any selection; the tier path only schedules
+    automatic steps. Guard: runtime `ameMinPqKems` (default 0), applied to
+    hello, own requests and incoming requests.
+  * New frame ExchangeDeny (0x12): a refused request is answered, the
+    requester stays on its old algorithms. The requester sends nothing
+    while its request is out; a responder that replied sends nothing until
+    epoch-ready (requireAmeMaySend).
+  * XHKDF branches switch with ciphers/MACs at the confirmation
+    (fomkeKdfFor) -- recomputed from the target tier, no checkpoint change.
+  * API by name: ameSelection, ameChangeRequest, ameRekeyRequest. The wire
+    keeps position bits: ids alone could not address one of two identical
+    instances.
+  * The TCP/DAC exchange-frame pairs are one body each with a carrier
+    parameter; the public names are one-line wrappers.
+  * Tests: test_ame_change_requests (9), plus updated handshake/session
+    tests for the new rules.
 - configs/ is the one source (2026-09-23). default.toml: [project] (read by
   the .nimble and nix), every build switch with every accepted word, and
   [runtime] (the old root config.toml, now deleted). Presets iot, iot-min,

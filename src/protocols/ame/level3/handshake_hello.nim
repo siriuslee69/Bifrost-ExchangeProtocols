@@ -31,6 +31,7 @@ import ../level1/path_triggers
 import ./handshake_authentication
 import ./handshake_records
 import ./handshake_transcript
+import ../../config
 import runePragmas
 
 ## ╭⟢ step 1: the client speaks
@@ -80,16 +81,36 @@ proc clientHelloLayoutError(c: AmeClientHello,
   ## c/supported: the clear fields only -- layout, tier, session id, nonce.
   ## Runs BEFORE a sealed hello is opened, so a hello this side would refuse
   ## anyway never costs it a key derivation.
+  ##
+  ## The client's layout is accepted when it FITS INSIDE one this side
+  ## offers -- every algorithm it lists is offered too, as often as it lists
+  ## it -- and its starting selection meets this side's minimum
+  ## (`ameMinPqKems`). The session then runs the CLIENT's layout:
+  ##
+  ##   this side offers  [LightSaber, Kyber768, X25519]
+  ##   client sends      [LightSaber, X25519]          -> accepted, runs that
+  ##   client sends      [FireSaber, X25519]           -> refused
+  ##
+  ## Nothing is lost by accepting a smaller layout: the layout and every
+  ## selection are part of the transcript both ends prove, so a client
+  ## whose list was trimmed on the way finds out at the finish.
   var
     layoutSupported: bool = false
     i: int = 0
   while i < supported.len:
-    if layoutsEquivalent(c.layout, supported[i].layout) and
-        ameTierPathContains(supported[i], c.initialTier):
+    if ameLayoutFitsInside(c.layout, supported[i].layout):
       layoutSupported = true
     i = i + 1
   if not layoutSupported:
-    return "client exact AME layout and initial tier are not supported"
+    return "client AME layout lists an algorithm this side does not offer"
+  try:
+    validateAmeTier(c.layout, c.initialTier)
+  except ValueError as e:
+    return e.msg
+  result = ameTierPolicyError(c.layout, c.initialTier,
+    currentBifrostConfig().ameMinPqKems)
+  if result.len > 0:
+    return
   if c.sessionId == 0'u64 or c.nonce.len != ameHandshakeNonceLen:
     return "client hello shape is invalid"
 

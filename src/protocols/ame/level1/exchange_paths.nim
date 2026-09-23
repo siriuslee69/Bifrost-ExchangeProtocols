@@ -30,18 +30,55 @@ proc validAmeKemMask*(A: AmeKemAlgorithms): uint8 {.role: helper.} =
     result = result or slotMask(i)
     i = i + 1
 
+proc sortedByWireId*[T: enum](A: openArray[T]): seq[T] {.role: helper.} =
+  ## A: algorithms in any order -> the same algorithms in wire-id order.
+  ##
+  ## Every layout is kept in this ONE order, whatever order it was written
+  ## in, so the same set always has the same bytes, the same bit positions
+  ## and the same key-derivation order on both ends:
+  ##
+  ##   written   [X25519 0x0F, FireSaber 0x01, X25519 0x0F]
+  ##   kept      [FireSaber 0x01, X25519 0x0F, X25519 0x0F]
+  ##
+  ## Repeated entries stay (side by side); each keeps its own keys.
+  var
+    i: int = 1
+    j: int = 0
+    t: T = low(T)
+  result = @A
+  while i < result.len:
+    t = result[i]
+    j = i - 1
+    while j >= 0 and ord(result[j]) > ord(t):
+      result[j + 1] = result[j]
+      j = j - 1
+    result[j + 1] = t
+    i = i + 1
+
+proc requireWireOrder*(previous, id: uint8, what: string) {.role: parser.} =
+  ## previous/id: two neighbouring ids read off the wire. A layout is only
+  ## ever sent sorted, so one out of order is refused: otherwise the same set
+  ## could arrive as two different byte strings and two different keys.
+  if id < previous:
+    raise newException(ValueError, "AME " & what &
+      " layout is not in wire-id order")
+
 proc initAmeKemAlgorithms*(A: openArray[AmeKemAlgorithm]): AmeKemAlgorithms {.
     role: configurator.} =
   ## A: immutable ordered KEM slots. Repeated entries remain independent.
+  ## The slots are kept in wire-id order (`sortedByWireId`), however they
+  ## were written.
   ## A slot whose family this build left out is refused here, so a session is
   ## never configured with a KEM the binary cannot execute.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeKemAlgorithm] = sortedByWireId(A)
   if A.len == 0 or A.len > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME KEM layout must contain 1..8 slots")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeKemBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 converter toAmeKemAlgorithms*[N: static[int]](
@@ -161,6 +198,8 @@ proc decodeAmeKemAlgorithms*(A: openArray[uint8]): AmeKemAlgorithms {.
   result.length = uint8(n)
   while i < n:
     result.algorithms[i] = algorithmFromId(A[i + 1])
+    if i > 0:
+      requireWireOrder(A[i], A[i + 1], "KEM")
     requireAmeKemBuilt(result.algorithms[i])
     i = i + 1
 

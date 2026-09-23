@@ -46,10 +46,11 @@ import ../types
 import runePragmas
 
 proc tmeAeadAmeCiphers*(): AmeCipherAlgorithms {.role: configurator.} =
-  ## The three-cipher chain TMEAEAD ran, in TMEAEAD's order. A build that
-  ## left out any of these primitives is refused here rather than at the
-  ## first message.
-  result = initAmeCipherAlgorithms([acaXChaCha20, acaAesCtr, acaGimli])
+  ## The three ciphers TMEAEAD ran, in wire-id order (every layout is kept
+  ## that way; TMEAEAD itself ran AES-CTR before Gimli). A build that left
+  ## out any of these primitives is refused here rather than at the first
+  ## message.
+  result = initAmeCipherAlgorithms([acaXChaCha20, acaGimli, acaAesCtr])
 
 proc tmeAeadAmeMacs*(): AmeMacAlgorithms {.role: configurator.} =
   ## The two authenticators TMEAEAD XORed together.

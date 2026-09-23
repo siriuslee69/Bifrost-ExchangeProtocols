@@ -27,12 +27,16 @@ type
       ## It is also the furthest a message may sit behind and still open.
     ameLayout*: AmeSuiteLayout
     ameInitialTier*: AmeMaskTier
+    ameMinPqKems*: int
+      ## The fewest post-quantum KEMs (anything but X25519) a selection must
+      ## keep switched on -- in a client's hello and in every later change
+      ## request, whichever side sends it. 0 (the default) asks for none.
+      ## A request below it is answered with a deny, not a switch.
 
 var
   bifrostRuntimeConfig*: BifrostConfig
 
-proc defaultBifrostConfig*(): BifrostConfig {.role: configurator, gcsafe,
-    raises: [].}
+proc defaultBifrostConfig*(): BifrostConfig {.role: configurator, gcsafe.}
   ## Declared here, defined at the bottom: it needs the preset reader.
 
 proc codeBifrostConfig(): BifrostConfig {.role: configurator.} =
@@ -108,6 +112,8 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
   if c.fomkeReorderCeiling < fomkeMinReorderWindow or
       c.fomkeReorderCeiling > fomkeMaxReorderWindow:
     raise newException(ValueError, "Bifrost FOMKE reorder ceiling is invalid")
+  if c.ameMinPqKems < 0 or c.ameMinPqKems > ameMaxAlgorithmSlots:
+    raise newException(ValueError, "Bifrost ameMinPqKems must be in 0..8")
   discard encodeAmeSuiteLayout(c.ameLayout)
   validateAmeTier(c.ameLayout, c.ameInitialTier)
 
@@ -169,6 +175,7 @@ proc applyConfigKey(c: var BifrostConfig, key, value: string) {.
   of "ameinitialtierhex":
     c.ameInitialTier = decodeAmeMaskTier(c.ameLayout,
       decodeConfigHex(value))
+  of "ameminpqkems": c.ameMinPqKems = parseInt(value)
   else: raise newException(ValueError, "unknown Bifrost config key: " & key)
 
 proc parseBifrostConfigText*(text: string,
@@ -210,8 +217,7 @@ const
       c = parseBifrostConfigText(t, c)
     c
 
-proc defaultBifrostConfig*(): BifrostConfig {.role: configurator, gcsafe,
-    raises: [].} =
+proc defaultBifrostConfig*(): BifrostConfig {.role: configurator, gcsafe.} =
   ## The process defaults: code values, then configs/default.toml, then the
   ## preset named by -d:preset (see configs/ and preset_layout.nim).
   result = presetBifrostConfig

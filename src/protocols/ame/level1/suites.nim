@@ -13,6 +13,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./exchange_paths
+import ./algorithms
 import runePragmas
 
 template requirePathLength(n: int, what: string) =
@@ -23,56 +24,66 @@ proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
     AmeCipherAlgorithms {.role: configurator.} =
   ## A: immutable ordered symmetric-cipher slots. A slot whose primitive
   ## this build left out is refused here, before any session uses it.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeCipherAlgorithm] = sortedByWireId(A)
   requirePathLength(A.len, "cipher")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeCipherBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 proc initAmeMacAlgorithms*(A: openArray[AmeMacAlgorithm]):
     AmeMacAlgorithms {.role: configurator.} =
   ## A: ordered keyed-authentication slots, refused if not compiled.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeMacAlgorithm] = sortedByWireId(A)
   requirePathLength(A.len, "MAC")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeMacBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 proc initAmeHashAlgorithms*(A: openArray[AmeHashAlgorithm]):
     AmeHashAlgorithms {.role: configurator.} =
   ## A: ordered transcript-hash slots, refused if not compiled.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeHashAlgorithm] = sortedByWireId(A)
   requirePathLength(A.len, "hash")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeHashBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 proc initAmeSignatureAlgorithms*(A: openArray[AmeSignatureAlgorithm]):
     AmeSignatureAlgorithms {.role: configurator.} =
   ## A: ordered signature slots, refused if not compiled.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeSignatureAlgorithm] = sortedByWireId(A)
   requirePathLength(A.len, "signature")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeSigBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 proc initAmeKdfAlgorithms*(A: openArray[AmeKdfAlgorithm]):
     AmeKdfAlgorithms {.role: configurator.} =
   ## A: ordered KDF slots, refused if not compiled.
-  var i: int = 0
+  var
+    i: int = 0
+    S: seq[AmeKdfAlgorithm] = sortedByWireId(A)
   requirePathLength(A.len, "KDF")
   result.length = uint8(A.len)
   while i < A.len:
     requireAmeKdfBuilt(A[i])
-    result.algorithms[i] = A[i]
+    result.algorithms[i] = S[i]
     i = i + 1
 
 converter toAmeCipherAlgorithms*[N: static[int]](
@@ -222,6 +233,70 @@ proc validateAmeTierTransition*(L: AmeSuiteLayout, current,
     raise newException(ValueError,
       "AME target tier selects an unavailable KEM slot")
 
+proc familyIds[T](P: T): seq[int] {.role: helper.} =
+  ## P: one algorithm list -> its wire ids, in order. Walks the array with
+  ## `items` on purpose: indexing it inside a generic lets Nim pick the
+  ## array-to-layout converter and read the unused (zero) entries.
+  for a in items(P.algorithms):
+    if result.len < int(P.length):
+      result.add(ord(a))
+
+proc countId(A: openArray[int], x: int): int {.role: helper.} =
+  ## A/x: wire ids and one id -> how often it appears.
+  for a in A:
+    if a == x:
+      result = result + 1
+
+proc idsFitInside(small, big: openArray[int]): bool {.role: parser.} =
+  ## small/big: wire ids of one family -> true when every id of small is in
+  ## big at least as often (repeats count).
+  result = true
+  for x in small:
+    if countId(small, x) > countId(big, x):
+      return false
+
+proc familyFitsInside[T](small, big: T): bool {.role: parser.} =
+  ## small/big: two lists of one family -> see `idsFitInside`.
+  result = idsFitInside(familyIds(small), familyIds(big))
+
+proc ameLayoutFitsInside*(small, big: AmeSuiteLayout): bool {.role: parser.} =
+  ## small/big: a client's layout and one a server offers -> true when
+  ## every algorithm the client lists is also in the server's, family by
+  ## family, as often as the client lists it. Order plays no part: both
+  ## are kept in wire-id order anyway.
+  ##
+  ##   server offers   [LightSaber, Kyber768, X25519]  ciphers [XChaCha20, Gimli]
+  ##   client lists    [LightSaber, X25519]            ciphers [XChaCha20]   fits
+  ##   client lists    [FireSaber, X25519]             ...                   does not
+  result = familyFitsInside(small.kems, big.kems) and
+    familyFitsInside(small.ciphers, big.ciphers) and
+    familyFitsInside(small.macs, big.macs) and
+    familyFitsInside(small.hashes, big.hashes) and
+    familyFitsInside(small.signatures, big.signatures) and
+    familyFitsInside(small.kdfs, big.kdfs)
+
+proc ameTierPqKemCount*(L: AmeSuiteLayout, t: AmeMaskTier): int {.
+    role: parser.} =
+  ## L/t: layout and selection -> how many switched-on KEM slots are
+  ## post-quantum (every family but X25519).
+  var
+    i: int = 0
+  while i < int(L.kems.length):
+    if algorithmSlotSelected(t.masks.kem, i) and
+        ameKemFamily(L.kems.algorithms[i]) != akfX25519:
+      result = result + 1
+    i = i + 1
+
+proc ameTierPolicyError*(L: AmeSuiteLayout, t: AmeMaskTier,
+    minPqKems: int): string {.role: parser.} =
+  ## L/t/minPqKems: a selection -> "" when it may be used, else why not.
+  ## The one minimum AME enforces on a selection, whoever proposes it and
+  ## whenever: at least `minPqKems` post-quantum KEMs switched on
+  ## (`ameMinPqKems` in the runtime config).
+  if ameTierPqKemCount(L, t) < minPqKems:
+    result = "AME selection keeps " & $ameTierPqKemCount(L, t) &
+      " post-quantum KEM(s) switched on; this side requires " & $minPqKems
+
 proc fullAmeMaskTier*(L: AmeSuiteLayout,
     tierId: uint32 = 1'u32): AmeMaskTier {.role: truthBuilder.} =
   ## L/tierId: tier selecting every occupied slot in each algorithm family.
@@ -280,6 +355,8 @@ template decodeNibbleLayout(A: untyped, cursor: var int, P: untyped,
       id = if (i and 1) == 0: packed shr 4 else: packed and 0x0f'u8
       if id < uint8(ord(low(EnumType))) or id > uint8(ord(high(EnumType))):
         raise newException(ValueError, "AME " & what & " algorithm id is unknown")
+      if i > 0:
+        requireWireOrder(uint8(ord(P.algorithms[i - 1])), id, what)
       P.algorithms[i] = EnumType(id)
       i = i + 1
     if (n and 1) != 0 and (A[cursor + packedLen - 1] and 0x0f'u8) != 0'u8:
@@ -416,7 +493,7 @@ proc generateAmeSigningKeys*(L: AmeSuiteLayout, t: AmeMaskTier): tuple[
   ## L/t: selected signature slots receiving independent keypairs.
   var
     A: seq[AmeSignatureAlgorithm] = @[]
-    keypair: AmeSigKeypair
+    keypair: AmeSigKeypair = default(AmeSigKeypair)
     i: int = 0
   A = activeAmeSignatures(L, t)
   while i < A.len:
@@ -465,3 +542,38 @@ proc verifyAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
     if not verifyAmeMessage(A[i], subject, signatures[i], publicKeys[i]):
       return false
     i = i + 1
+
+proc nextFreeSlot(layoutIds: openArray[int], x: int, taken: uint8): uint8 {.
+    role: parser.} =
+  ## layoutIds/x/taken: the first slot holding id x whose bit is not taken.
+  for i in 0 ..< layoutIds.len:
+    if layoutIds[i] == x and (taken and slotMask(i)) == 0'u8:
+      return slotMask(i)
+  raise newException(ValueError, "AME layout has no free slot for algorithm id " &
+    $x)
+
+proc idsToSlotMask(layoutIds, want: openArray[int]): uint8 {.role: parser.} =
+  ## layoutIds/want: one family's ids in layout order and the ids asked for
+  ## -> the bits that select them. Each mention takes the next instance not
+  ## yet taken; an id the layout does not hold (often enough) is refused.
+  var
+    taken: uint8 = 0'u8
+  for x in want:
+    taken = taken or nextFreeSlot(layoutIds, x, taken)
+  result = taken
+
+proc ameSelectionMask*[P, E](layoutFamily: P, want: openArray[E]): uint8 {.
+    role: parser.} =
+  ## layoutFamily/want: one family of a layout and the algorithms to switch
+  ## on -> the bit mask over that family. Name an algorithm twice to select
+  ## two instances of it:
+  ##
+  ##   layout KEMs  [FireSaber, X25519, X25519]
+  ##   want         [X25519]            -> 0b01000000  (first X25519)
+  ##   want         [X25519, X25519]    -> 0b01100000  (both)
+  ##   want         [Kyber768]          -> refused: not in the layout
+  var
+    ids: seq[int] = @[]
+  for a in want:
+    ids.add(ord(a))
+  result = idsToSlotMask(familyIds(layoutFamily), ids)

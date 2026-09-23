@@ -66,7 +66,13 @@ type
     lastTrigger*: AmeTierStep   ## otter:latest
     nextExchangeRequestId*: uint32
     pendingExchange*: AmePendingExchange
+      ## This side's own request, from sending it until the answer. While
+      ## it is active this side sends NOTHING: whatever it sent would be
+      ## sealed with the old algorithms or the requested ones, and which is
+      ## right is only known once the peer has accepted or denied.
     pendingIncoming*: AmePendingIncomingExchange
+    lastExchangeDenial*: string
+      ## Why the peer denied this side's last request ("" if it did not).
     fomke*: FomkeState
       ## The one thing that protects payloads. Always present on a live
       ## session -- there is no mode in which a frame body is unprotected or
@@ -470,6 +476,22 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   clearFomkeState(S.fomkeCandidate)
   S = default(AmeSession)
 
+proc ameRequestPolicyError*(S: AmeSession, target: AmeMaskTier): string {.
+    role: parser.} =
+  ## S/target: a selection either side asks for -> "" when this side
+  ## accepts it, else the reason. One rule for both directions: at least
+  ## `ameMinPqKems` post-quantum KEMs stay switched on.
+  result = ameTierPolicyError(S.auth.current.layout, target,
+    currentBifrostConfig().ameMinPqKems)
+
+proc requireAmeRequestPolicy(S: AmeSession, target: AmeMaskTier) {.
+    role: parser.} =
+  ## S/target: refuses to SEND a request this side would itself deny.
+  var
+    reason: string = ameRequestPolicyError(S, target)
+  if reason.len > 0:
+    raise newException(ValueError, reason)
+
 proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
   ## S: outgoing exchange cancelled and trigger returned to the due queue.
   if S.path.inFlightTierId != 0'u32:
@@ -504,9 +526,11 @@ proc beginAmeSessionExchange*(S: var AmeSession,
   if S.pendingIncoming.active:
     raise newException(ValueError,
       "AME cannot start an exchange while a peer candidate epoch is pending")
-  if not ameTierPathAllowsTransition(S.path, S.auth.current.tier,
-      r.targetTier):
-    raise newException(ValueError, "AME target tier is outside the session path")
+  ## Any selection over the session's layout may be asked for -- more
+  ## algorithms, fewer, different ones -- as long as it meets this side's own
+  ## minimum. The session's tier path only schedules AUTOMATIC steps; it no
+  ## longer limits what either side may request.
+  requireAmeRequestPolicy(S, r.targetTier)
   validateAmeTierTransition(S.auth.current.layout, S.auth.current.tier,
     r.targetTier, r.exchangeMask, S.auth.current.exchange.activeMask)
   if S.path.inFlightTierId != 0'u32:
@@ -559,9 +583,10 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
     cancelAmeSessionExchange(S)
   if o.baseEpochId != S.auth.current.epochId:
     raise newException(ValueError, "AME exchange offer base epoch mismatch")
-  if not ameTierPathAllowsTransition(S.path, S.auth.current.tier,
-      o.request.targetTier):
-    raise newException(ValueError, "AME target tier is outside the session path")
+  ## The frame layer answers a refusable request with a deny before it gets
+  ## here (`ameExchangeDenyReason`); a direct caller gets the same rule as an
+  ## error.
+  requireAmeRequestPolicy(S, o.request.targetTier)
   validateAmeTierTransition(S.auth.current.layout, S.auth.current.tier,
     o.request.targetTier, o.request.exchangeMask,
     S.auth.current.exchange.activeMask)
@@ -690,6 +715,123 @@ proc cancelIncomingAmeSessionExchange*(S: var AmeSession) {.
   S.fomkeCandidateActive = false
   cancelFomkeUpgrade(S.fomke)
   restoreConfiguredAmeFomkeCache(S)
+
+## ╭⟢ saying no
+##
+## Either side may ask for any change at any time. The answer is one of two
+## frames, and the requester sends nothing until one has arrived:
+##
+##   requester                                   responder
+##     |--- request (offer) ----------------------->|
+##     |    [sends nothing now]                     |  acceptable?
+##     |<-- reply ---------------------------------|  yes: stages the switch
+##     |--- epoch-ready (first NEW message) ------>|  both now on the new
+##     |                                            |  algorithms
+##   or
+##     |<-- deny (reason) -------------------------|  no: nothing changes
+##     |    back to normal on the OLD algorithms    |
+##
+## Only a request the responder can read and prove is answered at all; a
+## deny is for honest requests this side does not want (its minimum) or
+## cannot run (a selection that breaks the rules), so a requester never
+## waits on a request that was silently dropped.
+
+proc ameExchangeDenyReason*(S: AmeSession, o: AmeExchangeOffer): string {.
+    role: parser.} =
+  ## S/o: an incoming request -> "" when this side will switch to it, else
+  ## the reason it answers with a deny instead.
+  result = ameRequestPolicyError(S, o.request.targetTier)
+  if result.len > 0:
+    return
+  try:
+    validateAmeTierTransition(S.auth.current.layout, S.auth.current.tier,
+      o.request.targetTier, o.request.exchangeMask,
+      S.auth.current.exchange.activeMask)
+  except ValueError as e:
+    result = e.msg
+
+proc denyAmeSessionExchange*(S: var AmeSession, requestId: uint32,
+    reason: string) {.role: actor.} =
+  ## S/requestId/reason: the peer refused this side's request. The request
+  ## is dropped, the current algorithms stay, and sending is allowed again.
+  if not S.pendingExchange.active or
+      S.pendingExchange.offer.requestId != requestId:
+    raise newException(ValueError, "AME deny does not match the pending request")
+  cancelAmeSessionExchange(S)
+  S.lastExchangeDenial = reason
+
+## ╭⟢ asking for a change, by algorithm name
+##
+## A request is built from the algorithms themselves; which bit each one
+## sits on is worked out against the session's layout (always in wire-id
+## order, so both ends agree on it):
+##
+##   var t = ameSelection(S, ciphers = [acaXChaCha20, acaGimli],
+##                           kdfs = [akfaBlake3, akfaGimliXof])
+##   frame = beginAmeTcpExchangeFrame(S, ameChangeRequest(S, t))
+##
+##   frame = beginAmeTcpExchangeFrame(S, ameRekeyRequest(S, [akaLightSaber]))
+##
+## A family left out keeps its current selection. Naming an algorithm twice
+## selects two instances of it (a layout may hold X25519 twice; each has
+## its own keys). A KEM the change newly switches on always gets a fresh
+## secret; `rekey` asks for fresh secrets for ones that are already on.
+
+proc ameManualTierId(S: AmeSession): uint32 {.role: helper.} =
+  ## S: a tier id for a selection asked for by name. Kept apart from the
+  ## small ids a tier path uses, so the two can never be mistaken.
+  result = 0x8000_0000'u32 or (S.auth.current.epochId + 1'u32)
+
+proc keepOrSelect[P, E](family: P, current: uint8,
+    want: openArray[E]): uint8 {.role: helper.} =
+  ## family/current/want: the new bits for one family -- the current ones
+  ## when nothing is named.
+  if want.len == 0:
+    return current
+  result = ameSelectionMask(family, want)
+
+proc ameSelection*(S: AmeSession,
+    kems: openArray[AmeKemAlgorithm] = [],
+    ciphers: openArray[AmeCipherAlgorithm] = [],
+    macs: openArray[AmeMacAlgorithm] = [],
+    hashes: openArray[AmeHashAlgorithm] = [],
+    signatures: openArray[AmeSignatureAlgorithm] = [],
+    kdfs: openArray[AmeKdfAlgorithm] = []): AmeMaskTier {.
+    role: configurator, tag: "appApi".} =
+  ## S/kems/.../kdfs: the algorithms to have switched on after the change,
+  ## family by family -> the selection to ask for. Every named algorithm
+  ## must be in the session's layout.
+  var
+    L: AmeSuiteLayout = S.auth.current.layout
+    now: AmeTierMasks = S.auth.current.tier.masks
+  result = initAmeMaskTier(L, ameManualTierId(S), initAmeTierMasks(
+    keepOrSelect(L.kems, now.kem, kems),
+    keepOrSelect(L.ciphers, now.cipher, ciphers),
+    keepOrSelect(L.macs, now.mac, macs),
+    keepOrSelect(L.hashes, now.hash, hashes),
+    keepOrSelect(L.signatures, now.signature, signatures),
+    keepOrSelect(L.kdfs, now.kdf, kdfs)))
+
+proc ameChangeRequest*(S: AmeSession, target: AmeMaskTier,
+    rekey: openArray[AmeKemAlgorithm] = []): AmeExchangeRequest {.
+    role: configurator, tag: "appApi".} =
+  ## S/target/rekey: a request to switch to `target`, with fresh secrets for
+  ## every KEM it newly switches on plus the ones named in `rekey`.
+  var
+    L: AmeSuiteLayout = S.auth.current.layout
+    fresh: uint8 = target.masks.kem and not S.auth.current.tier.masks.kem
+  if rekey.len > 0:
+    fresh = fresh or ameSelectionMask(L.kems, rekey)
+  result = initAmeExchangeRequest(L.kems, target, fresh, S.pendingParams)
+
+proc ameRekeyRequest*(S: AmeSession,
+    rekey: openArray[AmeKemAlgorithm]): AmeExchangeRequest {.
+    role: configurator, tag: "appApi".} =
+  ## S/rekey: fresh secrets for the named KEMs, nothing else changes.
+  ##
+  ##   ameRekeyRequest(S, [akaLightSaber])          one KEM
+  ##   ameRekeyRequest(S, [akaX25519, akaX25519])   both X25519 instances
+  result = ameChangeRequest(S, S.auth.current.tier, rekey)
 
 ## ╭⟢ what the path profile says this session should send with
 ##

@@ -114,6 +114,8 @@ ameLayoutHex                 ""        "" = derived from the build; a value
                                        pins it (every algorithm in it is then
                                        compiled, see "Tiny devices")
 ameInitialTierHex            ""        only together with every endpoint
+ameMinPqKems                 0         yes: fewest post-quantum KEMs any
+                                       selection keeps on (hello, requests)
 ```
 
 ## Definitions ✦
@@ -1189,11 +1191,88 @@ not named security levels.
 | signature | 4 bit | 8 | tier mask |
 | KDF | 4 bit | 8 | tier mask |
 
-Repeated KEM entries are independent slots. Setting the bit of a
-switched-off slot adds it; setting the bit of a switched-on slot runs it
-again. Other switched-on slots stay on.
+Every list in a layout is kept in **wire-id order**, however it was
+written, and a layout arriving out of that order is refused. So bit `n` of a
+mask always means "the n-th algorithm in wire-id order" on both ends, and
+KEM secrets always reach the key schedule in that order:
 
-A layout offer is accepted exactly or refused. There is no substitution.
+```text
+  written    [X25519 0x0F, FireSaber 0x01, X25519 0x0F]
+  kept       [FireSaber 0x01, X25519 0x0F, X25519 0x0F]
+  mask bit   1000_0000 = FireSaber   0100_0000 = first X25519
+```
+
+Repeated KEM entries are independent slots, each with its own keypair and
+its own secret. Setting the bit of a switched-off slot adds it; setting the
+bit of a switched-on slot runs it again. Other switched-on slots stay on.
+
+A client's layout is accepted when it **fits inside** one the server offers:
+every algorithm it lists is offered too, as often. The session then runs the
+client's layout. Anything else is refused; there is no substitution.
+
+```text
+  server offers  [LightSaber, Kyber768, X25519]
+  client sends   [LightSaber, X25519]    accepted, the session runs this
+  client sends   [FireSaber, X25519]     refused: FireSaber is not offered
+```
+
+### Asking for a change -- either side, any time 🌿
+
+Either endpoint may ask to rekey KEMs or to switch any algorithm on or off
+(KEMs, ciphers, MACs, hashes, signatures, KDFs -- and with the KDFs,
+XHKDF's branches). The other endpoint answers with a reply or a deny. The
+switch happens for both at the same point: the epoch-ready frame.
+
+```text
+  requester                                   responder
+    |--- request (offer) ----------------------->|
+    |    sends NOTHING else now                  |  meets my minimum?
+    |<-- reply ----------------------------------|  yes: stages the switch,
+    |--- epoch-ready = first NEW message ------->|       sends nothing until
+    |    new ciphers, MACs, KDF branches         |       this arrives
+    |                                            |  both now switched
+  or
+    |<-- deny (reason) --------------------------|  no: nothing changes
+    |    back to sending, on the OLD algorithms  |
+```
+
+**Why the requester waits.** Anything it sent between request and answer
+would be sealed with the old algorithms or the new ones, and which of the
+two the peer expects is only settled by the answer. So `sealAme*Frame`
+refuses to send while a request is out (error: "AME waits for the answer to
+its exchange request..."), and a responder that replied refuses until
+epoch-ready has arrived.
+
+**The minimum.** `ameMinPqKems` (runtime config, default 0) is the fewest
+post-quantum KEMs a selection must keep on. It applies to a client's hello,
+to a request this side sends, and to a request it receives -- which is then
+answered with a deny, not dropped, so the requester never waits forever.
+Rekeying fewer KEMs never weakens the keys: every old secret stays in the
+stacks and in FOMKE's next secret. It only weakens how well a rotation
+heals after a compromise.
+
+**Asking by name.**
+
+```nim
+# switch Gimli on as a second cipher, GimliXof as a second KDF
+var t = ameSelection(S, ciphers = [acaXChaCha20, acaGimli],
+                        kdfs = [akfaBlake3, akfaGimliXof])
+frame = beginAmeTcpExchangeFrame(S, ameChangeRequest(S, t))
+
+# fresh secret for one KEM only; nothing else changes
+frame = beginAmeTcpExchangeFrame(S, ameRekeyRequest(S, [akaLightSaber]))
+
+# on the requester, when the answer arrives:
+ready = finishAmeTcpExchangeFrame(S, answer)   # empty = denied
+if ready.len == 0: echo S.lastExchangeDenial   # why
+```
+
+A family left out of `ameSelection` keeps its current selection. Naming an
+algorithm twice selects two instances of it. A KEM the change newly
+switches on always gets a fresh secret.
+
+The session's tier path (see triggers) still schedules AUTOMATIC steps, but
+it no longer limits what either side may ask for.
 
 ### One rotation at a time
 
@@ -2327,7 +2406,20 @@ open. An unknown flag bit is refused, not ignored.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
-`0x10` SessionIdRequest, `0x11` SessionIdAssign.
+`0x10` SessionIdRequest, `0x11` SessionIdAssign, `0x12` ExchangeDeny.
+
+ExchangeDeny body (inside the sealed payload):
+
+```text
+  offset  size  field
+  ------  ----  ---------------------------------------------
+  0       4     requestId   the refused request (little-endian)
+  4       4     baseEpoch   the epoch it was asked from
+  8       2     n           reason length, at most 256
+  10      n     reason      UTF-8, e.g. "AME selection keeps 0
+                            post-quantum KEM(s) switched on; this side
+                            requires 1"
+```
 
 #### The masked field: Seq at offset 22 ⌜guide⌟
 

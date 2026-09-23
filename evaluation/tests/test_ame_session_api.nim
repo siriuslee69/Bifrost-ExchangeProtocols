@@ -91,8 +91,8 @@ suite "AME certificate codec":
       certificate: AmeIdentityCertificate = issueAmeIdentityCertificate(
         authority, identity, 77'u64, validFrom, validUntil)
       encoded: ByteSeq = encodeAmeIdentityCertificate(certificate)
-      decoded: AmeIdentityCertificate
-      trust: AmePeerTrustResult
+      decoded: AmeIdentityCertificate = default(AmeIdentityCertificate)
+      trust: AmePeerTrustResult = default(AmePeerTrustResult)
     check encoded.len > 0
     decoded = decodeAmeIdentityCertificate(encoded)
     check decoded.serial == certificate.serial
@@ -155,7 +155,7 @@ suite "AME certificate codec":
   # {.testKind: tkEdgeCase.}
   test "an incomplete certificate never encodes":
     var
-      certificate: AmeIdentityCertificate
+      certificate: AmeIdentityCertificate = default(AmeIdentityCertificate)
     expect ValueError:
       discard encodeAmeIdentityCertificate(certificate)
 
@@ -169,7 +169,7 @@ suite "carrier chosen while running":
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 1, 2, 3, 4, 5, 6, 7, 8, 9]
       frame: ByteSeq = @[]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     frame = sealAmeFrame(sender, acrTcp, payload)
     opened = openAmeFrame(receiver, acrTcp, frame)
     check opened.ok
@@ -184,7 +184,7 @@ suite "carrier chosen while running":
       receiver: AmeSession = initAmeSession(apiAuth(aerResponder),
         peerTrustRequired = false)
       payload: ByteSeq = @[byte 40, 41, 42]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     opened = openAmeFrame(receiver, acrDac,
       sealAmeFrame(sender, acrDac, payload))
     check opened.ok
@@ -231,7 +231,7 @@ suite "rotation triggers driven by the clock":
   test "an elapsed-time trigger becomes due exactly at its threshold":
     var
       connection: AmeSession = apiUpgradeSession()
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     ## The clock is fed as a READING, not as a delta -- unlike the byte
     ## counter next door, which accumulates. Feeding 4999 and then 1 would
     ## leave the session at one millisecond, not five seconds.
@@ -251,7 +251,7 @@ suite "rotation triggers driven by the clock":
   test "the offer stands until it is claimed, and the clock never runs back":
     var
       connection: AmeSession = apiUpgradeSession()
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     connection.path.setTimeTrigger(1, 100'u64)
     step = connection.feedAmeElapsedMs(100'u64)
     check step.available
@@ -270,7 +270,7 @@ suite "rotation triggers driven by the clock":
   test "the clock and the byte counter drive the same path independently":
     var
       connection: AmeSession = apiUpgradeSession()
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     ## Time alone must not move a tier whose trigger counts bytes.
     connection.path.setTrigger(1, 4'u64)
     step = connection.feedAmeElapsedMs(1_000_000'u64)
@@ -282,7 +282,7 @@ suite "rotation triggers driven by the clock":
   test "a manual tier waits for a request, and a disabled one never comes":
     var
       connection: AmeSession = apiUpgradeSession()
-      step: AmeTierStep
+      step: AmeTierStep = default(AmeTierStep)
     connection.path.setManualTrigger(1)
     check not connection.feedAmeElapsedMs(9_000_000'u64).available
     check not connection.recordTransferredBytes(
@@ -344,14 +344,18 @@ suite "abandoning a rotation midway":
       client: AmeSession = apiUpgradeSession(aerInitiator)
       server: AmeSession = apiUpgradeSession(aerResponder)
       payload: ByteSeq = @[byte 5, 5, 5, 5]
-      opened: AmeOpenResult
+      opened: AmeOpenResult = default(AmeOpenResult)
     installSignaturePeers(client, server)
     ## Abort after answering but before the initiator finishes, which is the
     ## case a timeout actually produces: both sides are still on epoch 1 and
     ## ordinary traffic has to keep flowing as though nothing happened.
+    ## A timeout aborts BOTH ends: the requester drops its request too,
+    ## because until it does it may not send anything (see "a requester
+    ## sends nothing until its request is answered").
     discard answerAmeExchangeFrame(server, acrTcp,
       beginAmeExchangeFrame(client, acrTcp, upgradeRequest(client)))
     cancelIncomingAmeSessionExchange(server)
+    cancelAmeSessionExchange(client)
     check client.auth.current.epochId == 1'u32
     check server.auth.current.epochId == 1'u32
     opened = openAmeFrame(server, acrTcp, sealAmeFrame(client, acrTcp, payload))
