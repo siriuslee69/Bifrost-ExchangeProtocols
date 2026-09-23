@@ -17,10 +17,19 @@ const
     "libsodium.dll"
   ]
 
-version       = "0.1.0"
-author        = "siriuslee69"
-description   = "Bifrost transport, encryption, and wire protocols."
-license       = "UNLICENSED"
+## Name, version, description, license and author live in ONE place:
+## [project] in configs/default.toml. nix/package.nix reads the same table.
+when fileExists(thisDir() & "/../Nimble-Tasks/src/preset.nims"):
+  include "../Nimble-Tasks/src/preset.nims"
+elif fileExists(thisDir() & "/submodules/Nimble-Tasks/src/preset.nims"):
+  include "submodules/Nimble-Tasks/src/preset.nims"
+else:
+  {.error: "Nimble-Tasks/src/preset.nims not found: update the Nimble-Tasks submodule".}
+
+version       = projectValue("version")
+author        = projectValue("author")
+description   = projectValue("description")
+license       = projectValue("license")
 srcDir        = "src"
 bin           = @[]
 requires "nim >= 1.6.0"
@@ -377,15 +386,28 @@ proc defaultOutputArgs(filePath: string; extraArgs: openArray[string]): seq[stri
       outPath = t.replace('\\', '/')
       result = @["-o:" & outPath]
 
+proc commandPreset(): string =
+  ## The `-d:preset=...` given to nimble (e.g. `nimble test -d:preset=iot`),
+  ## handed on to every nim call below; "" when none was given.
+  var
+    i: int = 1
+  while i <= paramCount():
+    if paramStr(i).startsWith("-d:preset=") or
+        paramStr(i).startsWith("--define:preset="):
+      return paramStr(i)
+    i = i + 1
+
 proc runNim(mode: string; filePath: string;
     extraArgs: openArray[string] = []) =
   ## Execute a Nim command with resolved dependency paths.
   let root = getCurrentDir()
-  let extraKey = @extraArgs.join("\x1f")
+  let extraKey = @extraArgs.join("\x1f") & commandPreset()
   var args: seq[string] = @[mode, "--nimcache:" &
     normalizePath(cacheDirFor(root, mode, filePath, extraKey))]
   args.add(depPaths(root))
   args.add(defaultOutputArgs(filePath, extraArgs))
+  if commandPreset().len > 0:
+    args.add(commandPreset())
   args.add(extraArgs)
   args.add(normalizePath(filePath))
   runCommand("nim", args)
@@ -482,6 +504,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
     runNim("c", "evaluation/tests/test_xhkdf.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_handshake_flags.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_preset_layout.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_session.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_header_protection.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_handshake_package.nim", @["-r"])
@@ -557,6 +580,11 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
     "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac",
     "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
   ])
+  ## Single slots, not families: LightSaber, Kyber768, Falcon512.
+  runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
+    "-d:bifrostKems=lightsaber,kyber768,x25519",
+    "-d:bifrostSigs=ed25519,falcon512",
+    "-r"])
   ## XHKDF with and without Gimli: the default branch mask must shrink to
   ## BLAKE3 and still derive, and the full build must keep the GB3HKDF bytes.
   runNim("c", "evaluation/tests/test_xhkdf.nim", @["-r"])
@@ -573,6 +601,35 @@ task testHandshakeFlags, "Run the AME handshake-mode tests under each -d:bifrost
     else:
       runNim("c", "evaluation/tests/test_ame_handshake_flags.nim", @[
         "-d:bifrostHandshakes=" & hs, "-r"])
+
+task testPresetLayout, "Check that a preset's pinned layout always gets its algorithms":
+  ## A pinned layout naming a family the flags left out must still build
+  ## (-f: warnings are printed only when a module is really compiled, so
+  ## every probe forces a full build rather than trusting the cache)
+  ## (with a warning), must fail under -d:bifrostStrictConfig, and a Saber
+  ## slot larger than -d:saberMaxRank must stop the build.
+  const
+    fx: string = "evaluation/tests/fixtures/presets/"
+    t: string = "evaluation/tests/test_ame_preset_layout.nim"
+  var
+    probe: tuple[output: string, exitCode: int] = ("", 0)
+  runNim("c", t, @["-r"])
+  runNim("c", t, @["-d:preset=iot", "-r"])
+  runNim("c", t, @["-d:preset=iot-min", "-r"])
+  runNim("c", t, @["-d:preset=" & fx & "adds_falcon_gimli.toml", "-r"])
+  probe = gorgeEx(shellCommand("nim", @["c", "-f", "-r", "-d:preset=" & fx &
+    "adds_kyber.toml", "-o:build/preset_probe_kyber", t]))
+  if probe.exitCode != 0 or not probe.output.contains("uses kyber768, which -d:bifrostKems left out"):
+    quit("a pinned Kyber layout did not build with its warning:\n" & probe.output, 1)
+  probe = gorgeEx(shellCommand("nim", @["c", "-f", "-d:bifrostStrictConfig",
+    "-d:preset=" & fx & "adds_kyber.toml", "-o:build/preset_probe_strict", t]))
+  if probe.exitCode == 0:
+    quit("-d:bifrostStrictConfig still added a family the flags left out", 1)
+  probe = gorgeEx(shellCommand("nim", @["c", "-f", "-d:preset=" & fx &
+    "firesaber_rank2.toml", "-o:build/preset_probe_rank", t]))
+  if probe.exitCode == 0 or not probe.output.contains("saberMaxRank=2 is too small"):
+    quit("a FireSaber layout built under saberMaxRank=2", 1)
+  echo "OK | pinned layouts: added with a warning, refused when strict or too large"
 
 task testDacFlag, "Check that -d:bifrostDac=off removes the adaptive layer":
   ## The wire and the fixed profiles must still build with the flag off, the

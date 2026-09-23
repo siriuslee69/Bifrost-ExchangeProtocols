@@ -35,7 +35,7 @@ const
     "CONTRIBUTING.md",
     "bifrost_exchange_protocols.nimble",
     "config.nims",
-    "config.toml",
+    "configs/default.toml",
     "userconfig.toml.template"
   ]
   repoScanExts = [

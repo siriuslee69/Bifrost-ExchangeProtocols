@@ -1,8 +1,17 @@
 # Progress
 
-Commit Message: GB3HKDF -> XHKDF with a branch bit mask; -d:tyrSimd through the shared tyr_simd.nims
+Commit Message: configs/ presets are the one source; single-slot KEM/signature selection; pinned layouts always compile
 
 Features (Planned):
+- PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
+  the pins move, a fresh clone (and the nix build, which uses submodules/)
+  lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the
+  .nimble file stops with "preset.nims not found". Sibling checkouts work.
+- Pinned layouts are hex (`ameLayoutHex`). Readable lists of slot names in
+  the preset ([runtime.ame] kems = ["lightsaber", "x25519"] ...) would
+  spare the decoding comments; needs the runtime parser to read lists.
+- Otter reads `defaultBifrostConfig` (returns the compiled-in preset
+  constant) as a placeholder. It is finished; the heuristic misfires.
 - Kyber has the same fixed-size buffers Saber had (Kyber768 row in the
   README lowmem table: 45 KB stack). A `-d:kyberMaxRank` in Tyr, like
   `-d:saberMaxRank`, would bring it close to LightSaber.
@@ -68,6 +77,22 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- configs/ is the one source (2026-09-23). default.toml: [project] (read by
+  the .nimble and nix), every build switch with every accepted word, and
+  [runtime] (the old root config.toml, now deleted). Presets iot, iot-min,
+  server. `nim c -d:preset=iot`; nimble tasks forward it.
+  * defaultBifrostConfig() = the presets' [runtime], parsed while compiling.
+    The runtime parser reads preset files and plain /etc files alike.
+  * A layout pinned in [runtime.ame] always gets its algorithms: missing
+    slots are compiled with a warning (error under -d:bifrostStrictConfig);
+    preset_layout.nim, test_ame_preset_layout, nimble testPresetLayout.
+  * bifrostKems / bifrostSigs take single slots (lightsaber, mceliece6688,
+    falcon512 ...) as well as families. config.nims derives Tyr's
+    -d:saberMaxRank from the chosen Saber slots, so presets no longer set it.
+  * initAmeSession now takes its inbox capacity and peerTrustRequired
+    defaults from the active config (they were hard-coded before).
+  * nix: module option `preset` (the files in configs/), /etc file = the
+    preset's [runtime] + settings; package built with -d:preset.
 - Tiny-device builds (2026-09-23). Measured with `nimble benchLowMem`
   (table in README "Tiny devices"): AM1P+S with LightSaber + X25519 +
   Ed25519 runs in about 66 KB RAM, AM1P with X25519 in 41 KB.

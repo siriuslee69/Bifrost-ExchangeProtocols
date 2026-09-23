@@ -49,19 +49,15 @@ const
   buildDir: string = "build/lowmem"
   beginMark: string = "<!-- lowmem:begin -->"
   endMark: string = "<!-- lowmem:end -->"
-  ## The flags every tiny row shares. Each one, and what it saves, is
-  ## explained in README.md "Tiny devices".
-  tinyFlags: seq[string] = @["-d:danger", "--opt:size", "-d:useMalloc",
-    "-d:noSignalHandler", "--panics:on", "--passC:-flto", "--passL:-flto",
-    "--passC:-ffunction-sections", "--passC:-fdata-sections",
-    "--passL:-Wl,--gc-sections", "--passC:-fno-asynchronous-unwind-tables",
-    "--passC:-fno-unwind-tables"]
-  slimFlags: seq[string] = @["-d:bifrostSigs=ed25519",
-    "-d:bifrostSymmetric=blake3,chacha20", "-d:bifrostCarriers=dac",
-    "-d:bifrostDac=off"]
-  lightSaber: seq[string] = @["-d:bifrostKems=saber,x25519",
-    "-d:saberMaxRank=2"]
-  avx2Flags: seq[string] = @["-d:tyrSimd=avx2"]
+  ## Every row starts from a preset in configs/ -- the same file a real
+  ## device build uses -- plus only the switches that row changes. So the
+  ## table measures exactly what `nim c -d:preset=iot` ships.
+  iot: string = "-d:preset=iot"
+  iotMin: string = "-d:preset=iot-min"
+  allFamilies: seq[string] = @["-d:bifrostKems=", "-d:bifrostSigs=",
+    "-d:bifrostSymmetric=", "-d:bifrostCarriers=", "-d:bifrostHandshakes=",
+    "-d:bifrostDac=on"]
+    ## Undoes iot's family choices while keeping its compiler settings.
   referenceProfile: int = 6
     ## Index of the profile whose modules are broken down (AM1P+S, LightSaber).
 
@@ -70,32 +66,26 @@ proc profiles(): seq[LowmemProfile] {.role: configurator.} =
   result = @[
     LowmemProfile(name: "AM1P, whole library, -d:release",
       flags: @["-d:release", "-d:useMalloc", "-d:lowmemMode=psk"]),
-    LowmemProfile(name: "AM1P, whole library, tiny flags",
-      flags: tinyFlags & @["-d:lowmemMode=psk"]),
-    LowmemProfile(name: "AM1P, X25519",
-      flags: tinyFlags & slimFlags & @["-d:bifrostKems=x25519",
-        "-d:bifrostHandshakes=am1p", "-d:lowmemMode=psk"]),
+    LowmemProfile(name: "AM1P, whole library, iot compiler",
+      flags: @[iot] & allFamilies & @["-d:lowmemMode=psk"]),
+    LowmemProfile(name: "AM1P, X25519            [iot-min]",
+      flags: @[iotMin, "-d:lowmemMode=psk"]),
     LowmemProfile(name: "AM1P, Kyber768 + X25519",
-      flags: tinyFlags & slimFlags & @["-d:bifrostKems=kyber,x25519",
-        "-d:bifrostHandshakes=am1p", "-d:lowmemMode=psk"]),
+      flags: @[iotMin, "-d:bifrostKems=kyber,x25519", "-d:lowmemMode=psk"]),
     LowmemProfile(name: "AM1P, LightSaber + X25519",
-      flags: tinyFlags & slimFlags & lightSaber &
-        @["-d:bifrostHandshakes=am1p", "-d:lowmemMode=psk"]),
-    LowmemProfile(name: "AM1P or AM1P+S, LightSaber + X25519",
-      flags: tinyFlags & slimFlags & lightSaber &
-        @["-d:bifrostHandshakes=am1p,am1ps", "-d:lowmemMode=pskSig"]),
+      flags: @[iot, "-d:bifrostHandshakes=am1p", "-d:lowmemMode=psk"]),
+    LowmemProfile(name: "AM1P or AM1P+S, LightSaber   [iot]",
+      flags: @[iot, "-d:lowmemMode=pskSig"]),
     LowmemProfile(name: "AM1P+S, LightSaber + X25519, Ed25519",
-      flags: tinyFlags & slimFlags & lightSaber &
-        @["-d:bifrostHandshakes=am1ps", "-d:lowmemMode=pskSig"]),
+      flags: @[iot, "-d:bifrostHandshakes=am1ps", "-d:lowmemMode=pskSig"]),
     LowmemProfile(name: "AM1S, LightSaber + X25519, Ed25519",
-      flags: tinyFlags & slimFlags & lightSaber &
-        @["-d:bifrostHandshakes=am1s", "-d:lowmemMode=sig"]),
-    LowmemProfile(name: "AM1P+S, LightSaber, saberMaxRank=4",
-      flags: tinyFlags & slimFlags & @["-d:bifrostKems=saber,x25519",
-        "-d:bifrostHandshakes=am1ps", "-d:lowmemMode=pskSig"]),
+      flags: @[iot, "-d:bifrostHandshakes=am1s", "-d:lowmemMode=sig"]),
+    LowmemProfile(name: "AM1P+S, LightSaber, whole Saber family",
+      flags: @[iot, "-d:bifrostHandshakes=am1ps", "-d:bifrostKems=saber,x25519",
+        "-d:lowmemMode=pskSig"]),
     LowmemProfile(name: "AM1P+S, LightSaber, AVX2",
-      flags: tinyFlags & slimFlags & lightSaber & avx2Flags &
-        @["-d:bifrostHandshakes=am1ps", "-d:lowmemMode=pskSig"])]
+      flags: @[iot, "-d:bifrostHandshakes=am1ps", "-d:tyrSimd=avx2",
+        "-d:lowmemMode=pskSig"])]
 
 proc outName(i: int): string {.role: helper.} =
   ## i: profile index -> its own program path, so builds never collide.
@@ -337,7 +327,7 @@ proc main() {.role: metaOrchestrator.} =
     return
   createDir(repoRoot / buildDir)
   while i < P.len:
-    if P[i].flags.contains("-d:avx2") and not hasAvx2():
+    if P[i].flags.contains("-d:tyrSimd=avx2") and not hasAvx2():
       R.add(LowmemRow(name: P[i].name, note: "skipped: no AVX2 on this CPU"))
     else:
       R.add(measure(P[i], i))

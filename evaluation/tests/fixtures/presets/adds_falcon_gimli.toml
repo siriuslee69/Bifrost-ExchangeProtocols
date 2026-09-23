@@ -1,0 +1,13 @@
+# Test fixture: the layout pins a Falcon-512 signature slot and a GimliXof
+# KDF slot, the flags compile only Ed25519 and BLAKE3/ChaCha20. The build
+# must add falcon and gimli and warn about both.
+[define]
+bifrostKems = "saber,x25519"
+bifrostSigs = "ed25519"
+bifrostSymmetric = "blake3,chacha20"
+saberMaxRank = 2
+
+[runtime.ame]
+#   02 | 02 0b 0f | 01 10 | 01 10 | 01 10 | 01 50    | 01 30
+#        LightSaber cipher  MAC     hash    Falcon512  GimliXof
+ameLayoutHex = "02020b0f01100110011001500130"

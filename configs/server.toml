@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# server <- a machine that serves many peers: every family, native SIMD
+# ---------------------------------------------------------------------------
+#
+#   nim c -d:preset=server app.nim
+#
+# Uses whatever vector code the BUILDING machine has (`native`). Build on
+# the machine that runs it, or name the level: -d:tyrSimd=avx2.
+
+[preset]
+name = "server"
+description = "Full library, native SIMD, speed-optimised, threads on."
+
+[nim]
+opt = "speed"
+threads = true
+
+[define]
+tyrSimd = "native"

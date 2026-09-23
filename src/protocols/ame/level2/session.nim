@@ -763,8 +763,8 @@ proc initAmeSession*(a: AmeAuthPackage,
     rootLaneId: uint32 = 1'u32, laneId: uint32 = 5'u32,
     pathLane: DacPathLane = dplCleanPath,
     messageClass: AmeMessageClass = amcUserdata,
-    inboxCapacity: int = defaultAmeInboxCapacity,
-    peerTrustRequired: bool = true,
+    inboxCapacity: int = currentBifrostConfig().defaultAmeInboxCapacity,
+    peerTrustRequired: bool = currentBifrostConfig().peerTrustRequired,
     peerTrust: AmePeerTrustResult = default(AmePeerTrustResult)):
     AmeSession {.role: orchestrator.} =
   ## a/path/session/lane/runtime: exact connection configuration.
@@ -823,8 +823,8 @@ proc initAmeSession*(a: AmeAuthPackage,
     sessionId: uint64 = 0'u64, rootLaneId: uint32 = 1'u32,
     laneId: uint32 = 5'u32, pathLane: DacPathLane = dplCleanPath,
     messageClass: AmeMessageClass = amcUserdata,
-    inboxCapacity: int = defaultAmeInboxCapacity,
-    peerTrustRequired: bool = true,
+    inboxCapacity: int = currentBifrostConfig().defaultAmeInboxCapacity,
+    peerTrustRequired: bool = currentBifrostConfig().peerTrustRequired,
     peerTrust: AmePeerTrustResult = default(AmePeerTrustResult)):
     AmeSession {.role: configurator.} =
   ## a/session/lane/runtime: exact auth package with default AME triggers.

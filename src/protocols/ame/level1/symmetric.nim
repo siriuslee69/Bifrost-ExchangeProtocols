@@ -28,6 +28,7 @@
 import ../../types
 import ../types
 import ./symmetric/types as sym_types
+import ./preset_layout
 import runePragmas
 
 export sym_types
@@ -35,8 +36,25 @@ export sym_types
 const
   bifrostSymmetric* {.strdefine.}: string = ""
     ## Comma-separated symmetric primitives to compile. Empty is all.
-  ameSymBuilt* = parseAmeSymPrimitives(bifrostSymmetric)
-    ## The primitives this build actually carries. Always includes BLAKE3.
+  symAddedByPreset =
+    presetSymPrimitives - parseAmeSymPrimitives(bifrostSymmetric)
+    ## Primitives the preset's pinned layout needs that the flag left out.
+  ameSymBuilt* = parseAmeSymPrimitives(bifrostSymmetric) + presetSymPrimitives
+    ## The primitives this build actually carries. Always includes BLAKE3,
+    ## plus whatever the pinned layout names (see preset_layout.nim).
+
+proc symListName(P: set[AmeSymPrimitive]): string {.compileTime,
+    role: helper.} =
+  ## P: primitives -> "gimli, sha3" for the build message.
+  for p in P:
+    result.add((if result.len > 0: ", " else: "") & ameSymPrimitiveName(p))
+
+when symAddedByPreset != {} and defined(bifrostStrictConfig):
+  {.error: presetAddedMessage("bifrostSymmetric",
+    symListName(symAddedByPreset)).}
+elif symAddedByPreset != {}:
+  {.warning: presetAddedMessage("bifrostSymmetric",
+    symListName(symAddedByPreset)).}
 
 import ./symmetric/blake3 as ame_blake3
 export ame_blake3

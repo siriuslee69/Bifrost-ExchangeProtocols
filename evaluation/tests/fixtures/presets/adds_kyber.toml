@@ -1,0 +1,8 @@
+# Test fixture: the layout pins Kyber768 + X25519, the flags compile only
+# Saber + X25519. The build must add Kyber and warn (error when strict).
+[define]
+bifrostKems = "saber,x25519"
+
+[runtime.ame]
+#   02 | 02 08 0f | ...   KEMs: Kyber768, X25519  (flags: saber family, x25519)
+ameLayoutHex = "0202080f01100110011001100110"

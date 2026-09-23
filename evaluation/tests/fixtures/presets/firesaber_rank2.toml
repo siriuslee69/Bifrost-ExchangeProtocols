@@ -1,0 +1,9 @@
+# Test fixture: the layout pins FireSaber, but saberMaxRank = 2 sizes Tyr's
+# arrays for LightSaber. Compiling more cannot fix that: the build must stop.
+[define]
+bifrostKems = "saber,x25519"
+saberMaxRank = 2
+
+[runtime.ame]
+#   02 | 02 01 0f | ...   KEMs: FireSaber, X25519
+ameLayoutHex = "0202010f01100110011001100110"

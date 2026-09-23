@@ -61,19 +61,35 @@ nimble install webui
 **Where configuration lives.**
 
 ```text
-config.toml                <- shipped defaults
+configs/default.toml       <- THE config: name + version, every build switch,
+                              and the start values ([runtime])
+configs/iot.toml, ...      <- presets: only what differs from default.toml
 userconfig.toml.template   <- copy to userconfig.toml for local overrides
 ```
 
-`config.toml` stays unchanged unless a protocol default changes. Local
-changes belong in `userconfig.toml`, which is gitignored.
+One file controls the rest:
 
-The library reads no config file on its own. The program names the files and
-their order. `parseBifrostConfigText` takes a starting config, so the second
-file overrides only the keys it names:
+```text
+configs/default.toml --+--> [project]  -> bifrost_exchange_protocols.nimble, nix
+configs/<preset>.toml -+--> [nim] [define] [passC/L] -> the build (config.nims)
+                       +--> [runtime]  -> compiled in as defaultBifrostConfig(),
+                                          and /etc/bifrost/config.toml via nix
+```
+
+```text
+nim c app.nim                      configs/default.toml
+nim c -d:preset=iot app.nim        default.toml, then iot.toml over it
+nimble test -d:preset=iot          tasks pass the preset on
+nim c -d:preset=iot -d:tyrSimd=avx2 app.nim    the command line wins
+```
+
+The runtime values are compiled in, so a program needs no file at all. A
+program that wants to read one at start-up names it; the second file
+overrides only the keys it names. A preset file reads the same way (its
+build sections are skipped):
 
 ```nim
-var cfg = loadBifrostConfigFile("config.toml")     # shipped defaults
+var cfg = defaultBifrostConfig()                   # the preset, compiled in
 if fileExists("userconfig.toml"):
   cfg = parseBifrostConfigText(readFile("userconfig.toml"), cfg)
 applyBifrostConfig(cfg)                            # now the library uses it
@@ -94,8 +110,10 @@ peerTrustRequired            true      keep true on anything reachable
 fomkePregeneration           false     see "Preparing ahead"
 fomkePregenerationMessages   8         yes (1 .. 4096)
 fomkeReorderCeiling          64        yes (4 .. 4096), see FOMKE
-ameLayoutHex                 (hex)     only together with every endpoint
-ameInitialTierHex            (hex)     only together with every endpoint
+ameLayoutHex                 ""        "" = derived from the build; a value
+                                       pins it (every algorithm in it is then
+                                       compiled, see "Tiny devices")
+ameInitialTierHex            ""        only together with every endpoint
 ```
 
 ## Definitions ✦
@@ -422,11 +440,15 @@ nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
 +---------------------------+-------------------------+---------------------+
 | flag                      | accepted values         | default (no flag)   |
 +---------------------------+-------------------------+---------------------+
-| -d:bifrostKems=<list>     | x25519 kyber saber      | all six families    |
+| -d:bifrostKems=<list>     | x25519 kyber saber      | every slot          |
 |                           | ntru frodo mceliece     |                     |
+|                           | or one slot: lightsaber |                     |
+|                           | kyber768 mceliece6688 . |                     |
+|                           | (configs/default.toml)  |                     |
 +---------------------------+-------------------------+---------------------+
-| -d:bifrostSigs=<list>     | ed25519 dilithium       | all four families   |
-|                           | falcon sphincs          |                     |
+| -d:bifrostSigs=<list>     | ed25519 dilithium       | every slot          |
+|                           | falcon sphincs, or one  |                     |
+|                           | slot: falcon512 ...     |                     |
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostSymmetric=      | blake3 sha3 gimli       | all seven           |
 |   <list>                  | chacha20 aes poly1305   | primitives          |
@@ -483,6 +505,7 @@ Check all slim profiles at once:
 ```text
 nimble testMinimalAme        # algorithm and carrier flags
 nimble testHandshakeFlags    # each AM1 mode alone, and mixes
+nimble testPresetLayout      # a pinned layout always gets its algorithms
 ```
 
 ### Tiny devices (under 100 KB of RAM) 🌱
@@ -499,19 +522,21 @@ Every flag below passes straight through Bifrost into Tyr. Nim flags are
 global, so Tyr sees them without Bifrost doing anything:
 
 ```text
-  nim c  -d:bifrostKems=saber,x25519  -d:saberMaxRank=2  -d:tyrSimd=avx2  app.nim
-           |                            |                  |
-           Bifrost: which KEM families  Tyr: Saber arrays  Tyr + SIMD-Nexus:
-           are compiled at all          sized for rank 2   vector code (omit
-                                                           = scalar)
+  nim c  -d:bifrostKems=lightsaber,x25519      -d:tyrSimd=avx2  app.nim
+           |                                     |
+           Bifrost: exactly these two slots.     Tyr + SIMD-Nexus: vector
+           config.nims also tells Tyr to size    code (omit = scalar)
+           its Saber arrays for LightSaber
+           (-d:saberMaxRank=2, 8 KB -> 2 KB)
 ```
 
 ```text
 +------------------------------+-------------------------------------------+
 | flag                         | what it does on a tiny device             |
 +------------------------------+-------------------------------------------+
-| -d:bifrostKems / Sigs /      | leave out whole algorithm families        |
-|   Symmetric / Carriers       | (see the table above)                     |
+| -d:bifrostKems / Sigs /      | keep only the named families or single    |
+|   Symmetric / Carriers       | slots (lightsaber, mceliece6688, ...);    |
+|                              | every word: configs/default.toml          |
 | -d:bifrostDac=off            | leave out DAC's adaptive layer; the DAC   |
 |                              | wire format itself stays                  |
 | -d:bifrostHandshakes=am1p    | keep only the named AM1 modes (any list). |
@@ -519,11 +544,10 @@ global, so Tyr sees them without Bifrost doing anything:
 |                              | signature routine: Ed25519 is not linked. |
 |                              | A left-out mode does not compile, and one |
 |                              | arriving from the wire is refused.        |
-| -d:saberMaxRank=2            | Tyr sizes every Saber matrix for          |
-|                              | LightSaber: 8 KB -> 2 KB each. About      |
-|                              | 14 KB less stack. Saber and FireSaber     |
-|                              | are then refused with an error naming     |
-|                              | this flag. (3 keeps Saber too.)           |
+| bifrostKems=lightsaber       | also sizes Tyr's Saber matrices for       |
+|   (no separate flag)         | LightSaber: 8 KB -> 2 KB each, about      |
+|                              | 14 KB less stack. config.nims derives     |
+|                              | -d:saberMaxRank from the chosen slots.    |
 | -d:tyrSimd=scalar            | plain code, one value at a time: the      |
 |   (the default)              | smallest, runs on every CPU. `avx2`,      |
 |                              | `neon`, `native` switch on vector code;   |
@@ -545,6 +569,36 @@ global, so Tyr sees them without Bifrost doing anything:
 +------------------------------+-------------------------------------------+
 ```
 
+You do not type any of this. Every switch above is written down once, in
+`configs/iot.toml` (AM1P or AM1P+S, LightSaber) and `configs/iot-min.toml`
+(AM1P, X25519 only):
+
+```text
+nim c -d:preset=iot firmware.nim
+```
+
+**Pinned bitmasks can never lack their algorithms.** `iot.toml` also pins
+the AME layout (`[runtime.ame] ameLayoutHex`: which algorithms a session
+offers) next to the flags that compile them, so the two sit in one file. If
+they ever disagree, the build does not quietly produce a program that
+cannot run its own layout:
+
+```text
+layout names ...           flags compile ...      the build
+-------------------------  ---------------------  ---------------------------
+Kyber768                   saber, x25519          compiles kyber too, and
+                                                  prints a warning naming it
+(same)  + -d:bifrostStrictConfig                  stops with an error instead
+FireSaber                  lightsaber, x25519     compiles FireSaber too, and
+                                                  sizes Saber arrays for it
+                                                  (saberMaxRank follows)
+FireSaber                  an explicit            stops: Tyr's arrays would be
+                           saberMaxRank = 2       too small for it
+```
+
+Added families use the same `tyrSimd` as the rest of the build. The check
+runs while compiling (`src/protocols/ame/level1/preset_layout.nim`).
+
 The numbers below are written by `nimble benchLowMem`. It builds
 `evaluation/benchmarks/lowmem/lowmem_probe.nim` once per profile. The probe
 runs one whole handshake and seals and opens one frame. Then the numbers
@@ -556,16 +610,16 @@ stack are an upper bound: a device holds one end.
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
 | profile                                | program   | RAM total | heap peak | stack     | globals   |
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
-| AM1P, whole library, -d:release        | 1020.4 KB |  260.9 KB |   26.6 KB |   43.0 KB |  191.3 KB |
-| AM1P, whole library, tiny flags        |  385.1 KB |   75.9 KB |   26.6 KB |   41.5 KB |    7.7 KB |
-| AM1P, X25519                           |  167.8 KB |   41.0 KB |   16.2 KB |   21.4 KB |    3.4 KB |
-| AM1P, Kyber768 + X25519                |  187.1 KB |   87.4 KB |   38.8 KB |   44.8 KB |    3.8 KB |
-| AM1P, LightSaber + X25519              |  181.5 KB |   57.6 KB |   26.7 KB |   27.1 KB |    3.8 KB |
-| AM1P or AM1P+S, LightSaber + X25519    |  206.8 KB |   65.9 KB |   34.3 KB |   27.6 KB |    4.1 KB |
-| AM1P+S, LightSaber + X25519, Ed25519   |  207.0 KB |   65.8 KB |   34.3 KB |   27.4 KB |    4.1 KB |
-| AM1S, LightSaber + X25519, Ed25519     |  195.6 KB |   61.3 KB |   30.1 KB |   27.5 KB |    3.8 KB |
-| AM1P+S, LightSaber, saberMaxRank=4     |  207.0 KB |   79.6 KB |   34.3 KB |   41.3 KB |    4.1 KB |
-| AM1P+S, LightSaber, AVX2               |  210.1 KB |   65.7 KB |   34.2 KB |   27.4 KB |    4.1 KB |
+| AM1P, whole library, -d:release        | 1021.2 KB |  261.3 KB |   26.6 KB |   43.4 KB |  191.3 KB |
+| AM1P, whole library, iot compiler      |  384.1 KB |   76.3 KB |   26.6 KB |   41.9 KB |    7.7 KB |
+| AM1P, X25519            [iot-min]      |  166.8 KB |   34.2 KB |    9.0 KB |   21.9 KB |    3.3 KB |
+| AM1P, Kyber768 + X25519                |  186.3 KB |   87.6 KB |   38.8 KB |   45.1 KB |    3.8 KB |
+| AM1P, LightSaber + X25519              |  179.9 KB |   57.8 KB |   26.7 KB |   27.3 KB |    3.8 KB |
+| AM1P or AM1P+S, LightSaber   [iot]     |  205.7 KB |   66.0 KB |   34.3 KB |   27.7 KB |    4.0 KB |
+| AM1P+S, LightSaber + X25519, Ed25519   |  206.2 KB |   66.0 KB |   34.3 KB |   27.7 KB |    4.0 KB |
+| AM1S, LightSaber + X25519, Ed25519     |  195.4 KB |   61.7 KB |   30.1 KB |   27.8 KB |    3.8 KB |
+| AM1P+S, LightSaber, whole Saber family |  206.2 KB |   79.9 KB |   34.3 KB |   41.6 KB |    4.0 KB |
+| AM1P+S, LightSaber, AVX2               |  209.8 KB |   66.0 KB |   34.2 KB |   27.7 KB |    4.0 KB |
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
 ```
 
@@ -575,24 +629,24 @@ Code per module, profile "AM1P+S, LightSaber + X25519, Ed25519":
 +------------------------------------------+-----------+
 | module                                   | code      |
 +------------------------------------------+-----------+
-| Bifrost AME handshake     (ame/level3)   |   39.6 KB |
-| Bifrost AME session/frame (ame/level2)   |   31.4 KB |
-| Bifrost AME suites/keys   (ame/level1)   |   26.0 KB |
-| the probe itself                         |   19.5 KB |
-| Bifrost FOMKE ratchet     (fomke)        |   12.4 KB |
-| Tyr Ed25519                              |   10.9 KB |
+| Bifrost AME handshake     (ame/level3)   |   41.8 KB |
+| Bifrost AME session/frame (ame/level2)   |   31.0 KB |
+| Bifrost AME suites/keys   (ame/level1)   |   23.8 KB |
+| the probe itself                         |   19.0 KB |
+| Bifrost FOMKE ratchet     (fomke)        |   12.3 KB |
+| Tyr Ed25519                              |   10.8 KB |
 | Tyr hashes (BLAKE3, SHA-3)               |    7.9 KB |
 | Tyr X25519                               |    6.7 KB |
-| C library / start-up                     |    4.6 KB |
 | Tyr Saber                                |    4.4 KB |
-| Tyr other (MACs, random, helpers)        |    4.1 KB |
-| Nim runtime (system)                     |    2.8 KB |
+| C library / start-up                     |    4.4 KB |
+| Tyr other (MACs, random, helpers)        |    4.0 KB |
+| Nim runtime (system)                     |    2.7 KB |
 | Tyr ciphers (ChaCha20)                   |    2.3 KB |
-| Nim runtime (std)                        |    0.9 KB |
+| Nim runtime (std)                        |    0.8 KB |
 | Bifrost AME bytes         (ame/level0)   |    0.8 KB |
 | Bifrost other                            |    0.4 KB |
 +------------------------------------------+-----------+
-| total named code                         |  174.8 KB |
+| total named code                         |  173.2 KB |
 +------------------------------------------+-----------+
 ```
 <!-- lowmem:end -->
@@ -1701,10 +1755,10 @@ matches. A forged message cannot widen the window. An honest endpoint on a
 reordering path widens it within a few messages.
 
 The window never exceeds the reorder ceiling (largest window, most held keys).
-The ceiling is fixed per session and comes from `config.toml`:
+The ceiling is fixed per session and comes from the preset (`configs/*.toml`):
 
 ```toml
-[fomke]
+[runtime.fomke]
 fomkeReorderCeiling = 64     # 4 .. 4096; held keys per lane, 32 B each
 ```
 
@@ -2546,8 +2600,8 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 - **"FOMKE skipped messages must be resolved before a KEM upgrade"**: held
   keys exist. The DAC relay erases them when a package ends; without the relay,
   call `discardAmeSessionSkipped`.
-- `fomkeReorderCeiling` outside 4 .. 4096 in `config.toml` refuses the whole
-  config at load time. Raise it for links that reorder heavily, not for loss:
+- `fomkeReorderCeiling` outside 4 .. 4096 in a preset or config file refuses
+  the whole config (at build time for a preset, at load time for a file). Raise it for links that reorder heavily, not for loss:
   a held key of a lost datagram is erased once it falls further behind than
   the reorder ceiling anyway.
 

@@ -1,0 +1,164 @@
+# ---------------------------------------------------------------------------
+# default <- every Bifrost build switch, at the value a plain build uses
+# ---------------------------------------------------------------------------
+#
+# Applied to EVERY build that names no other preset, so this file IS the
+# default: change a value here and `nim c app.nim` changes with it.
+#
+#   nim c app.nim                      this file
+#   nim c -d:preset=iot app.nim        configs/iot.toml instead
+#   nim c -d:preset=iot -d:tyrSimd=avx2 app.nim
+#                                      iot.toml, but the command line wins
+#   nimble test -d:preset=iot          nimble tasks hand the preset on
+#
+# The same file drives the nix build: nix/module.nix option `preset`.
+# Reader and full syntax: Nimble-Tasks/src/preset.nims.
+#
+#   section    becomes              "" / false means
+#   ---------  -------------------  ------------------------------------
+#   [nim]      --key:value          (line left out: compiler default)
+#   [define]   -d:key=value         not set -> the built-in default
+#   [passC]    --passC:<each flag>
+#   [passL]    --passL:<each flag>
+#   [runtime]  written over config.toml by the nix module (not a flag)
+
+[project]
+# Who this repository is. Read by the .nimble file (projectValue) and by
+# nix/package.nix + nix/module.nix (builtins.fromTOML). Only default.toml
+# carries it: a preset changes how a build is made, not which project it is.
+name = "bifrost-exchange-protocols"
+version = "0.1.0"
+description = "Bifrost transport, encryption, and wire protocols."
+license = "UNLICENSED"
+author = "siriuslee69"
+
+[preset]
+name = "default"
+description = "Full library, portable scalar code, every mode and family."
+
+[nim]
+# Left out on purpose, so tasks keep choosing -d:release themselves.
+# opt = "speed"          # none | speed | size
+# mm = "orc"             # orc | arc | refc
+# panics = false         # true: every Defect ends the program
+# threads = true
+# stackTrace = true
+
+[define]
+# -- algorithms (Bifrost). "" = every one. Otherwise a comma list of the
+#    words below: a FAMILY word takes all of its slots, a SLOT word exactly
+#    one. Only the families of the chosen slots are compiled, and only the
+#    chosen slots may run. Tyr's Saber arrays are sized for the largest
+#    Saber slot chosen (config.nims sets -d:saberMaxRank from it).
+#
+#    KEMs (bifrostKems)
+#    family    slot word      parameter set               wire id  level
+#    --------  -------------  --------------------------  -------  -----
+#    x25519    x25519         X25519                      0x0F     classic
+#    kyber     kyber768       Kyber768   (round 3)        0x08     3
+#              kyber1024      Kyber1024  (round 3)        0x03     5
+#    saber     lightsaber     LightSaber (rank 2)         0x0B     1
+#              saber3         Saber      (rank 3)         0x06     3
+#              firesaber      FireSaber  (rank 4)         0x01     5
+#    ntru      ntru509        NTRU-HPS-2048-509           0x0C     1
+#              ntru677        NTRU-HPS-2048-677           0x07     3
+#              ntru821        NTRU-HPS-4096-821           0x02     5
+#    frodo     frodo640       FrodoKEM-640-AES            0x0D     1
+#              frodo976       FrodoKEM-976-AES            0x09     3
+#              frodo1344      FrodoKEM-1344-AES           0x04     5
+#    mceliece  mceliece6688   Classic-McEliece-6688128f   0x0E     5
+#              mceliece6960   Classic-McEliece-6960119f   0x0A     5
+#              mceliece8192   Classic-McEliece-8192128f   0x05     5
+bifrostKems = ""
+#
+#    Signatures (bifrostSigs). Family words take every slot whose families
+#    are ALL named: "ed25519,falcon" includes the two hybrids.
+#    family     slot word          parameter set          wire id  needs
+#    ---------  -----------------  ---------------------  -------  --------
+#    ed25519    ed25519            Ed25519                0x01     ed25519
+#    dilithium  dilithium44        ML-DSA-44 / Dil. 2     0x02     dilithium
+#               dilithium65        ML-DSA-65 / Dil. 3     0x03     dilithium
+#               dilithium87        ML-DSA-87 / Dil. 5     0x04     dilithium
+#    falcon     falcon512          Falcon-512             0x05     falcon
+#               falcon1024         Falcon-1024            0x06     falcon
+#    sphincs    sphincs128f        SPHINCS+-SHAKE-128f    0x07     sphincs
+#    (hybrid)   ed25519falcon512   Ed25519 + Falcon-512   0x08     both
+#               ed25519falcon1024  Ed25519 + Falcon-1024  0x09     both
+bifrostSigs = ""
+#
+#    Symmetric (bifrostSymmetric) -- primitives; each serves several slots.
+#    BLAKE3 is always compiled (AME needs it for its own bookkeeping).
+#    word      slots it makes runnable (cipher / MAC / hash / KDF)
+#    --------  ---------------------------------------------------------
+#    blake3    MAC BLAKE3, hash BLAKE3, KDF BLAKE3
+#    chacha20  cipher XChaCha20, cipher ChaCha20
+#    aes       cipher AES-CTR
+#    gimli     cipher Gimli, MAC Gimli, hash GimliXof, KDF GimliXof,
+#              XHKDF's Gimli branch
+#    sha3      MAC SHA3, hash SHA3, hash SHAKE256, KDF SHAKE256,
+#              XHKDF's SHAKE256 branch
+#    poly1305  MAC Poly1305
+#    argon2    KDF Argon2id
+bifrostSymmetric = ""
+#
+# -- transport and handshake (Bifrost)
+bifrostCarriers = ""     # tcp dac
+bifrostHandshakes = ""   # am1a am1s am1p am1ps
+bifrostDac = ""          # "" / on = adaptive layer, off = fixed profile only
+ssl = false              # true: TLS through OpenSSL (transport/tls_ops)
+# -- passed through to Tyr
+tyrSimd = "scalar"       # scalar native sse2 avx2 aesni neon (a,b combine)
+saberHeapBuffers = false # true: Saber scratch on the heap, not the stack
+# -- general
+danger = false           # true: no run-time checks at all
+useMalloc = false        # true: C allocator (smaller heap on tiny devices)
+noSignalHandler = false  # true: no crash handler
+
+[passC]
+flags = []
+
+[passL]
+flags = []
+
+# ---------------------------------------------------------------------------
+# Runtime values. Compiled in as the program's defaults (defaultBifrostConfig),
+# written to /etc/bifrost/config.toml by the nix module, and readable at run
+# time with loadBifrostConfigFile("configs/default.toml").
+# ---------------------------------------------------------------------------
+[runtime]
+# Keep peerTrustRequired true for exposed services. Disable it only in local
+# tests or toy examples where peer authority verification is intentionally
+# absent.
+maxTcpFrameBytes = 16777216
+maxDacFrameBytes = 16777216
+defaultAmeInboxCapacity = 64
+defaultTimeoutMs = 4000
+peerTrustRequired = true
+
+[runtime.fomke]
+# Preparing message keys ahead of time cuts send latency. It also keeps the
+# keys for that many not-yet-sent messages in memory, so a machine seized
+# while the cache is full gives those messages up. Off unless you need it.
+fomkePregeneration = false
+fomkePregenerationMessages = 8
+# How many message keys each lane may hold for messages that arrive out of
+# order. Each kept key is 32 bytes:
+#   16 -> about 0.5 KB    64 -> about 2 KB    4096 -> about 128 KB
+# It is also the furthest back a late message may be and still open.
+# Allowed 4 .. 4096. Raise it for very lossy/reordering links; keep it small
+# on devices that can be seized.
+fomkeReorderCeiling = 64
+
+[runtime.ame]
+# The AME layout (which algorithms a session offers, in order) and the
+# initial tier (which of them are switched on). This is the ONE place these
+# bitmasks are set. "" = derive them from what this build compiles: the
+# strongest post-quantum KEM built + X25519, and so on (defaultAmeLayout).
+#
+# A preset that pins a layout here gets every algorithm in it compiled,
+# whatever [define] says -- with a warning naming what was added (an error
+# under -d:bifrostStrictConfig). See src/protocols/ame/level1/preset_layout.nim.
+#
+# Tier masks: KEM, cipher, MAC, hash, signature, KDF, each MSB-first.
+ameLayoutHex = ""
+ameInitialTierHex = ""

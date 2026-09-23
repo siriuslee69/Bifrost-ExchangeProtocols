@@ -87,6 +87,79 @@ else:
     "--init` (one level, NOT --recursive), or clone Rune-Pragmas next to " &
     "this repository."
 
+## Build presets: configs/default.toml always, plus configs/<name>.toml when
+## the build says -d:preset=<name>. One file per kind of device holds every
+## switch below (families, modes, SIMD, compiler options). The reader is
+## shared by every repo: Nimble-Tasks/src/preset.nims.
+when fileExists(thisDir() & "/../Nimble-Tasks/src/preset.nims"):
+  include "../Nimble-Tasks/src/preset.nims"
+elif fileExists(thisDir() & "/submodules/Nimble-Tasks/src/preset.nims"):
+  include "submodules/Nimble-Tasks/src/preset.nims"
+else:
+  proc presetValue(section, key, fallback: string): string = fallback
+  proc applyPreset() = echo "config.nims: Nimble-Tasks/src/preset.nims " &
+    "not found; configs/*.toml are ignored. Update the submodule."
+applyPreset()
+
+## Tyr's Saber arrays are sized for the largest Saber slot the build may
+## run (-d:saberMaxRank). That follows from the chosen slots, so it is
+## worked out here rather than set by hand:
+##
+##   -d:bifrostKems=...          pinned layout      -> saberMaxRank
+##   lightsaber,x25519           (none)                2   (2 KB matrices)
+##   saber3                      LightSaber            3
+##   saber  (the whole family)   anything              4   (8 KB matrices)
+##   ""     (every slot)         anything              4
+##
+## An explicit -d:saberMaxRank on the command line or in a preset wins.
+proc bifrostWordsRank(words: string): int =
+  ## words: the -d:bifrostKems value -> largest Saber rank it selects.
+  if words.strip().len == 0:
+    return 4
+  for w in words.split(','):
+    case w.strip().toLowerAscii()
+    of "saber", "firesaber": result = max(result, 4)
+    of "saber3": result = max(result, 3)
+    of "lightsaber": result = max(result, 2)
+    else: discard
+
+proc bifrostLayoutRank(hex: string): int =
+  ## hex: a pinned ameLayoutHex -> largest Saber rank among its KEM ids
+  ## (byte 1 = how many, then one id each: 0x01 FireSaber, 0x06 Saber,
+  ## 0x0B LightSaber).
+  var
+    i: int = 0
+  if hex.len < 4:
+    return 0
+  while i < parseHexInt(hex[2 .. 3]) and hex.len >= 6 + 2 * i:
+    case parseHexInt(hex[4 + 2 * i .. 5 + 2 * i])
+    of 0x01: result = max(result, 4)
+    of 0x06: result = max(result, 3)
+    of 0x0B: result = max(result, 2)
+    else: discard
+    i = i + 1
+
+proc bifrostKemsWords(): string =
+  ## The -d:bifrostKems value in force: the command line, else the preset.
+  var
+    i: int = 1
+  result = presetValue("define", "bifrostKems", "")
+  while i <= paramCount():
+    if paramStr(i).startsWith("-d:bifrostKems=") or
+        paramStr(i).startsWith("--define:bifrostKems="):
+      result = paramStr(i).split('=', maxsplit = 1)[1]
+    i = i + 1
+
+proc applySaberRank() =
+  ## Sets -d:saberMaxRank to what the chosen slots need, unless given.
+  var
+    rank: int = max(bifrostWordsRank(bifrostKemsWords()),
+      bifrostLayoutRank(presetValue("runtime.ame", "ameLayoutHex", "")))
+  if rank in 2 .. 3 and presetValue("define", "saberMaxRank", "").len == 0:
+    switch("define", "saberMaxRank=" & $rank)
+
+applySaberRank()
+
 ## CPU vector code (SIMD) for Tyr and SIMD-Nexus: one flag, read by Tyr's own
 ## `tyr_simd.nims`, so it means the same here as inside Tyr:
 ##
@@ -99,10 +172,10 @@ else:
 when not defined(bifrostPinnedTyr) and
     fileExists(thisDir() & "/../Tyr-Crypto/tyr_simd.nims"):
   include "../Tyr-Crypto/tyr_simd.nims"
-  applyTyrSimd("scalar")
+  applyTyrSimd(presetValue("define", "tyrSimd", "scalar"))
 elif fileExists(thisDir() & "/submodules/Tyr-Crypto/tyr_simd.nims"):
   include "submodules/Tyr-Crypto/tyr_simd.nims"
-  applyTyrSimd("scalar")
+  applyTyrSimd(presetValue("define", "tyrSimd", "scalar"))
 else:
   echo "config.nims: Tyr's tyr_simd.nims was not found; -d:tyrSimd is " &
     "ignored. Update the Tyr-Crypto submodule."

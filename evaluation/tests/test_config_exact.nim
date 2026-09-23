@@ -3,7 +3,7 @@
 ## -------------------------------------------------------------------------
 
 import std/unittest
-import std/strutils
+import std/[os, strutils]
 
 import ../../src/protocols/config
 import ../../src/protocols/ame/level1/suites
@@ -11,10 +11,12 @@ import ../../src/protocols/fomke/types
 
 suite "exact Bifrost config":
   # {.testKind: tkUnit.}
-  test "committed layout and tier equal the programmatic default":
+  test "configs/default.toml read at run time equals the compiled-in default":
+    ## default.toml is applied to every build, so the defaults compiled into
+    ## the program and the file read back while running must agree exactly.
     var
       expected: BifrostConfig = defaultBifrostConfig()
-      loaded: BifrostConfig = loadBifrostConfigFile("config.toml")
+      loaded: BifrostConfig = loadBifrostConfigFile("configs/default.toml")
     check layoutsEquivalent(expected.ameLayout, loaded.ameLayout)
     check tiersEquivalent(expected.ameInitialTier, loaded.ameInitialTier)
     check encodeConfigHex(encodeAmeSuiteLayout(expected.ameLayout)) ==
@@ -36,7 +38,7 @@ suite "exact Bifrost config":
   test "validated configuration becomes the active process default":
     var
       configured: BifrostConfig = defaultBifrostConfig()
-      active: BifrostConfig
+      active: BifrostConfig = default(BifrostConfig)
     configured.defaultTimeoutMs = 1234
     applyBifrostConfig(configured)
     active = currentBifrostConfig()
@@ -55,6 +57,23 @@ suite "exact Bifrost config":
     expect ValueError:
       discard parseBifrostConfigText("fomkePregenerationMessages = 0")
 
+  # {.testKind: tkIntegration, covers: "loadBifrostConfigFile".}
+  test "every preset in configs/ loads as a runtime config":
+    ## The nix module writes a preset's [runtime] table to /etc; the same
+    ## file read directly must load too, with the build sections skipped.
+    var
+      c: BifrostConfig = default(BifrostConfig)
+    for kind, path in walkDir("configs"):
+      if path.endsWith(".toml"):
+        checkpoint(path)
+        c = loadBifrostConfigFile(path)
+        check c.defaultTimeoutMs > 0
+    c = loadBifrostConfigFile("configs/iot.toml")
+    check c.defaultAmeInboxCapacity == 8
+    check c.fomkeReorderCeiling == 16'u32
+    check encodeConfigHex(encodeAmeSuiteLayout(c.ameLayout)) ==
+      "02020b0f01100110011001100110"
+
 suite "NixOS module output is loadable":
   ## The module generates TOML; the parser refuses unknown keys. Nothing tied
   ## the two together, so the module's own documented example named
@@ -65,7 +84,7 @@ suite "NixOS module output is loadable":
       exampleKeys: seq[string] = @[]
       moduleText: string = readFile("nix/module.nix")
       checkText: string = readFile("nix/module-check.nix")
-      parsed: BifrostConfig
+      parsed: BifrostConfig = default(BifrostConfig)
     ## Exactly the settings block `nix/module.nix` shows as its example.
     parsed = parseBifrostConfigText("""
 maxTcpFrameBytes = 16777216

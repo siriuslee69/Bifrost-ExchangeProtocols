@@ -2,7 +2,27 @@
 
 let
   cfg = config.programs.bifrost-exchange-protocols;
+  project = (builtins.fromTOML (builtins.readFile ../configs/default.toml)).project;
   tomlFormat = pkgs.formats.toml { };
+
+  ## Presets: configs/<name>.toml, one per kind of device. The SAME file
+  ## chooses what the package compiles (-d:preset=<name>) and, through its
+  ## [runtime] table, what /etc/bifrost/config.toml says. One source.
+  ##
+  ##   configs/default.toml --+
+  ##   configs/<preset>.toml -+--> [runtime] --> /etc/bifrost/config.toml
+  ##   settings (below) ------+                   (settings win)
+  ##   configs/<preset>.toml ----> [define] ---> package build flags
+  presetNames = map (lib.removeSuffix ".toml")
+    (builtins.filter (lib.hasSuffix ".toml")
+      (builtins.attrNames (builtins.readDir ../configs)));
+
+  presetRuntime = name:
+    (builtins.fromTOML (builtins.readFile (../configs + "/${name}.toml"))).runtime or { };
+
+  effectiveGlobalSettings = lib.recursiveUpdate
+    (lib.recursiveUpdate (presetRuntime "default") (presetRuntime cfg.preset))
+    cfg.settings;
 
   hasSettings = settings: settings != { };
 
@@ -13,7 +33,7 @@ let
     if profileCfg.mode == "replace" then
       profileCfg.settings
     else
-      lib.recursiveUpdate cfg.settings profileCfg.settings;
+      lib.recursiveUpdate effectiveGlobalSettings profileCfg.settings;
 
   effectiveProfileSource = name: profileCfg:
     if profileCfg.configFile != null then
@@ -57,12 +77,25 @@ let
 in
 {
   options.programs.bifrost-exchange-protocols = with lib; {
-    enable = mkEnableOption "Bifrost exchange protocol library and generated configs";
+    enable = mkEnableOption "${project.name} ${project.version}: ${project.description}";
+
+    preset = mkOption {
+      type = types.enum presetNames;
+      default = "default";
+      example = "iot";
+      description = ''
+        Build preset from configs/: what the package compiles and the
+        runtime values written to the global config. Settings below are
+        laid over the preset's [runtime] table.
+      '';
+    };
 
     package = mkOption {
       type = types.package;
-      default = pkgs.callPackage ./package.nix { };
-      description = "Bifrost package to expose through environment.systemPackages.";
+      default = pkgs.callPackage ./package.nix { preset = cfg.preset; };
+      defaultText = lib.literalExpression
+        "pkgs.callPackage ./package.nix { preset = cfg.preset; }";
+      description = "Bifrost package, built with the chosen preset.";
     };
 
     installPackage = mkOption {
@@ -120,10 +153,11 @@ in
     environment.systemPackages = lib.mkIf cfg.installPackage [ cfg.package ];
 
     environment.etc =
-      (lib.optionalAttrs (cfg.configFile != null || hasSettings cfg.settings) {
+      {
         "${cfg.target}".source =
-          if cfg.configFile != null then cfg.configFile else generatedToml "global" cfg.settings;
-      })
+          if cfg.configFile != null then cfg.configFile
+          else generatedToml "global" effectiveGlobalSettings;
+      }
       //
       (lib.mapAttrs'
         (name: profileCfg:

@@ -88,24 +88,66 @@ proc ameSigFamilySetName*(F: set[AmeSigFamily]): string {.role: parser.} =
     result.add(ameSigFamilyName(f))
 
 
-proc parseAmeSigFamilies*(s: string): set[AmeSigFamily] {.role: parser.} =
-  ## s: comma-separated family names from `-d:bifrostSigs=`. An empty string
-  ## means every family. Runs while compiling; an unknown name stops the build.
+proc ameSigToken*(a: AmeSignatureAlgorithm): string {.role: parser.} =
+  ## a: slot -> the word `-d:bifrostSigs=` accepts for this ONE slot.
+  case a
+  of asaEd25519: result = "ed25519"
+  of asaDilithium44: result = "dilithium44"
+  of asaDilithium65: result = "dilithium65"
+  of asaDilithium87: result = "dilithium87"
+  of asaFalcon512: result = "falcon512"
+  of asaFalcon1024: result = "falcon1024"
+  of asaSphincsShake128f: result = "sphincs128f"
+  of asaEd25519Falcon512Hybrid: result = "ed25519falcon512"
+  of asaEd25519Falcon1024Hybrid: result = "ed25519falcon1024"
+
+proc ameSigFamiliesOf*(S: set[AmeSignatureAlgorithm]): set[AmeSigFamily] {.
+    role: parser.} =
+  ## S: slots -> every family they need (what has to be compiled).
+  for a in S:
+    result = result + ameSigFamilies(a)
+
+proc ameSigFamilyOfWord(t: string): set[AmeSigFamily] {.role: parser.} =
+  ## t: one word -> the family it names, or {}.
+  for f in AmeSigFamily:
+    if t == ameSigFamilyName(f):
+      result.incl(f)
+
+proc ameSigSlotOfWord(t: string): set[AmeSignatureAlgorithm] {.role: parser.} =
+  ## t: one word -> the slot it names, or {}.
+  for a in AmeSignatureAlgorithm:
+    if t == ameSigToken(a):
+      result.incl(a)
+
+proc ameSigWords(s: string): tuple[families: set[AmeSigFamily],
+    slots: set[AmeSignatureAlgorithm]] {.role: parser.} =
+  ## s: the -d:bifrostSigs value -> its family words and its slot words.
+  ## "ed25519" is both (the family has one slot). An unknown word stops
+  ## the build.
   var
     t: string = ""
-  if s.strip().len == 0:
-    return {asfEd25519, asfDilithium, asfFalcon, asfSphincs}
   for raw in s.split(','):
-    t = raw.strip()
-    case t
-    of "ed25519": result.incl(asfEd25519)
-    of "dilithium": result.incl(asfDilithium)
-    of "falcon": result.incl(asfFalcon)
-    of "sphincs": result.incl(asfSphincs)
-    else:
+    t = raw.strip().toLowerAscii()
+    result.families = result.families + ameSigFamilyOfWord(t)
+    result.slots = result.slots + ameSigSlotOfWord(t)
+    if ameSigFamilyOfWord(t) == {} and ameSigSlotOfWord(t) == {}:
       raise newException(ValueError, "unknown -d:bifrostSigs entry '" & t &
-        "' (expected: ed25519, dilithium, falcon, sphincs, " &
-        "or omit the flag for all)")
-  if result == {}:
-    raise newException(ValueError,
-      "-d:bifrostSigs= selected no family; omit the flag to keep all")
+        "' (a family: ed25519 dilithium falcon sphincs, or one slot: " &
+        "dilithium44 dilithium65 dilithium87 falcon512 falcon1024 " &
+        "sphincs128f ed25519falcon512 ed25519falcon1024; or omit the flag)")
+
+proc parseAmeSigSlots*(s: string): set[AmeSignatureAlgorithm] {.role: parser.} =
+  ## s: comma-separated words from `-d:bifrostSigs=` -> the slots to build.
+  ## Empty means every slot. A slot word selects that slot; family words
+  ## select every slot whose families are ALL named, so "ed25519,falcon"
+  ## also brings the two Ed25519+Falcon hybrids. Runs while compiling.
+  var
+    w: tuple[families: set[AmeSigFamily], slots: set[AmeSignatureAlgorithm]] =
+      ({}, {})
+  if s.strip().len == 0:
+    return {low(AmeSignatureAlgorithm) .. high(AmeSignatureAlgorithm)}
+  w = ameSigWords(s)
+  result = w.slots
+  for a in AmeSignatureAlgorithm:
+    if ameSigFamilies(a) <= w.families:
+      result.incl(a)

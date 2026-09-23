@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# iot-min <- the smallest session: AM1P with X25519 only
+# ---------------------------------------------------------------------------
+#
+#   nim c -d:preset=iot-min app.nim
+#
+# About 168 KB of program and 41 KB of RAM (README "Tiny devices"). No
+# post-quantum KEM and no signatures: the pre-shared secret is the only
+# anchor. Use `iot` when the device can afford LightSaber.
+
+[preset]
+name = "iot-min"
+description = "AM1P only, X25519, DAC, scalar, size-optimised."
+
+[nim]
+opt = "size"
+panics = true
+threads = false
+
+[define]
+bifrostKems = "x25519"
+bifrostSigs = "ed25519"
+bifrostSymmetric = "blake3,chacha20"
+bifrostCarriers = "dac"
+bifrostHandshakes = "am1p"
+bifrostDac = "off"
+tyrSimd = "scalar"
+danger = true
+useMalloc = true
+noSignalHandler = true
+
+[passC]
+flags = ["-flto", "-ffunction-sections", "-fdata-sections",
+         "-fno-asynchronous-unwind-tables", "-fno-unwind-tables"]
+
+[passL]
+flags = ["-flto", "-Wl,--gc-sections"]
+
+[runtime]
+maxTcpFrameBytes = 65536
+maxDacFrameBytes = 65536
+defaultAmeInboxCapacity = 8
+
+[runtime.fomke]
+fomkeReorderCeiling = 16
+
+[runtime.ame]
+# The bitmasks this device speaks -- pinned, so both ends agree for good.
+#
+#   02 | 01 0f | 01 10 | 01 10 | 01 10 | 01 10 | 01 10
+#   v2   X25519  XChaCha BLAKE3  BLAKE3  Ed25519 BLAKE3
+#                20      (MAC)   (hash)  (sig)   (KDF)
+ameLayoutHex = "02010f01100110011001100110"
+ameInitialTierHex = "0101000000808080808080"

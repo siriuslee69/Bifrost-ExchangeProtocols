@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# iot <- devices with under 100 KB of RAM: AM1P or AM1P+S, LightSaber
+# ---------------------------------------------------------------------------
+#
+#   nim c -d:preset=iot app.nim
+#
+# Measured (README "Tiny devices", `nimble benchLowMem`): about 207 KB of
+# program and 66 KB of RAM for one AM1P+S handshake plus a frame each way.
+# Every switch not named here keeps its default.toml value.
+
+[preset]
+name = "iot"
+description = "AM1P / AM1P+S, LightSaber + X25519, Ed25519, DAC, scalar, size-optimised."
+
+[nim]
+opt = "size"
+panics = true
+threads = false
+
+[define]
+bifrostKems = "lightsaber,x25519"
+bifrostSigs = "ed25519"
+bifrostSymmetric = "blake3,chacha20"
+bifrostCarriers = "dac"
+bifrostHandshakes = "am1p,am1ps"
+bifrostDac = "off"
+tyrSimd = "scalar"
+danger = true
+useMalloc = true
+noSignalHandler = true
+
+[passC]
+# link-time optimising, one section per routine (so the linker can drop
+# unused ones), and no unwind tables (Nim's exceptions never read them)
+flags = ["-flto", "-ffunction-sections", "-fdata-sections",
+         "-fno-asynchronous-unwind-tables", "-fno-unwind-tables"]
+
+[passL]
+flags = ["-flto", "-Wl,--gc-sections"]
+
+[runtime]
+# Written over config.toml by the nix module. Smaller limits for a small
+# device; each is an upper bound, not memory taken up front.
+maxTcpFrameBytes = 65536
+maxDacFrameBytes = 65536
+defaultAmeInboxCapacity = 8
+
+[runtime.fomke]
+fomkeReorderCeiling = 16
+
+[runtime.ame]
+# The bitmasks this device speaks -- pinned, so both ends agree for good.
+# Every algorithm named here is compiled, whatever [define] says.
+#
+#   02 | 02 0b 0f | 01 10 | 01 10 | 01 10 | 01 10 | 01 10
+#   v2   KEMs:      cipher  MAC     hash    sig     KDF
+#        LightSaber XChaCha BLAKE3  BLAKE3  Ed25519 BLAKE3
+#        X25519     20
+#
+# Tier: every slot switched on (KEM mask 11......, the rest 1.......).
+ameLayoutHex = "02020b0f01100110011001100110"
+ameInitialTierHex = "0101000000c08080808080"

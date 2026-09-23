@@ -15,10 +15,14 @@
 ##   frodo       FrodoKEM-1344-AES, -976-AES, -640-AES
 ##   mceliece    Classic-McEliece-8192128f, -6960119f, -6688128f
 ##
-## A build selects families, never single slots, because one family's slots
-## share the same code. This file holds that grouping plus the two material
-## shapes, and deliberately imports no implementation, so a build that keeps
-## one family does not drag in the other five.
+## A build selects slots: a family word (`saber`) takes all of a family's
+## slots, a slot word (`lightsaber`) exactly one. What is COMPILED is the
+## families of the chosen slots; what may RUN is only the chosen slots, and
+## a slot left out is refused like a missing family. Where a family's
+## buffers grow with its largest slot (Saber), picking the small slot also
+## shrinks the build: config.nims sets Tyr's -d:saberMaxRank from it.
+## This file holds the grouping plus the two material shapes, and
+## deliberately imports no implementation.
 
 import std/strutils
 
@@ -98,39 +102,83 @@ proc ameKemFamilyName*(f: AmeKemFamily): string {.role: parser.} =
   of akfFrodo: result = "frodo"
   of akfMcEliece: result = "mceliece"
 
-proc defaultAmeKemSlot*(f: AmeKemFamily): AmeKemAlgorithm {.role: parser.} =
-  ## f: family mapped to the one slot AME picks when it must choose for
-  ## itself. Each family names its strongest slot, so an unconfigured build
-  ## never quietly settles for a weaker parameter set.
-  case f
-  of akfX25519: result = akaX25519
-  of akfKyber: result = akaKyber1024
-  of akfSaber: result = akaFireSaber
-  of akfNtru: result = akaNtruHps4096821
-  of akfFrodo: result = akaFrodo1344Aes
-  of akfMcEliece: result = akaMcEliece8192
+const
+  ameKemSlotsStrongestFirst*: array[15, AmeKemAlgorithm] = [
+    akaFireSaber, akaSaber, akaLightSaber,
+    akaKyber1024, akaKyber768,
+    akaNtruHps4096821, akaNtruHps2048677, akaNtruHps2048509,
+    akaFrodo1344Aes, akaFrodo976Aes, akaFrodo640Aes,
+    akaMcEliece8192, akaMcEliece6960, akaMcEliece6688,
+    akaX25519]
+    ## Every slot, grouped by family, strongest parameter set first. AME
+    ## walks this when it has to pick a slot of a family for itself.
 
-proc parseAmeKemFamilies*(s: string): set[AmeKemFamily] {.role: parser.} =
-  ## s: comma-separated family names from `-d:bifrostKems=`. An empty string
-  ## means every family, so a build with no flag keeps the whole registry.
-  ## Runs while compiling; an unknown name stops the build.
+proc ameKemToken*(a: AmeKemAlgorithm): string {.role: parser.} =
+  ## a: slot -> the word `-d:bifrostKems=` accepts for this ONE slot.
+  ## `saber` alone means the whole family, so the middle Saber set is
+  ## written `saber3` (its rank).
+  case a
+  of akaFireSaber: result = "firesaber"
+  of akaSaber: result = "saber3"
+  of akaLightSaber: result = "lightsaber"
+  of akaKyber1024: result = "kyber1024"
+  of akaKyber768: result = "kyber768"
+  of akaNtruHps4096821: result = "ntru821"
+  of akaNtruHps2048677: result = "ntru677"
+  of akaNtruHps2048509: result = "ntru509"
+  of akaFrodo1344Aes: result = "frodo1344"
+  of akaFrodo976Aes: result = "frodo976"
+  of akaFrodo640Aes: result = "frodo640"
+  of akaMcEliece8192: result = "mceliece8192"
+  of akaMcEliece6960: result = "mceliece6960"
+  of akaMcEliece6688: result = "mceliece6688"
+  of akaX25519: result = "x25519"
+
+proc ameKemSlotsOfFamily*(f: AmeKemFamily): set[AmeKemAlgorithm] {.
+    role: parser.} =
+  ## f: family -> every slot it serves.
+  for a in AmeKemAlgorithm:
+    if ameKemFamily(a) == f:
+      result.incl(a)
+
+proc ameKemFamiliesOf*(S: set[AmeKemAlgorithm]): set[AmeKemFamily] {.
+    role: parser.} =
+  ## S: slots -> the families that serve them (what has to be compiled).
+  for a in S:
+    result.incl(ameKemFamily(a))
+
+proc ameKemSlotOfWord(t: string): set[AmeKemAlgorithm] {.role: parser.} =
+  ## t: one word of `-d:bifrostKems=` -> the slots it selects: a family
+  ## word selects all of its slots, a slot word exactly one. {} = unknown.
+  for f in AmeKemFamily:
+    if t == ameKemFamilyName(f):
+      return ameKemSlotsOfFamily(f)
+  for a in AmeKemAlgorithm:
+    if t == ameKemToken(a):
+      return {a}
+
+proc parseAmeKemSlots*(s: string): set[AmeKemAlgorithm] {.role: parser.} =
+  ## s: comma-separated words from `-d:bifrostKems=` -> the slots to build.
+  ## Empty means every slot. A word is a family (all its slots) or one
+  ## slot; see configs/default.toml for the full list. Runs while
+  ## compiling; an unknown word stops the build.
+  ##
+  ##   "saber,x25519"          FireSaber, Saber, LightSaber, X25519
+  ##   "lightsaber,x25519"     LightSaber, X25519 (and Saber arrays sized
+  ##                           for rank 2 -- config.nims derives it)
+  ##   "mceliece6688"          Classic-McEliece-6688128f only
   var
     t: string = ""
+    one: set[AmeKemAlgorithm] = {}
   if s.strip().len == 0:
-    return {akfX25519, akfKyber, akfSaber, akfNtru, akfFrodo, akfMcEliece}
+    return {low(AmeKemAlgorithm) .. high(AmeKemAlgorithm)}
   for raw in s.split(','):
-    t = raw.strip()
-    case t
-    of "x25519": result.incl(akfX25519)
-    of "kyber": result.incl(akfKyber)
-    of "saber": result.incl(akfSaber)
-    of "ntru": result.incl(akfNtru)
-    of "frodo": result.incl(akfFrodo)
-    of "mceliece": result.incl(akfMcEliece)
-    else:
+    t = raw.strip().toLowerAscii()
+    one = ameKemSlotOfWord(t)
+    if one == {}:
       raise newException(ValueError, "unknown -d:bifrostKems entry '" & t &
-        "' (expected: x25519, kyber, saber, ntru, frodo, mceliece, " &
-        "or omit the flag for all)")
-  if result == {}:
-    raise newException(ValueError,
-      "-d:bifrostKems= selected no family; omit the flag to keep all")
+        "' (a family: x25519 kyber saber ntru frodo mceliece, or one slot: " &
+        "lightsaber saber3 firesaber kyber768 kyber1024 ntru509 ntru677 " &
+        "ntru821 frodo640 frodo976 frodo1344 mceliece6688 mceliece6960 " &
+        "mceliece8192; or omit the flag for all)")
+    result = result + one

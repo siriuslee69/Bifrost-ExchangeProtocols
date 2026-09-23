@@ -1,6 +1,13 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import <nixpkgs> {}
+, preset ? "default"   # configs/<preset>.toml: what gets compiled
+}:
 
 let
+  ## One source: configs/default.toml. [project] names the package; the
+  ## chosen preset decides what is compiled (config.nims applies it).
+  config = builtins.fromTOML (builtins.readFile ../configs/default.toml);
+  project = config.project;
+
   nimsimdSrc = pkgs.fetchFromGitHub {
     owner = "guzba";
     repo = "nimsimd";
@@ -9,8 +16,9 @@ let
   };
 in
 pkgs.stdenv.mkDerivation {
-  pname = "bifrost-exchange-protocols";
-  version = "0.1.0";
+  pname = if preset == "default" then project.name else "${project.name}-${preset}";
+  version = project.version;
+  meta.description = "${project.description} (preset: ${preset})";
   src = pkgs.lib.cleanSource ../.;
 
   nativeBuildInputs = [
@@ -32,6 +40,7 @@ pkgs.stdenv.mkDerivation {
       --path:${nimsimdSrc}/src \
       --path:submodules/Eir-CompressionAndECC/src \
       -d:release \
+      -d:preset=${preset} \
       src/bifrost_exchange_protocols.nim
   '';
 
@@ -48,6 +57,6 @@ pkgs.stdenv.mkDerivation {
       -name '*.pro' -o \
       -name '*.xml' \
     \) -exec cp --parents '{}' "$out/share/nimble/pkgs/bifrost_exchange_protocols/" \;
-    cp config.toml "$out/share/bifrost/config.toml"
+    cp -r configs "$out/share/bifrost/configs"
   '';
 }

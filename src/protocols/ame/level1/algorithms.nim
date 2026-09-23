@@ -55,15 +55,35 @@
 import ../../types
 import ../types
 import ./kems/types as kem_types
+import ./preset_layout
 import runePragmas
 
 export kem_types
 
+proc kemSlotListName(S: set[AmeKemAlgorithm]): string {.compileTime,
+    role: helper.} =
+  ## S: slots -> "kyber768, x25519" for the build message.
+  for a in S:
+    result.add((if result.len > 0: ", " else: "") & ameKemToken(a))
+
 const
   bifrostKems* {.strdefine.}: string = ""
-    ## Comma-separated KEM families to compile. Empty (the default) is all.
-  ameKemsBuilt* = parseAmeKemFamilies(bifrostKems)
-    ## The families this build actually carries.
+    ## Comma-separated KEM words: a family (all its slots) or one slot.
+    ## Empty (the default) is every slot. Full list: configs/default.toml.
+  kemsAddedByPreset = presetKemSlotSet - parseAmeKemSlots(bifrostKems)
+    ## Slots the preset's pinned layout needs that the flag left out.
+  ameKemSlotsBuilt* = parseAmeKemSlots(bifrostKems) + presetKemSlotSet
+    ## The exact slots this build may run: the flag, plus whatever the
+    ## pinned layout names (see preset_layout.nim).
+  ameKemsBuilt* = ameKemFamiliesOf(ameKemSlotsBuilt)
+    ## The families that serve them -- what is actually compiled.
+
+when kemsAddedByPreset != {} and defined(bifrostStrictConfig):
+  {.error: presetAddedMessage("bifrostKems",
+    kemSlotListName(kemsAddedByPreset)).}
+elif kemsAddedByPreset != {}:
+  {.warning: presetAddedMessage("bifrostKems",
+    kemSlotListName(kemsAddedByPreset)).}
 
 when akfX25519 in ameKemsBuilt:
   import ./kems/x25519 as ame_x25519
@@ -84,42 +104,37 @@ when akfMcEliece in ameKemsBuilt:
   import ./kems/mceliece as ame_mceliece
   export ame_mceliece
 
-template excludedKemMessage(a: untyped): string =
-  ## a: the slot that this build cannot execute.
-  "AME KEM " & ameKemName(a) & " is not in this build; add '" &
-    ameKemFamilyName(ameKemFamily(a)) &
-    "' to -d:bifrostKems= or omit the flag to compile every family"
-
 proc raiseExcludedKem(a: AmeKemAlgorithm) {.role: helper, noreturn.} =
-  ## a: slot whose family this build left out -- or, for Saber, a slot
-  ## larger than Tyr's -d:saberMaxRank allows.
-  if ameKemFamily(a) in ameKemsBuilt:
+  ## a: slot this build cannot run -- left out of -d:bifrostKems, or (Saber
+  ## only) larger than an explicitly given -d:saberMaxRank.
+  if a in ameKemSlotsBuilt:
     raise newException(ValueError, "AME KEM " & ameKemName(a) &
       " is larger than this build's -d:saberMaxRank; raise it or omit it")
-  raise newException(ValueError, excludedKemMessage(a))
+  raise newException(ValueError, "AME KEM " & ameKemName(a) &
+    " is not in this build; add '" & ameKemToken(a) & "' (or its family '" &
+    ameKemFamilyName(ameKemFamily(a)) & "') to -d:bifrostKems, or omit " &
+    "the flag to build every slot")
 
 proc ameKemBuilt*(a: AmeKemAlgorithm): bool {.role: parser.} =
-  ## a: exact KEM slot. True when this build can actually run it, so a peer's
-  ## proposal can be refused before any key material is touched. Saber is the
-  ## one family where a slot can be missing although the family is built
-  ## (Tyr's -d:saberMaxRank), so it is asked slot by slot.
-  result = ameKemFamily(a) in ameKemsBuilt
+  ## a: exact KEM slot. True when this build may run it, so a peer's
+  ## proposal can be refused before any key material is touched.
+  result = a in ameKemSlotsBuilt
   when akfSaber in ameKemsBuilt:
     if result and ameKemFamily(a) == akfSaber:
       result = saberSlotBuilt(a)
 
 proc requireAmeKemBuilt*(a: AmeKemAlgorithm) {.role: parser.} =
-  ## a: exact KEM slot rejected unless this build carries its family.
+  ## a: exact KEM slot rejected unless this build may run it.
   if not ameKemBuilt(a):
     raiseExcludedKem(a)
 
 proc builtDefaultSlot(f: AmeKemFamily): AmeKemAlgorithm {.role: configurator.} =
-  ## f: family AME picks for itself. Its strongest slot, except that Saber
-  ## gives the strongest one Tyr's -d:saberMaxRank left in this build.
-  result = defaultAmeKemSlot(f)
-  when akfSaber in ameKemsBuilt:
-    if f == akfSaber:
-      result = strongestSaberSlot()
+  ## f: a family this build carries -> its strongest slot the build may run.
+  for a in ameKemSlotsStrongestFirst:
+    if ameKemFamily(a) == f and ameKemBuilt(a):
+      return a
+  raise newException(ValueError, "AME builds no runnable slot of " &
+    ameKemFamilyName(f))
 
 const
   ameKemPqPreference: array[5, AmeKemFamily] = [
@@ -148,6 +163,7 @@ proc defaultAmeKemSlots*(): seq[AmeKemAlgorithm] {.role: configurator.} =
 
 proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: exact KEM slot, named by a value only known while running.
+  requireAmeKemBuilt(a)
   case ameKemFamily(a)
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeKeypair(a)
@@ -185,6 +201,7 @@ proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: truthBuild
 proc sealAmeKem*(a: AmeKemAlgorithm,
     publicKey: openArray[byte]): AmeKemCipher {.role: encryptor.} =
   ## a/publicKey: exact slot named at run time, and the receiver public key.
+  requireAmeKemBuilt(a)
   case ameKemFamily(a)
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeSeal(a, publicKey)
@@ -222,6 +239,7 @@ proc sealAmeKem*(a: static AmeKemAlgorithm,
 proc openAmeKem*(a: AmeKemAlgorithm, env: AmeKemCipher,
     secretKey: openArray[byte]): ByteSeq {.role: decryptor.} =
   ## a/env/secretKey: exact slot named at run time, envelope, and our secret.
+  requireAmeKemBuilt(a)
   case ameKemFamily(a)
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeOpen(a, env, secretKey)

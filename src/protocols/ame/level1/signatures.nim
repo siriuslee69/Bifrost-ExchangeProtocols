@@ -32,6 +32,7 @@
 import ../../types
 import ../types
 import ./sigs/types as sig_types
+import ./preset_layout
 import runePragmas
 
 export sig_types
@@ -39,8 +40,26 @@ export sig_types
 const
   bifrostSigs* {.strdefine.}: string = ""
     ## Comma-separated signature families to compile. Empty is all.
-  ameSigsBuilt* = parseAmeSigFamilies(bifrostSigs)
-    ## The families this build actually carries.
+  sigsAddedByPreset = presetSigSlotSet - parseAmeSigSlots(bifrostSigs)
+    ## Slots the preset's pinned layout needs that the flag left out.
+  ameSigSlotsBuilt* = parseAmeSigSlots(bifrostSigs) + presetSigSlotSet
+    ## The exact slots this build may run: the flag, plus whatever the
+    ## pinned layout names (see preset_layout.nim).
+  ameSigsBuilt* = ameSigFamiliesOf(ameSigSlotsBuilt)
+    ## The families those slots need -- what is actually compiled.
+
+proc sigSlotListName(S: set[AmeSignatureAlgorithm]): string {.compileTime,
+    role: helper.} =
+  ## S: slots -> "falcon512, dilithium65" for the build message.
+  for a in S:
+    result.add((if result.len > 0: ", " else: "") & ameSigToken(a))
+
+when sigsAddedByPreset != {} and defined(bifrostStrictConfig):
+  {.error: presetAddedMessage("bifrostSigs",
+    sigSlotListName(sigsAddedByPreset)).}
+elif sigsAddedByPreset != {}:
+  {.warning: presetAddedMessage("bifrostSigs",
+    sigSlotListName(sigsAddedByPreset)).}
 
 when asfEd25519 in ameSigsBuilt:
   import ./sigs/ed25519 as ame_ed25519
@@ -61,8 +80,8 @@ when {asfEd25519, asfFalcon} <= ameSigsBuilt:
 template excludedSigMessage(a: untyped): string =
   ## a: the slot this build cannot execute.
   "AME signature " & ameSigName(a) & " is not in this build; add '" &
-    ameSigFamilySetName(ameSigFamilies(a) - ameSigsBuilt) &
-    "' to -d:bifrostSigs= or omit the flag to compile every family"
+    ameSigToken(a) & "' to -d:bifrostSigs= or omit the flag to build " &
+    "every slot"
 
 proc raiseExcludedSig(a: AmeSignatureAlgorithm) {.role: helper, noreturn.} =
   ## a: slot whose family this build left out.
@@ -71,12 +90,18 @@ proc raiseExcludedSig(a: AmeSignatureAlgorithm) {.role: helper, noreturn.} =
 proc ameSigBuilt*(a: AmeSignatureAlgorithm): bool {.role: parser.} =
   ## a: exact signature slot. True when this build can run it, so a peer's
   ## proposal can be refused before any key material is touched.
-  result = ameSigFamilies(a) <= ameSigsBuilt
+  result = a in ameSigSlotsBuilt
 
 proc requireAmeSigBuilt*(a: AmeSignatureAlgorithm) {.role: parser.} =
   ## a: exact slot rejected unless this build carries every family it needs.
   if not ameSigBuilt(a):
     raiseExcludedSig(a)
+
+const
+  ameSigPqPreference: array[6, AmeSignatureAlgorithm] = [asaFalcon512,
+    asaFalcon1024, asaDilithium65, asaDilithium44, asaDilithium87,
+    asaSphincsShake128f]
+    ## Order AME walks when it picks a post-quantum slot unaided.
 
 proc defaultAmeSigSlots*(): seq[AmeSignatureAlgorithm] {.role: configurator.} =
   ## The signature stack AME uses when nothing else is configured: one
@@ -86,14 +111,12 @@ proc defaultAmeSigSlots*(): seq[AmeSignatureAlgorithm] {.role: configurator.} =
   ##
   ## A build carrying only some of that keeps whichever slots it can run;
   ## the flag guarantees at least one family, so this is never empty.
-  when asfEd25519 in ameSigsBuilt:
+  if ameSigBuilt(asaEd25519):
     result.add(asaEd25519)
-  when asfFalcon in ameSigsBuilt:
-    result.add(asaFalcon512)
-  elif asfDilithium in ameSigsBuilt:
-    result.add(asaDilithium65)
-  elif asfSphincs in ameSigsBuilt:
-    result.add(asaSphincsShake128f)
+  for a in ameSigPqPreference:
+    if ameSigBuilt(a):
+      result.add(a)
+      return
 
 
 ## ╭⟢ keypair
@@ -102,6 +125,7 @@ proc ameSigKeypair*(a: AmeSignatureAlgorithm,
     seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: exact slot named by a value only known while running, plus
   ## optional fixed randomness for reproducible tests.
+  requireAmeSigBuilt(a)
   case a
   of asaEd25519:
     when asfEd25519 in ameSigsBuilt: result = ed25519AmeKeypair(a, seed)
@@ -138,6 +162,7 @@ proc ameSigKeypair*(a: static AmeSignatureAlgorithm,
 proc signAmeMessage*(a: AmeSignatureAlgorithm,
     msg, secretKey: openArray[byte]): ByteSeq {.role: encryptor.} =
   ## a/msg/secretKey: slot named at run time, subject bytes, our secret key.
+  requireAmeSigBuilt(a)
   case a
   of asaEd25519:
     when asfEd25519 in ameSigsBuilt: result = ed25519AmeSign(a, msg, secretKey)
@@ -177,6 +202,8 @@ proc verifyAmeMessage*(a: AmeSignatureAlgorithm,
   ## a/msg/sig/publicKey: slot named at run time and the claim to check.
   ## A slot this build lacks verifies as false rather than raising, so a
   ## peer cannot turn an unsupported algorithm into an exception path.
+  if not ameSigBuilt(a):
+    return false
   case a
   of asaEd25519:
     when asfEd25519 in ameSigsBuilt:

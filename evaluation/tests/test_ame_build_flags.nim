@@ -139,10 +139,11 @@ suite "AME build flags":
   test "a hybrid slot needs both of its families":
     ## A hybrid is only usable when Ed25519 AND Falcon are both compiled,
     ## which is why the build set is compared as a set, not a single family.
-    check ameSigBuilt(asaEd25519Falcon1024Hybrid) ==
-      ({asfEd25519, asfFalcon} <= ameSigsBuilt)
+    ## (Both compiled is necessary, not enough: the slot must be chosen.)
+    check ameSigFamilies(asaEd25519Falcon1024Hybrid) <= ameSigsBuilt or
+      not ameSigBuilt(asaEd25519Falcon1024Hybrid)
 
-  when {asfEd25519, asfFalcon} <= ameSigsBuilt:
+  when ameSigBuilt(asaEd25519Falcon512Hybrid):
     # {.testKind: tkUnit.}
     test "a hybrid signs twice and both halves must verify":
       var
@@ -292,3 +293,35 @@ suite "AME runtime parameters":
     var other: AmeSession = tagLenSession(aatl32)
     check sealAmeTcpFrame(S, @[byte 1]).len ==
       sealAmeTcpFrame(other, @[byte 1]).len
+
+suite "AME build flags: one slot at a time":
+  # {.testKind: tkUnit, covers: "parseAmeKemSlots".}
+  test "a family word takes every slot, a slot word exactly one":
+    check parseAmeKemSlots("saber") == {akaFireSaber, akaSaber, akaLightSaber}
+    check parseAmeKemSlots("lightsaber,x25519") == {akaLightSaber, akaX25519}
+    check parseAmeKemSlots("saber3") == {akaSaber}
+    check parseAmeKemSlots("mceliece6688") == {akaMcEliece6688}
+    check parseAmeKemSlots("").len == 15
+    expect ValueError:
+      discard parseAmeKemSlots("mceliece9999")
+
+  # {.testKind: tkUnit, covers: "parseAmeSigSlots".}
+  test "signature family words bring the hybrids only when both are named":
+    check asaEd25519Falcon512Hybrid in parseAmeSigSlots("ed25519,falcon")
+    check asaEd25519Falcon512Hybrid notin parseAmeSigSlots("ed25519,falcon512")
+    check parseAmeSigSlots("falcon512") == {asaFalcon512}
+    check parseAmeSigSlots("ed25519") == {asaEd25519}
+    expect ValueError:
+      discard parseAmeSigSlots("falcon2048")
+
+  # {.testKind: tkEdgeCase, covers: "requireAmeKemBuilt".}
+  test "a slot left out is refused although its family is compiled":
+    ## Only meaningful in a build that keeps Saber but not every Saber slot
+    ## (testMinimalAme runs one: -d:bifrostKems=lightsaber,kyber768,x25519).
+    var
+      a: AmeKemAlgorithm = akaFireSaber
+    check ameKemBuilt(a) == (a in ameKemSlotsBuilt and
+      akfSaber in ameKemsBuilt and (akaFireSaber in ameKemSlotsBuilt))
+    if akfSaber in ameKemsBuilt and a notin ameKemSlotsBuilt:
+      expect ValueError:
+        discard ameKemKeypair(a)
