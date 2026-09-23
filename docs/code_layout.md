@@ -31,8 +31,12 @@ src/protocols
 │   │                              and the AME/DAC seam
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
-│   └── level3/  <- handshake.nim   the four messages, and the four calls
-│                    _identity.nim  who someone is, and whether you believe
+│   └── level3/  <- handshake.nim   steps 3 and 4 (finish, accept), and the
+│                                   one import that brings in all the rest
+│                    _hello.nim     steps 1 and 2: the (sealed) hello, the answer
+│                    _authentication.nim  the four modes AM1A/AM1S/AM1P/AM1P+S
+│                                   and the one AmeAuthentication object
+│                    _identity.nim  identities, certificates, how each is checked
 │                    _cookie.nim    proving you can receive where you claim
 │                    _records.nim   the shape of the four messages
 │                    _wire.nim      those same four, byte for byte
@@ -53,7 +57,8 @@ src/protocols
 ├── fomke/
 │   ├── types.nim
 │   ├── level0/  <- GB3HKDF and protocol descriptor
-│   ├── level1/  <- directional chains and exact AME upgrade commits
+│   ├── level1/  <- directional chains, the epoch split [LK1|LK2|NS], and
+│   │                exact AME upgrade commits (NS + new KEM -> next epoch)
 │   │                (the ratchet is the ONLY payload protection)
 │   ├── level2/  <- envelope/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface
@@ -110,7 +115,7 @@ client hello (no identity: nonce, layout, tier, KEM public keys)
   -> return first AmeAuthPackage to both peers
 ```
 
-Handshake records (AMC1/AMR1/AMS1/AMF1) travel as ordinary AME frames with a
+Handshake records (AMC2/AMR2/AMS2/AMF2) travel as ordinary AME frames with a
 handshake packet kind (0x0C..0x0F). They are not encrypted -- there are no
 session keys yet -- but each of the last two carries its own sealed block, so
 no identity is ever on the wire in the clear.

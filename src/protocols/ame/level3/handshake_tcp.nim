@@ -146,7 +146,7 @@ proc ameTcpServerHandshake*(sock: Socket, c: AmeResponderPolicy,
     clearAmeServerHandshake(answered.state)
     result.err = e.msg
     return
-  accepted = acceptAmeHandshake(answered.state, finish, c.authentication,
+  accepted = acceptAmeHandshake(answered.state, finish,
     nowUnix, c.revokedSerials)
   if not accepted.ok:
     result.err = accepted.err
@@ -174,7 +174,7 @@ proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
     return
   try:
     state = beginAmeHandshake(sessionId, c.layout, c.initialTier,
-      mode = c.authentication.mode)
+      a = c.authentication)
     sendTcpFrame(sock, encodeAmeClientHelloFrame(state.hello))
   except CatchableError as e:
     clearAmeClientHandshake(state)
@@ -194,7 +194,7 @@ proc ameTcpClientHandshake*(sock: Socket, c: AmeInitiatorPolicy,
       retry = decodeAmeHelloRetry(got.frame.record)
       clearAmeClientHandshake(state)
       state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
-        retry.cookie, c.authentication.mode)
+        retry.cookie, c.authentication)
       sendTcpFrame(sock, encodeAmeClientHelloFrame(state.hello,
         retried = true))
     except CatchableError as e:

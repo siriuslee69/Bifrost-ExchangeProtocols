@@ -181,7 +181,7 @@ suite "AME private handshake":
     check clientDone.ok
     finishWire = encodeAmeClientFinish(clientDone.finish)
     clientDone.finish = decodeAmeClientFinish(finishWire)
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish,
       nowUnix)
     check serverDone.err == ""
     check serverDone.ok
@@ -217,7 +217,7 @@ suite "AME private handshake":
       opened: AmeOpenResult
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish,
       nowUnix)
     check clientDone.ok and serverDone.ok
     clientSession = initAmeSession(clientDone.auth,
@@ -291,7 +291,7 @@ suite "AME private handshake":
     check clientDone.ok
     check clientDone.finish.params == wanted
     check clientDone.finish.sealed.len mod 64 == 0
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish,
       nowUnix)
     check serverDone.ok
     ## Both first epochs carry the same tunables, which is what makes the
@@ -399,7 +399,7 @@ suite "AME private handshake":
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
       client: AmeClientHandshake = beginAmeHandshake(9'u64, layout, tier,
-        mode = atmPinnedPeerKey)
+        a = initAmePinnedAuthentication(serverPin))
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         initAmePinnedAuthentication(clientPin), serverDesc, serverKey)
       clientDone: AmeHandshakeResult
@@ -410,7 +410,7 @@ suite "AME private handshake":
     check clientDone.err == ""
     check clientDone.ok
     serverDone = acceptAmeHandshake(server.state, clientDone.finish,
-      initAmePinnedAuthentication(clientPin), nowUnix)
+      nowUnix)
     check serverDone.ok
     check clientDone.peerTrust.authority == "pinned-peer"
     check serverDone.peerTrust.subjectKeyId == "pin-client"
@@ -431,7 +431,7 @@ suite "AME private handshake":
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
       client: AmeClientHandshake = beginAmeHandshake(9'u64, layout, tier,
-        mode = atmPinnedPeerKey)
+        a = initAmePinnedAuthentication(wrongPin))
       clientPin: AmePinnedPeerIdentity = pinnedPeerIdentity(clientKey)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         initAmePinnedAuthentication(clientPin), serverDesc, serverKey)
@@ -518,7 +518,7 @@ suite "AME private handshake":
     check clientDone.ok
     check client.secretKeys.len == 0
     check client.hello.sessionId == 0'u64
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish,
       nowUnix)
     check serverDone.ok
     check server.state.sharedSecrets.len == 0
@@ -559,7 +559,7 @@ suite "AME anti-flood cookie":
 
 suite "AME handshake transport":
   # {.testKind: tkUnit.}
-  test "AM1M proof binds the provisioned identity and transcript":
+  test "AM1P proof binds the provisioned identity and transcript":
     var
       secret: ByteSeq = newSeq[byte](32)
       auth: AmeAuthentication
@@ -587,14 +587,14 @@ suite "AME handshake transport":
   ## helper on its own, which is why a client that read the server's block
   ## before opening it went unnoticed.
   # {.testKind: tkRegression.}
-  test "a complete AM1M handshake runs with no certificate on either side":
+  test "a complete AM1P handshake runs with no certificate on either side":
     var
       secret: ByteSeq = pskSecret(1)
       auth: AmeAuthentication = initAmePskAuthentication("site-a", secret)
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
       client: AmeClientHandshake = beginAmeHandshake(71'u64, layout, tier,
-        mode = atmPskMac)
+        a = auth)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
       clientDone: AmeHandshakeResult
@@ -604,16 +604,16 @@ suite "AME handshake transport":
     clientDone = finishAmeHandshake(client, server.state.serverHello, auth)
     check clientDone.err == ""
     check clientDone.ok
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, auth)
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish)
     check serverDone.err == ""
     check serverDone.ok
     ## Both sides agreed the same epoch, and both name the mode they ran.
     check clientDone.auth.current.transcriptSalt ==
       serverDone.auth.current.transcriptSalt
-    check clientDone.peerTrust.mode == am1m
-    check serverDone.peerTrust.mode == am1m
+    check clientDone.peerTrust.mode == am1p
+    check serverDone.peerTrust.mode == am1p
     check clientDone.peerTrust.subjectKeyId == "site-a"
-    check clientDone.auth.authenticationMode == am1m
+    check clientDone.auth.authenticationMode == am1p
     ## No signature key was involved anywhere.
     check clientDone.auth.peerSignaturePublicKeys.len == 0
     check serverDone.auth.peerSignaturePublicKeys.len == 0
@@ -636,7 +636,7 @@ suite "AME handshake transport":
 
   # {.testKind: tkRegression, covers: "exchangeBinderKey", pins: "a certificate handshake must not invent a provisioned secret it was never given".}
   test "a mode with no provisioned secret carries no binder":
-    ## AM1C and AM1S are trusted through signatures, not through a secret
+    ## AM1A and AM1S are trusted through signatures, not through a secret
     ## shared beforehand. There is nothing for them to bind, and inventing
     ## something would be worse than nothing: it would look like protection
     ## while resting on values both sides already send in the clear.
@@ -651,10 +651,10 @@ suite "AME handshake transport":
     clientDone = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
     check clientDone.ok
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, p.auth,
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish,
       nowUnix)
     check serverDone.ok
-    check clientDone.auth.authenticationMode == am1c
+    check clientDone.auth.authenticationMode == am1a
     check clientDone.auth.exchangeBinder.len == 0
     check serverDone.auth.exchangeBinder.len == 0
     ## Which changes nothing about the two sides agreeing: the stack they
@@ -673,12 +673,12 @@ suite "AME handshake transport":
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
       client: AmeClientHandshake = beginAmeHandshake(72'u64, layout, tier,
-        mode = atmPskMac)
+        a = auth)
       saved: AmeClientHandshake = client
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
       done: AmeHandshakeResult
-      certified: Pair = newPair("am1m-mismatch")
+      certified: Pair = newPair("am1p-mismatch")
       certClient: AmeClientHandshake = beginAmeHandshake(73'u64,
         certified.layout, certified.tier)
       certServer: tuple[ok: bool, state: AmeServerHandshake, err: string]
@@ -693,7 +693,7 @@ suite "AME handshake transport":
     client = saved
     done = finishAmeHandshake(client, server.state.serverHello, wrongName)
     check not done.ok
-    ## A responder running AM1M refuses a hello that asked for AM1C.
+    ## A responder running AM1P refuses a hello that asked for AM1A.
     certServer = answerAmeHandshake(certClient.hello,
       [handshakePath(certified.layout, certified.tier)], auth)
     check not certServer.ok
@@ -701,14 +701,14 @@ suite "AME handshake transport":
       "client asked for an authentication mode this side does not run"
 
   # {.testKind: tkRegression.}
-  test "AM1M rotates an epoch with no signature keys to sign with":
+  test "AM1P rotates an epoch with no signature keys to sign with":
     var
       auth: AmeAuthentication = initAmePskAuthentication("rotate",
         pskSecret(3))
       layout: AmeSuiteLayout = handshakeLayout()
       tier: AmeMaskTier = handshakeTier(layout)
       client: AmeClientHandshake = beginAmeHandshake(74'u64, layout, tier,
-        mode = atmPskMac)
+        a = auth)
       server = answerAmeHandshake(client.hello, [handshakePath(layout, tier)],
         auth)
       clientDone: AmeHandshakeResult
@@ -722,7 +722,7 @@ suite "AME handshake transport":
       commit: FomkeUpgradeCommit
     check server.ok
     clientDone = finishAmeHandshake(client, server.state.serverHello, auth)
-    serverDone = acceptAmeHandshake(server.state, clientDone.finish, auth)
+    serverDone = acceptAmeHandshake(server.state, clientDone.finish)
     check clientDone.ok and serverDone.ok
     a = initAmeSession(clientDone.auth, handshakePath(layout, tier), 74'u64,
       peerTrust = clientDone.peerTrust)
@@ -756,13 +756,23 @@ suite "AME handshake transport":
   test "authentication mode is carried in and bound to the hello":
     var
       p: Pair = newPair("mode-wire")
+      auth: AmeAuthentication = initAmePskAuthentication("mode-wire",
+        pskSecret(4))
       h: AmeClientHandshake = beginAmeHandshake(91'u64, p.layout, p.tier,
-        mode = atmPskMac)
+        a = auth)
       encoded: ByteSeq = encodeAmeClientHello(h.hello)
       decoded: AmeClientHello = decodeAmeClientHello(encoded)
-    check decoded.mode == atmPskMac
-    decoded.mode = atmPinnedPeerKey
-    check clientHelloSubject(decoded) != clientHelloSubject(h.hello)
+      edited: AmeClientHello = default(AmeClientHello)
+    check decoded.mode == atmPreSharedKey
+    ## A sealed hello has to be opened before its transcript exists.
+    check openAmeHelloOffer(decoded, auth) == ""
+    check clientHelloSubject(decoded) == clientHelloSubject(h.hello)
+    ## Editing the mode changes the record, AND the sealed offer no longer
+    ## opens: the mode byte is under the seal's tag.
+    edited = decoded
+    edited.mode = atmPreSharedPinned
+    check clientHelloSubject(edited) != clientHelloSubject(h.hello)
+    check openAmeHelloOffer(edited, auth) != ""
 
   # {.testKind: tkEdgeCase.}
   test "records ride ordinary AME frames and refuse to arrive out of order":
@@ -823,7 +833,7 @@ suite "AME secure package":
       i = i + 1
     sender = finishAmeHandshake(client, server.state.serverHello, p.auth,
       p.clientCert, p.clientKey, nowUnix)
-    receiver = acceptAmeHandshake(server.state, sender.finish, p.auth, nowUnix)
+    receiver = acceptAmeHandshake(server.state, sender.finish, nowUnix)
     check sender.ok and receiver.ok
     plan = planAmeSecurePackage(sender.auth, 55'u64, plaintext,
       dacDefaultsFor(dscCleanLan))

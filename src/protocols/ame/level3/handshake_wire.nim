@@ -5,32 +5,43 @@
 ## Each record begins with three letters and one version byte, so the first
 ## four bytes read as a name:
 ##
-##   "AMC1"  client hello        "AMS1"  server hello
-##   "AMR1"  hello retry         "AMF1"  client finish
+##   "AMC2"  client hello        "AMS2"  server hello
+##   "AMR2"  hello retry         "AMF2"  client finish
 ##
 ## Fixed-size fields carry no length. The nonce is always 32 bytes, so
 ## writing "32" in front of it every time would say nothing. Variable fields
 ## carry a length in front, u16 where the field is small by construction and
 ## u32 only where a post-quantum key can genuinely run to megabytes.
 ##
-## Client hello (AMC1)
-##   +---+---+---+---+-------------------+------------------------------+
-##   | A | M | C | 1 |    session id     |   nonce (32 bytes, fixed)    |
-##   +---+---+---+---+-------------------+------------------------------+
-##     0   1   2   3    4..11               12..43
+## Client hello (AMC2)
+##   +---+---+---+---+----------------+------+-----------------------------+
+##   | A | M | C | 2 |   session id   | mode |   nonce (32 bytes, fixed)   |
+##   +---+---+---+---+----------------+------+-----------------------------+
+##     0   1   2   3    4..11           12      13..44
 ##
 ##   +--------+---------+--------+--------+--------+---------+
-##   | u16 len| layout  | u16 len|  tier  | u16 len| cookie  |  then u32+offer
+##   | u16 len| layout  | u16 len|  tier  | u16 len| cookie  |  then ...
 ##   +--------+---------+--------+--------+--------+---------+
 ##
-## Hello retry (AMR1)
+##   ... in AM1A / AM1S:       u32 len | offer (KEM public keys, clear)
+##
+##   ... in AM1P / AM1P+S:     the offer is SEALED under the shared secret
+##   +------+-------------+-------------+---------+----------------------+
+##   | flag | salt (32)   | tag (32)    | u32 len | sealed offer         |
+##   +------+-------------+-------------+---------+----------------------+
+##     flag: 0 = psk only, 1 = psk + the previous session's next secret
+##
+## Byte 12 (right after the session id) is the mode: 0 AM1A, 1 AM1S,
+## 2 AM1P, 3 AM1P+S. Which of the two tails follows is decided by it alone.
+##
+## Hello retry (AMR2)
 ##   "AMR" | ver | session id u64 | u16 len | cookie
 ##
-## Server hello (AMS1)
-##   "AMS" | ver | nonce (32) | u32 len | KEM reply
+## Server hello (AMS2)
+##   "AMS" | ver | mode u8 | nonce (32) | u32 len | KEM reply
 ##         | tagLen u8 | padding u8 | tag (tagLen bytes) | u32 len | sealed
 ##
-## Client finish (AMF1)
+## Client finish (AMF2)
 ##   "AMF" | ver | tagLen u8 | padding u8 | tag | u32 len | sealed block
 ##
 ## The two bytes after the KEM reply are the epoch's tunables: how long every
@@ -53,7 +64,10 @@ import ../level1/padding
 import runePragmas
 
 const
-  ameHandshakeWireVersion = 1'u8
+  ameHandshakeWireVersion = 2'u8
+    ## 2: modes renamed and AM1P+S added, the pre-shared hello sealed.
+  ameHelloSealFieldLen = 32
+    ## Salt and tag of a sealed hello, both fixed at 32 bytes.
   ameClientHelloMagic = [uint8('A'), uint8('M'), uint8('C')]
   ameHelloRetryMagic = [uint8('A'), uint8('M'), uint8('R')]
   ameServerHelloMagic = [uint8('A'), uint8('M'), uint8('S')]
@@ -175,17 +189,45 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: dataWriter,
   appendSmallField(result, encodeAmeSuiteLayout(h.layout))
   appendSmallField(result, encodeAmeMaskTier(h.initialTier))
   appendSmallField(result, h.cookie)
-  appendLargeField(result, encodeAmeExchangeOffer(h.offer))
+  if not ameModeUsesPsk(h.mode):
+    appendLargeField(result, encodeAmeExchangeOffer(h.offer))
+    return
+  if h.offerSalt.len != ameHelloSealFieldLen or
+      h.offerTag.len != ameHelloSealFieldLen or h.sealedOffer.len == 0:
+    raise newException(ValueError, "AME pre-shared hello is not sealed")
+  result.add(if h.usesNextSecret: 1'u8 else: 0'u8)
+  appendAmeBytes(result, h.offerSalt)
+  appendAmeBytes(result, h.offerTag)
+  appendLargeField(result, h.sealedOffer)
+
+proc readSealedHelloTail(A: openArray[uint8], cursor: var int,
+    h: var AmeClientHello) {.role: parser, inline,
+    tag: "codecBoundary|parsing".} =
+  ## A/cursor/h: the pre-shared tail -- flag, salt, tag, sealed offer. The
+  ## offer itself stays unread until the responder opens it.
+  var
+    flag: uint8 = readHandshakeU8(A, cursor)
+  if flag > 1'u8:
+    raise newException(ValueError, "AME hello next-secret flag is invalid")
+  h.usesNextSecret = flag == 1'u8
+  h.offerSalt = readFixed(A, cursor, ameHelloSealFieldLen)
+  h.offerTag = readFixed(A, cursor, ameHelloSealFieldLen)
+  h.sealedOffer = readLargeField(A, cursor)
+  if h.sealedOffer.len == 0:
+    raise newException(ValueError, "AME hello sealed offer is empty")
 
 proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
     role: parser, tag: "appApi|codecBoundary|parsing".} =
-  ## A: complete bounded AMC1 client hello bytes.
+  ## A: complete bounded AMC2 client hello bytes. In the pre-shared modes the
+  ## returned hello still holds its offer sealed; `answerAmeHandshake` opens
+  ## it with the shared secret.
   var
     B: ByteSeq = @[]
     cursor: int = 0
+    modeByte: uint8 = 0'u8
   requireHandshakeHeader(A, ameClientHelloMagic, cursor)
   result.sessionId = readHandshakeU64(A, cursor)
-  var modeByte: uint8 = readHandshakeU8(A, cursor)
+  modeByte = readHandshakeU8(A, cursor)
   if modeByte > uint8(ord(high(AmeTrustMode))):
     raise newException(ValueError, "AME authentication mode is invalid")
   result.mode = AmeTrustMode(modeByte)
@@ -195,8 +237,11 @@ proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
   B = readSmallField(A, cursor)
   result.initialTier = decodeAmeMaskTier(result.layout, B)
   result.cookie = readSmallField(A, cursor, ameCookieMax)
-  B = readLargeField(A, cursor)
-  result.offer = decodeAmeExchangeOffer(result.layout.kems, B)
+  if ameModeUsesPsk(result.mode):
+    readSealedHelloTail(A, cursor, result)
+  else:
+    B = readLargeField(A, cursor)
+    result.offer = decodeAmeExchangeOffer(result.layout.kems, B)
   if cursor != A.len or result.sessionId == 0'u64:
     raise newException(ValueError, "AME client hello wire value is invalid")
 
@@ -212,7 +257,7 @@ proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: dataWriter,
 
 proc decodeAmeHelloRetry*(A: openArray[uint8]): AmeHelloRetry {.role: parser,
     tag: "appApi|codecBoundary|parsing".} =
-  ## A: complete bounded AMR1 hello retry bytes.
+  ## A: complete bounded AMR2 hello retry bytes.
   var
     cursor: int = 0
   requireHandshakeHeader(A, ameHelloRetryMagic, cursor)
@@ -239,7 +284,7 @@ proc encodeAmeServerHello*(h: AmeServerHello): ByteSeq {.role: dataWriter,
 proc decodeAmeServerHello*(L: AmeSuiteLayout,
     A: openArray[uint8]): AmeServerHello {.
     role: parser, tag: "appApi|codecBoundary|parsing".} =
-  ## L/A: negotiated layout and complete bounded AMS1 server hello bytes.
+  ## L/A: negotiated layout and complete bounded AMS2 server hello bytes.
   var
     B: ByteSeq = @[]
     cursor: int = 0
@@ -271,7 +316,7 @@ proc encodeAmeClientFinish*(f: AmeClientFinish): ByteSeq {.
 
 proc decodeAmeClientFinish*(A: openArray[uint8]): AmeClientFinish {.
     role: parser, tag: "appApi|codecBoundary|parsing".} =
-  ## A: complete bounded AMF1 client finish bytes.
+  ## A: complete bounded AMF2 client finish bytes.
   var
     cursor: int = 0
   requireHandshakeHeader(A, ameClientFinishMagic, cursor)

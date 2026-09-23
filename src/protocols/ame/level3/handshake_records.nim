@@ -32,15 +32,25 @@
 
 import ../../types
 import ../types
-import ./handshake_identity
+import ./handshake_authentication
 import runePragmas
 
 ## A record CONTAINS an `AmeTrustMode` and an `AmeIdentityCertificate`, so
 ## anyone holding the shape needs the vocabulary its fields are written in.
-export handshake_identity
+export handshake_authentication
 
 type
-  ## The cleartext half of a client hello. No identity here on purpose.
+  ## The client hello. No identity here on purpose.
+  ##
+  ## In the pre-shared modes (AM1P, AM1P+S) the offer -- the KEM public keys
+  ## -- does not travel in the clear. It is sealed under a key taken from the
+  ## shared secret, and `offer` is only filled in once it has been opened:
+  ##
+  ##   AM1A / AM1S          offer          in the clear
+  ##   AM1P / AM1P+S        offerSalt      in the clear, fresh per hello
+  ##                        usesNextSecret in the clear, one flag
+  ##                        sealedOffer    ciphertext of the offer
+  ##                        offerTag       its 32-byte tag
   AmeClientHello* {.role: truthState.} = object
     sessionId*: uint64
     mode*: AmeTrustMode
@@ -49,6 +59,16 @@ type
     initialTier*: AmeMaskTier
     cookie*: ByteSeq
     offer*: AmeExchangeOffer
+    offerSalt*: ByteSeq
+      ## 32 random bytes. The shared secret is the same for every hello, so
+      ## without a fresh salt two hellos would be sealed under one key and
+      ## one keystream -- XOR the two and both offers fall out.
+    usesNextSecret*: bool
+      ## True when the seal key (and the key schedule) also took the next
+      ## secret from the previous session. In the clear so a responder that
+      ## lacks it can refuse at once, and so a fallback is never silent.
+    sealedOffer*: ByteSeq
+    offerTag*: ByteSeq
 
   AmeHelloRetry* {.role: truthState.} = object
     sessionId*: uint64
@@ -70,12 +90,17 @@ type
   ## What the server's sealed block decrypts to. Which half is filled in
   ## depends on the mode the hello named:
   ##
-  ##   AM1C / AM1S : certificate + one proof per signature slot
-  ##   AM1M        : pskId + exactly one shared-secret proof
+  ##   AM1A / AM1S : certificate + one proof per signature slot
+  ##   AM1P        : pskId + exactly one shared-secret proof
+  ##   AM1P+S      : pskId + one shared-secret proof, THEN the certificate
+  ##                 and one proof per signature slot -- both halves
   AmeServerIdentityBlock* {.role: truthState.} = object
     certificate*: AmeIdentityCertificate
     pskId*: string
+    pskProofs*: seq[ByteSeq]
+      ## The shared-secret proof (exactly one) in AM1P and AM1P+S.
     proofs*: seq[ByteSeq]
+      ## One signature per active slot in AM1A, AM1S and AM1P+S.
 
   AmeClientFinish* {.role: truthState.} = object
     params*: AmeRuntimeParams
@@ -87,6 +112,8 @@ type
   AmeClientIdentityBlock* {.role: truthState.} = object
     certificate*: AmeIdentityCertificate
     pskId*: string
+    pskProofs*: seq[ByteSeq]
+      ## The shared-secret proof (exactly one) in AM1P and AM1P+S.
     transcriptHash*: ByteSeq
     proofs*: seq[ByteSeq]
 
@@ -99,6 +126,10 @@ type
     serverHello*: AmeServerHello
     sharedSecrets*: seq[ByteSeq]
     localSignatureSecretKeys*: seq[ByteSeq]
+    authentication*: AmeAuthentication
+      ## What this side answered the hello with, AFTER it was matched to the
+      ## hello's next-secret flag. The finish is opened with exactly this,
+      ## never with a fresh copy the caller might hand in differently.
 
   AmeHandshakeResult* {.role: truthState.} = object
     ok*: bool

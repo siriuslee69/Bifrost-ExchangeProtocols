@@ -16,6 +16,15 @@ peerTrustRequired = true
 fomkePregeneration = false
 fomkePregenerationMessages = 8
 
+# How many message keys each lane may hold for messages that arrive out of
+# order. Message 7 arriving before 5 makes this side step its chain to 7 and
+# KEEP the key for 5 (and 6) until they turn up. Each kept key is 32 bytes:
+#   16 -> about 0.5 KB    64 -> about 2 KB    4096 -> about 128 KB
+# It is also the furthest back a late message may be and still open.
+# Allowed 4 .. 4096. Raise it for very lossy/reordering links (UDP over
+# long paths); keep it small on devices that can be seized.
+fomkeReorderCeiling = 64
+
 # Canonical immutable AME layout and initial mask tier.
 # Tier masks are KEM, cipher, MAC, hash, signature, KDF in MSB-first order.
 [ame]

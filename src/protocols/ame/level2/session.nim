@@ -233,17 +233,17 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
 ## proved by the endpoint that sent it. HOW it is proved depends on what the
 ## handshake established:
 ##
-##   AM1C / AM1S  ->  one signature per active signature slot
-##   AM1M         ->  one tag under the session's own exchange key
+##   AM1A / AM1S / AM1P+S  ->  one signature per active signature slot
+##   AM1P                  ->  one tag under the session's own exchange key
 ##
-## AM1M sessions hold no signature keys at all, so there is nothing there to
+## AM1P sessions hold no signature keys at all, so there is nothing there to
 ## sign with. Both shapes travel in the same `signatures` field, and both are
 ## taken over the same subject bytes, so nothing below this point has to know
 ## which one it is looking at.
 
 proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
     tag: "cryptoBoundary".} =
-  ## A: the AM1M exchange key, checked before it is used.
+  ## A: the AM1P exchange key, checked before it is used.
   if A.exchangeAuthenticationKey.len < 32:
     raise newException(ValueError, "AME session has no exchange proof key")
   result = A.exchangeAuthenticationKey
@@ -252,7 +252,7 @@ proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
     subject: openArray[uint8]): seq[ByteSeq] {.role: truthBuilder,
     tag: "cryptoBoundary|exchange".} =
   ## S/t/subject: this endpoint's proof over one offer or reply.
-  if S.auth.authenticationMode == am1m:
+  if S.auth.authenticationMode == am1p:
     return @[ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)]
   result = signAmeTier(S.auth.current.layout, t, subject,
     activeAmeSignatureKeys(S.auth.current.layout, t,
@@ -263,7 +263,7 @@ proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
     tag: "cryptoBoundary|exchange|validation".} =
   ## S/t/subject/P: the peer's proof over one offer or reply.
   var expected: ByteSeq = @[]
-  if S.auth.authenticationMode != am1m:
+  if S.auth.authenticationMode != am1p:
     return verifyAmeTier(S.auth.current.layout, t, subject,
       activeAmeSignatureKeys(S.auth.current.layout, t,
         S.auth.peerSignaturePublicKeys), P)
@@ -796,18 +796,22 @@ proc initAmeSession*(a: AmeAuthPackage,
   result.peerTrust = peerTrust
   result.inbox = circ_seq.initCircSeq[AmePacket](inboxCapacity)
   setCurrentAmeTier(result.path, result.auth.current.tier)
+  runtime = currentBifrostConfig()
   ## The ratchet is started here, from the finished exchange and from the
   ## handshake transcript that produced it. Binding the transcript means two
   ## sessions that negotiated different things can never derive the same keys
   ## even if every KEM secret somehow matched.
+  ##
+  ## How many out-of-order message keys a lane may hold comes from the config
+  ## (`fomkeReorderCeiling`), so a lossy link can be given more room without
+  ## a rebuild.
   result.fomke = initFomkeFromAme(result.auth.current.exchange,
     result.auth.current.layout, result.auth.current.tier,
     fomkeRoleFor(result.auth.endpointRole),
     result.auth.current.transcriptSalt,
-    initGb3KdfConfig(), fomkeDefaultReorderCeiling,
+    initGb3KdfConfig(), runtime.fomkeReorderCeiling,
     result.auth.current.params.authTagLen)
   refreshAmeHeaderKeys(result)
-  runtime = currentBifrostConfig()
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)
   result.fomkePregenerationMessages = runtime.fomkePregenerationMessages
   if result.fomkePregenerationEnabled:
@@ -827,6 +831,16 @@ proc initAmeSession*(a: AmeAuthPackage,
   path = initAmeTierPath(a.current.layout, [a.current.tier])
   result = initAmeSession(a, path, sessionId, rootLaneId, laneId, pathLane,
     messageClass, inboxCapacity, peerTrustRequired, peerTrust)
+
+proc ameNextHandshakeSecret*(S: AmeSession): ByteSeq {.role: truthBuilder,
+    tag: "appApi|cryptoBoundary".} =
+  ## S: a live session. Returns the 32 bytes to keep for the NEXT AM1P
+  ## handshake with the same peer (see `withAmeNextSecret`). Both sides
+  ## call this at the same epoch and get the same bytes.
+  ##
+  ##   session A ends ──▶ keep ameNextHandshakeSecret(A)
+  ##   session B starts ──▶ withAmeNextSecret(auth, kept) ──▶ handshake
+  result = fomkeHandshakeSecret(S.fomke)
 
 proc pending*(S: AmeSession): int {.role: parser.} =
   ## S: connection whose parsed inbox count is returned.

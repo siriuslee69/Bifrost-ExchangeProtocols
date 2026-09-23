@@ -25,6 +25,7 @@ proc deriveKdfLayer(a: AmeKdfAlgorithm, seed: openArray[byte],
   appendAmeU32(layerSeed, uint32(seed.len))
   appendAmeBytes(layerSeed, seed)
   result = ameKdfBytes(a, layerSeed, outLen)
+  secureClearAmeBytes(layerSeed)
 
 proc deriveAmeKey*(S: AmeExchangeState, L: AmeSuiteLayout, t: AmeMaskTier,
     outLen: int, context: openArray[byte] = []): ByteSeq {.role: truthBuilder.} =
@@ -55,7 +56,9 @@ proc deriveAmeKey*(S: AmeExchangeState, L: AmeSuiteLayout, t: AmeMaskTier,
     if algorithmSlotSelected(t.masks.kdf, i):
       layer = deriveKdfLayer(L.kdfs.algorithms[i], seed, outLen)
       xorAmeInto(result, layer)
+      secureClearAmeBytes(layer)
     i = i + 1
+  secureClearAmeBytes(seed)
 
 proc deriveAmeStorageKey*(L: AmeSuiteLayout, t: AmeMaskTier,
     rootKey, context: openArray[byte], outLen: int): ByteSeq {.

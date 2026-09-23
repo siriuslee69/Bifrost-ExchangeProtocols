@@ -319,8 +319,16 @@ type
       ## one valid proof for every slot listed here -- an authority that signs
       ## with two algorithms cannot be forged by breaking only one of them.
 
+  ## How the two sides proved who they are. The names are the ones the key
+  ## schedule drawing uses:
+  ##
+  ##   am1a   AM1A    an Authority vouches (certificate)
+  ##   am1s   AM1S    a known Signature key, pinned in advance
+  ##   am1p   AM1P    a Pre-shared key; the hello is also encrypted with it
+  ##   am1ps  AM1P+S  both of the above at once: the pre-shared key AND a
+  ##                  pinned signature key must check out
   AmeAuthenticationMode* = enum
-    am1c = 0, am1s = 1, am1m = 2
+    am1a = 0, am1s = 1, am1p = 2, am1ps = 3
       ## AM1R describes relay topology, so it is not an authentication mode.
 
   AmePeerTrustResult* {.role: truthState.} = object
@@ -449,11 +457,13 @@ type
     endpointRole*: AmeEndpointRole
     authenticationMode*: AmeAuthenticationMode
     exchangeAuthenticationKey*: ByteSeq
-      ## Session-derived AM1M proof key; never the provisioned PSK.
+      ## Session-derived AM1P proof key; never the provisioned PSK. Empty in
+      ## AM1P+S, whose rotations are signed instead.
     exchangeBinder*: ByteSeq
       ## What the PROVISIONED secret contributes to every key this session
-      ## will ever derive. Derived once from the AM1M shared secret and the
-      ## finished transcript, and empty in AM1C and AM1S, which have no
+      ## will ever derive. Derived once from the AM1P shared secret (and the
+      ## carried next secret, when one was used) and the
+      ## finished transcript, and empty in AM1A and AM1S, which have no
       ## provisioned secret to contribute.
       ##
       ## It is mixed into the accumulated secret of every KEM slot, on the

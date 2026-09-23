@@ -314,7 +314,7 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     clearAmeServerHandshake(answered.state)
     result.outcome.err = e.msg
     return
-  accepted = acceptAmeHandshake(answered.state, finish, c.authentication,
+  accepted = acceptAmeHandshake(answered.state, finish,
     nowUnix, c.revokedSerials)
   if not accepted.ok:
     result.outcome.err = accepted.err
@@ -348,7 +348,7 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     return
   try:
     state = beginAmeHandshake(sessionId, c.layout, c.initialTier,
-      mode = c.authentication.mode)
+      a = c.authentication)
     pending.frame = encodeAmeClientHelloFrame(state.hello)
     pending.step = ameHandshakeStepHello
     sendRecord(sock, peer, pending.frame, maxDatagramBytes)
@@ -392,7 +392,7 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
       retry = decodeAmeHelloRetry(got.frame.record)
       clearAmeClientHandshake(state)
       state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
-        retry.cookie, c.authentication.mode)
+        retry.cookie, c.authentication)
       pending.frame = encodeAmeClientHelloFrame(state.hello, retried = true)
       pending.step = ameHandshakeStepRetriedHello
       sendRecord(sock, peer, pending.frame, maxDatagramBytes)

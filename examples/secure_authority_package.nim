@@ -48,8 +48,7 @@ server = answerAmeHandshake(client.hello, [path],
   initAmeCertificateAuthentication(root), receiverCert, receiverKey)
 sender = finishAmeHandshake(client, server.state.serverHello,
   initAmeCertificateAuthentication(root), senderCert, senderKey, 10'i64)
-receiver = acceptAmeHandshake(server.state, sender.finish,
-  initAmeCertificateAuthentication(root), 10'i64)
+receiver = acceptAmeHandshake(server.state, sender.finish, 10'i64)
 
 for i in 0 ..< plaintext.len:
   plaintext[i] = uint8(i mod 251)

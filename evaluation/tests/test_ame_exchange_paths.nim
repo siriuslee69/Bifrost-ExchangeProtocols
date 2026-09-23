@@ -358,9 +358,9 @@ suite "AME secrets stack instead of being replaced":
     check state.stackedSecrets[0].len > 0
     check state.stackedSecrets[0] != secret
 
-  # {.testKind: tkRegression, covers: "applyAmeExchange", pins: "a provisioned AM1M secret used to prove identity and touch no key".}
+  # {.testKind: tkRegression, covers: "applyAmeExchange", pins: "a provisioned AM1P secret used to prove identity and touch no key".}
   test "the provisioned secret changes every key, not just the proof":
-    ## AM1M hands both sides a secret out of band. It used to authenticate the
+    ## AM1P hands both sides a secret out of band. It used to authenticate the
     ## handshake and go nowhere near a traffic key, so a broken KEM took the
     ## whole session and the shared secret did nothing to stop it.
     ##

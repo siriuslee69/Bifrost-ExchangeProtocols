@@ -20,6 +20,31 @@
 ##   initiator sends on lane 1        responder sends on lane 2
 ##   ------------------------>        <------------------------
 ##
+## ╭─ ❧ where the two chains come from 🌊
+##
+## ONE GB3HKDF call, and its output cut into three pieces. There is no root
+## key in between -- nothing is left over to erase, because nothing else
+## was made:
+##
+##   every KEM secret (ISS) + transcript + layout + tier
+##                 │
+##              GB3HKDF  (one call, 160 bytes out)
+##                 │
+##   ┌─────────────┼──────────────┬──────────────────┐
+##   │ LK1  0..63  │ LK2  64..127 │ NS  128..159     │
+##   └─────────────┴──────────────┴──────────────────┘
+##     lane 1 chain   lane 2 chain   next secret: only ever used to
+##                                   derive the NEXT epoch
+##
+## A KEM rotation does the same with the NS in place of nothing:
+##
+##   NS + the fresh KEM secrets + the commit ──GB3HKDF──▶
+##       [ LK1' | LK2' | NS' | confirmation key ]
+##
+## So the new epoch needs BOTH the old NS and the new KEM result. An
+## attacker who only broke the new KEM lacks the NS; one who stole the NS
+## lacks the new KEM result.
+##
 ## The message key is not used to encrypt directly. It is expanded into one
 ## block that holds, in this order:
 ##
@@ -40,6 +65,12 @@ import ../../ame/level1/tier_aead
 import ../types
 import ../level0/gb3hkdf
 import runePragmas
+
+const
+  fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeNextSecretBytes
+    ## [ LK1 | LK2 | NS ] -- what one epoch derivation hands out.
+  fomkeConfirmKeyBytes = gb3BlockBytes
+    ## A rotation also derives the key its confirmation tag is taken with.
 
 type
   FomkeChainBlock = object
@@ -107,6 +138,7 @@ proc clearFomkePending(P: var FomkePendingUpgrade) {.role: actor,
   ## P: candidate chains erased when committed or cancelled.
   clearFomkeChain(P.candidateLane1)
   clearFomkeChain(P.candidateLane2)
+  secureClearAmeBytes(P.candidateNextSecret)
   secureClearAmeBytes(P.commit.confirmationTag)
   P = default(FomkePendingUpgrade)
 
@@ -115,6 +147,7 @@ proc clearFomkeState*(S: var FomkeState) {.role: actor,
   ## S: all current, skipped, and candidate secret material erased.
   clearFomkeChain(S.lane1)
   clearFomkeChain(S.lane2)
+  secureClearAmeBytes(S.nextSecret)
   clearFomkeSkipped(S.skipped)
   clearFomkePending(S.pending)
   S = default(FomkeState)
@@ -143,9 +176,12 @@ proc cloneFomkeState*(S: FomkeState): FomkeState {.role: helper,
   result = S
   result.lane1 = cloneFomkeChain(S.lane1)
   result.lane2 = cloneFomkeChain(S.lane2)
+  result.nextSecret = copyFomkeBytes(S.nextSecret)
   result.skipped = cloneFomkeSkipped(S.skipped)
   result.pending.candidateLane1 = cloneFomkeChain(S.pending.candidateLane1)
   result.pending.candidateLane2 = cloneFomkeChain(S.pending.candidateLane2)
+  result.pending.candidateNextSecret = copyFomkeBytes(
+    S.pending.candidateNextSecret)
   result.pending.commit.confirmationTag = copyFomkeBytes(
     S.pending.commit.confirmationTag)
 
@@ -213,6 +249,8 @@ proc validateFomkeState*(S: FomkeState) {.role: parser,
   if S.lane1.chainKey.len != fomkeChainKeyBytes or
       S.lane2.chainKey.len != fomkeChainKeyBytes:
     raise newException(ValueError, "FOMKE directional chain key is invalid")
+  if S.nextSecret.len != fomkeNextSecretBytes:
+    raise newException(ValueError, "FOMKE next secret is invalid")
   if S.reorderCeiling > fomkeMaxReorderWindow or
       S.reorderCeiling < fomkeMinReorderWindow:
     raise newException(ValueError, "FOMKE reorder ceiling is out of range")
@@ -249,29 +287,38 @@ proc requireFomkeQuiescent(S: FomkeState) {.role: parser,
   if S.pending.active:
     raise newException(ValueError, "FOMKE KEM upgrade is pending")
 
-proc buildFomkeRootInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
+proc buildFomkeEpochInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
     t: AmeMaskTier, epoch: uint32,
     context: openArray[uint8]): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|fomke|kdf".} =
-  ## A/L/t/epoch/context: KEM path, slot layout, active slots, root epoch, and
+  ## A/L/t/epoch/context: KEM path, slot layout, active slots, epoch, and
   ## the handshake transcript the caller binds in.
-  appendAmeLabel(result, "FOMKE-ROOT-v2")
+  appendAmeLabel(result, "FOMKE-EPOCH-KEYS-v3")
   appendAmeU32(result, epoch)
   appendFomkeField(result, encodeAmeKemAlgorithms(A))
   appendFomkeField(result, encodeAmeSuiteLayout(L))
   appendFomkeField(result, encodeAmeMaskTier(t))
   appendFomkeField(result, context)
 
-proc deriveFomkeLaneRoot(root: openArray[uint8], lane: FomkeLane,
-    epoch: uint32, c: Gb3KdfConfig): FomkeChainState {.role: truthBuilder,
+proc takeFomkeEpochKeys(K: var ByteSeq, lane1, lane2: var FomkeChainState,
+    nextSecret: var ByteSeq) {.role: actor,
     tag: "cryptoBoundary|fomke|kdf".} =
-  ## root/lane/epoch/c: ephemeral root and direction-bound chain derivation.
-  var
-    info: ByteSeq = @[]
-  appendAmeLabel(info, "FOMKE-DIRECTION-ROOT-v1")
-  info.add(uint8(ord(lane)))
-  appendAmeU32(info, epoch)
-  result.chainKey = deriveGb3Hkdf(root, @[], info, fomkeChainKeyBytes, c)
+  ## K: one epoch derivation's output, cut apart and then erased.
+  ## lane1/lane2/nextSecret: where the three pieces go.
+  ##
+  ##   offset   0 .. 63   lane 1 chain key
+  ##   offset  64 ..127   lane 2 chain key
+  ##   offset 128 ..159   next secret
+  ##   anything after that belongs to the caller (the rotation's
+  ##   confirmation key) and is left in K for it to take.
+  if K.len < fomkeEpochKeyBytes:
+    raise newException(ValueError, "FOMKE epoch key block is too short")
+  lane1.chainKey = sliceFomkeBytes(K, 0, fomkeChainKeyBytes)
+  lane1.nextIndex = 0'u64
+  lane2.chainKey = sliceFomkeBytes(K, fomkeChainKeyBytes, fomkeChainKeyBytes)
+  lane2.nextIndex = 0'u64
+  nextSecret = sliceFomkeBytes(K, fomkeChainKeyBytes * 2,
+    fomkeNextSecretBytes)
 
 proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     L: AmeSuiteLayout, t: AmeMaskTier, role: FomkeRole,
@@ -292,7 +339,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
   ##    widened by reordering a verified message has proved.
   var
     info: ByteSeq = @[]
-    root: ByteSeq = @[]
+    keys: ByteSeq = @[]
     seed: ByteSeq = @[]
     i: int = 0
   if S.len == 0:
@@ -305,23 +352,22 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
       reorderCeiling < fomkeMinReorderWindow:
     raise newException(ValueError, "FOMKE reorder ceiling is out of range")
   validateAmeTier(L, t)
-  info = buildFomkeRootInfo(A, L, t, 1'u32, context)
-  appendAmeLabel(seed, "FOMKE-ROOT-SECRETS-v1")
-  root = deriveGb3HkdfInputs(seed, S, info, fomkeChainKeyBytes, c)
+  info = buildFomkeEpochInfo(A, L, t, 1'u32, context)
+  appendAmeLabel(seed, "FOMKE-INITIAL-SECRETS-v2")
+  keys = deriveGb3HkdfInputs(seed, S, info, fomkeEpochKeyBytes, c)
   result.role = role
   result.epoch = 1'u32
   result.algorithms = A
   result.layout = L
   result.tier = t
   result.tagLen = tagLen
-  result.lane1 = deriveFomkeLaneRoot(root, flLane1, result.epoch, c)
-  result.lane2 = deriveFomkeLaneRoot(root, flLane2, result.epoch, c)
+  takeFomkeEpochKeys(keys, result.lane1, result.lane2, result.nextSecret)
   result.reorderCeiling = reorderCeiling
   result.reorderWindow = min(fomkeDefaultReorderWindow, reorderCeiling)
   result.orderedRun = 0'u32
   result.kdf = c
   secureClearAmeBytes(seed)
-  secureClearAmeBytes(root)
+  secureClearAmeBytes(keys)
   i = 0
   while i < S.len:
     secureClearAmeBytes(S[i])
@@ -837,15 +883,6 @@ proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
     clearFomkeState(pending)
     result.err = exc.msg
 
-proc canonicalFomkeLaneMaterial(S: FomkeState): ByteSeq {.role: truthBuilder,
-    tag: "cryptoBoundary|exchange|fomke|kdf".} =
-  ## S: current lane keys and counters framed in role-independent lane order.
-  appendAmeLabel(result, "FOMKE-CURRENT-LANES-v1")
-  appendAmeU64(result, S.lane1.nextIndex)
-  appendFomkeField(result, S.lane1.chainKey)
-  appendAmeU64(result, S.lane2.nextIndex)
-  appendFomkeField(result, S.lane2.chainKey)
-
 proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
     A: AmeKemAlgorithms, L: AmeSuiteLayout): ByteSeq {.
     role: truthBuilder,
@@ -853,7 +890,7 @@ proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
   ## c/A/L: public commit fields, KEM path, and the slot layout they sit in.
   var
     i: int = 0
-  appendAmeLabel(result, "FOMKE-UPGRADE-COMMIT-v3")
+  appendAmeLabel(result, "FOMKE-UPGRADE-COMMIT-v4")
   appendAmeU32(result, c.requestId)
   appendAmeU32(result, c.baseEpoch)
   appendAmeU32(result, c.targetEpoch)
@@ -912,15 +949,24 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   ## S/requestId/targetEpoch: quiescent chain and authenticated AME transaction.
   ## r/candidate: exact upgrade mask and resulting AME state.
   ##
-  ## The new epoch's root is derived from BOTH the current chain keys and the
-  ## fresh KEM secrets. Mixing the old keys keeps an attacker who only saw the
-  ## new exchange out; mixing the new secrets lets a session recover from a
-  ## past compromise, because the attacker never saw the new KEM result.
+  ## The new epoch is derived from BOTH this epoch's next secret (NS) and the
+  ## fresh KEM secrets, in one GB3HKDF call:
+  ##
+  ##   NS + new KEM secrets + commit ──▶ [ LK1' | LK2' | NS' | confirm key ]
+  ##
+  ## Mixing the NS keeps an attacker who only saw the new exchange out;
+  ## mixing the new secrets lets a session recover from a past compromise,
+  ## because the attacker never saw the new KEM result.
+  ##
+  ## The lane keys themselves are NOT an input. They were once, and that tied
+  ## the new epoch to the exact position each lane had reached -- a value the
+  ## two sides only agree on once every message in flight has landed. The NS
+  ## is fixed for the whole epoch, so both sides always hold the same one.
   var
-    laneMaterial: ByteSeq = @[]
     metadata: ByteSeq = @[]
     secretRows: seq[ByteSeq] = @[]
-    root: ByteSeq = @[]
+    keys: ByteSeq = @[]
+    confirmKey: ByteSeq = @[]
     confirmInfo: ByteSeq = @[]
   requireFomkeQuiescent(S)
   if S.skipped.len != 0:
@@ -940,24 +986,22 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   result.lane2Index = S.lane2.nextIndex
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
-  laneMaterial = canonicalFomkeLaneMaterial(S)
-  root = deriveGb3HkdfInputs(laneMaterial, secretRows, metadata,
-    fomkeChainKeyBytes, S.kdf)
+  keys = deriveGb3HkdfInputs(S.nextSecret, secretRows, metadata,
+    fomkeEpochKeyBytes + fomkeConfirmKeyBytes, S.kdf)
   S.pending.active = true
   S.pending.commit = result
-  S.pending.candidateLane1 = deriveFomkeLaneRoot(root, flLane1,
-    targetEpoch, S.kdf)
-  S.pending.candidateLane2 = deriveFomkeLaneRoot(root, flLane2,
-    targetEpoch, S.kdf)
-  appendAmeLabel(confirmInfo, "FOMKE-UPGRADE-CONFIRM-v3")
+  takeFomkeEpochKeys(keys, S.pending.candidateLane1,
+    S.pending.candidateLane2, S.pending.candidateNextSecret)
+  confirmKey = sliceFomkeBytes(keys, fomkeEpochKeyBytes, fomkeConfirmKeyBytes)
+  appendAmeLabel(confirmInfo, "FOMKE-UPGRADE-CONFIRM-v4")
   appendFomkeField(confirmInfo, metadata)
-  result.confirmationTag = tyr_blake3.blake3KeyedHash(
-    root.toOpenArray(0, gb3BlockBytes - 1), confirmInfo, gb3BlockBytes)
+  result.confirmationTag = tyr_blake3.blake3KeyedHash(confirmKey, confirmInfo,
+    gb3BlockBytes)
   S.pending.commit.confirmationTag = copyFomkeBytes(result.confirmationTag)
-  secureClearAmeBytes(laneMaterial)
   secureClearAmeBytes(metadata)
   clearFomkeSecretRows(secretRows)
-  secureClearAmeBytes(root)
+  secureClearAmeBytes(keys)
+  secureClearAmeBytes(confirmKey)
   secureClearAmeBytes(confirmInfo)
 
 proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
@@ -990,19 +1034,23 @@ proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
   var
     lane1: FomkeChainState = default(FomkeChainState)
     lane2: FomkeChainState = default(FomkeChainState)
+    nextSecret: ByteSeq = @[]
     targetEpoch: uint32 = 0'u32
     targetTier: AmeMaskTier = default(AmeMaskTier)
   validateFomkeUpgrade(S, c)
   lane1 = cloneFomkeChain(S.pending.candidateLane1)
   lane2 = cloneFomkeChain(S.pending.candidateLane2)
+  nextSecret = copyFomkeBytes(S.pending.candidateNextSecret)
   targetEpoch = S.pending.commit.targetEpoch
   targetTier = S.pending.commit.targetTier
   clearFomkeChain(S.lane1)
   clearFomkeChain(S.lane2)
+  secureClearAmeBytes(S.nextSecret)
   clearFomkeSkipped(S.skipped)
   clearFomkePending(S.pending)
   S.lane1 = lane1
   S.lane2 = lane2
+  S.nextSecret = move(nextSecret)
   S.epoch = targetEpoch
   S.tier = targetTier
   validateFomkeState(S)
@@ -1052,3 +1100,26 @@ proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
   ## gap means a slow path or a dropped one.
   result = S.skipped.len
   clearFomkeSkipped(S.skipped)
+
+proc fomkeHandshakeSecret*(S: FomkeState): ByteSeq {.role: truthBuilder,
+    tag: "appApi|cryptoBoundary|fomke|kdf".} =
+  ## S: the live ratchet whose next secret is handed to the NEXT handshake.
+  ##
+  ## When a session ends and the two sides later run a fresh AM1P handshake,
+  ## they can carry this into it (see `withAmeNextSecret`). It then keys the
+  ## sealed hello and joins the new key schedule, so the new session needs
+  ## the pre-shared key AND this -- a stolen pre-shared key alone no longer
+  ## opens the next hello.
+  ##
+  ## Never the raw NS: that one still has a job inside this session (the next
+  ## rotation). One secret doing two jobs is how a proof about one of them
+  ## stops holding for the other, so the export is its own derivation:
+  ##
+  ##   NS ──GB3HKDF("FOMKE-NEXT-HANDSHAKE-v1", epoch)──▶ 32 bytes
+  var
+    info: ByteSeq = @[]
+  validateFomkeState(S)
+  appendAmeLabel(info, "FOMKE-NEXT-HANDSHAKE-v1")
+  appendAmeU32(info, S.epoch)
+  result = deriveGb3Hkdf(S.nextSecret, @[], info, fomkeNextSecretBytes, S.kdf)
+  secureClearAmeBytes(info)

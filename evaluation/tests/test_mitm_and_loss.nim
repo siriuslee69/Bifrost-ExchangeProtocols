@@ -357,7 +357,7 @@ suite "MITM against the handshake":
     for b in encodeAmeClientFinish(clientDone.finish):
       captured.add(b)
     serverDone = acceptAmeHandshake(server.state, clientDone.finish,
-      initAmeCertificateAuthentication(root), nowUnix)
+      nowUnix)
     check serverDone.ok
     ## None of what the handshake PRODUCED may be visible in what it sent.
     check not windowFound(captured,

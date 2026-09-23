@@ -1,8 +1,27 @@
 # Progress
 
-Commit Message: Make every exchange stand on the ones before it
+Commit Message: Derive lanes and a next secret in one step, seal the pre-shared hello, add AM1P+S
 
 Features (Planned):
+- DAC rework (asked for, not started). DAC today is a self-diagnosing
+  parameter setter living inside the data path. Wanted: DAC as its own,
+  separate thing focused on MESSAGE MANAGEMENT, with its own channel -- a set
+  of parallel AME lanes -- over which it sends problem and congestion notices
+  for high-throughput links, instead of riding the data frames. AME and FOMKE
+  are the base it has to sit on; nothing in them should need to know DAC's
+  vocabulary.
+- Split `fomke/level1/chain.nim` into the ratchet (seal/open/reorder) and the
+  epoch upgrade (prepare/confirm/cancel). Otter lists three "APART" groups
+  there; they are the two halves of that file.
+- Replay guard for the sealed AM1P hello: a timestamp or counter inside the
+  sealed offer. A replayed hello gains an attacker no keys (the answer uses a
+  fresh KEM), but it still costs the responder one KEM encapsulation. The
+  cookie limits that to addresses that can receive; a counter would stop it.
+- `nim-check.sh` (Otter-RepoEvaluation) flags the continuation line of a
+  multi-line `var` default -- `answer: tuple[...] = (` then `reply: ...` --
+  as "var without a default value". False positive, 10+ sites in this repo.
+- Otter's whole-tree scan walks `.android-sdk/` although `.gitignore` lists
+  it: 470 "secrets" and 2400 "embedded code" findings come from there.
 - 83 triple-nesting sites remain, all at depth 3 (a loop plus two tests).
   Every site deeper than that is gone. Mostly BFX2, the HTTP request parser
   and the CHUNKYAEAD worker pool.
@@ -44,6 +63,41 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- Key schedule reworked (FOMKE): no root key. ONE GB3HKDF call over every KEM
+  secret (ISS) + transcript is cut into [LK1 64 | LK2 64 | NS 32]. The next
+  secret (NS) is never used for a message; a rotation derives
+  [LK1'|LK2'|NS'|confirm key] from NS + the fresh KEM secrets. The live lane
+  keys are no longer an input to the next epoch. NS is in the checkpoint
+  format (FSR version 3).
+- Authentication modes renamed to the drawing's names: AM1C -> AM1A,
+  AM1M -> AM1P (AM1S unchanged); `atmPskMac` -> `atmPreSharedKey`. New mode
+  AM1P+S (`atmPreSharedPinned`, `initAmePskPinnedAuthentication`): shared
+  secret AND pinned signature key, both required, rotations signed.
+- Pre-shared hello sealed: in AM1P / AM1P+S the KEM public keys travel
+  sealed under GB3HKDF(psk ‖ next secret?, 32-byte random salt, clear hello)
+  with the session's own cipher and MAC masks. Handshake wire version 2
+  (records AMC2/AMR2/AMS2/AMF2).
+- Next secret carried across sessions: `ameNextHandshakeSecret(session)` ->
+  `withAmeNextSecret(auth, kept, required)`. Keys the hello seal, both
+  proofs and the binder. Flag in the clear, under the seal's tag; responder
+  policy table in `nextSecretPolicyError`.
+- `acceptAmeHandshake` no longer takes an authentication: it uses the one
+  `answerAmeHandshake` matched to the hello (stored in the server state).
+- `beginAmeHandshake(..., a = auth)` replaces `mode = ...`.
+- `fomkeReorderCeiling` in config.toml (4..4096, default 64) now reaches
+  every session; checkpoint decode caps held keys by the ceiling, not the
+  moving window (it refused valid states before).
+- handshake split: `handshake_hello.nim` (steps 1-2),
+  `handshake_authentication.nim` (modes + AmeAuthentication). Two Otter seams
+  gone.
+- `deriveAmeKey` / `deriveKdfLayer` now erase their per-slot layer and seed
+  buffers (key material was left behind).
+- `examples/fomke_ame_chain.nim` compiles again (it predated the layout
+  argument of `applyAmeExchange`).
+- Mask use checked: cipher mask -> keystreams only, MAC mask -> the ONE tag
+  per frame (over ciphertext + AME header as AAD), hash mask -> transcript /
+  stack hashing only, never a tag. Written up in README "Which mask does
+  which job".
 - A KEM slot holds everything it has ever agreed, not the last thing it
   agreed. `stackAmeSecret` folds the fresh shared secret into the slot's
   accumulated stack -- previous hashed, then hashed together with the new KEM
@@ -164,6 +218,15 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last big change: the key-schedule rework above (2026-09-23).
+  Problem met: `nimble test` stops at `test_bfx2_geojson` because the SIBLING
+  Tyr-Crypto checkout has uncommitted edits that do not compile
+  (`tyr/kems/mceliece/operations.nim:201`, `role: {sanitizer}` -- set syntax
+  the pragma does not take). Not a Bifrost problem and not touched from here.
+  Worked around for verification by exporting Tyr's last commit
+  (`git archive HEAD`) and pointing `--path` at it: every remaining suite,
+  the four slim `testMinimalAme` profiles, the DAC-flag probes and all three
+  examples pass against it.
 - A twenty-five minute run with every fix in: 472,051 packages verified byte
   for byte, 11.40 GB, 16.95 million datagrams, 8,993 handshakes, 7,695 slots
   reclaimed, zero mismatches, zero escaped exceptions, zero FOMKE window

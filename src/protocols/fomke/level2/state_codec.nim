@@ -15,7 +15,9 @@ import runePragmas
 
 const
   fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]
-  fomkeStateVersion = 2'u8
+  fomkeStateVersion = 3'u8
+    ## 3 added the next secret (NS) after the two lanes, and the candidate
+    ## NS after the two candidate lanes.
 
 proc requireStateBytes(A: openArray[uint8], cursor, count: int) {.role: parser,
     tag: "fomke|parsing|validation".} =
@@ -154,7 +156,8 @@ proc validateDecodedPending(S: FomkeState) {.role: parser,
       S.pending.commit.targetEpoch != S.epoch + 1'u32:
     raise newException(ValueError, "FOMKE pending epoch is invalid")
   if S.pending.candidateLane1.chainKey.len != fomkeChainKeyBytes or
-      S.pending.candidateLane2.chainKey.len != fomkeChainKeyBytes:
+      S.pending.candidateLane2.chainKey.len != fomkeChainKeyBytes or
+      S.pending.candidateNextSecret.len != fomkeNextSecretBytes:
     raise newException(ValueError, "FOMKE pending chain is invalid")
 
 proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
@@ -177,6 +180,7 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
   appendStateField(result, encodeAmeMaskTier(S.tier))
   appendStateChain(result, S.lane1)
   appendStateChain(result, S.lane2)
+  appendStateField(result, S.nextSecret)
   appendAmeU32(result, S.reorderWindow)
   appendAmeU32(result, S.reorderCeiling)
   appendAmeU32(result, S.orderedRun)
@@ -194,6 +198,7 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
     appendStateField(result, commit)
     appendStateChain(result, S.pending.candidateLane1)
     appendStateChain(result, S.pending.candidateLane2)
+    appendStateField(result, S.pending.candidateNextSecret)
   if uint64(result.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE encoded state exceeds its limit")
 
@@ -228,6 +233,7 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   result.tier = decodeAmeMaskTier(result.layout, tier)
   result.lane1 = readStateChain(A, cursor)
   result.lane2 = readStateChain(A, cursor)
+  result.nextSecret = readStateField(A, cursor, fomkeNextSecretBytes.uint32)
   result.reorderWindow = readStateU32(A, cursor)
   result.reorderCeiling = readStateU32(A, cursor)
   result.orderedRun = readStateU32(A, cursor)
@@ -238,7 +244,10 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   discard initGb3KdfConfig(result.kdf.rounds, result.kdf.blockIndex,
     result.kdf.mode, result.kdf.memoryBlocks)
   count = readStateU32(A, cursor)
-  if count > result.reorderWindow or count > fomkeMaxReorderWindow:
+  ## The cache is capped by the CEILING, not by the moving window -- see
+  ## `acquireFomkeInboundKey`. A lane that narrowed its window while still
+  ## holding keys is a valid state and must survive a checkpoint.
+  if count > result.reorderCeiling or count > fomkeMaxReorderWindow:
     raise newException(ValueError, "FOMKE skipped state exceeds its limit")
   while i < count:
     result.skipped.add(readStateSkipped(A, cursor, result.epoch))
@@ -252,6 +261,8 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
     result.pending.commit = decodeFomkeUpgradeCommit(commit)
     result.pending.candidateLane1 = readStateChain(A, cursor)
     result.pending.candidateLane2 = readStateChain(A, cursor)
+    result.pending.candidateNextSecret = readStateField(A, cursor,
+      fomkeNextSecretBytes.uint32)
   if cursor != A.len:
     raise newException(ValueError, "FOMKE state has trailing bytes")
   validateFomkeState(result)

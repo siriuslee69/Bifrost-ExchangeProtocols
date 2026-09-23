@@ -12,13 +12,13 @@
 ## else, with a packet kind that says which record this is:
 ##
 ##   +--------------------------+--------------------------------+
-##   | AME header, kind = 0x0C  | "AMC1" client hello record     |
+##   | AME header, kind = 0x0C  | "AMC2" client hello record     |
 ##   +--------------------------+--------------------------------+
-##   | AME header, kind = 0x0D  | "AMR1" hello retry record      |
+##   | AME header, kind = 0x0D  | "AMR2" hello retry record      |
 ##   +--------------------------+--------------------------------+
-##   | AME header, kind = 0x0E  | "AMS1" server hello record     |
+##   | AME header, kind = 0x0E  | "AMS2" server hello record     |
 ##   +--------------------------+--------------------------------+
-##   | AME header, kind = 0x0F  | "AMF1" client finish record    |
+##   | AME header, kind = 0x0F  | "AMF2" client finish record    |
 ##   +--------------------------+--------------------------------+
 ##
 ## These frames are NOT encrypted -- there are no session keys yet, which is
@@ -200,7 +200,7 @@ proc initAmeResponderPolicy*(supported: openArray[AmeTierPath],
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
     AmeResponderPolicy {.role: configurator, tag: "appApi".} =
   ## supported/a/descriptor/identity/requireCookie/params: responder policy
-  ## with a freshly minted anti-flood secret. AM1M needs neither a certificate
+  ## with a freshly minted anti-flood secret. AM1P needs neither a certificate
   ## nor an identity key, so both are left at their defaults there.
   if supported.len == 0:
     raise newException(ValueError, "AME responder must support at least one path")

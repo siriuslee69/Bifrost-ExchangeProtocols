@@ -536,54 +536,119 @@ that window to be worth trusting, the peer's own proof over the transcript,
 the exact slot layout and initial tier, the KEM exchange, and the final
 transcript hash.
 
-### Three ways to decide whom to believe ꒰ঌ ໒꒱
+### Four ways to decide whom to believe ꒰ঌ ໒꒱
 
-The picture above shows AM1C, where an authority vouches for both sides. There
-are three modes in total. **The four messages are identical in all three** —
-same fields, same order, same sizes. Only the contents of the two sealed
-blocks change, and only because the modes prove different things.
+The picture above shows AM1A, where an authority vouches for both sides. There
+are four modes in total. **The four messages carry the same fields in all
+of them.** Two things change between modes: the contents of the two sealed
+blocks, and, in the pre-shared modes, the client hello's KEM public keys,
+which are sealed too.
 
 **Def. 3 — authentication mode.** The single choice of what a peer must show
 before this side will believe it. It is made once, by building one
 `AmeAuthentication`, and every step of the handshake reads that same object.
 
-| | What you provision | What travels sealed | Needs a PKI |
-|---|---|---|---|
-| **AM1C** | an authority's public keys | certificate + one signature per slot | yes |
-| **AM1S** | the peer's own public key | identity + one signature per slot | no |
-| **AM1M** | a secret both sides hold | a name + one tag under that secret | no |
+The names follow one pattern: **AM1** + the letter of what is provisioned.
+
+| | What you provision | What travels sealed | Hello keys | Needs a PKI |
+|---|---|---|---|---|
+| **AM1A** | an **A**uthority's public keys | certificate + one signature per slot | clear | yes |
+| **AM1S** | the peer's own **S**ignature key | identity + one signature per slot | clear | no |
+| **AM1P** | a **P**re-shared secret | a name + one tag under that secret | **sealed** | no |
+| **AM1P+S** | both of the last two | name + tag, **then** identity + signatures | **sealed** | no |
 
 ```nim
-# AM1C -- an authority vouches for the peer
+# AM1A -- an authority vouches for the peer
 var auth = initAmeCertificateAuthentication(root)
 
 # AM1S -- you were handed the peer's public key in advance
 var auth = initAmePinnedAuthentication(pinnedPeerIdentity(theirKey))
 
-# AM1M -- you were handed a shared secret in advance
+# AM1P -- you were handed a shared secret in advance
 var auth = initAmePskAuthentication("site-a", secretBytes)
+
+# AM1P+S -- a shared secret AND the peer's public key
+var auth = initAmePskPinnedAuthentication("site-a", secretBytes,
+  pinnedPeerIdentity(theirKey))
 ```
 
 That one object then goes to every call, and nothing else has to be told which
 mode is running:
 
 ```nim
-var server = answerAmeHandshake(hello, supportedPaths, auth, cert, key)
-var client = finishAmeHandshake(state, serverHello, auth, cert, key, nowUnix)
-var done   = acceptAmeHandshake(server.state, finish, auth, nowUnix)
+var hello  = beginAmeHandshake(sessionId, layout, tier, a = auth)
+var server = answerAmeHandshake(hello.hello, supportedPaths, auth, cert, key)
+var client = finishAmeHandshake(hello, server.state.serverHello, auth, cert,
+  key, nowUnix)
+var done   = acceptAmeHandshake(server.state, client.finish, nowUnix)
 ```
+
+`acceptAmeHandshake` takes no `auth`: it uses the one `answerAmeHandshake`
+settled on, which it stored in `server.state`. That keeps the two halves of the
+responder from ever running with different secrets.
 
 `cert` and `key` are the certificate and signing key this side proves itself
-with. **AM1M uses neither** — a device provisioned with a shared secret holds
-no signing key at all — so both are left out there:
+with. **AM1P uses neither.** A device provisioned with a shared secret holds no
+signing key at all, so both are left out:
 
 ```nim
-var server = answerAmeHandshake(hello, supportedPaths, auth)
-var client = finishAmeHandshake(state, serverHello, auth)
-var done   = acceptAmeHandshake(server.state, finish, auth)
+var server = answerAmeHandshake(hello.hello, supportedPaths, auth)
+var client = finishAmeHandshake(hello, server.state.serverHello, auth)
+var done   = acceptAmeHandshake(server.state, client.finish)
 ```
 
-#### What AM1M actually proves ʚ♡ɞ
+#### Which mode protects against what
+
+No single mode is best everywhere. The honest ranking depends on what you are
+afraid of:
+
+```text
+mode     proof                          someone who STEALS it can ...
+-------  -----------------------------  -----------------------------------
+AM1A     "an authority vouched for me"  whatever the authority will sign
+AM1S     "I own this pinned key"        pretend to be that one side
+AM1P     "I know the shared secret"     pretend to be EITHER side
+AM1P+S   both of the above              needs to steal BOTH
+
+against a quantum computer:  AM1P  >  AM1S (post-quantum sigs)  >  AM1A
+against a stolen device:     AM1S  >  AM1A  >  AM1P
+for first contact:           AM1A  (the others need earlier setup)
+```
+
+**Def. 3a — AM1P+S.** Both proofs are required, and neither can stand in for
+the other:
+
+```text
+shared secret stolen, signing key safe   -> still secure
+signatures broken, shared secret safe    -> still secure
+both lost                                -> broken
+```
+
+It costs one signature and one verification per side, once per handshake.
+Rotations inside an AM1P+S session are signed, like in AM1S.
+
+**Def. 3b — the sealed hello (AM1P, AM1P+S).** In the pre-shared modes the
+KEM public keys never travel in the clear. They are sealed under a key taken
+from the shared secret and a fresh random salt:
+
+```text
+key  = GB3HKDF( psk ‖ next secret?,  salt = 32 random bytes,
+                info = "AME-AM1P-HELLO-v1" + name + every clear hello field )
+seal = the session's own tier AEAD: every switched-on cipher, every
+       switched-on MAC -- the same masks every later message uses
+```
+
+The fresh salt matters. The shared secret is the same for every hello, so
+without it two hellos would be sealed with one keystream, and XORing the two
+would reveal both. The seal's tag covers every clear field, including the mode
+byte and the salt. A responder holding a different secret cannot even open
+the hello, and refuses it before doing any KEM work:
+
+```text
+-> "client hello did not open under the shared secret"
+```
+
+#### What AM1P actually proves ʚ♡ɞ
 
 Two separate things come out of the one provisioned secret, and it is worth
 keeping them apart.
@@ -600,32 +665,70 @@ initiator proves:  tag( secret, "initiator" | name | hash of the whole exchange 
 
 **2. A binder, so the keys depend on the secret too.** This is the part that
 matters, and the part it is easy to leave out. The proof alone says who is
-talking; it puts nothing into the keys. So AM1M also derives one *binder* from
+talking; it puts nothing into the keys. So AM1P also derives one *binder* from
 the secret and drops it into the key schedule beside the KEM results:
 
 ```text
-AM1C / AM1S :  keys <- [ KEM slot 0 | KEM slot 1 | ... ]
-AM1M        :  keys <- [ KEM slot 0 | KEM slot 1 | ... | binder ]
+AM1A / AM1S   :  keys <- [ KEM slot 0 | KEM slot 1 | ... ]
+AM1P / AM1P+S :  keys <- [ KEM slot 0 | KEM slot 1 | ... | binder ]
 ```
 
 Read the second row carefully. Someone who breaks **every** KEM slot still
-cannot open an AM1M sealed block, because they are missing the last input. A
+cannot open an AM1P sealed block, because they are missing the last input. A
 provisioned secret that only authenticated would not buy that.
 
 The provisioned secret itself never enters the derivation — only the binder
 computed from it — so a key block recovered later says nothing about a secret
 that gets reused across many sessions.
 
+#### The next secret: carrying one session into the next ⟡
+
+**Def. 3c — next secret (NS).** 32 bytes the key schedule sets aside in every
+epoch and never uses for a message (see [FOMKE](#fomke)). When a session ends,
+both sides can keep a value derived from it. The next AM1P handshake with the
+same peer can then take it as a second key, next to the shared secret:
+
+```nim
+# session 1 is running
+var kept = ameNextHandshakeSecret(session)        # 32 bytes, same on both ends
+
+# later, session 2
+var auth = initAmePskAuthentication("site-a", secretBytes).withAmeNextSecret(kept)
+```
+
+With it, the hello seal, both proofs and the binder all take
+`psk ‖ next secret` as their key. **A stolen shared secret alone no longer
+opens the next hello.**
+
+Both sides have to agree whether it was used. The hello carries a one-byte
+flag for exactly that, in the clear and under the seal's tag. The responder
+decides what it accepts:
+
+```text
+hello flag   responder holds   required   outcome
+----------   ---------------   --------   -------------------------------------
+set          yes               any        use it
+set          no                any        refuse: nothing to match it with
+clear        any               yes        refuse: no silent fallback
+clear        yes               no         psk only -- and the flag SAYS so
+clear        no                no         psk only
+```
+
+`withAmeNextSecret(kept, required = true)` is the setting that stops an
+attacker from quietly pushing both sides back to psk-only by breaking one
+handshake on purpose. Leave it off only while a peer may have lost its copy,
+for example after a restore from backup.
+
 #### Rotating an epoch without signature keys
 
 Every so often a session throws its keys away and agrees new ones. The offer
 and the reply that do this each have to be proved by whoever sent them, and
-AM1M has no signing key to prove them with. It uses a tag instead, under a key
+AM1P has no signing key to prove them with. It uses a tag instead, under a key
 derived from the finished handshake:
 
 ```text
-AM1C / AM1S  ->  one signature per active signature slot
-AM1M         ->  one tag under the session's own exchange key
+AM1A / AM1S / AM1P+S  ->  one signature per active signature slot
+AM1P                  ->  one tag under the session's own exchange key
 ```
 
 Both travel in the same field and cover the same bytes, so nothing downstream
@@ -634,29 +737,30 @@ session and is never the provisioned secret.
 
 #### What a mode mismatch does
 
-The hello names the mode it wants, and that byte is covered by the transcript.
-A responder running one mode **refuses** a hello asking for another, before it
-does any key work:
+The hello names the mode it wants, and that byte is covered by the transcript
+(and, in the pre-shared modes, by the seal's tag). A responder running one mode
+**refuses** a hello asking for another, before it does any key work:
 
 ```text
-client asks for AM1C, responder runs AM1M
+client asks for AM1A, responder runs AM1P
   -> "client asked for an authentication mode this side does not run"
 ```
 
 This is checked rather than mirrored on purpose. A responder that simply
 echoed the mode back would be letting the client choose which of its own
-checks ran.
+checks ran. The same rule is what makes a *downgrade* impossible: each side
+decides its mode locally, and never takes "whatever the other one offers".
 
 ### What each side can and cannot do
 
 | | Client hello | Server hello | Finish |
 |---|---|---|---|
 | Who sent it | not stated | sealed | sealed |
-| Readable by an observer | yes | nonce + KEM answer only | nothing |
+| Readable by an observer | AM1A/AM1S: yes. AM1P, AM1P+S: nonce, layout, salt -- the KEM keys are sealed | nonce + KEM answer only | nothing |
 | Costs the server real work | no (cookie first) | yes | yes |
-| Authenticated | no — it cannot be | yes | yes |
+| Authenticated | AM1A/AM1S: no, it cannot be. AM1P, AM1P+S: yes, by the seal's tag | yes | yes |
 
-The client hello is deliberately unauthenticated. There is nothing to
+In the certificate and pinned modes the client hello is unauthenticated. There is nothing to
 authenticate it *with* yet, which is exactly why the cookie sits in front of
 the work it would otherwise trigger.
 
@@ -912,7 +1016,7 @@ stack is erased the instant the new one is built, and the new one is a one-way
 image of it, so a machine seized today still cannot read yesterday. What
 changed is only what an attacker needs in order to read **tomorrow**.
 
-**The provisioned secret finally does something.** In AM1M both sides are
+**The provisioned secret finally does something.** In AM1P (and AM1P+S) both sides are
 handed a secret out of band. It used to prove who was speaking and then go
 nowhere near a traffic key, so a broken KEM took the whole session and the
 secret the two sides had gone to the trouble of sharing beforehand did nothing
@@ -931,7 +1035,7 @@ its own label — deliberately **not** the same bytes as
 replies. One secret doing two jobs is how a proof about one of them quietly
 stops being a proof about the other.
 
-AM1C and AM1S carry an empty binder. They are trusted through signatures, have
+AM1A and AM1S carry an empty binder. They are trusted through signatures, have
 no secret shared beforehand, and inventing one would look like protection while
 resting on values both sides already send in the clear.
 
@@ -1173,19 +1277,48 @@ today's state therefore never opens yesterday's messages. ʕ•́ᴥ•̀ʔっ�
 
 ### How The FOMKE Algorithm Works
 
-**Step 1 — root.** *Every* shared secret the exchange produced, for every KEM
-slot the tier switches on, goes through GB3HKDF together with the epoch
-number, the KEM path, the slot layout, the tier, and the handshake transcript.
-The result is a 64-byte root; the secrets are erased.
+**Step 1 — one derivation, three pieces.** *Every* shared secret the exchange
+produced (the initial shared secret, ISS: one per KEM slot the tier switches
+on) goes through **one** GB3HKDF call, together with the epoch number, the
+KEM path, the slot layout, the tier, and the handshake transcript. Its 160
+bytes of output are cut apart:
+
+```text
+every KEM secret (ISS) + transcript + layout + tier
+                 │
+              GB3HKDF  (one call, 160 bytes out)
+                 │
+┌──────────────────┬──────────────────┬───────────────────┐
+│ LK1   bytes 0..63│ LK2  bytes 64..127│ NS  bytes 128..159│
+└──────────────────┴──────────────────┴───────────────────┘
+  lane 1 chain key   lane 2 chain key    next secret
+```
+
+The secrets and the 160-byte block are erased at once. **There is no root
+key.** There used to be one: a 64-byte value derived first, then split
+again. It bought nothing (the one call already separates the pieces by
+position) and it was one more secret that had to exist for a moment.
 
 Using every slot is the point. A tier that names Kyber *and* X25519 but
 derived from one of them would be a hybrid in name only — breaking the single
 contributing algorithm would be enough.
 
-**Step 2 — lane split.** The root becomes two independent 64-byte chain keys,
-one per direction, by including the lane number in the derivation. Then the
-root itself is erased. Lane 1 always carries initiator-to-responder traffic,
-lane 2 the reverse, so both sides agree without negotiating.
+**Def. — lane key (LK).** One of the two chain keys. Lane 1 always carries
+initiator-to-responder traffic, lane 2 the reverse, so both sides agree
+without negotiating.
+
+**Def. — next secret (NS).** 32 bytes that are never used for a message. They
+have exactly two jobs:
+
+```text
+1. the next KEM rotation:   NS + fresh KEM secrets ──GB3HKDF──▶ LK1' | LK2' | NS'
+2. the next handshake:      ameNextHandshakeSecret() = GB3HKDF(NS, "next handshake")
+                            ──▶ withAmeNextSecret(...) on both sides
+```
+
+NS is a one-way image of the epoch's secret. Someone who steals it cannot
+work back to any lane key, so it opens no message. It only matters together
+with the NEXT KEM result, which that person does not have.
 
 **Step 3 — the chain.** Each send advances the sender's outbound lane one
 step. One GB3HKDF call turns the current chain key `CK(i)` into the next chain
@@ -1299,23 +1432,44 @@ verifies. A forged message is thrown away before its measurement is committed,
 so nobody can walk the window up and then aim the full amplifier at this side.
 An honest peer on a badly reordering path widens it within a few messages.
 
-The ceiling is fixed when the ratchet is built (`reorderCeiling`, default 64)
-and the window never grows past it. Loss on a datagram link is usually handled
-below this layer anyway — DAC rebuilds a missing frame from repair shards, or
-asks for it again — so the window rarely needs to be wide.
+The ceiling is fixed when the ratchet is built and the window never grows
+past it. It comes from `config.toml` (`fomkeReorderCeiling`, default 64,
+allowed 4 .. 4096), so a very lossy or reordering link can be given more room
+without a rebuild:
+
+```toml
+[fomke]
+fomkeReorderCeiling = 64     # keys held per lane for late messages, 32 B each
+```
+
+Loss on a datagram link is usually handled below this layer anyway — DAC
+rebuilds a missing frame from repair shards, or asks for it again — so the
+window rarely needs to be wide.
 
 **Step 7 — epoch upgrade.** An AME tier transition prepares candidate chains
-for epoch `n+1` beside the live epoch `n` chains. The new root is derived from
-**both** the current chain keys and the fresh KEM secrets: mixing the old keys
-keeps out an attacker who only saw the new exchange, and mixing the new
-secrets lets a session recover from a past compromise, because the attacker
-never saw the new KEM result.
+for epoch `n+1` beside the live epoch `n` chains, again with ONE GB3HKDF call:
+
+```text
+NS(n) + fresh KEM secrets + the commit ──GB3HKDF──▶
+    [ LK1(n+1) | LK2(n+1) | NS(n+1) | confirmation key ]
+       64         64         32         32 bytes
+```
+
+Mixing the old NS keeps out an attacker who only saw the new exchange; mixing
+the new secrets lets a session recover from a past compromise, because the
+attacker never saw the new KEM result.
+
+The live lane keys are **not** an input. They were once, and that tied the new
+epoch to the exact position each lane had reached. The two sides only agree on
+that position once every message in flight has landed. NS is fixed for the
+whole epoch, so both sides always hold the same one.
 
 Data is paused; the FKU1 commit must match request id, epochs, target tier,
 KEM exchange mask, slot generations, both lane counters, and a confirmation
-tag derived from the candidate chains. Only then do the candidates atomically
-replace the live chains, and the tier changes with them. On any mismatch the
-candidates are erased and epoch `n` continues.
+tag taken with the confirmation key above. Only then do the candidates
+(both lanes AND the new NS) atomically replace the live ones, and the tier
+changes with them. On any mismatch the candidates are erased and epoch `n`
+continues.
 
 
 ### When a message is not late but gone ⌜guide⌟
@@ -1683,10 +1837,10 @@ Handshake records travel as ordinary AME frames with a handshake packet kind,
 because there are no session keys yet to protect them with:
 
 ```text
-AMC1  -> client hello   (packet kind 0x0C)
-AMR1  -> hello retry    (packet kind 0x0D)  -- the cookie challenge
-AMS1  -> server hello   (packet kind 0x0E)
-AMF1  -> client finish  (packet kind 0x0F)
+AMC2  -> client hello   (packet kind 0x0C)
+AMR2  -> hello retry    (packet kind 0x0D)  -- the cookie challenge
+AMS2  -> server hello   (packet kind 0x0E)
+AMF2  -> client finish  (packet kind 0x0F)
 ASP1  -> secure package, for bytes that sit still somewhere
 ```
 
@@ -1702,11 +1856,54 @@ the application's own bytes. A frame is encrypted exactly once.
 
 ```text
 PHASE A -- the handshake (no session keys yet)
-  [stream 4] -> AME4 header (kind 0x0C..0x0F) -> AMC1/AMR1/AMS1/AMF1
+  [stream 4] -> AME4 header (kind 0x0C..0x0F) -> AMC2/AMR2/AMS2/AMF2
 
 PHASE B -- after the handshake
   [stream 4] -> AME4 header -> FOMKE envelope -> plaintext
 ```
+
+### Which mask does which job ⌜guide⌟
+
+A tier is six bit masks (KEM, cipher, MAC, hash, signature, KDF). Each one
+switches slots on for **one** job and is never borrowed for another:
+
+```text
+mask        used for                                    where
+----------  ------------------------------------------  -----------------------
+KEM         which key exchanges run                     exchange_paths
+cipher      the keystreams a payload is XORed through   tier_aead (ameTierCrypt)
+MAC         THE tag on the wire -- one per frame        tier_aead (ameTierTag)
+hash        transcript hash, secret stack, selection    suites (hashAmeTier)
+            hash -- never a tag
+signature   identity proofs and signed rotations        suites / handshake
+KDF         header keys and storage keys                derivation
+```
+
+**There is one tag per frame, not two.** The cipher's authentication and the
+"MAC on the wire" are the same thing here. The tag is taken over the
+ciphertext AND the AME header (passed in as associated data), so the header
+cannot be edited without breaking it:
+
+```text
+per-message key block (from ONE GB3HKDF call on the message key):
+[ nonce | cipher key, slot 0 | cipher key, slot 1 | MAC key, slot 0 | MAC key, slot 1 ]
+          └──────── cipher mask ────────────────┘   └──────── MAC mask ─────────┘
+
+plaintext ─XOR cipher 0─XOR cipher 1─▶ ciphertext
+tag = MAC0(input) XOR MAC1(input)     input = layout | tier | AME header | nonce | ciphertext
+```
+
+Every cipher slot and every MAC slot has its **own** 32-byte key from its own
+position in the block, so no key is ever used by two algorithms. A second,
+separate wire MAC would add bytes to every frame and protect nothing the one
+tag does not already protect.
+
+Three places use fixed BLAKE3 on purpose, outside the masks: header
+protection (both ends must always agree, see above), the anti-flood cookie
+(only the server ever checks it), and the AM1P proofs and binder (the shared
+secret is the post-quantum anchor, and BLAKE3 is the one primitive every
+build carries). Message keys always come from GB3HKDF, never from the KDF
+mask.
 
 ### TCP/TLS stream frame
 
@@ -1985,13 +2182,25 @@ every byte dropped was a byte a receiver either ignored or refused.
 ### Handshake records
 
 ```text
-AMC1 hello  = "AMC" | ver | session u64 | nonce (32, fixed, no length field)
-                    | u16+layout | u16+tier | u16+cookie | u32+offer
-AMR1 retry  = "AMR" | ver | session u64 | u16+cookie
-AMS1 hello  = "AMS" | ver | nonce (32) | u32+KEM reply
+AMC2 hello  = "AMC" | ver | session u64 | mode u8 | nonce (32, fixed)
+                    | u16+layout | u16+tier | u16+cookie | ... tail
+                      tail, AM1A / AM1S:    u32+offer            (clear)
+                      tail, AM1P / AM1P+S:  flag u8 | salt (32) | tag (32)
+                                            | u32+sealed offer   (sealed)
+AMR2 retry  = "AMR" | ver | session u64 | u16+cookie
+AMS2 hello  = "AMS" | ver | mode u8 | nonce (32) | u32+KEM reply
                     | tagLen u8 | padding u8 | tag | u32+sealed block
-AMF1 finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed block
+AMF2 finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed block
 ```
+
+`ver` is 2 since the pre-shared hello got its seal. The mode byte reads
+`0` AM1A, `1` AM1S, `2` AM1P, `3` AM1P+S, and it alone decides which hello
+tail follows. The `flag` byte is `1` when the seal and the key schedule also
+took a next secret, `0` otherwise.
+
+Note the names: the three letters are the RECORD (C = client hello, S = server
+hello, R = retry, F = finish). They are not the authentication mode —
+"AMS2" is the server hello in every mode, AM1S is the pinned-key mode.
 
 Fixed-size fields carry no length: the nonce is always 32 bytes, so writing
 "32" in front of it every time would say nothing. Variable fields use `u16`
@@ -2007,23 +2216,26 @@ on, the sealed identity blocks are padded too: hiding *who* is connecting
 while leaving the size of their certificate on the wire only does half the
 job.
 
-The **sealed block** in the last two is ciphertext. Opened, it holds one of
-two shapes, decided by the mode byte in the hello. AM1C and AM1S look alike;
-AM1M is the short one, because it carries no certificate at all:
+The **sealed block** in the last two is ciphertext. Opened, it holds up to
+two halves, in a fixed order; each mode leaves out the halves it does not
+use:
 
 ```text
-AM1C / AM1S
-  server: certificate body | u32 count + authority proofs
-                           | u32 count + proofs
-  client: certificate body | u32 count + authority proofs
-                           | u32+transcript hash | u32 count + proofs
+server block                         AM1A/AM1S   AM1P   AM1P+S
+  u32+name | u32 count (1) + tag         -        yes     yes
+  certificate body                      yes        -      yes
+  u32 count + authority proofs          yes        -      yes
+  u32 count + signatures                yes        -      yes
 
-AM1M
-  server: u32+name | u32 count (always 1) + one tag
-  client: u32+name | u32+transcript hash | u32 count (always 1) + one tag
+client block                         AM1A/AM1S   AM1P   AM1P+S
+  u32+name | u32 count (1) + tag         -        yes     yes
+  certificate body                      yes        -      yes
+  u32 count + authority proofs          yes        -      yes
+  u32+transcript hash                   yes       yes     yes
+  u32 count + signatures                yes        -      yes
 ```
 
-Both shapes are padded under the same policy, so which mode is running is not
+All shapes are padded under the same policy, so which mode is running is not
 readable from the length of the block either.
 
 The certificate body goes in raw rather than length-framed, because it is the
@@ -2036,6 +2248,28 @@ Offer and reply sizes grow with the selected KEM public keys and ciphertexts
 
 ## Issue Playbook
 
+- **"client hello did not open under the shared secret"** (AM1P, AM1P+S) means
+  the two sides do not hold the same key for the hello seal. Check, in order:
+  the same `pskId` and secret bytes on both ends; that both ends agree on the
+  next secret (same `kept` bytes, or neither has one). A peer restored from a
+  backup has an older next secret -- drop it on both sides with
+  `withAmeNextSecret(@[])` and start over from psk-only.
+- **"client used a next secret this side does not hold"** means the client
+  kept one from an earlier session and the responder did not. Either give the
+  responder the same bytes, or have the client drop its copy.
+- **"client hello did not carry the required next secret"** means the
+  responder was built with `required = true` and the client came without one.
+  This is the setting doing its job; it is what stops a forced fallback. Turn
+  it off only while you re-establish the next secret on a peer that lost it.
+- Handshake records from before the key-schedule rework (`ver` byte 1, the
+  old mode names AM1C / AM1M) are refused with "AME handshake wire version
+  mismatch". Both ends must run the same build. So are FOMKE checkpoints
+  written before the next secret existed ("FOMKE state version mismatch"):
+  there is no conversion, rebuild the session with a fresh handshake.
+- `fomkeReorderCeiling` outside 4 .. 4096 in `config.toml` refuses the whole
+  config at load time. Raise it for links that reorder heavily, not for loss:
+  a lost datagram's key is dropped once it falls further behind than the
+  ceiling anyway.
 - A layout mismatch is rejected. Compare `encodeAmeSuiteLayout` output.
 - A tier mismatch is rejected. Compare `encodeAmeMaskTier` output.
 - A stale exchange is rejected. Check request id and base epoch id.

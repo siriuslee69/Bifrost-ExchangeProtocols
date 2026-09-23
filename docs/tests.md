@@ -73,18 +73,39 @@ AME handshake (private identities)
   -> the cookie verifies only for the address, hello, and window it was minted for
   -> handshake records ride AME frames and refuse to arrive out of order
 
-AME authentication modes (AM1C / AM1S / AM1M)
-  -> the mode byte is carried in the hello and bound into the transcript
-  -> a complete AM1M handshake runs with no certificate on either side
-  -> the AM1M proof binds the provisioned name, the transcript, AND the
+AME authentication modes (AM1A / AM1S / AM1P / AM1P+S)
+  -> the mode byte is carried in the hello, bound into the transcript, and
+     (pre-shared modes) under the hello seal's tag
+  -> a complete AM1P handshake runs with no certificate on either side
+  -> the AM1P proof binds the provisioned name, the transcript, AND the
      direction, so the two proofs of one handshake are not interchangeable
   -> the wrong shared secret cannot open the sealed block at all, because
      the binder went into the key schedule and not just into a proof
   -> the right secret under the wrong name is refused
   -> a responder refuses a hello naming a mode it does not run
-  -> AM1M rotates an epoch with a tag, having no signature keys to sign with
+  -> AM1P rotates an epoch with a tag, having no signature keys to sign with
   -> a tampered rotation proof is refused rather than ignored
   -> the same, over a real TCP socket, through the driver
+
+AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
+  -> no KEM public key of an AM1P hello crosses the wire in the clear
+  -> two hellos under one secret never share a salt or a ciphertext
+  -> a responder with another secret cannot even open the hello
+  -> an edited session id or salt breaks the seal
+  -> AM1P+S runs to the end, names both halves, and signs its rotations
+  -> AM1P+S: the right secret with the wrong pin fails, and the reverse
+  -> AM1P+S over a real TCP socket, through the driver
+  -> session 1 hands out a next secret that session 2 is keyed with
+  -> next-secret policy: missing, required, wrong, and a visible fallback
+  -> only pre-shared modes take a next secret, and only 32 bytes of it
+
+FOMKE next secret
+  -> both sides hold the same NS, and it is not a lane key
+  -> what leaves for the next handshake is a derivation, not NS itself
+  -> a rotation replaces NS on both sides, whatever the lanes have done
+  -> a checkpoint (encodeFomkeState / decodeFomkeState) keeps NS
+  -> fomkeReorderCeiling is read from config, range-checked, and reaches
+     the session
 
 FOMKE forward secrecy
   -> the state that sent a message cannot open it again afterwards

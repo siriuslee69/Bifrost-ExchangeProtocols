@@ -48,6 +48,7 @@ const
   echoPort: uint16 = 49010'u16
   pinnedPort: uint16 = 49011'u16
   pskPort: uint16 = 49014'u16
+  pskPinnedPort: uint16 = 49015'u16
   tcpPskId: string = "tcp-site"
   rejectPort: uint16 = 49012'u16
   carrierPort: uint16 = 49013'u16
@@ -85,7 +86,7 @@ proc authorityFor(tag: int): AmeAuthorityKey =
     slotSeeds(tag))
 
 proc tcpPsk(): ByteSeq =
-  ## The shared secret both ends of the AM1M variant are provisioned with.
+  ## The shared secret both ends of the AM1P variant are provisioned with.
   ## A test value, built from a ramp so the two threads agree without one
   ## having to send it to the other.
   var i: int = 0
@@ -177,8 +178,12 @@ proc runAmeTcpServer(a: AmeTcpServerArgs) {.thread.} =
   of atmPinnedPeerKey:
     descriptor = pinnedIdentityDescriptor(serverKey, validFrom, validUntil)
     responderAuth = initAmePinnedAuthentication(pinnedPeerIdentity(clientKey))
-  of atmPskMac:
+  of atmPreSharedKey:
     responderAuth = initAmePskAuthentication(tcpPskId, tcpPsk())
+  of atmPreSharedPinned:
+    descriptor = pinnedIdentityDescriptor(serverKey, validFrom, validUntil)
+    responderAuth = initAmePskPinnedAuthentication(tcpPskId, tcpPsk(),
+      pinnedPeerIdentity(clientKey))
   of atmAuthorityCertificate:
     descriptor = issueAmeIdentityCertificate(authority, serverKey, 22'u64,
       validFrom, validUntil)
@@ -229,9 +234,14 @@ proc clientConfig(mode: AmeTrustMode, authorityTag: int): AmeInitiatorPolicy =
     result = initAmeInitiatorPolicy(layout, tcpTier(layout),
       initAmePinnedAuthentication(pinnedPeerIdentity(serverKey)),
       pinnedIdentityDescriptor(clientKey, validFrom, validUntil), clientKey)
-  of atmPskMac:
+  of atmPreSharedKey:
     result = initAmeInitiatorPolicy(layout, tcpTier(layout),
       initAmePskAuthentication(tcpPskId, tcpPsk()))
+  of atmPreSharedPinned:
+    result = initAmeInitiatorPolicy(layout, tcpTier(layout),
+      initAmePskPinnedAuthentication(tcpPskId, tcpPsk(),
+        pinnedPeerIdentity(serverKey)),
+      pinnedIdentityDescriptor(clientKey, validFrom, validUntil), clientKey)
   of atmAuthorityCertificate:
     result = initAmeInitiatorPolicy(layout, tcpTier(layout),
       initAmeCertificateAuthentication(initAmeAuthorityRoot(authority)),
@@ -290,7 +300,7 @@ suite "AME handshake over a real TCP socket":
     var
       th: Thread[AmeTcpServerArgs]
       args: AmeTcpServerArgs = AmeTcpServerArgs(port: pskPort,
-        requireCookie: true, mode: atmPskMac, authorityTag: 1)
+        requireCookie: true, mode: atmPreSharedKey, authorityTag: 1)
       sock: Socket
       outcome: AmeHandshakeOutcome
       payload: ByteSeq = rampBytes(200)
@@ -300,17 +310,17 @@ suite "AME handshake over a real TCP socket":
     createThread(th, runAmeTcpServer, args)
     waitForServer()
     sock = connectTcp(initTcpAddress("127.0.0.1", pskPort), 4000)
-    outcome = ameTcpClientHandshake(sock, clientConfig(atmPskMac, 1),
+    outcome = ameTcpClientHandshake(sock, clientConfig(atmPreSharedKey, 1),
       10'u64, nowUnix, 20000)
     check outcome.err == ""
     check outcome.ok
     check outcome.peerTrust.ok
     ## The verdict names the shape it came from and the secret it used, and
     ## the mode the session records is the mode that actually ran.
-    check outcome.peerTrust.mode == am1m
+    check outcome.peerTrust.mode == am1p
     check outcome.peerTrust.authority == "shared-secret"
     check outcome.peerTrust.subjectKeyId == tcpPskId
-    check outcome.connection.auth.authenticationMode == am1m
+    check outcome.connection.auth.authenticationMode == am1p
     check outcome.connection.auth.peerSignaturePublicKeys.len == 0
     sendAmeTcp(sock, outcome.connection, payload)
     echoed = recvAmeTcp(sock, outcome.connection)
@@ -323,6 +333,42 @@ suite "AME handshake over a real TCP socket":
     check echoed.packet.payload == payload
     clearAmeSession(outcome.connection)
     sock.close()
+  ## AM1P+S: the same driver, now needing the shared secret AND the pin. The
+  ## hello goes out sealed, and both sealed blocks carry both halves.
+  # {.testKind: tkIntegration, covers: "initAmePskPinnedAuthentication".}
+  test "a shared secret plus reciprocal pins authenticates the same driver":
+    var
+      th: Thread[AmeTcpServerArgs]
+      args: AmeTcpServerArgs = AmeTcpServerArgs(port: pskPinnedPort,
+        requireCookie: true, mode: atmPreSharedPinned, authorityTag: 1)
+      sock: Socket = nil
+      outcome: AmeHandshakeOutcome = default(AmeHandshakeOutcome)
+      payload: ByteSeq = rampBytes(300)
+      echoed: AmeOpenResult = default(AmeOpenResult)
+    serverReport = default(AmeTcpServerReport)
+    serverReady.store(false)
+    createThread(th, runAmeTcpServer, args)
+    waitForServer()
+    sock = connectTcp(initTcpAddress("127.0.0.1", pskPinnedPort), 4000)
+    outcome = ameTcpClientHandshake(sock, clientConfig(atmPreSharedPinned, 1),
+      12'u64, nowUnix, 20000)
+    check outcome.err == ""
+    check outcome.ok
+    check outcome.peerTrust.mode == am1ps
+    check outcome.connection.auth.authenticationMode == am1ps
+    check outcome.connection.auth.peerSignaturePublicKeys.len > 0
+    sendAmeTcp(sock, outcome.connection, payload)
+    echoed = recvAmeTcp(sock, outcome.connection)
+    joinThread(th)
+    check serverError() == ""
+    check serverReport.ok
+    check serverReport.trusted
+    check serverReport.echoed
+    check echoed.ok
+    check echoed.packet.payload == payload
+    clearAmeSession(outcome.connection)
+    sock.close()
+
   # {.testKind: tkIntegration.}
   test "reciprocal pins authenticate the same driver":
     var

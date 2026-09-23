@@ -73,37 +73,51 @@ The wall clock is a caller parameter. A library that silently reads an unset
 system clock and judges certificates against it is worse than one that makes
 the caller say where the time came from.
 
-### The three modes, and what each one requires
+### The four modes, and what each one requires
 
-Steps 3 to 6 above describe AM1C, the certificate mode. The other two replace
-those steps and nothing else — the four records, their order and their sizes
-are the same in all three.
+Steps 3 to 6 above describe AM1A, the certificate mode. The others replace
+those steps; the pre-shared modes also seal the client hello's KEM public
+keys. The four records and their order are the same in all of them.
 
-| | Replaces steps 3-6 with | Provisioned in advance |
-|---|---|---|
-| AM1C | authority proofs, serial, validity, transcript proof | the authority's public keys |
-| AM1S | validity and an exact key match, then transcript proof | the peer's own public key |
-| AM1M | a name match and one tag over the transcript | a shared secret |
+| | Replaces steps 3-6 with | Provisioned in advance | Hello keys |
+|---|---|---|---|
+| AM1A | authority proofs, serial, validity, transcript proof | the authority's public keys | clear |
+| AM1S | validity and an exact key match, then transcript proof | the peer's own public key | clear |
+| AM1P | a name match and one tag over the transcript | a shared secret | sealed |
+| AM1P+S | the AM1P tag, THEN the AM1S key match and proofs | a shared secret AND the peer's public key | sealed |
 
-Three properties hold across all three, and are what make the choice safe to
+Five properties hold across all of them, and are what make the choice safe to
 make per deployment rather than per protocol:
 
 1. **The mode is bound, not merely stated.** It travels as one byte in the
-   hello and is inside the transcript both sides rebuild independently. A
-   responder refuses a hello naming a mode it does not run, before any key
-   work, rather than mirroring the client's choice back.
+   hello and is inside the transcript both sides rebuild independently (and,
+   in the pre-shared modes, under the hello seal's tag). A responder refuses
+   a hello naming a mode it does not run, before any key work, rather than
+   mirroring the client's choice back. This is what rules out a downgrade.
 2. **Failure is closed in every direction.** A wrong pin, a wrong secret, a
    wrong name, or a mode this side does not run all end in no epoch and a
-   dropped connection. None of them fall through to a weaker check.
-3. **AM1M contributes key material, not just a verdict.** A binder derived
-   from the shared secret goes into the handshake key schedule beside the KEM
-   results, so an attacker who breaks every KEM slot still cannot open the
-   sealed blocks. The provisioned secret itself never enters the derivation.
+   dropped connection. None of them fall through to a weaker check. In
+   AM1P+S a right secret does not excuse a wrong pin, nor the reverse.
+3. **AM1P and AM1P+S contribute key material, not just a verdict.** A binder
+   derived from the shared secret goes into the handshake key schedule beside
+   the KEM results, so an attacker who breaks every KEM slot still cannot
+   open the sealed blocks. The provisioned secret itself never enters the
+   derivation.
+4. **The pre-shared hello is sealed per hello.** Its key comes from the
+   shared secret and 32 fresh random bytes (the salt), so two hellos never
+   share a keystream. The seal uses the session's own cipher and MAC masks.
+5. **A next secret makes the shared secret alone insufficient.** A session
+   hands out 32 bytes (`ameNextHandshakeSecret`); the next AM1P handshake can
+   take them (`withAmeNextSecret`) as a second key beside the shared secret.
+   Whether it did is a flag in the hello. A responder that sets
+   `required = true` refuses any hello without it, so an attacker cannot
+   force a quiet fallback.
 
-AM1M sessions hold no signature keys, so the offers and replies that rotate an
+AM1P sessions hold no signature keys, so the offers and replies that rotate an
 epoch are proved with a tag under a session-derived key instead of a signature
 stack. That key comes from the finished transcript and is never the
-provisioned secret, so it differs in every session.
+provisioned secret, so it differs in every session. AM1P+S sessions hold
+signature keys and sign their rotations like AM1S.
 
 ## Package Delivery
 

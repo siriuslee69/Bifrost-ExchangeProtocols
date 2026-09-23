@@ -17,8 +17,10 @@ them, and the folder it sits in tells you which:
   WHAT DO I SEND?       level2/framing.nim
                                   sealing a payload into a frame, opening one
                                   again, and the AME/DAC seam
-  HOW DO I START?       level3/handshake.nim  and its five neighbours
-                                  one question each -- who someone is, the
+  HOW DO I START?       level3/handshake.nim  and its seven neighbours
+                                  one question each -- who someone is, whom
+                                  to believe (AM1A/AM1S/AM1P/AM1P+S), the
+                                  hello and its answer, the
                                   anti-flood cookie, the four message shapes,
                                   their bytes, and the transcript they sign
 ```
@@ -36,8 +38,10 @@ them, and the folder it sits in tells you which:
 | **`level2/session.nim`** | **what a connection IS** — keys, epoch, exchange, settings |
 | **`level2/framing.nim`** | **what a message LOOKS LIKE** — seal, open, and the DAC seam |
 | `level2/carriers/` | the two things that own a socket: `tcp.nim`, `dac.nim` |
-| `level3/handshake.nim` | the four messages, and the four calls you make |
-| `level3/handshake_identity.nim` | who someone is, and whether you believe them |
+| `level3/handshake.nim` | steps 3 and 4, and the one import that brings in the rest |
+| `level3/handshake_hello.nim` | steps 1 and 2: the hello (sealed in AM1P, AM1P+S) and the answer |
+| `level3/handshake_authentication.nim` | the four modes and the one `AmeAuthentication` object |
+| `level3/handshake_identity.nim` | identities and certificates, and how each is checked |
 | `level3/handshake_cookie.nim` | proving you can receive where you claim to be |
 | `level3/handshake_records.nim` | the shape of the four messages. Types only |
 | `level3/handshake_wire.nim` | those same four, byte for byte |

@@ -34,6 +34,17 @@ const
   gb3MaxWorkBlocks* = 16_777_216'u64
 
   fomkeChainKeyBytes* = 64
+  fomkeNextSecretBytes* = 32
+    ## The "next secret" (NS). Born next to the two lane keys and never used
+    ## for a message. Its only job is to be carried into the NEXT epoch:
+    ##
+    ##   ISS ──GB3HKDF──▶ [ LK1 (64) | LK2 (64) | NS (32) ]
+    ##                                            │
+    ##   rotation:  NS + fresh KEM secrets ──GB3HKDF──▶ [ LK1' | LK2' | NS' ]
+    ##
+    ## It is a one-way image of the epoch's secret, so holding it opens no
+    ## message of this epoch -- but the next epoch cannot be derived without
+    ## it. There is no root key: nothing else outlives the derivation.
   fomkeMessageKeyBytes* = 32
     ## What one ratchet step hands out. It is not the encryption key itself:
     ## it is the seed the per-message key block is expanded from, so its size
@@ -156,6 +167,8 @@ type
     commit*: FomkeUpgradeCommit
     candidateLane1*: FomkeChainState
     candidateLane2*: FomkeChainState
+    candidateNextSecret*: ByteSeq
+      ## The NS the new epoch will carry, taken up together with the lanes.
 
   ## One message's worth of work done ahead of time. `material` is the whole
   ## derived key block for that message: nonce first, then one key per
@@ -188,6 +201,8 @@ type
       ## at any other length is refused before it is even compared.
     lane1*: FomkeChainState
     lane2*: FomkeChainState
+    nextSecret*: ByteSeq
+      ## NS -- see `fomkeNextSecretBytes`. Replaced at every rotation.
     skipped*: seq[FomkeSkippedKey]
     reorderWindow*: uint32
       ## How far ahead of the next expected position a message may sit and

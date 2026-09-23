@@ -41,7 +41,7 @@ import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/exchange_paths
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/path_triggers
-import ../../src/protocols/ame/level3/handshake_identity
+import ../../src/protocols/ame/level3/handshake_authentication
 import ../../src/protocols/ame/level3/handshake_transport
 import ../../src/protocols/dac/level0/defaults
 import runePragmas
@@ -57,7 +57,7 @@ const
 
   soakPskId* = "bifrost-soak"
   soakPskSecretLen* = 32
-    ## AM1M provisioning. A soak is not proving that certificates work -- the
+    ## AM1P provisioning. A soak is not proving that certificates work -- the
     ## handshake suite already does that -- so it uses the cheap mode and
     ## spends its time on the thing being measured.
 

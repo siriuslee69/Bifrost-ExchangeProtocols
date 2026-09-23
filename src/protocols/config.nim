@@ -20,6 +20,10 @@ type
     peerTrustRequired*: bool
     fomkePregeneration*: bool
     fomkePregenerationMessages*: int
+    fomkeReorderCeiling*: uint32
+      ## How many message keys a lane may hold for messages that arrive out
+      ## of order (see `fomkeMaxReorderWindow`). Each held key is 32 bytes.
+      ## It is also the furthest a message may sit behind and still open.
     ameLayout*: AmeSuiteLayout
     ameInitialTier*: AmeMaskTier
 
@@ -37,6 +41,7 @@ proc defaultBifrostConfig*(): BifrostConfig {.role: configurator.} =
   result.peerTrustRequired = true
   result.fomkePregeneration = false
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
+  result.fomkeReorderCeiling = fomkeDefaultReorderCeiling
   result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
     defaultAmeKemSlots()))
   result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
@@ -95,6 +100,9 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
       c.fomkePregenerationMessages > fomkeMaxPreparedMessages:
     raise newException(ValueError,
       "Bifrost FOMKE pregeneration message count is invalid")
+  if c.fomkeReorderCeiling < fomkeMinReorderWindow or
+      c.fomkeReorderCeiling > fomkeMaxReorderWindow:
+    raise newException(ValueError, "Bifrost FOMKE reorder ceiling is invalid")
   discard encodeAmeSuiteLayout(c.ameLayout)
   validateAmeTier(c.ameLayout, c.ameInitialTier)
 
@@ -144,6 +152,8 @@ proc parseBifrostConfigText*(text: string,
     of "fomkepregeneration": result.fomkePregeneration = parseBool(value)
     of "fomkepregenerationmessages":
       result.fomkePregenerationMessages = parseInt(value)
+    of "fomkereorderceiling":
+      result.fomkeReorderCeiling = uint32(parseUInt(value))
     of "amelayouthex":
       result.ameLayout = decodeAmeSuiteLayout(decodeConfigHex(value))
     of "ameinitialtierhex":

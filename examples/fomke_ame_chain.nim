@@ -39,10 +39,11 @@ when isMainModule:
 
   aliceAme = initAmeExchangeState(kems)
   bobAme = initAmeExchangeState(kems)
-  applyAmeExchange(aliceAme, initialRequest, initialSender.sharedSecrets)
-  applyAmeExchange(bobAme, initialRequest, initialReceiver)
-  ## The ratchet root absorbs EVERY KEM slot the tier switches on, not just
-  ## one, so a hybrid exchange is a hybrid in fact.
+  applyAmeExchange(aliceAme, layout, initialRequest, initialSender.sharedSecrets)
+  applyAmeExchange(bobAme, layout, initialRequest, initialReceiver)
+  ## One GB3HKDF call absorbs EVERY KEM slot the tier switches on, not just
+  ## one, so a hybrid exchange is a hybrid in fact. Its output is cut into
+  ## [ lane 1 key | lane 2 key | next secret ] -- no root key in between.
   alice = initFomkeFromAme(aliceAme, layout, initialTier, frInitiator)
   bob = initFomkeFromAme(bobAme, layout, initialTier, frResponder)
 
@@ -55,8 +56,8 @@ when isMainModule:
   upgradeSender = sealAmeExchange(kems, upgradeRequest, upgradeKeys.publicKeys)
   upgradeReceiver = openAmeExchange(kems, upgradeRequest, upgradeSender.envelopes,
     upgradeKeys.secretKeys)
-  applyAmeExchange(aliceAme, upgradeRequest, upgradeSender.sharedSecrets)
-  applyAmeExchange(bobAme, upgradeRequest, upgradeReceiver)
+  applyAmeExchange(aliceAme, layout, upgradeRequest, upgradeSender.sharedSecrets)
+  applyAmeExchange(bobAme, layout, upgradeRequest, upgradeReceiver)
   aliceCommit = prepareFomkeUpgrade(alice, 1'u32, 2'u32, upgradeRequest,
     aliceAme)
   bobCommit = prepareFomkeUpgrade(bob, 1'u32, 2'u32, upgradeRequest, bobAme)
@@ -67,4 +68,7 @@ when isMainModule:
   message = sealFomkeMessage(bob, @[byte 79, 75])
   opened = openFomkeMessage(alice, message)
   doAssert opened.ok
+  ## The rotation replaced the next secret on both sides, from the old one
+  ## plus the fresh KEM result.
+  doAssert alice.nextSecret == bob.nextSecret
   echo "FOMKE epoch ", alice.epoch, " exchanged both directions"

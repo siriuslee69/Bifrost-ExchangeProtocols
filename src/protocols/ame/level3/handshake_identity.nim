@@ -6,17 +6,9 @@
 ## it says it is?** Nothing here knows the handshake exists. It is about
 ## identities, and it is equally usable before, during, or long after one.
 ##
-## ╭─ ❧ the three ways to be believed 🌊
-##
-## There are exactly three, you pick one when you build the connection, and
-## every later step reads it from the same place:
-##
-##   AM1C  atmAuthorityCertificate   somebody you trust vouches for them
-##   AM1S  atmPinnedPeerKey          you were handed their public key already
-##   AM1M  atmPskMac                 you were handed a shared secret already
-##
-## The three constructors that say which are at the bottom of this file, side
-## by side, so the choice is one place and not three.
+## WHICH of these a connection demands -- the four modes and the one
+## `AmeAuthentication` object -- lives next door in
+## `handshake_authentication.nim`.
 ##
 ## ╭─ ❧ why the keys are a STACK ⟡
 ##
@@ -47,7 +39,6 @@
 ## one certificate out of use and the same subject can be issued a fresh one;
 ## revoking by name instead would burn the name forever.
 
-import tyr/helpers/tiers as tyr_alg
 import ../level1/signatures
 
 import ../../types
@@ -67,40 +58,6 @@ const
     ## a year out would otherwise silently accept expired certificates.
 
 type
-  ## How this side decides whom to believe. One value, chosen once, and every
-  ## step of the handshake reads it from the same place.
-  AmeTrustMode* = enum
-    atmAuthorityCertificate,
-      ## AM1C -- a certificate signed by a pinned authority.
-    atmPinnedPeerKey,
-      ## AM1S -- the peer's own public key, provisioned in advance.
-    atmPskMac
-      ## AM1M -- a shared secret, provisioned in advance. No certificates and
-      ## no signature keys are involved on either side.
-
-  ## Which end of the exchange a shared-secret proof belongs to. Without this
-  ## the two proofs would be tags over different byte strings and nothing
-  ## more; with it they are tags over byte strings that cannot be confused,
-  ## so a responder's proof can never be replayed as an initiator's.
-  AmePskProofDirection* = enum
-    apdResponder,
-    apdInitiator
-
-  ## Everything one endpoint needs in order to judge the other. Exactly one
-  ## of the three groups below is filled in, chosen by `mode`.
-  AmeAuthentication* {.role: configurator.} = object
-    mode*: AmeTrustMode
-    pskId*: string
-      ## AM1M only. Names WHICH shared secret this is, so a machine holding
-      ## several does not have to guess. Travels sealed, never in the clear.
-    psk*: ByteSeq
-      ## AM1M only. Never leaves this machine; only tags and one derived
-      ## binder computed from it ever reach the exchange.
-    root*: AmeAuthorityRoot
-      ## AM1C only.
-    expectedPeer*: AmePinnedPeerIdentity
-      ## AM1S only.
-
   AmePinnedPeerIdentity* {.role: configurator.} = object
     subject*: string
     signingKeys*: seq[AmeIdentitySigningKey]
@@ -152,15 +109,6 @@ proc appendHandshakeBytes*(A: var ByteSeq, B: openArray[uint8]) {.
   requireAmeU32Len(B.len, "handshake bytes")
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
-
-proc initAmePskAuthentication*(identifier: string,
-    secret: openArray[uint8]): AmeAuthentication {.role: configurator.} =
-  ## identifier/secret: AM1M provisioning material for a shared exchange path.
-  if identifier.len == 0 or secret.len < 16:
-    raise newException(ValueError, "AME PSK authentication is incomplete")
-  result.mode = atmPskMac
-  result.pskId = identifier
-  result.psk = @secret
 
 proc appendHandshakeProofs*(A: var ByteSeq, P: openArray[ByteSeq]) {.
     role: dataWriter.} =
@@ -748,46 +696,4 @@ proc decodeAmeIdentityCertificate*(A: openArray[uint8]):
       result.validFromUnix < 0 or
       not (certificateShape or pinnedShape):
     raise newException(ValueError, "AME certificate wire value is invalid")
-
-## ╭⟢ the three ways to say whom you believe
-##
-## All three live here, side by side. Two of them used to sit 1500 lines
-## below the third, which made "what are my options" a search rather than a
-## glance.
-##
-## The wire path is the same in all three modes:
-##
-##   hello(KEM public keys) -> answer(KEM ciphertext) -> finish(transcript)
-##
-## Only the authentication input differs, and it is chosen once, by building
-## one `AmeAuthentication` and handing it to every call below. There is no
-## second way to say the same thing.
-##
-##   what you provision          what you build
-##   -------------------------   -----------------------------------
-##   an authority's public keys  initAmeCertificateAuthentication(root)
-##   the peer's own public key   initAmePinnedAuthentication(peer)
-##   a shared secret             initAmePskAuthentication(id, secret)
-
-proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthentication {.
-    role: configurator, tag: "appApi".} =
-  ## peer: public key expected from the remote endpoint (AM1S).
-  if peer.subject.len == 0 or peer.signingKeys.len == 0:
-    raise newException(ValueError, "AME pinned authentication is incomplete")
-  result.mode = atmPinnedPeerKey
-  result.expectedPeer = peer
-
-proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthentication {.
-    role: configurator, tag: "appApi".} =
-  ## root: authority key stack used to validate certificates (AM1C).
-  if root.authority.len == 0 or root.signingKeys.len == 0:
-    raise newException(ValueError, "AME certificate authentication is incomplete")
-  result.mode = atmAuthorityCertificate
-  result.root = root
-
-proc clearAmeAuthentication*(A: var AmeAuthentication) {.
-    role: actor, tag: "appApi|cryptoBoundary".} =
-  ## A: erase provisioned shared-secret material once it is finished with.
-  secureClearAmeBytes(A.psk)
-  A = default(AmeAuthentication)
 
