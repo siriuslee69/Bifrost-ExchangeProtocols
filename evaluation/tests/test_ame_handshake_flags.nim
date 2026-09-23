@@ -112,10 +112,13 @@ proc roundTrip(m: AmeTrustMode): string {.role: orchestrator.} =
     encodeAmeClientFinish(done.finish)), nowUnix).err
 
 proc someBuiltMode(): AmeTrustMode {.role: configurator.} =
-  ## The first mode this build carries, to make a hello that encodes.
-  for m in AmeTrustMode:
-    if m in ameModesBuilt:
-      return m
+  ## The first mode this build carries, to make a hello that encodes. The
+  ## flag refuses an empty list, so the walk always finds one.
+  var
+    m: AmeTrustMode = high(AmeTrustMode)
+  while m notin ameModesBuilt:
+    m = pred(m)
+  result = m
 
 suite "AME handshake flags":
   # {.testKind: tkIntegration, covers: "beginAmeHandshake".}
