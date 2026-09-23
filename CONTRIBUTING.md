@@ -61,7 +61,7 @@ Bifrost-ExchangeProtocols
 | nimble vectors            | regenerate committed BFX2 vectors           |
 | nimble examples           | run all Nim examples                        |
 | nimble androidTest        | Android JVM tests                           |
-| nimble androidDebug       | Android debug APK build                     |
+| nimble buildAndroid       | Android debug APK build                     |
 | nimble testTls            | TLS transport/AME TCP checks; uses host OpenSSL or Nix fallback |
 | nimble buildLib           | shared-library build                        |
 | nix-build nix/module-check.nix --no-out-link | NixOS module merge/replace/conflict checks |
@@ -176,7 +176,7 @@ if TLS/transport touched -> run nimble testTls (host OpenSSL or automatic Nix fa
 if Nix module/config surface touched -> run nix-build nix/module-check.nix --no-out-link
    |
    v
-if Android touched -> run nimble androidTest + nimble androidDebug
+if Android touched -> run nimble androidTest + nimble buildAndroid
    |
    v
 check README + docs/production_readiness.md

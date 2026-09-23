@@ -17,7 +17,7 @@
 | nimble vectors            | explicit BFX2 deterministic vector regeneration |
 | nimble examples           | runnable AME examples                    |
 | nimble androidTest        | Android JVM tests + instrumented test APK assembly |
-| nimble androidDebug       | Android debug APK build                      |
+| nimble buildAndroid       | Android debug APK build                      |
 | nimble androidConnectedTest| Android device/instrumented tests           |
 +---------------------------+----------------------------------------------+
 ```
@@ -32,7 +32,7 @@ Prerequisites:
 - `nimble testTls` uses direct host OpenSSL build libraries when they are
   available; otherwise it falls back to
   `nix-build nix/tls-check.nix --no-out-link` when `nix-build` is installed.
-- `nimble androidTest` / `nimble androidDebug` need the local Android SDK/NDK
+- `nimble androidTest` / `nimble buildAndroid` need the local Android SDK/NDK
   paths configured or the repo wrapper environment that provides them.
 - `nimble androidConnectedTest` additionally needs a connected device or
   emulator; `nimble androidTest` deliberately stops at JVM execution plus

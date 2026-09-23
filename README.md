@@ -53,7 +53,7 @@ Already cloned without the submodules? Fix it in place with the same command:
 git submodule update --init
 ```
 
-**The desktop client only.** `nimble desktop` needs one extra package that the
+**The desktop client only.** `nimble runWebui` needs one extra package that the
 library itself does not:
 
 ```text
@@ -2382,13 +2382,13 @@ desktop :48371  <---- local Wi-Fi / Ethernet ---->  Android :48371
 Run the desktop client:
 
 ```sh
-nimble desktop
+nimble runWebui
 ```
 
 Build it without launching the UI:
 
 ```sh
-nimble desktopBuild
+nimble buildWebui
 ```
 
 Build both Android APKs and run the physical host/phone exchange:

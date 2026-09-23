@@ -122,15 +122,16 @@ suite "Bifrost task contract":
   runNim("c", "src/bifrost_exchange_protocols.nim",
     @["--app:lib", "--outdir:build/lib"])""") >= 0
     check content.find("""runNim("c", "src/bifrost_exchange_protocols.nim", @["--app:lib"])""") < 0
-    ## autopush follows Proto-RepoTemplate: the message goes through a file
-    ## rather than `-m`, so a multi-word subject survives quoting, and the
-    ## stale Git lock is refused before anything is staged.
-    check content.find("""runCommand("git", @["commit", "--file", msgPath])""") >= 0
-    check content.find("""proc resolveProgressPath(): string =""") >= 0
-    check content.find("""      "agents/PROGRESS.md",""") >= 0
-    check content.find("""proc resolveCommitMessage(progressPath: string): string =""") >= 0
-    check content.find("""proc resolveGitIndexLockPath(): string =""") >= 0
-    check content.find("""proc resolveAutopushMessagePath(): string =""") >= 0
+    ## autopush, switch, applyNightly and find come from the shared
+    ## Nimble-Tasks include; a local copy would collide with it.
+    check content.find("""include "../Nimble-Tasks/src/nimbleTasks.nims"""") >= 0
+    check content.find("""include "submodules/Nimble-Tasks/src/nimbleTasks.nims"""") >= 0
+    check content.find("""task autopush,""") < 0
+    check content.find("""proc resolveCommitMessage(""") < 0
+    ## Bifrost's own runners keep the shared names, claimed in ownTasks.
+    check content.find("""ownTasks: array[5, string] = ["test", "runWebui", "buildWebui",""") >= 0
+    check content.find("""task runWebui, """) >= 0
+    check content.find("""task buildAndroid, """) >= 0
     ## Split so the removed folder's name never appears whole in this repo.
     check content.find(".ir" & "on/PROGRESS.md") < 0
     check content.find("""proc shellPath(p: string): string =""") >= 0

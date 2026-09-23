@@ -1,6 +1,13 @@
 import std/[os, strutils, sequtils, hashes]
 
 const
+  ## Bifrost keeps these under the shared names: they need its own runNim
+  ## (dependency paths) and runGradle (Java setup). The rest of the generic
+  ## tasks come from Nimble-Tasks, included at the end of this file.
+  ownTasks: array[5, string] = ["test", "runWebui", "buildWebui",
+    "buildAndroid", "installAndroid"]
+  extraArtifacts: array[3, string] = ["/app/build/", ".android-sdk/",
+    ".android-home/"]
   LibsodiumTaskShellEnv = "BIFROST_NIMBLE_IN_NIX_SHELL"
   LibsodiumLibNames = [
     "libsodium.so",
@@ -20,8 +27,8 @@ requires "nim >= 1.6.0"
 
 ## `webui` is NOT required here. Only `src/clients/desktop/app.nim` imports it,
 ## and Bifrost is a protocol library first: a service that links the wire
-## formats should not have to install a GUI toolkit to do it. The `desktop`
-## and `desktopBuild` tasks check for it and say how to install it.
+## formats should not have to install a GUI toolkit to do it. The `runWebui`
+## and `buildWebui` tasks check for it and say how to install it.
 
 proc normalizePath(p: string): string =
   ## Normalize slashes for Nim compiler path arguments.
@@ -437,59 +444,6 @@ proc requireWebui(taskName: string) =
     "    nimble install webui\n"
   )
 
-proc resolveProgressPath(): string =
-  ## Where this repo keeps its handoff notes. `.iron/` was removed, so the
-  ## commit message autopush uses lives in `agents/PROGRESS.md` now.
-  var
-    ts: seq[string] = @[
-      "agents/PROGRESS.md",
-      "agents/progress.md"
-    ]
-  for t in ts:
-    if fileExists(t):
-      return t
-  result = ts[0]
-
-proc resolveGitIndexLockPath(): string =
-  result = joinPath(".git", "index.lock")
-
-proc resolveAutopushMessagePath(): string =
-  result = joinPath(".git", "autopush-commit-message.txt")
-
-proc resolveCommitMessage(progressPath: string): string =
-  ## progressPath: the PROGRESS.md whose `Commit Message:` line is taken.
-  var
-    msg: string = ""
-    content: string = ""
-  if fileExists(progressPath):
-    content = readFile(progressPath)
-    for line in content.splitLines:
-      if line.startsWith("Commit Message:"):
-        msg = line["Commit Message:".len .. ^1].strip()
-        break
-  if msg.len == 0:
-    msg = "No specific commit message given."
-  result = msg
-
-proc isGeneratedOrLocalArtifact(path: string): bool =
-  ## path: one staged repo-relative path checked against local/generated
-  ## outputs. The gradle and kotlin caches sit under `src/clients/android/`,
-  ## so they are matched anywhere in the path rather than only at its start.
-  var p: string = normalizePath(path)
-  result = splitPath(p).tail.startsWith(".fuse_hidden") or
-    p.startsWith("nimcache") or
-    p.startsWith("build/") or p.startsWith("builds/") or
-    p.startsWith(".gradle/") or p.startsWith(".kotlin/") or
-    p.contains("/.gradle/") or p.contains("/.kotlin/") or
-    p.contains("/app/build/") or
-    p.startsWith(".android-sdk/") or p.startsWith(".android-home/") or
-    p.endsWith(".exe") or p.endsWith(".dll") or p.endsWith(".so") or
-    p.endsWith(".dylib") or p.endsWith(".o") or p.endsWith(".obj") or
-    p.endsWith(".a") or p.endsWith(".lib") or p.endsWith(".pdb") or
-    p == "local.properties" or p == "userconfig.toml" or
-    p == "nimble.paths" or p == "nimble.develop" or
-    p.startsWith("agents/.local")
-
 task buildLib, "Build the bifrost_exchange_protocols module as a library":
   runNim("c", "src/bifrost_exchange_protocols.nim",
     @["--app:lib", "--outdir:build/lib"])
@@ -753,15 +707,15 @@ task releaseHygiene, "Check generated and local repo artifacts that should not s
 task cleanGenerated, "Remove generated and local repo artifacts such as build/, nimcache/, and helper binaries":
   runRepoHygiene(@["--root=.", "--clean"])
 
-task androidDebug, "Build the Android LAN client debug APK":
+task buildAndroid, "Build the Android LAN client debug APK":
   runGradle(@[":androidApp:assembleDebug"])
 
-task desktop, "Build and run the themed direct-LAN desktop client":
-  requireWebui("nimble desktop")
+task runWebui, "Build and run the themed direct-LAN desktop client":
+  requireWebui("nimble runWebui")
   runNim("c", "src/clients/desktop/app.nim", @["--threads:on", "-r"])
 
-task desktopBuild, "Build the themed direct-LAN desktop client for release":
-  requireWebui("nimble desktopBuild")
+task buildWebui, "Build the themed direct-LAN desktop client for release":
+  requireWebui("nimble buildWebui")
   runNim("c", "src/clients/desktop/app.nim", @[
     "--threads:on", "-d:release", "--out:build/clients/bifrost-lan-desktop"
   ])
@@ -776,80 +730,15 @@ task androidLanTest, "Run direct host-to-Android BMSG exchange over LAN IP":
   runGradle(@[":androidApp:assembleDebug", ":androidApp:assembleDebugAndroidTest"])
   runNim("c", "tools/test_android_lan_ip.nim", @["--threads:on", "-r"])
 
-task androidInstall, "Install the Android LAN client debug APK on a connected device":
+task installAndroid, "Install the Android LAN client debug APK on a connected device":
   runGradle(@[":androidApp:installDebug"])
 
-task autopush, "Add, commit, and push after rejecting generated/local artifacts":
-  var
-    progressPath: string = resolveProgressPath()
-    lockPath: string = resolveGitIndexLockPath()
-    msg: string = resolveCommitMessage(progressPath)
-    msgPath: string = resolveAutopushMessagePath()
-    staged: string = ""
-  if fileExists(lockPath):
-    quit(
-      "Refusing to run autopush because Git lock exists at " & lockPath &
-      ". If no Git process is active, remove the stale lock and retry."
-    )
-  runCommand("git", @["add", "-A", "."])
-  staged = captureCommand("git", @["diff", "--cached", "--name-only"]).strip()
-  if staged.len == 0:
-    echo "No staged changes. Skipping commit."
-  else:
-    for stagedPath in staged.splitLines:
-      if isGeneratedOrLocalArtifact(stagedPath):
-        echo "Refusing autopush: generated/local artifact staged: " & stagedPath
-        echo "Remove it from the index or extend .gitignore before committing."
-        quit(1)
-    writeFile(msgPath, msg & "\n")
-    runCommand("git", @["commit", "--file", msgPath])
-  runCommand("git", @["push"])
 
-task switch, "Toggle the working branch between nightly and main":
-  var
-    branch: string = captureCommand("git", @["branch", "--show-current"]).strip()
-    target: string = ""
-  if branch == "nightly":
-    target = "main"
-  else:
-    target = "nightly"
-  echo "Switching from '" & (if branch.len > 0: branch else: "(detached HEAD)") &
-    "' to '" & target & "'."
-  runCommand("git", @["checkout", target])
-
-task applyNightly, "Promote nightly onto main by fast-forward and push":
-  var
-    branch: string = captureCommand("git", @["branch", "--show-current"]).strip()
-  if branch == "main":
-    quit "On 'main'. Run `nimble switch` to move to nightly before applying."
-  runCommand("git", @["fetch", ".", "nightly:main"])
-  runCommand("git", @["push", "origin", "nightly:main"])
-  echo "main is now at the nightly state; nightly branch left intact."
-
-task find, "Use local clones for submodules in parent folder":
-  let modulesPath = ".gitmodules"
-  if not fileExists(modulesPath):
-    echo "No .gitmodules found."
-  else:
-    let root = parentDir(getCurrentDir())
-    var current = ""
-    for line in readFile(modulesPath).splitLines:
-      let s = line.strip()
-      if s.startsWith("[submodule"):
-        let start = s.find('"')
-        let stop = s.rfind('"')
-        if start >= 0 and stop > start:
-          current = s[start + 1 .. stop - 1]
-      elif current.len > 0 and s.startsWith("path"):
-        let parts = s.split("=", maxsplit = 1)
-        if parts.len == 2:
-          let subPath = parts[1].strip()
-          let tail = splitPath(subPath).tail
-          let localDir = joinPath(root, tail)
-          if dirExists(localDir):
-            let localUrl = normalizePath(localDir)
-            runCommand("git", @["config", "-f", ".gitmodules",
-              "submodule." & current & ".url", localUrl])
-            runCommand("git", @["config",
-              "submodule." & current & ".url", localUrl])
-    runCommand("git", @["submodule", "sync", "--recursive"])
+## Shared tasks (autopush, switch, applyNightly, updateSubmodules, clean, …):
+## the sibling clone wins, the submodule is the fallback. `nimble sharedTasks`
+when fileExists(thisDir() & "/../Nimble-Tasks/src/nimbleTasks.nims"):
+  include "../Nimble-Tasks/src/nimbleTasks.nims"
+elif fileExists(thisDir() & "/submodules/Nimble-Tasks/src/nimbleTasks.nims"):
+  include "submodules/Nimble-Tasks/src/nimbleTasks.nims"
+else:
+  {.error: "Nimble-Tasks not found: git submodule update --init submodules/Nimble-Tasks".}

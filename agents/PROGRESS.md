@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Derive lanes and a next secret in one step, seal the pre-shared hello, add AM1P+S
+Commit Message: Take the generic nimble tasks from Nimble-Tasks; desktop -> runWebui, androidDebug -> buildAndroid
 
 Features (Planned):
 - DAC rework (asked for, not started). DAC today is a self-diagnosing
