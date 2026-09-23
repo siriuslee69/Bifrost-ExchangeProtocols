@@ -51,6 +51,23 @@ description = "Full library, portable scalar code, every mode and family."
 #    chosen slots may run. Tyr's Saber arrays are sized for the largest
 #    Saber slot chosen (config.nims sets -d:saberMaxRank from it).
 #
+#    WHAT TO COMPILE: every algorithm of every layout this program
+#    accepts -- nothing more. These words never travel; the peers only
+#    ever see exact ids in the layout ([runtime.ame] below).
+#
+#      client / device  speaks ONE layout -> exactly its algorithms. A
+#                       pinned layout is compiled automatically, so the
+#                       lines below may just repeat it.
+#      server           answerAmeHandshake(hello, [pathA, pathB, ...])
+#                       accepts SEVERAL layouts in one process -> compile
+#                       the union of them. No second process is needed.
+#
+#    One big layout (say 8 KEMs) with tier masks switching different
+#    subsets on also works, but a layout is compared whole and decoding it
+#    needs every algorithm in it compiled: EVERY peer, tiny devices
+#    included, would carry all 8. Separate small layouts, all accepted by
+#    the server, keep the small peers small.
+#
 #    KEMs (bifrostKems)
 #    family    slot word      parameter set               wire id  level
 #    --------  -------------  --------------------------  -------  -----
