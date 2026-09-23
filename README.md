@@ -29,32 +29,30 @@ git submodule update --init
 nimble test
 ```
 
-**Why one level and not `--recursive`.** One level is all Bifrost needs, and
-it is far cheaper. Recursing pulls the vendored C sources its dependencies
-carry -- libsodium, liboqs, openssl, PQClean, lz4, zstd:
+**One level, not `--recursive`.** One level is all Bifrost needs. Recursing
+also pulls the vendored C sources of the dependencies (libsodium, liboqs,
+openssl, PQClean, lz4, zstd):
 
 ```text
 git submodule update --init      6 repositories, ~157 MB
 git clone --recursive            plus their vendored C sources, ~4.6 GB
 ```
 
-Both work, and both pass the full suite, 96 suites and 525 checks, with no
-sibling checkouts anywhere present. Take `--recursive` only when you actually
-intend to build the native crypto libraries from source.
+Both pass the full suite with no sibling checkouts present. Take
+`--recursive` only to build the native crypto libraries from source.
 
 Windows needs Nim 1.6+ with a working `gcc` on `PATH` (the Nim installer's
-MinGW is enough). `nimble testTls` additionally needs OpenSSL development
-libraries; without them that one task stops with a message saying so, and
-every other task still runs.
+MinGW is enough). `nimble testTls` also needs the OpenSSL development
+libraries; without them that one task stops with a message, and every other
+task still runs.
 
-Already cloned without the submodules? Fix it in place with the same command:
+Cloned without the submodules? The same command repairs it:
 
 ```text
 git submodule update --init
 ```
 
-**The desktop client only.** `nimble runWebui` needs one extra package that the
-library itself does not:
+**The desktop client only.** `nimble runWebui` needs one extra package:
 
 ```text
 nimble install webui
@@ -67,13 +65,12 @@ config.toml                <- shipped defaults
 userconfig.toml.template   <- copy to userconfig.toml for local overrides
 ```
 
-Leave `config.toml` alone unless you are changing a protocol default. Local
-and per-machine changes belong in `userconfig.toml`, which is gitignored.
+`config.toml` stays unchanged unless a protocol default changes. Local
+changes belong in `userconfig.toml`, which is gitignored.
 
-Neither file is read on its own — nothing in the library loads a config at
-startup. A program says which files it wants and in what order. Because
-`parseBifrostConfigText` takes a starting config, the second file overrides
-only the keys it mentions:
+The library reads no config file on its own. The program names the files and
+their order. `parseBifrostConfigText` takes a starting config, so the second
+file overrides only the keys it names:
 
 ```nim
 var cfg = loadBifrostConfigFile("config.toml")     # shipped defaults
@@ -82,45 +79,106 @@ if fileExists("userconfig.toml"):
 applyBifrostConfig(cfg)                            # now the library uses it
 ```
 
-Both entry points validate before returning: an out-of-range value or an
-unknown key raises rather than being silently clamped or ignored. So a typo in
-`userconfig.toml` stops the program at startup instead of quietly leaving a
-protocol limit at its default.
-
-## Names And Abbreviations
-
-Every protocol name in this repo is an abbreviation. Spelled out once, here:
+Both calls validate before they return. An out-of-range value or an unknown
+key raises an error. A typo in `userconfig.toml` therefore stops the program
+at startup.
 
 ```text
-+----------+----------------------------------------+----------------------------------+
-| Short    | Full name                              | One-line job                     |
-+----------+----------------------------------------+----------------------------------+
-| DAC      | Data Adaptive Connection               | delivery: chunks, ACK, repair    |
-| AME      | Adaptive Message Encryption            | suite/KEM/protect + live session |
-| FOMKE    | Forward-Only Message Key Extension     | one fresh key per message        |
-| GB3HKDF  | Gimli BLAKE3 Hash Key Derivation Func. | turns one secret into many keys  |
-| BFX2     | Bifrost Exchange format 2              | tagged binary envelopes          |
-+----------+----------------------------------------+----------------------------------+
+key                          default   free to change?
+---------------------------  --------  ------------------------------------------
+maxTcpFrameBytes             16 MiB    yes, downward
+maxDacFrameBytes             16 MiB    yes, downward
+defaultAmeInboxCapacity      64        yes
+defaultTimeoutMs             4000      yes
+peerTrustRequired            true      keep true on anything reachable
+fomkePregeneration           false     see "Preparing ahead"
+fomkePregenerationMessages   8         yes (1 .. 4096)
+fomkeReorderCeiling          64        yes (4 .. 4096), see FOMKE
+ameLayoutHex                 (hex)     only together with every endpoint
+ameInitialTierHex            (hex)     only together with every endpoint
 ```
 
-Supporting terms used throughout:
+## Definitions ✦
 
-- `KEM` (Key Encapsulation Mechanism): a public-key exchange that leaves both
-  peers holding the same secret bytes.
-- `AEAD` (Authenticated Encryption with Associated Data): encryption that also
-  proves nobody changed the message, and can bind extra public bytes (the
-  "associated data", `AAD`) into that proof.
-- `KDF` (Key Derivation Function): a one-way function that stretches one secret
-  into any number of independent keys.
-- `Epoch`: a numbered key generation. A new KEM exchange starts a new epoch.
-- `Lane`: one direction of traffic. Lane 1 is initiator to responder, lane 2 is
+Every term below keeps exactly this meaning for the whole document. No
+synonyms are used. A term used in only one section is defined at the top of
+that section, under **Definitions**. An abbreviation carries its definition
+in brackets the first two times it is used after that.
+
+**Protocol names**
+
+- `DAC` := Data Adaptive Connection. Delivery: chunks, receipts, repair.
+- `AME` := Adaptive Message Encryption. Algorithm slots, handshake, sessions.
+- `FOMKE` := Forward-Only Message Key Extension. One fresh key per message.
+- `GB3HKDF` := Gimli BLAKE3 Hash Key Derivation Function. Turns secret bytes
+  into any number of key bytes.
+- `BFX2` := Bifrost Exchange format 2. Tagged binary envelopes.
+
+**Cryptographic terms**
+
+- `KEM` := key encapsulation mechanism. A public-key exchange after which both
+  endpoints hold the same secret bytes.
+- `KEM exchange` := one run of every switched-on KEM, public keys one way and
+  ciphertexts back.
+- `KDF` := key derivation function. A one-way function from secret bytes to
+  key bytes.
+- `MAC` := message authentication code. The ALGORITHM that computes a tag.
+- `tag` := the BYTES a MAC outputs. A changed byte in the covered input gives a
+  different tag.
+- `AEAD` := authenticated encryption with associated data. Encryption plus one
+  tag over the ciphertext and over extra unencrypted bytes.
+- `AAD` := associated data. The unencrypted bytes an AEAD tag also covers.
+- `PSK` := pre-shared key. Secret bytes both endpoints received before the
+  first handshake.
+
+**Actions**
+
+- `seal` := encrypt, then compute the tag over the ciphertext and the AAD.
+- `open` := check the tag first; decrypt only if it matches.
+- `unencrypted` := readable by anyone who sees the bytes. The opposite of
+  sealed.
+- `erase` := overwrite secret bytes in memory, then release them.
+- `refuse` := stop with an error message; nothing changes.
+- `discard` := throw bytes away with no error message.
+
+**Roles and units**
+
+- `endpoint` := one of the two programs in a conversation.
+- `initiator` := the endpoint that sends the first handshake record.
+- `responder` := the other endpoint.
+- `frame` := one AME unit on the wire: header plus sealed body.
+- `datagram` := one UDP packet.
+- `message` := one payload a caller hands to FOMKE for one frame.
+- `package` := a sealed blob meant to be stored or relayed, cut into chunks
+  by DAC.
+- `chunk` := one piece of a package.
+
+**Session terms**
+
+- `session` := the state two endpoints share after one handshake.
+- `epoch` := one numbered key generation inside a session. Epoch 1 starts at
+  the handshake.
+- `rotation` := the switch from epoch n to epoch n+1.
+- `lane` := one direction of traffic. Lane 1: initiator to responder. Lane 2:
   responder to initiator.
-- `Slot`: one position in the session's list of algorithms. A `tier` is a set of
-  bit patterns saying which slots are switched on right now. Every switched-on
-  cipher is applied in turn; every switched-on authenticator contributes to one
-  combined tag.
+- `slot` := one position in a session's algorithm list.
+- `layout` := the fixed, ordered algorithm list of a session: up to eight
+  slots per family (KEM, cipher, MAC, hash, signature, KDF).
+- `mask` := one byte per family; bit i set means slot i is switched on.
+- `tier` := one mask per family, plus a tier id.
 
-## Read This First
+Example 1. A layout with ciphers `[XChaCha20, Gimli, AES-CTR]` and a cipher
+mask `1100_0000` switches on XChaCha20 (slot 0) and Gimli (slot 1). AES-CTR
+(slot 2) stays switched off.
+
+## Read This First 🌊
+
+**Definitions**
+
+- `carrier` := the transport under AME: TCP (a byte stream) or DAC
+  (datagrams).
+- `DAC kind` := the first byte of a DAC word. It says which of nine DAC words
+  follows.
 
 ```text
 +---------------- Application ----------------+
@@ -128,138 +186,128 @@ Supporting terms used throughout:
 +----------------------|-----------------------+
                        v
 +---------------- AME security ----------------+
-| authority trust -> layout + mask-tier epoch  |
-| -> optional compression -> protect / open    |
-| -> optional FOMKE per-message ratchet        |
+| trust -> layout + tier -> epoch              |
+| -> optional compression -> seal / open       |
+| -> FOMKE per-message keys                    |
 +----------------------|-----------------------+
                        v
 +---------------- DAC delivery -----------------+
-| manifest -> chunks -> parity -> repair       |
+| manifest -> chunks -> parity -> repair        |
 | -> digest check -> commit receipt             |
 +----------------------------------------------+
 ```
 
-AME owns both the crypto toolkit and the live session (epochs, triggers,
-handshake, TCP/DAC carriers, replay). **DAC frames nothing itself** — it
-decides parameters and AME carries the words.
+AME (Adaptive Message Encryption) owns the crypto toolkit and the live
+session (epochs (numbered key generations), triggers, handshake, carriers,
+replay). **DAC (Data Adaptive
+Connection) writes no frame of its own.** It decides parameters, and AME
+carries its words.
 
 ### Which one is on the outside? ⌜guide⌟
 
-This is the thing people get backwards, so it is worth stating twice, because
-the answer is **different for a live frame and for a stored package**.
+The answer differs between a live frame and a stored package.
 
-**A live frame — AME is outermost. There is no DAC header.**
+**A live frame: AME is outermost. There is no DAC header.**
 
 ```text
 +------------------------------ one AME frame --------------------------------+
 | AME header 26 B (session, lane, sequence, kind, class)                      |
-|   in the clear, because a receiver must read it before it can pick keys;    |
-|   every byte of it still goes into the tag below                            |
+|   unencrypted: a receiver must read it to pick its keys.                    |
+|   every byte of it is covered by the tag below (it is the AAD)              |
 |  +-------------------- FOMKE envelope 13 B ---------------------------------+|
 |  | epoch | index | lane | tag | ciphertext                                 ||
-|  |   opened once -> app bytes. There is no second layer either side.        ||
+|  |   opened once -> application bytes. There is no second layer.           ||
 |  +--------------------------------------------------------------------------+|
 +-----------------------------------------------------------------------------+
 ```
 
-A DAC message rides *inside* that ciphertext, its kind as the first byte:
+A DAC word travels INSIDE that ciphertext. Its DAC kind is the first byte:
 
 ```text
 AME frame, kind = 0x0B DacControl        <- ampkDacControl
-  -> sealed payload -> [ DacKind u8 | DAC body ]
+  -> sealed body -> [ DAC kind u8 | DAC body ]
 ```
 
-So the kind is recovered only after the tag checks out. There is no
-unauthenticated DAC framing and no way for a stranger to present a kind.
+The DAC kind is readable only after the tag matched. There is no unencrypted
+DAC header, and an endpoint without the key cannot present a DAC kind.
 
-**A stored package — DAC is outermost, wrapping something AME already sealed.**
+**A stored package: DAC is outermost, around bytes AME already sealed.**
 
 ```text
 plaintext
    |  AME seals it ONCE
    v
 [ "ASP" | ver | epoch | nonce | tag | ciphertext ]      one sealed blob
-   |  DAC cuts it up and adds parity
+   |  DAC cuts it into chunks and adds parity
    v
-[chunk][chunk][chunk][chunk]  +  [parity shards]        DAC framing, outside
+[chunk][chunk][chunk][chunk]  +  [parity shards]        DAC, outside
 ```
 
-Encrypt → authenticate → **then** add repair data. That ordering is the point:
-a relay holding no key can rebuild a lost chunk from parity, and the one tag
-over the whole blob is checked at the end, by the endpoint, on bytes that have
-already been put back together.
-
-Two axes, to keep the two apart:
+Seal, then add repair data. A relay without any key can rebuild a lost chunk
+from parity. The one tag over the whole blob is checked at the end, by the
+receiving endpoint, on the rebuilt bytes.
 
 ```text
 OWNERSHIP (API)
-  app  ->  AmeSession  ->  FOMKE ratchet  ->  DAC / TCP stream
+  app  ->  AmeSession  ->  FOMKE  ->  DAC / TCP carrier
 
 WIRE, live frame (outer to inner)
   [stream length prefix 4, TCP only]
     -> AME header 26
       -> FOMKE envelope 13 + tag + ciphertext
-        -> app bytes, or [DacKind u8 | DAC body]
+        -> application bytes, or [DAC kind u8 | DAC body]
 
 WIRE, stored package (outer to inner)
   DAC chunk + parity
     -> ASP envelope 15 + nonce + tag + ciphertext
-      -> app bytes
+      -> application bytes
 ```
 
-Which layer does what:
-
-| | decides | carries |
+| | decides | writes bytes on the wire |
 |---|---|---|
-| **AME** | which algorithms, the identity, the AAD | yes — it is the envelope |
-| **FOMKE** | the key for this one message | its 13-byte position marker |
-| **DAC** | chunking, parity, ACK pacing, repair timing, path | no, for frames; yes, for packages |
+| **AME** | algorithms, identity, AAD (associated data) | yes, the frame |
+| **FOMKE** | the key for one message | its 13-byte envelope header |
+| **DAC** | chunk size, parity, receipt pacing, repair timing, path lane | no for frames; yes for packages |
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
 
-### The nine words DAC can say ୨୧
+### The nine DAC words ୨୧
 
-DAC never invents bytes on the wire. It has a **vocabulary** — nine words —
-and AME is what speaks them. Here is the whole list, which is also the whole
-of `DacMessageKind`:
+DAC writes no bytes itself. It has nine words, and AME carries them. The list
+is the whole of `DacMessageKind`:
 
-| byte | word | who says it | what it means |
+| byte | word | sent by | meaning |
 |---|---|---|---|
-| `0x00` | Unknown | nobody | a first byte no word claims; the message is dropped |
-| `0x01` | PathStats | receiver | "here is what I measured about this path" |
-| `0x02` | PackageManifest | sender | "a package is coming: this many pieces, this big, this digest" |
-| `0x03` | PackageChunk | sender | one piece of it |
-| `0x04` | ParityShard | sender | spare maths, so a lost piece can be rebuilt without asking |
-| `0x05` | AckRange | receiver | "these pieces arrived" |
-| `0x06` | RepairHint | receiver | "these pieces did not; send them again" |
-| `0x07` | RepairChunk | sender | a piece, sent again |
-| `0x08` | PackageCommit | receiver | "it is all here and the digest matches" |
+| `0x00` | Unknown | nobody | a first byte no word claims; the frame is discarded |
+| `0x01` | PathStats | receiver | "this is what I measured about the path" |
+| `0x02` | PackageManifest | sender | "a package follows: this many chunks, this size, this digest" |
+| `0x03` | PackageChunk | sender | one chunk |
+| `0x04` | ParityShard | sender | repair data; rebuilds a lost chunk without a request |
+| `0x05` | AckRange | receiver | "these chunks arrived" |
+| `0x06` | RepairHint | receiver | "these chunks did not arrive; send them again" |
+| `0x07` | RepairChunk | sender | one chunk, sent again |
+| `0x08` | PackageCommit | receiver | "everything arrived and the digest matches" |
 
-Eight real words and one non-word. **Every one of the eight has a branch in
-`feedDacMessage`** — there is no list to cross-check and no kind that arrives
-and is quietly ignored. If it is in the enum, the loop acts on it.
+Each of the eight real words has a branch in `feedDacMessage`. No DAC kind
+arrives and is ignored.
 
-> There used to be four more: a path probe, a path-switch request and its ack,
-> and a realtime pose packet. All four had encoders, decoders and fuzz tests,
-> and none of them had a branch in the loop. See `src/protocols/dac/README.md`,
-> *Four words DAC used to have*, for why each one went and what covers it now.
+> Four more words existed: a path probe, a path-switch request and its ack,
+> and a realtime pose packet. None had a branch in the loop. See
+> `src/protocols/dac/README.md`, *Four words DAC used to have*.
 
-### How one word gets from DAC to the wire and back ❮💕❯
-
-This is the seam. Four files, and each one does exactly one thing:
+### How one DAC word reaches the wire and comes back ❮💕❯
 
 ```text
   SENDING                                        module
   ------------------------------------------     ---------------------------
   1. the loop decides what to say                dac/level3/link.nim
-       "ack, and here is the receipt body"
        -> DacTaggedMessage(kind, body)
                     |
-  2. the relay finds this peer's session         ame/level3/dac_relay.nim
+  2. the relay finds this endpoint's session     ame/level3/dac_relay.nim
        one address -> one slot -> one session
                     |
-  3. the seal puts the kind in FRONT of the      ame/level2/framing.nim
-     body and encrypts the pair                    sealAmeDacControl()
+  3. the DAC kind goes in FRONT of the body,     ame/level2/framing.nim
+     and the pair is sealed                        sealAmeDacControl()
        [ kind u8 | body ]  ->  AME frame
                     |
   4. the socket sends it                         ame/level3/dac_endpoint.nim
@@ -267,56 +315,57 @@ This is the seam. Four files, and each one does exactly one thing:
 
   RECEIVING                                      module
   ------------------------------------------     ---------------------------
-  1. a datagram arrives from some address        ame/level3/dac_endpoint.nim
+  1. a datagram arrives from an address          ame/level3/dac_endpoint.nim
                     |
-  2. no session for that address? DROPPED        ame/level3/dac_relay.nim
+  2. no session for that address: discard        ame/level3/dac_relay.nim
        nothing is parsed, nothing is allocated
                     |
-  3. the tag is checked, the frame opened,       ame/level2/framing.nim
-     and ONLY THEN is the kind read                openAmeDacControl()
+  3. the frame is opened, and ONLY THEN is the   ame/level2/framing.nim
+     DAC kind read                                 openAmeDacControl()
        AME frame -> [ kind u8 | body ]
                     |
-  4. the loop acts on a kind it can trust        dac/level3/link.nim
+  4. the loop acts on a DAC kind it can trust    dac/level3/link.nim
        feedDacMessage(link, kind, body)
 ```
 
-Read step 3 twice, because it is the whole security argument:
+Step 3 is the security argument:
 
 ```text
-  the kind is INSIDE the encryption, not in a header
+  the DAC kind is INSIDE the ciphertext, not in a header
 
-    an observer  cannot tell an ACK from a repair hint, because the byte
-                 that says which one is encrypted with everything else
-    a stranger   cannot present a kind at all, because a frame that does
-                 not authenticate never reaches step 4
-    a peer       cannot rewrite one, because the tag covers it
+    an observer   cannot tell a receipt from a repair hint: the byte that
+                  says which one is sealed with everything else
+    an outsider   cannot present a DAC kind: a frame whose tag fails never
+                  reaches step 4
+    an endpoint   cannot rewrite one: the tag covers it
 ```
 
-### What DAC is allowed to change, and what it is not ⟡
+### What DAC may change, and what it may not ⟡
 
-DAC sets AME's parameters. It does this by choosing a **lane**, and the lane
-is a row of numbers:
+**Definitions**
+
+- `path lane` := one row of DAC transport numbers (chunk size, parity width,
+  receipt batch, receipt deadline, repair wait, repair rounds). Not the same
+  thing as a traffic lane (lane 1 / lane 2).
 
 ```text
-  a peer's PathStats arrives
+  a PathStats word arrives
         |
   recommendDacPathFromStats()   one step, never a jump
         |
   a new DacPathLane  ->  dacDefaultsFor()  ->  chunk size, parity width,
-                                               ACK batch, ACK deadline,
+                                               receipt batch, receipt deadline,
                                                repair wait, repair rounds
 ```
 
-Every one of those is about **how bytes are cut up and paced**. Not one of
-them touches a key, an algorithm, a tag length or a padding policy. That wall
-is deliberate and there is a test that fails if it is ever crossed: link
-conditions must never be able to talk this side into weaker protection.
+Every number in a path lane is about **how bytes are cut and paced**. None
+touches a key, an algorithm, a tag length or the padding policy. A test fails
+if that line is ever crossed: link conditions must never lower protection.
 
 ```text
-  DAC may say            "send smaller pieces, send more parity, answer sooner"
-  DAC may NEVER say      "use a weaker cipher, a shorter tag, no padding"
+  DAC may say       "send smaller chunks, send more parity, answer sooner"
+  DAC may NEVER say "use a weaker cipher, a shorter tag, no padding"
 ```
-
 
 ## Quick Start
 
@@ -341,19 +390,28 @@ path.setCurrentAmeTier(initial)
 path.setTrigger(1, 200'u64)
 ```
 
-Run the example and tests:
+Run the examples and the tests:
 
 ```text
 nimble exampleAmeExactPath
 nimble exampleSecurePackage
+nimble exampleFomke
 nimble test
 ```
 
 ## Small Builds
 
-A device that speaks one KEM over one transport should not carry the code for
-five other KEMs and a second network stack. Two build flags decide what enters
-the binary. Nothing in your source changes between a full build and a slim one.
+**Definitions**
+
+- `family` := one algorithm kind in a layout: KEM, cipher, MAC, hash,
+  signature or KDF.
+- `slim build` := a build compiled with fewer KEM, signature or symmetric
+  families, or one carrier.
+
+A device with one KEM (key encapsulation mechanism) and one carrier (TCP or
+DAC) needs no
+code for the others. Four build flags decide what enters the binary. The
+source code stays the same between a full build and a slim build.
 
 ```text
 nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
@@ -377,18 +435,21 @@ nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
 +---------------------------+-------------------------+---------------------+
 ```
 
-Two notes on the lists. BLAKE3 is always compiled whatever you write, because
-AME normalizes MAC tags and derives Argon2's salt with it. And the symmetric
-flag names *primitives*, not slots, because one primitive serves several
-families at once — dropping `sha3` removes a MAC slot, two hash slots and a
-KDF slot in one move, since they are all the same code.
+BLAKE3 is always compiled, whatever the list says: AME normalises MAC (message
+authentication code) outputs and derives Argon2's salt with it. The symmetric
+flag names *primitives*, not slots (positions in a layout). One primitive
+serves several families:
+removing `sha3` removes one MAC (message authentication code) slot, two hash
+slots and one KDF (key
+derivation function) slot at once.
 
 Hybrid signature slots need two families. `asaEd25519Falcon512Hybrid` exists
-only when both `ed25519` and `falcon` are compiled; ask for it otherwise and
-the error names exactly what is missing.
+only when `ed25519` and `falcon` are both compiled. The compile error names
+what is missing.
 
-What comes out. A program that performs one two-slot AME KEM exchange and
-generates its signing keys, built with `-d:release` on x86-64:
+Size of a program that runs one two-slot KEM (key encapsulation mechanism)
+exchange and generates its
+signing keys, `-d:release`, x86-64:
 
 ```text
   everything ...................................... 747 336 bytes
@@ -396,20 +457,21 @@ generates its signing keys, built with `-d:release` on x86-64:
   + sigs=ed25519  symmetric=blake3,chacha20 ....... 249 272 bytes   (-67%)
 ```
 
-The flags do not change the wire. Every slot number keeps its meaning, so a
-slim node and a full node still understand each other whenever they share an
-algorithm. What changes is what the slim node can run: a slot it lacks is
-refused the moment a layout naming it is built or decoded, before any key
-material is touched. Naming a missing family as a constant does not even
-compile, and the error says which flag to change.
+The flags do not change the wire. Every slot (position in a layout) number
+keeps its meaning, so a
+slim build and a full build understand each other wherever they share an
+algorithm. A slim build refuses a layout (the ordered algorithm list) that
+names a missing slot, when the
+layout (the ordered algorithm list) is built or decoded, before any key
+exists. Naming a missing family as
+a constant does not compile, and the error names the flag.
 
-One wire change did happen, once, and not because of a flag: **Ed448 is gone**.
-It existed only as a liboqs algorithm, so keeping it would have forced every
-AME build to link liboqs. The signature slot ids are renumbered contiguously
-(Ed25519 is still 0x01, everything after it moved down by one). AME no longer
-depends on liboqs at all.
+One wire change happened once, for another reason: **Ed448 is gone.** It
+existed only in liboqs, and keeping it forced every AME build to link liboqs.
+The signature slot ids are renumbered without gaps (Ed25519 is still 0x01;
+everything after it moved down by one). AME no longer depends on liboqs.
 
-Verify all three profiles at once:
+Check all slim profiles at once:
 
 ```text
 nimble testMinimalAme
@@ -417,8 +479,13 @@ nimble testMinimalAme
 
 ## Native TLS 1.3
 
-Bifrost now exports a transport-neutral TLS 1.3 client and server engine. The
-first profile is deliberately narrow:
+**Definitions**
+
+- `TLS` := Transport Layer Security, the standard encrypted stream protocol.
+- `engine` := the TLS state machine without a socket: bytes in, bytes out.
+
+Bifrost exports a TLS 1.3 client and server engine. The first profile is
+narrow on purpose:
 
 ```text
 TLS version       TLS 1.3 only
@@ -432,7 +499,7 @@ Application       caller-owned bytes, such as HTTP/1.1
 Compression       none at the TLS record layer
 ```
 
-The engine does not own a socket:
+The engine owns no socket:
 
 ```text
 TCP / AsyncSocket / memory test
@@ -457,7 +524,7 @@ var config = Tls13ServerConfig(
 )
 var server = initTls13ServerSession(config)
 
-# Pass each arbitrary TCP fragment to the engine.
+# Pass each TCP fragment to the engine, in any size.
 var output = server.feedTls13Server(networkBytes)
 for record in output.outbound:
   sendToPeer(record)
@@ -480,100 +547,135 @@ sendToPeer(client.startTls13Client())
 var output = client.feedTls13Client(networkBytes)
 ```
 
-Both directions support fragmented and coalesced records, encrypted alerts,
-`close_notify`, and post-handshake `KeyUpdate`. Handshake and copied schedule
-secrets are cleared after traffic-key promotion.
+Both directions handle fragmented and joined records, sealed alerts,
+`close_notify`, and post-handshake `KeyUpdate`. Handshake secrets and copied
+schedule secrets are erased once the traffic keys exist.
 
-This profile is not a general public-Web TLS client. It currently rejects
-multi-certificate chains and certificates using RSA or ECDSA. It also omits
-HelloRetryRequest, client certificates, session resumption, and 0-RTT. Keep the
-OpenSSL transport wrapper available until the native profile receives broader
-interoperability, fuzzing, and independent security review.
+This profile is not a general web TLS client. It refuses multi-certificate
+chains and RSA or ECDSA certificates. It has no HelloRetryRequest, no client
+certificates, no session resumption and no 0-RTT. Keep the OpenSSL transport
+wrapper until the native profile has broader interoperability tests, fuzzing
+and an independent security review.
 
-## Initial Trust
+## Initial Trust 🐦‍🔥
 
-The handshake settles two things at once: what keys both sides will use, and
-who the other side is. It settles the second one **in private** — an observer
-watching every byte never learns who is talking to whom.
+**Definitions**
+
+- `handshake` := the four records that start a session: client hello, hello
+  retry (optional), server hello, client finish.
+- `client hello` := record 1, initiator to responder: nonce, layout, tier,
+  KEM public keys.
+- `hello retry` := the responder's answer "send your hello again, with this
+  cookie".
+- `server hello` := record 2, responder to initiator: nonce, KEM answer, one
+  sealed block.
+- `client finish` := record 3, initiator to responder: one sealed block.
+- `nonce` := 32 random bytes, fresh per record, never reused.
+- `transcript` := every handshake field so far, in order, built the same way by
+  both endpoints.
+- `sealed block` := the sealed part of the server hello and of the client
+  finish. It holds the identity proofs.
+- `cookie` := a tag the responder computes over the initiator's address with a
+  secret only the responder holds.
+- `authority` := a key stack that signs certificates.
+- `certificate` := subject name, public signing keys, validity window, serial,
+  and one authority signature per authority slot.
+- `pin` := a public signing key an endpoint received before the handshake.
+- `authentication mode` := what an endpoint must show before the other one
+  believes it. One of AM1A, AM1S, AM1P, AM1P+S.
+- `AM1A` := mode "Authority": a certificate signed by a known authority.
+- `AM1S` := mode "Signature": the other endpoint's pin.
+- `AM1P` := mode "Pre-shared": a PSK and its name.
+- `AM1P+S` := AM1P and AM1S at once; both must hold.
+- `pre-shared mode` := AM1P or AM1P+S.
+- `binder` := 32 bytes derived from the PSK that join the key schedule.
+- `salt` := 32 random bytes in a pre-shared client hello, fresh per hello.
+- `sealed hello` := a client hello whose KEM public keys are sealed (pre-shared
+  modes only).
+- `CS` := carried secret. 32 bytes a finished session hands to the NEXT
+  handshake with the same endpoint. `CS = GB3HKDF(NS, "next handshake")`, see
+  [FOMKE](#fomke) for NS. Code names: `ameNextHandshakeSecret` returns it,
+  `withAmeNextSecret` takes it, the hello flag is `usesNextSecret`.
+
+The handshake decides two things at once: which keys both endpoints use, and
+who the other endpoint is. It decides the second one privately: an observer
+of every byte never learns who talks to whom.
 
 ```text
 Authority
-  +-> signs Client certificate   (with its WHOLE algorithm stack)
-  +-> signs Server certificate
+  +-> signs initiator certificate   (with its WHOLE algorithm stack)
+  +-> signs responder certificate
 
-Client                                              Server
-  |--- Hello: nonce, slot layout, KEM public keys ---->|
-  |         (no identity here -- there is no key yet)  |
-  |                                                    |
-  |<-- Retry: "prove you can receive at that address" -|   optional
-  |--- the same Hello again, carrying the cookie ----->|
-  |                                                    |
-  |<-- Server Hello: nonce, KEM answer, [sealed block]-|
-  |         the sealed block holds the server's        |
-  |         certificate and its proof                  |
-  |                                                    |
-  |--- Finish: [sealed block] ------------------------>|
-  |         the client's certificate, its proof, and   |
-  |         a hash of the whole conversation           |
-  +================ equal AME epoch ===================+
+Initiator                                           Responder
+  |--- client hello: nonce, layout, KEM public keys ->|
+  |       (no identity: there is no key yet)          |
+  |       (pre-shared modes: KEM keys sealed)         |
+  |                                                   |
+  |<-- hello retry: cookie ---------------------------|   optional
+  |--- client hello again, with the cookie ---------->|
+  |                                                   |
+  |<-- server hello: nonce, KEM answer, sealed block -|
+  |       sealed block: responder certificate + proof |
+  |                                                   |
+  |--- client finish: sealed block ------------------>|
+  |       initiator certificate, proof, transcript hash|
+  +=============== equal epoch 1 =====================+
 ```
 
-**Def. 1 — sealed block.** Ciphertext under a key both sides work out from the
-KEM answer plus everything said so far. It exists from the server hello
-onwards. Nothing before it needs to be secret; nothing after it is not.
+A sealed block (the sealed part of the server hello and of the client finish)
+is sealed under a key both endpoints derive from the KEM answer and the
+transcript (every handshake field so far). It exists from the server hello
+onwards.
 
-**Def. 2 — cookie.** A short tag the server computes from the sender's address
-using a secret only the server holds. The server keeps no record of issuing
-one: when the cookie comes back it simply recomputes the tag. Someone who
-cannot receive at the address they claimed never gets a valid cookie, so the
-expensive work — key encapsulation, signature checks — only ever runs for a
-peer that is really there.
+The cookie (a tag over the initiator's address) needs no memory on the
+responder: when the cookie comes back, the responder computes it again. An
+initiator that cannot receive at its claimed address never gets a matching
+cookie. The costly work, key encapsulation and signature checks, therefore
+runs only for an endpoint that is really there.
 
-An epoch is returned only after all of this passes: every authority proof (one
-per authority slot, not just the first), the certificate serial against the
-revocation list, the validity window, the local clock being close enough to
-that window to be worth trusting, the peer's own proof over the transcript,
-the exact slot layout and initial tier, the KEM exchange, and the final
+An epoch (numbered key generation) is returned only after all of this holds:
+every authority signature (one per authority slot, not only the first), the
+certificate serial against the revocation list, the validity window, the local
+clock near enough to that window, the other endpoint's proof over the
+transcript, the exact layout and initial tier, the KEM exchange, and the final
 transcript hash.
 
-### Four ways to decide whom to believe ꒰ঌ ໒꒱
+### Four authentication modes ꒰ঌ ໒꒱
 
-The picture above shows AM1A, where an authority vouches for both sides. There
-are four modes in total. **The four messages carry the same fields in all
-of them.** Two things change between modes: the contents of the two sealed
-blocks, and, in the pre-shared modes, the client hello's KEM public keys,
-which are sealed too.
+The picture above shows AM1A (authority certificate). All four modes send the
+same four records with the same fields. Two things differ: the content of the
+two sealed blocks, and, in the pre-shared modes (AM1P, AM1P+S), the KEM public
+keys of the client hello, which are sealed too.
 
-**Def. 3 — authentication mode.** The single choice of what a peer must show
-before this side will believe it. It is made once, by building one
-`AmeAuthentication`, and every step of the handshake reads that same object.
+The mode is chosen once, by building one `AmeAuthentication`. Every handshake
+step reads that same object. The names follow one pattern: **AM1** + the
+letter of what an endpoint holds in advance.
 
-The names follow one pattern: **AM1** + the letter of what is provisioned.
-
-| | What you provision | What travels sealed | Hello keys | Needs a PKI |
+| mode | held in advance | content of the sealed blocks | client hello KEM keys | needs a PKI |
 |---|---|---|---|---|
-| **AM1A** | an **A**uthority's public keys | certificate + one signature per slot | clear | yes |
-| **AM1S** | the peer's own **S**ignature key | identity + one signature per slot | clear | no |
-| **AM1P** | a **P**re-shared secret | a name + one tag under that secret | **sealed** | no |
-| **AM1P+S** | both of the last two | name + tag, **then** identity + signatures | **sealed** | no |
+| **AM1A** | an **A**uthority's public keys | certificate + one signature per slot | unencrypted | yes |
+| **AM1S** | the other endpoint's **S**ignature key (pin) | certificate + one signature per slot | unencrypted | no |
+| **AM1P** | a **P**SK (pre-shared key) and its name | the name + one PSK (pre-shared key) tag | sealed | no |
+| **AM1P+S** | both of the above | name + PSK tag, THEN certificate + signatures | sealed | no |
+
+`PKI` := public key infrastructure, a set of authorities.
 
 ```nim
-# AM1A -- an authority vouches for the peer
+# AM1A -- an authority vouches for the other endpoint
 var auth = initAmeCertificateAuthentication(root)
 
-# AM1S -- you were handed the peer's public key in advance
+# AM1S -- the other endpoint's pin was handed over in advance
 var auth = initAmePinnedAuthentication(pinnedPeerIdentity(theirKey))
 
-# AM1P -- you were handed a shared secret in advance
-var auth = initAmePskAuthentication("site-a", secretBytes)
+# AM1P -- a PSK was handed over in advance
+var auth = initAmePskAuthentication("site-a", pskBytes)
 
-# AM1P+S -- a shared secret AND the peer's public key
-var auth = initAmePskPinnedAuthentication("site-a", secretBytes,
+# AM1P+S -- a PSK AND the other endpoint's pin
+var auth = initAmePskPinnedAuthentication("site-a", pskBytes,
   pinnedPeerIdentity(theirKey))
 ```
 
-That one object then goes to every call, and nothing else has to be told which
-mode is running:
+That one object goes to every call. No other call is told the mode:
 
 ```nim
 var hello  = beginAmeHandshake(sessionId, layout, tier, a = auth)
@@ -583,13 +685,13 @@ var client = finishAmeHandshake(hello, server.state.serverHello, auth, cert,
 var done   = acceptAmeHandshake(server.state, client.finish, nowUnix)
 ```
 
-`acceptAmeHandshake` takes no `auth`: it uses the one `answerAmeHandshake`
-settled on, which it stored in `server.state`. That keeps the two halves of the
-responder from ever running with different secrets.
+`acceptAmeHandshake` takes no `auth`. It uses the `auth` that
+`answerAmeHandshake` matched to the hello and stored in `server.state`. The
+two responder steps can therefore never run with different secrets.
 
-`cert` and `key` are the certificate and signing key this side proves itself
-with. **AM1P uses neither.** A device provisioned with a shared secret holds no
-signing key at all, so both are left out:
+`cert` and `key` are this endpoint's own certificate and signing key. **AM1P
+(PSK only) uses neither**; an endpoint with only a PSK (pre-shared key) holds
+no signing key:
 
 ```nim
 var server = answerAmeHandshake(hello.hello, supportedPaths, auth)
@@ -599,177 +701,169 @@ var done   = acceptAmeHandshake(server.state, client.finish)
 
 #### Which mode protects against what
 
-No single mode is best everywhere. The honest ranking depends on what you are
-afraid of:
-
 ```text
 mode     proof                          someone who STEALS it can ...
 -------  -----------------------------  -----------------------------------
 AM1A     "an authority vouched for me"  whatever the authority will sign
-AM1S     "I own this pinned key"        pretend to be that one side
-AM1P     "I know the shared secret"     pretend to be EITHER side
+AM1S     "I own this pinned key"        pretend to be that one endpoint
+AM1P     "I know the PSK"               pretend to be EITHER endpoint
 AM1P+S   both of the above              needs to steal BOTH
 
-against a quantum computer:  AM1P  >  AM1S (post-quantum sigs)  >  AM1A
+against a quantum computer:  AM1P  >  AM1S (post-quantum signatures)  >  AM1A
 against a stolen device:     AM1S  >  AM1A  >  AM1P
 for first contact:           AM1A  (the others need earlier setup)
 ```
 
-**Def. 3a — AM1P+S.** Both proofs are required, and neither can stand in for
-the other:
+AM1P+S (PSK and pin) needs both proofs. Neither replaces the other:
 
 ```text
-shared secret stolen, signing key safe   -> still secure
-signatures broken, shared secret safe    -> still secure
+PSK stolen, signing key safe             -> still secure
+signatures broken, PSK safe              -> still secure
 both lost                                -> broken
 ```
 
-It costs one signature and one verification per side, once per handshake.
-Rotations inside an AM1P+S session are signed, like in AM1S.
+It costs one signature and one verification per endpoint, once per handshake.
+Rotations (switches to the next epoch) inside an AM1P+S session are signed, as
+in AM1S.
 
-**Def. 3b — the sealed hello (AM1P, AM1P+S).** In the pre-shared modes the
-KEM public keys never travel in the clear. They are sealed under a key taken
-from the shared secret and a fresh random salt:
+#### The sealed hello (pre-shared modes)
+
+In the pre-shared modes the KEM public keys of the client hello are never
+unencrypted. They are sealed under a key derived from the PSK and the salt:
 
 ```text
-key  = GB3HKDF( psk ‖ next secret?,  salt = 32 random bytes,
-                info = "AME-AM1P-HELLO-v1" + name + every clear hello field )
-seal = the session's own tier AEAD: every switched-on cipher, every
-       switched-on MAC -- the same masks every later message uses
+key  = GB3HKDF( PSK ‖ CS if present,  salt,
+                "AME-AM1P-HELLO-v1" + PSK name + every unencrypted hello field )
+seal = the session's own tier AEAD (encryption + one tag): every switched-on cipher, every
+       switched-on MAC -- the same masks every later frame uses
 ```
 
-The fresh salt matters. The shared secret is the same for every hello, so
-without it two hellos would be sealed with one keystream, and XORing the two
-would reveal both. The seal's tag covers every clear field, including the mode
-byte and the salt. A responder holding a different secret cannot even open
-the hello, and refuses it before doing any KEM work:
+The salt (32 random bytes, fresh per hello) is required. The PSK is the same
+for every hello. Without the salt, two hellos would be sealed with one
+keystream, and XOR of the two ciphertexts would reveal both. The tag of the
+sealed hello covers every unencrypted field, including the mode byte and the
+salt. A responder with a different PSK cannot open the hello, and refuses it
+before any KEM work:
 
 ```text
 -> "client hello did not open under the shared secret"
 ```
 
-#### What AM1P actually proves ʚ♡ɞ
+#### What AM1P proves ʚ♡ɞ
 
-Two separate things come out of the one provisioned secret, and it is worth
-keeping them apart.
+Two separate things come from the one PSK.
 
-**1. A proof, so each side knows who the other is.** A tag over the
-conversation so far. The two proofs are not interchangeable: a direction byte
-sits inside the tagged bytes, so a responder's proof can never be replayed as
-an initiator's.
+**1. A proof: each endpoint learns who the other one is.** A tag over the
+transcript. A direction byte sits inside the tagged bytes, so the responder's
+proof never passes as the initiator's.
 
 ```text
-responder proves:  tag( secret, "responder" | name | everything said so far )
-initiator proves:  tag( secret, "initiator" | name | hash of the whole exchange )
+responder proves:  tag( PSK, "responder" | name | transcript so far )
+initiator proves:  tag( PSK, "initiator" | name | hash of the whole transcript )
 ```
 
-**2. A binder, so the keys depend on the secret too.** This is the part that
-matters, and the part it is easy to leave out. The proof alone says who is
-talking; it puts nothing into the keys. So AM1P also derives one *binder* from
-the secret and drops it into the key schedule beside the KEM results:
+**2. The binder: the keys depend on the PSK too.** The proof says who talks;
+it adds nothing to the keys. So AM1P also derives the binder (32 bytes from
+the PSK) and adds it to the key schedule next to the KEM results:
 
 ```text
 AM1A / AM1S   :  keys <- [ KEM slot 0 | KEM slot 1 | ... ]
 AM1P / AM1P+S :  keys <- [ KEM slot 0 | KEM slot 1 | ... | binder ]
 ```
 
-Read the second row carefully. Someone who breaks **every** KEM slot still
-cannot open an AM1P sealed block, because they are missing the last input. A
-provisioned secret that only authenticated would not buy that.
+Row 2: an attacker who breaks **every** KEM slot still cannot open a
+pre-shared sealed block, because the binder (the PSK's key-schedule input) is
+missing. The PSK itself never enters the derivation; only the binder does. A
+key block recovered later says nothing about a PSK that many sessions reuse.
 
-The provisioned secret itself never enters the derivation — only the binder
-computed from it — so a key block recovered later says nothing about a secret
-that gets reused across many sessions.
+#### The carried secret: from one session to the next ⟡
 
-#### The next secret: carrying one session into the next ⟡
-
-**Def. 3c — next secret (NS).** 32 bytes the key schedule sets aside in every
-epoch and never uses for a message (see [FOMKE](#fomke)). When a session ends,
-both sides can keep a value derived from it. The next AM1P handshake with the
-same peer can then take it as a second key, next to the shared secret:
+When a session ends, both endpoints can keep the CS (carried secret, 32 bytes
+from the old session). The next pre-shared handshake with the same endpoint
+takes it as a second key next to the PSK:
 
 ```nim
 # session 1 is running
-var kept = ameNextHandshakeSecret(session)        # 32 bytes, same on both ends
+var kept = ameNextHandshakeSecret(session)        # the CS, equal on both endpoints
 
 # later, session 2
-var auth = initAmePskAuthentication("site-a", secretBytes).withAmeNextSecret(kept)
+var auth = initAmePskAuthentication("site-a", pskBytes).withAmeNextSecret(kept)
 ```
 
-With it, the hello seal, both proofs and the binder all take
-`psk ‖ next secret` as their key. **A stolen shared secret alone no longer
-opens the next hello.**
+With it, the sealed hello, both proofs and the binder all take `PSK ‖ CS` (CS:
+the carried secret) as their key. **A stolen PSK alone no longer opens the next
+hello.**
 
-Both sides have to agree whether it was used. The hello carries a one-byte
-flag for exactly that, in the clear and under the seal's tag. The responder
-decides what it accepts:
+Both endpoints must agree whether the CS was used. The client hello carries
+one flag byte for that, unencrypted and covered by the tag of the sealed
+hello. The responder decides what it accepts:
 
 ```text
-hello flag   responder holds   required   outcome
-----------   ---------------   --------   -------------------------------------
-set          yes               any        use it
-set          no                any        refuse: nothing to match it with
-clear        any               yes        refuse: no silent fallback
-clear        yes               no         psk only -- and the flag SAYS so
-clear        no                no         psk only
+hello flag   responder holds a CS   required   outcome
+----------   --------------------   --------   ----------------------------------
+1            yes                    any        use it
+1            no                     any        refuse: nothing to match it with
+0            any                    yes        refuse: no fallback without notice
+0            yes                    no         PSK only -- and the flag shows it
+0            no                     no         PSK only
 ```
 
-`withAmeNextSecret(kept, required = true)` is the setting that stops an
-attacker from quietly pushing both sides back to psk-only by breaking one
-handshake on purpose. Leave it off only while a peer may have lost its copy,
-for example after a restore from backup.
+`withAmeNextSecret(kept, required = true)` stops an attacker from forcing both
+endpoints back to PSK only by breaking one handshake on purpose. Set it to
+`false` only while an endpoint may have lost its CS, for example after a
+restore from backup.
 
 #### Rotating an epoch without signature keys
 
-Every so often a session throws its keys away and agrees new ones. The offer
-and the reply that do this each have to be proved by whoever sent them, and
-AM1P has no signing key to prove them with. It uses a tag instead, under a key
-derived from the finished handshake:
+A rotation needs an offer and a reply, and each is proved by the endpoint that
+sent it. AM1P has no signing key. It uses a tag instead, under a key derived
+from the finished handshake:
 
 ```text
-AM1A / AM1S / AM1P+S  ->  one signature per active signature slot
+AM1A / AM1S / AM1P+S  ->  one signature per switched-on signature slot
 AM1P                  ->  one tag under the session's own exchange key
 ```
 
-Both travel in the same field and cover the same bytes, so nothing downstream
-has to know which one it is looking at. The exchange key is derived per
-session and is never the provisioned secret.
+Both forms travel in the same field and cover the same bytes. The exchange key
+is derived per session and is never the PSK.
 
-#### What a mode mismatch does
+#### A mode mismatch
 
-The hello names the mode it wants, and that byte is covered by the transcript
-(and, in the pre-shared modes, by the seal's tag). A responder running one mode
-**refuses** a hello asking for another, before it does any key work:
+The client hello names its mode. The mode byte is covered by the transcript
+and, in the pre-shared modes, by the tag of the sealed hello. A responder that
+runs another mode **refuses** the hello before any key work:
 
 ```text
-client asks for AM1A, responder runs AM1P
+initiator asks for AM1A, responder runs AM1P
   -> "client asked for an authentication mode this side does not run"
 ```
 
-This is checked rather than mirrored on purpose. A responder that simply
-echoed the mode back would be letting the client choose which of its own
-checks ran. The same rule is what makes a *downgrade* impossible: each side
-decides its mode locally, and never takes "whatever the other one offers".
+The responder checks the mode; it does not copy it back. Copying would let the
+initiator choose which checks the responder runs. The same rule prevents a
+downgrade: each endpoint sets its mode locally and never takes the other
+endpoint's choice.
 
-### What each side can and cannot do
+### What each record shows
 
-| | Client hello | Server hello | Finish |
+| | client hello | server hello | client finish |
 |---|---|---|---|
-| Who sent it | not stated | sealed | sealed |
-| Readable by an observer | AM1A/AM1S: yes. AM1P, AM1P+S: nonce, layout, salt -- the KEM keys are sealed | nonce + KEM answer only | nothing |
-| Costs the server real work | no (cookie first) | yes | yes |
-| Authenticated | AM1A/AM1S: no, it cannot be. AM1P, AM1P+S: yes, by the seal's tag | yes | yes |
+| sender identity | not stated | sealed | sealed |
+| unencrypted to an observer | AM1A/AM1S: everything. AM1P, AM1P+S: nonce, layout, tier, salt; the KEM keys are sealed | nonce + KEM answer | nothing |
+| costs the responder real work | no (cookie first) | yes | yes |
+| authenticated | AM1A/AM1S: no, nothing to authenticate it with yet. AM1P, AM1P+S: yes, by the tag of the sealed hello | yes | yes |
 
-In the certificate and pinned modes the client hello is unauthenticated. There is nothing to
-authenticate it *with* yet, which is exactly why the cookie sits in front of
-the work it would otherwise trigger.
+In AM1A and AM1S the client hello has no key to authenticate it with. The
+cookie in front of the costly work exists for that reason.
 
 ### Revocation
 
-A certificate carries a **serial**: a number naming that certificate, not its
-holder. Revoking a serial takes one certificate out of use and leaves the
-subject free to be issued another. Revoking by name instead would burn the
-name forever.
+**Definitions**
+
+- `serial` := a number that names one certificate, not its holder.
+
+Revoking a serial (certificate number) removes one certificate and leaves the
+subject free to receive another one. Revoking by name would block the name for
+ever.
 
 ```nim
 var cert = issueAmeIdentityCertificate(authority, identity,
@@ -779,6 +873,11 @@ var trust = verifyAmeIdentityCertificate(cert, root, nowUnix,
 ```
 
 ### Running it over a socket
+
+**Definitions**
+
+- `policy` := `AmeResponderPolicy` or `AmeInitiatorPolicy`: what one endpoint
+  accepts, independent of the carrier.
 
 ```nim
 var auth = initAmeCertificateAuthentication(root)
@@ -794,9 +893,8 @@ var outcome = ameTcpClientHandshake(sock, client, sessionId = 1'u64,
   nowUnix = nowUnix)
 ```
 
-The same policy objects drive the datagram carrier. Only the driver changes,
-because `AmeResponderPolicy` and `AmeInitiatorPolicy` say what each side will
-accept, not which socket carries it:
+The same policy (what one endpoint accepts) drives the DAC carrier. Only the
+driver changes:
 
 ```nim
 var done = ameDacServerHandshake(sock, server, nowUnix)
@@ -810,20 +908,27 @@ var outcome = ameDacClientHandshake(sock, peer, client, sessionId = 1'u64,
   nowUnix = nowUnix)
 ```
 
-The DAC responder returns the address it ended up talking to rather than being
-told one: on a datagram socket it learns who its peer is by listening. It also
-retransmits nothing -- the initiator owns every timer -- so a responder holds
-no per-peer state until a handshake actually completes.
+The DAC responder returns the address it answered: on a datagram socket it
+learns the other endpoint by listening. It sends nothing twice (the initiator
+owns every timer), so a responder holds no state per endpoint until a
+handshake completes.
 
-Leave `requireCookie` on for DAC. Nothing proves a source address there, and a
-responder without a cookie will do post-quantum key exchanges for packets that
-never came from anyone.
+Keep `requireCookie` on for DAC. Nothing proves a source address there, and a
+responder without the cookie runs post-quantum KEM work for datagrams nobody
+sent.
 
-`nowUnix` is supplied by the caller on purpose. A library that silently reads
-an unset system clock and judges certificates against it is worse than one
-that makes the caller say where the time came from.
+`nowUnix` comes from the caller on purpose. A library that reads an unset
+system clock and judges certificates by it is worse than one that makes the
+caller name the time source.
 
 ## Secure Packages
+
+**Definitions**
+
+- `ASP` := AME secure package: one sealed blob for bytes that are stored or
+  relayed.
+- `manifest` := the first DAC word of a package: chunk count, size, digest.
+- `padding` := filler bytes that round a payload up to whole 64-byte blocks.
 
 ```text
 Sender
@@ -835,20 +940,19 @@ Receiver
          -> BLAKE3 digest -> AME open -> bounded decode -> plaintext
 ```
 
-Note the order: seal first, then cut up and add repair data. The repair layer
-works on ciphertext and needs no key at all, and the one tag over the whole
-package is checked once, at the end, on bytes already put back together.
+Seal first, then cut and add repair data. The repair layer works on
+ciphertext and needs no key. The one tag over the whole ASP (secure package)
+is checked once, at the end, on the rebuilt bytes.
 
-Compression is **off** by default. Compressing before encrypting leaks: the
-ciphertext is as long as the compressed input, so its length says how well the
-plaintext compressed — and if an attacker can get their own text placed beside
-a secret, a shorter result means the two matched. Ask for it by name, and only
-when no part of the payload is attacker-influenced.
+Compression is **off** by default. Compression before sealing leaks: the
+ciphertext is as long as the compressed input, so its length shows how well
+the plaintext compressed. An attacker who can place their own text next to a
+secret sees a shorter result when the two match. Switch compression on by
+name, and only when no part of the payload is under an attacker's influence.
 
-Switching compression on switches **padding** on with it, and there is no way
-to ask for one without the other. Before encryption the envelope is rounded up
-to a whole number of 64 bytes, and the last filler byte says how many filler
-bytes there are:
+Compression on means padding (filler up to whole 64-byte blocks) on. Before
+sealing, the envelope is rounded up to whole 64-byte blocks, and the last
+filler byte counts the filler bytes:
 
 ```text
   compressed (5 bytes)             padded to one 64-byte block
@@ -858,12 +962,10 @@ bytes there are:
                                      \_____ 5 _____/ \____ 59 filler ___/
 ```
 
-There is always filler — a 64-byte payload becomes 128 — so the last byte can
-never be mistaken for real data. Padding blunts the length leak into 64-byte
-steps; it does not delete it, and a payload that compresses from 4 KiB to 100
-bytes still lands in a different block count than one that does not compress
-at all. `paddedAmeCompressionPolicy()` gives padding without compression, for
-a stored package whose size alone would say what it is.
+There is always filler (a 64-byte payload becomes 128), so the last byte is
+never data. Padding (the filler) reduces the length leak to 64-byte steps; it
+does not remove it. `paddedAmeCompressionPolicy()` gives padding without
+compression, for a package whose size alone would reveal its content.
 
 ```nim
 var plan = planAmeSecurePackage(senderAuth, packageId, plaintext,
@@ -876,111 +978,122 @@ for chunk in plan.package.chunks:
 var restored = finishAmeSecurePackage(receiverAuth, incoming, plan.compression)
 ```
 
-Applications transmit the manifest, chunks, repair hints, repair chunks, and
-commit with their own socket or event loop. Protocol state stays deterministic
-and can be tested without a live network.
+The caller sends the manifest (chunk count, size, digest), chunks, repair
+hints, repair chunks and commit with its own socket or event loop. Protocol
+state is deterministic and testable without a network.
+
 ## AME
 
-AME exchanges exact ordered algorithm paths rather than security tiers.
+**Definitions**
 
-| Family | Identifier | Slots | Selection |
+- `exchange mask` := the KEM mask of one rotation: which KEM slots run a new
+  KEM exchange.
+- `rekeyMask` := the caller's name for the exchange mask of one rotation.
+- `offer` := rotation record 1: the requester's KEM public keys and target
+  tier.
+- `reply` := rotation record 2: the KEM answer.
+- `epoch-ready` := rotation record 3: the first frame of the new epoch.
+- `transcript salt` := a hash of the handshake transcript, fixed per epoch,
+  mixed into every traffic key.
+- `stack` := per KEM slot, the one-way image of every KEM secret that slot has
+  ever produced, with the binder underneath.
+- `stack depth` := how many KEM exchanges a stack holds.
+
+AME (Adaptive Message Encryption) exchanges exact, ordered algorithm lists,
+not named security levels.
+
+| family | identifier | slots | selection |
 |---|---:|---:|---:|
 | KEM | 8 bit | 8 | exchange mask |
-| Cipher | 4 bit | 8 | active mask |
-| MAC/HMAC | 4 bit | 8 | active mask |
-| Hash | 4 bit | 8 | active mask |
-| Signature | 4 bit | 8 | active mask |
-| KDF | 4 bit | 8 | active mask |
+| cipher | 4 bit | 8 | tier mask |
+| MAC | 4 bit | 8 | tier mask |
+| hash | 4 bit | 8 | tier mask |
+| signature | 4 bit | 8 | tier mask |
+| KDF | 4 bit | 8 | tier mask |
 
-Repeated KEM entries are independent. Selecting an inactive slot adds it;
-selecting an active slot rekeys it. Other active slots remain.
+Repeated KEM entries are independent slots. Setting the bit of a
+switched-off slot adds it; setting the bit of a switched-on slot runs it
+again. Other switched-on slots stay on.
 
-Exact suite proposals are accepted or rejected without substitution.
+A layout offer is accepted exactly or refused. There is no substitution.
 
-### One Transition At A Time
+### One rotation at a time
 
-Only one epoch transition may be in flight, counting both directions. If both
-endpoints start one at the same moment, roles break the tie:
+Only one rotation (switch to the next epoch) may be in progress, counting
+both directions. When both endpoints start one at the same moment, the roles
+decide:
 
 ```text
   initiator A                       responder B
   ------------                      ------------
-  begin  -> offer A  -------------> B drops its own offer, answers A
+  begin  -> offer A  -------------> B discards its own offer, answers A
   offer B <------------------------ begin  -> offer B
-  reject offer B (A keeps its own)
+  refuse offer B (A keeps its own)
 
-  result: both endpoints follow A's transition, one epoch, one key set
+  result: both endpoints follow A's rotation: one epoch, one key set
 ```
 
-Without the tie-break both sides would rotate to the same epoch number from
-different key material, and every later frame would fail to authenticate.
-`beginAmeSessionExchange` therefore refuses to start while a peer candidate
-epoch is pending, and `answerAmeSessionExchange` refuses an offer while the
-local endpoint is the initiator with its own exchange outstanding.
+Without this rule both endpoints would reach the same epoch number with
+different keys, and every later frame would fail its tag.
+`beginAmeSessionExchange` refuses to start while a candidate epoch from the
+other endpoint is pending. `answerAmeSessionExchange` refuses an offer while
+the local endpoint is the initiator with its own offer outstanding.
 
-### Rekeying Versus Rotating
+### Rotation with and without a new KEM exchange
 
 A tier change always rotates the epoch and always changes every traffic key,
-because each epoch mixes in a fresh transcript salt. Whether it runs a **new
-KEM** is a separate question, and that is the one that matters:
+because each epoch mixes in a new transcript salt (hash of the transcript).
+Whether the rotation runs a **new KEM exchange** is a separate choice, and it
+is the one that matters:
 
 ```text
-  keys change      every rotation, always, from the fresh transcript salt
-  KEM runs again   only for the slots in the exchange mask
-  stack deepens    only for the slots in the exchange mask
+  traffic keys change    every rotation, from the new transcript salt
+  KEM runs again         only for the slots in the exchange mask
+  stack grows            only for the slots in the exchange mask
 ```
 
-**The default re-exchanges everything that was already on.** If the last
-exchange had all its algorithm bits set, all of them run again:
+**Default: every slot that was switched on runs again.**
 
 ```nim
-requestAmeTier(session, tierId)              # rekey everything that was on
-requestAmeTier(session, tierId, 0)           # rekey nothing already active
-requestAmeTier(session, tierId, 0b0100_0000) # rekey exactly slot 1
+requestAmeTier(session, tierId)              # new KEM for every switched-on slot
+requestAmeTier(session, tierId, 0)           # no new KEM for switched-on slots
+requestAmeTier(session, tierId, 0b0100_0000) # new KEM for slot 1 only
 ```
 
 ```text
   current kem 1000_0000 -> target kem 1100_0000   default -> mask 1100_0000
-      both slots run a KEM; both stacks go one deeper
+      both slots run a KEM; both stacks grow by one
 
   current kem 1000_0000 -> target kem 1100_0000   mask 0  -> mask 0100_0000
-      only the ADDED slot runs a KEM; slot 0's stack stays where it was
+      only the ADDED slot runs a KEM; the stack of slot 0 stays as it was
 
   current kem 1000_0000 -> target kem 1000_0000   mask 0  -> mask 0000_0000
-      keys change and nothing else does
+      traffic keys change, nothing else does
 ```
 
-It used to default the other way, and that was backwards. A rotation with no
-new KEM still changes every traffic key, so it **looks** like it did the work —
-and it did not: an attacker holding the current KEM secrets keeps reading, and
-no stack is deeper than it was. The expensive, honest thing happens when nobody
-says otherwise; the cheap thing has to be asked for by name.
+The default was once the other way round. A rotation without a new KEM
+exchange still changes every traffic key, so it looks like work was done. It
+was not: an attacker who holds the current KEM secrets keeps reading, and no
+stack grows. The costly, real rotation now happens by default; the cheap one
+must be asked for with `rekeyMask = 0`.
 
-Asking for the tier already in force is allowed, and is the ordinary way to
-deepen the stack without changing anything else about the connection.
+Asking for the tier already in force is allowed. It is the ordinary way to
+grow the stacks without changing anything else.
 
-**Triggered rotations do the same.** A rotation that fires because enough bytes
-have moved, or enough time has passed, is exactly the moment fresh key material
-is wanted — so it re-exchanges the established slots too, not only the slot the
-next tier adds.
+**Triggered rotations do the same.** A rotation triggered by transferred bytes
+or elapsed time runs a new KEM exchange for every switched-on slot too.
 
-> 💸 **This costs real bytes, and one KEM family makes it expensive.** An
-> exchange carries a public key and a ciphertext per slot. For X25519, Saber,
-> Kyber and NTRU that is one or two kilobytes each — nothing. Classic McEliece
-> public keys are **hundreds of kilobytes**, so a layout using one re-ships
-> that on every rotation under this default. On a metered or thin link, name a
-> smaller `rekeyMask`, or `0`, and accept that those slots stop getting deeper.
-> The knob is per rotation; nothing is decided for the whole session.
+> 💸 **Cost.** A KEM exchange carries one public key and one ciphertext per
+> slot. For X25519, Saber, Kyber and NTRU that is one or two kilobytes per
+> slot. Classic McEliece public keys are **hundreds of kilobytes**, and the
+> default sends them again on every rotation. On a metered or thin link, pass a
+> smaller `rekeyMask`, or `0`, and accept that those stacks stop growing. The
+> choice is per rotation.
 
-### Every exchange stacks on the one before it ⟡
+### The stack: every KEM exchange builds on the one before ⟡
 
-A KEM slot does not hold the secret it last agreed. It holds **everything it
-has ever agreed**, folded together, so each exchange makes the next one harder
-to unpick rather than simply replacing what came before.
-
-**Def. — the stack.** What `AmeExchangeState.stackedSecrets[i]` holds for slot
-`i`. Not a shared secret; the accumulated image of every shared secret that
-slot has produced, with the provisioned secret underneath all of them.
+A KEM slot does not hold only its latest secret. It holds the stack (the
+one-way image of all its secrets).
 
 ```text
   first exchange   stack = H( binder, slot, algorithm, 1, secret1 )
@@ -988,113 +1101,104 @@ slot has produced, with the provisioned secret underneath all of them.
   rotation         stack = H( H(stack), binder, slot, algorithm, 3, secret3 )
 ```
 
-`H` here is the tier's hash overlay — every switched-on hash slot, XORed
-together — so breaking one hash primitive is not enough here either.
+`H` := the tier's hash overlay: every switched-on hash slot, outputs XORed
+together. Breaking one hash primitive is not enough.
 
-**Why it is built that way.** Before, a slot kept only its latest secret and a
-rotation threw the old one away:
+Before the stack, a slot kept only its latest secret:
 
 ```text
   epoch 1   key = KDF( ... secret1 ... )
-  epoch 2   key = KDF( ... secret2 ... )      secret1 gone, and irrelevant
+  epoch 2   key = KDF( ... secret2 ... )      secret1 erased, and irrelevant
 ```
 
-An attacker who recovered `secret2` alone — a KEM broken ten years from now, a
-bad random number, a flawed machine — read epoch 2, and every exchange before
-it had protected nothing. Now the key hangs off the whole stack, and `secret2`
-on its own reaches none of it:
+An attacker with `secret2` alone read epoch 2. Now the key depends on the
+whole stack (image of all secrets):
 
 ```text
-  to read epoch 3 you now need
-    secret3   AND   secret2   AND   secret1   AND   the provisioned secret
+  to read epoch 3 an attacker needs
+    secret3   AND   secret2   AND   secret1   AND   the binder
 ```
 
-Each rotation adds a term. None of them ever removes one.
+Each rotation adds a term. No rotation removes one.
 
-**What it costs nothing of.** Forward secrecy is exactly what it was. The old
-stack is erased the instant the new one is built, and the new one is a one-way
-image of it, so a machine seized today still cannot read yesterday. What
-changed is only what an attacker needs in order to read **tomorrow**.
+**Forward secrecy is unchanged.** The old stack is erased when the new one is
+built, and the new one is a one-way image of the old one. A device seized
+today still cannot read yesterday.
 
-**The provisioned secret finally does something.** In AM1P (and AM1P+S) both sides are
-handed a secret out of band. It used to prove who was speaking and then go
-nowhere near a traffic key, so a broken KEM took the whole session and the
-secret the two sides had gone to the trouble of sharing beforehand did nothing
-to stop it. It is now the `binder` in the diagram above — mixed into every
-slot's stack, on the first exchange and on every rotation after it:
+**The PSK joins every stack.** In the pre-shared modes both endpoints hold a
+PSK. The binder derived from it enters every slot's stack, on the first KEM
+exchange and on every rotation:
 
 ```nim
-## Both sides reach the same binder, and it is not the provisioned secret.
+## Both endpoints hold the same binder, and it is not the PSK.
 check clientDone.auth.exchangeBinder == serverDone.auth.exchangeBinder
 check clientDone.auth.exchangeBinder != secret
 ```
 
-It is derived from the provisioned secret and the finished transcript, under
-its own label — deliberately **not** the same bytes as
-`exchangeAuthenticationKey`, which is the MAC key that tags offers and
-replies. One secret doing two jobs is how a proof about one of them quietly
-stops being a proof about the other.
+The binder is derived from the PSK, the CS if present, and the finished
+transcript, under its own label. It is NOT the same bytes as
+`exchangeAuthenticationKey`, the MAC key that tags offers and replies in AM1P.
+One secret with two jobs is how a proof about one job silently stops holding
+for the other.
 
-AM1A and AM1S carry an empty binder. They are trusted through signatures, have
-no secret shared beforehand, and inventing one would look like protection while
-resting on values both sides already send in the clear.
+AM1A and AM1S have an empty binder. They have no PSK, and a binder built from
+unencrypted values would protect nothing.
 
-**Stacking on purpose.** Ask for the tier already in force, as many times as
-the traffic is worth. Every KEM slot that tier uses is re-exchanged, and every
-one of their stacks goes one deeper:
+**Growing the stacks on purpose.** Ask for the tier already in force, as
+often as the traffic is worth. Each switched-on KEM slot runs again, and each
+stack grows by one:
 
 ```text
-  for each rotation the server wants:
+  for each rotation:
 
     requestAmeTier(session, session.auth.current.tier.tierId)
-        ^ no mask needed: the default is everything that was already on
+        ^ no mask needed: the default is every switched-on slot
 
     beginAmeSessionExchange   ->  offer   ->  answerAmeSessionExchange
     finishAmeSessionExchange  <-  reply   <-
     confirmAmeSessionExchange <-> epoch-ready
 
-    every slot the tier uses is now one deeper
+    every stack of the tier is now one deeper
 ```
 
-One round trip per rotation. This is a two-party agreement — no side can
-deepen the stack alone, because the whole point is that the new term comes
-from a KEM both of them ran.
+One round trip per rotation. Neither endpoint can grow a stack alone: the new
+term comes from a KEM exchange both endpoints ran.
 
 ```nim
-## What that bought, read back from the session itself.
+## The stack depth, read from the session.
 echo ameSessionStackDepth(session)
 ```
 
-It reports the **shallowest** slot the tier uses, because an attacker picks
-which slot to work on and the defender does not. A tier running a slot six
-exchanges deep beside one that has run once is one deep.
+It reports the **smallest** stack depth (KEM exchanges per stack) among the
+tier's slots, because an attacker chooses which slot to attack.
 
-Which has a consequence worth knowing before it surprises you: **adding an
-algorithm lowers the number.** Rotating onto a tier that brings in a new KEM
-slot deepens every slot that was already on, and then puts a brand new slot
-beside them at depth one -- so the session reads one. Nothing was lost; there
-is simply a shallower place to aim at now. It comes back up by rotating again
-on the tier now in force.
+**Adding an algorithm lowers the number.** A rotation onto a tier with a new
+KEM slot grows every existing stack and adds a new slot at depth 1, so the
+session reads 1. Nothing is lost; there is a shallower target now. Rotating
+again on the same tier raises it.
 
-> ⚠️ Depth grows only with fresh key material. Passing `rekeyMask = 0` asks
-> for the cheap rotation — new traffic keys, no new KEM — and that one deepens
-> nothing, because re-hashing a value is something an attacker can do just as
-> easily. It is there for callers who know what they are giving up, and it is
-> not what you get by default.
+> ⚠️ Stack depth grows only with a new KEM exchange. `rekeyMask = 0` gives new
+> traffic keys without a KEM exchange, and grows nothing: hashing a value
+> again is as easy for an attacker as for an endpoint.
 
-## What DAC actually decides ꒰ঌ ໒꒱
+## What DAC decides ꒰ঌ ໒꒱
 
-DAC is two things wearing one name, and it is worth keeping them apart.
+**Definitions**
 
-**Def. — the parameter setter.** Given what the link looks like, it says what
-to send with. Pure arithmetic; no socket touches it:
+- `parameter setter` := the part of DAC that maps path measurements to a path
+  lane. Arithmetic only, no socket.
+- `transport` := the part of DAC that acts on those numbers: the link loop,
+  chunking, receipt bookkeeping, repair. It has a socket and state.
+- `receipt` := an AckRange word: "these chunks arrived".
+- `receipt mode` := when a receiver sends receipts (`ackMode`).
+- `not measured` := the value 0 in a PathStats field (except loss ppm).
 
 ```text
   DacPathStats          loss ppm, rtt, jitter, reorder depth,
                         mtu hint, queue ms, credit hint
-        |               ZERO MEANS "NOT MEASURED", never "measured zero".
+        |               0 MEANS "NOT MEASURED", never "measured 0".
         |               Only loss ppm is exempt. A rule whose input is
-        |               missing is skipped, not believed.
+        |               not measured is skipped.
         |
   recommendDacPathFromStats     moves ONE step toward a target, never jumps
         |
@@ -1103,25 +1207,24 @@ to send with. Pure arithmetic; no socket touches it:
         |
   dacDefaultsFor(scenario)
         |
-  DacScenarioDefaults   chunkBytes      how big a payload piece is
-                        dataShards      how many pieces per repair group
-                        parityShards    how much repair rides along
+  DacScenarioDefaults   chunkBytes      size of one chunk
+                        dataShards      chunks per repair group
+                        parityShards    repair data per group
                         repairMode      none | xor | reedSolomon | tcpExact
-                        ackBatchChunks  how many before an answer
-                        ackMaxDelayMs   how long before one anyway
-                        repairWaitMs    how long before rebuilding
-                        repairRounds    how many attempts
+                        ackBatchChunks  chunks per receipt
+                        ackMaxDelayMs   longest wait before a receipt
+                        repairWaitMs    wait before rebuilding
+                        repairRounds    rebuild attempts
 ```
 
-**Def. — the transport.** The link loop, the chunking, the ACK bookkeeping and
-the repair maths that act on those numbers. It has a socket and state.
-
+`rtt` := round-trip time. `mtu` := maximum transmission unit, the largest
+datagram a path carries. `ppm` := parts per million.
 
 ### The scenario table
 
-Twelve rows, one enum, one table. Several scenarios share a lane on purpose:
-bad signal, heavy loss, jitter and an unstable path are all `dplLossyPath` and
-want different amounts of parity.
+Twelve rows, one enum, one table. Several scenarios share one path lane on
+purpose: bad signal, heavy loss, jitter and an unstable path are all
+`dplLossyPath` and differ in parity.
 
 ```nim
 var d = dacDefaultsFor(dscCleanLan)          # 1200-byte chunks, 32D + 1P
@@ -1129,29 +1232,26 @@ var e = dacDefaultsFor(dscHeavyLoss)         # 512-byte chunks, 12D + 6P
 var f = dacDefaultsFor(dscWeakRecovery)      # fixes its own transfer class
 ```
 
-Notice that heavy loss gets the **small** ACK batch, not the large one: every
-un-acknowledged frame is retransmit state the sender cannot free yet. Long
-deadlines are for battery radios, where what is being saved is a wake-up
-rather than bandwidth.
+Heavy loss gets the **small** receipt batch: every chunk without a receipt is
+state the sender cannot release yet. Long deadlines are for battery radios,
+where a wake-up costs more than bandwidth.
 
-### How a receiver answers — the five modes ꒰ঌ ໒꒱
+### Receipt modes ꒰ঌ ໒꒱
 
-`ackMode` is the sixth number in that row and it is not a size, it is a
-**habit**. The two levers above say how big a receipt gets and how long it may
-wait; the mode says whether a receipt is the right idea at all:
+`ackMode` is the receipt mode (when a receiver sends receipts). It is a
+behaviour, not a size:
 
-| mode | when it answers | what it is for |
+| mode | sends a receipt | use |
 |---|---|---|
-| `damSilent` | never | an uplink byte costs more than a wasted parity shard |
-| `damNackOnly` | only when something really is missing | a metered link, where silence is the message |
+| `damSilent` | never | a sent byte costs more than a wasted parity shard |
+| `damNackOnly` | only when a chunk is really missing | a metered link |
 | `damBatch` | on the count or the deadline | the ordinary case |
-| `damExplicit` | every single chunk | lowest latency, most receipts |
-| `damVerified` | like batch, plus "I have committed N packages" | a barely-working path, where the commit itself may be lost |
+| `damExplicit` | for every chunk | lowest latency, most receipts |
+| `damVerified` | like batch, plus "I have committed N packages" | a path so bad the commit itself may be lost |
 
-The last one earns its keep in one specific way. A `PackageCommit` is one
-datagram and it can die like any other; a `damVerified` receiver puts its
-running commit count in **every** receipt, so the sender learns the package
-landed even when the commit never arrived:
+A `PackageCommit` is one datagram and can be lost. A `damVerified` receiver
+puts its commit count in **every** receipt (AckRange word), so the sender
+learns the package arrived even when the commit is lost:
 
 ```text
   receiver commits package 1          its count goes 0 -> 1
@@ -1159,382 +1259,416 @@ landed even when the commit never arrived:
   every receipt from now on says 1
         |
   sender started this package when the count read 0
-        -> the number MOVED -> the peer committed something
-        -> with one package in flight, that something is this one
+        -> the count CHANGED -> the receiver committed a package
+        -> with one package in flight, that is this one
         -> release it
 ```
 
-Every other mode reports a fixed zero, which a sender reads as *"this peer
-does not report commits"* — never as *"this peer has committed nothing"*. That
-distinction is the whole guard, and it is why the count is floored rather than
-left to mean two things at once.
+Every other mode reports 0, which a sender reads as "this receiver does not
+report commits", never as "this receiver committed nothing".
 
-**One more thing that ends with the package.** The receipt does too, and it
-used not to. The ACK window slides over arrivals only and never past a hole --
-which is right, because a sequence pushed below the base could never be
-reported again -- but the window belongs to ONE package, and the package used
-to end without it:
+**The receipt ends with the package.** The receipt window slides over arrived
+chunks only and never past a hole: a position below the window base could
+never be reported again. The window belongs to ONE package, and it once
+outlived it:
 
 ```text
   base                    the package is complete, and yet
-   |  X  .  X  X          pending = 2, so the batch is still due
+   |  X  .  X  X          pending = 2, so a receipt is still due
          ^                -> a receipt every ackMaxDelayMs
-         the hole that       -> the batch slides nowhere
-         parity filled       -> so it happens again, and again
+         the hole that       -> the window does not slide
+         parity filled       -> so it repeats, for ever
 ```
 
-Every delivery repaired from parity ends that way, which under loss is most of
-them. The link then sent about ten sealed receipts a second, for ever, to a
-peer that had usually stopped listening -- and each one made the link look
-alive, so its relay slot was never reclaimed.
+Every delivery rebuilt from parity ended like that. The link sent about ten
+sealed receipts per second to an endpoint that had stopped listening, and
+each one made the link look alive, so its relay slot was never reclaimed.
 
-One last receipt still goes out, for `damVerified` only: that mode carries its
-commit count in every receipt, and that count is what a sender learns from
-when the commit message itself is lost. The other four modes have just sent a
-commit, which says everything a receipt could.
+One last receipt still goes out, in `damVerified` only: that mode's receipt
+carries the commit count a sender needs when the commit word is lost. The
+other four modes have just sent a commit.
 
-### The top lane is chosen, never discovered ⌜guide⌟
+### The top path lane is configured, never measured ⌜guide⌟
 
-`dplSuperCleanPath` — 32 KB chunks, no repair at all — is **configuration
-only**. Nothing measures its way into it, and that is correct rather than a
-gap: promotion needs an MTU hint of 4096 or more, and the hint a receiver
-reports is the chunk size that actually got through. A sender on the clean
-lane sends 1200-byte chunks, so 1200 is all anyone can ever observe. You do
-not discover a 32 KB path by only ever sending small pieces down it.
+`dplSuperCleanPath` (32 KB chunks, no repair) is **configuration only**.
+Promotion needs an mtu hint of 4096 or more, and a receiver reports the chunk
+size that got through. On the clean path lane a sender sends 1200-byte
+chunks, so 1200 is all a receiver ever sees. Small chunks never reveal a
+32 KB path.
 
 ```nim
-## Ask for it when you KNOW the two machines share a rack or a switch.
+## Ask for it when both machines share a rack or a switch.
 var d = dacDefaultsFor(dscSameRoom)      # dplSuperCleanPath
 ```
 
-Adaptation can still walk *down* from it the moment the path disagrees.
+Adaptation still moves *down* from it as soon as the path disagrees.
 
-### One sentence that costs more than it looks ⌜guide⌟
+### A zero means "not measured" ⌜guide⌟
 
-> A zero in a path report means "I did not measure this".
-
-Everything above is arithmetic on numbers a peer sent. If a number nobody
-measured reads as a measurement, the arithmetic is exactly as confident as if
-it were real — and it will be wrong in whatever direction the unfilled field
-happens to point. That is not hypothetical. `creditHint` went unfilled, the
-first rule in the chain reads `creditHint <= 32` as "the receiver is out of
+Every rule above is arithmetic on numbers the other endpoint sent. A field
+that was not measured but reads as a measurement makes the arithmetic wrong in
+whichever direction that field points. This happened: `creditHint` was not
+filled, the first rule reads `creditHint <= 32` as "the receiver is out of
 buffer", and so **every** report said so:
 
 ```text
-  a flawless LAN, one package at a time
+  a perfect LAN, one package at a time
 
   clean  ->  mobile  ->  thin  ->  lossy  ->  recovery
      1          2         3         4          and stays there
 
   chunks 1200 -> 512 bytes, parity none -> six-way Reed-Solomon,
-  ACK batch 64 -> 4, and the stated reason is "receiver pressure"
-  on a receiver that has not been asked to do anything.
+  receipt batch 64 -> 4, reason given: "receiver pressure"
 ```
 
-The same shape appears twice more in this protocol, so it is worth
-recognising: **a number that describes the speaker's own behaviour is not a
-measurement of the path.** DAC shuffles its chunks on purpose, which makes
-chunk order say what the sender did, not what the wire did — so reorder depth
-read off chunk ids is meaningless, and so is a hole in an ACK batch. Both are
-handled in `src/protocols/dac/README.md`; both were getting it wrong.
+**A number that describes the sender's own behaviour is not a measurement of
+the path.** DAC shuffles its chunks on purpose, so chunk order describes the
+sender, not the wire. Reorder depth read from chunk ids means nothing, and
+neither does a hole in a receipt batch. Both are handled in
+`src/protocols/dac/README.md`.
 
-### How AME reaches it ʚ♡ɞ
+### How AME reaches DAC ʚ♡ɞ
 
-A session records which path profile it is running over, and hands back the
-whole parameter set for it:
+A session records its path lane and returns the whole parameter row:
 
 ```nim
 var d = ameSessionPathDefaults(connection)
 var plan = planAmeSecurePackage(connection, packageId, payload)
 ```
 
-The second call is the one to prefer. The older overload takes a
-`DacScenarioDefaults` the caller has to keep in step with the session by hand,
-and nothing checks that the two agree.
+Prefer the second call. The older overload takes a `DacScenarioDefaults` the
+caller must keep equal to the session's by hand, and nothing checks it.
 
-### The line this must not cross ₊˚⊹♡
+### The line DAC must not cross ₊˚⊹♡
 
-> Chunk size, repair strength, ACK batching and timeouts follow the link.
-> **Which algorithms are on, the tag length, and the padding policy do not.**
+> Chunk size, repair strength, receipt batching and timeouts follow the link.
+> **The switched-on algorithms, the tag length and the padding policy do not.**
 
-Loss is something an attacker on the path can cause at will. If padding
-switched off on a "thin" profile, an attacker would induce loss and get
-message lengths back — which is the exact thing padding exists to hide. The
-same argument rules out stepping down a tier or shortening a tag.
+An attacker on the path can cause loss at will. If padding switched off on a
+"thin" path lane, the attacker would cause loss and read message lengths,
+which is exactly what padding hides. The same holds for a lower tier or a
+shorter tag.
 
-So AME tier transitions fire on elapsed time, transferred MiB, or an explicit
-call, and never on measured link conditions. There is a test that says so.
+So AME rotations trigger on elapsed time, transferred MiB, or an explicit
+call, and never on measured link conditions. A test checks it.
 
 ## FOMKE
 
-FOMKE (Forward-Only Message Key Extension) is **the** thing that protects a
-payload once the handshake is done. There is no second wrapper around it and
-none inside it: a frame is encrypted exactly once.
+**Definitions**
 
-"Forward-only" means keys can only be derived forward, never backward. After a
-key is used, it and everything that could recreate it are erased. Taking
-today's state therefore never opens yesterday's messages. ʕ•́ᴥ•̀ʔっ♡
+- `ISS` := initial shared secret. Every KEM secret of one KEM exchange, one per
+  switched-on KEM slot.
+- `LK1(i)`, `LK2(i)` := lane key of lane 1 / lane 2 at step i, 64 bytes each.
+  Code name: `chainKey`.
+- `NS(n)` := next secret of epoch n, 32 bytes. Never used for a message.
+- `MK(i)` := message key of message i on one lane, 32 bytes.
+- `step` := one GB3HKDF call that turns LK(i) into LK(i+1) and MK(i).
+- `key block` := the bytes one MK expands into: nonce, one key per switched-on
+  cipher slot, one key per switched-on MAC slot.
+- `held key` := an MK kept for a message that has not arrived yet, while later
+  messages already did.
+- `reorder cache` := the set of held keys of one session.
+- `reorder window` := how far AHEAD of the next expected index a message may
+  sit and still be opened. Moves with measured reordering.
+- `reorder ceiling` := the largest reorder window, and the most held keys per
+  lane. Fixed per session (`fomkeReorderCeiling`).
+- `forward secrecy` := a device seized today cannot open earlier messages.
 
-### How The FOMKE Algorithm Works
+FOMKE (Forward-Only Message Key Extension) is **the** only protection of a
+payload after the handshake. Nothing wraps it and nothing sits inside it: a
+frame is sealed exactly once.
 
-**Step 1 — one derivation, three pieces.** *Every* shared secret the exchange
-produced (the initial shared secret, ISS: one per KEM slot the tier switches
-on) goes through **one** GB3HKDF call, together with the epoch number, the
-KEM path, the slot layout, the tier, and the handshake transcript. Its 160
-bytes of output are cut apart:
+"Forward-only" means keys are derived forward, never backward. Once a key is
+used, it and everything that could recreate it are erased. A device seized
+today therefore opens no earlier message. ʕ•́ᴥ•̀ʔっ♡
+
+### What exists, and when it is erased ⟡
+
+This table is the whole memory story of FOMKE (forward-only message keys).
+Every other step below only explains one row of it.
 
 ```text
-every KEM secret (ISS) + transcript + layout + tier
+value        size   created                      erased
+-----------  -----  ---------------------------  ---------------------------------------
+ISS          var.   KEM exchange                 right after the one GB3HKDF call
+             (initial shared secret)
+160-byte     160    that GB3HKDF call            right after LK1(0), LK2(0), NS(1) are
+output                                           copied out of it (same call)
+LK1(i)       64     step i-1 of lane 1           at step i of lane 1 (LK1(i+1) replaces it)
+LK2(i)       64     step i-1 of lane 2           at step i of lane 2
+MK(i)        32     step i                       sender: right after message i is sealed
+                                                 receiver, message i arrives in order:
+                                                   right after message i is opened
+                                                 receiver, message i skipped (a later
+                                                   message arrived first): kept as a held
+                                                   key, see "held keys" below
+NS(n)        32     start of epoch n             at the rotation to epoch n+1, when
+                                                 NS(n+1) replaces it
+key block    var.   from MK(i)                   right after message i is sealed / opened
+```
+
+Held keys (MKs of skipped messages) are erased at the FIRST of:
+
+```text
+  message i arrives          -> opened, then its held key is erased
+  i falls more than the      -> erased: that message is lost, not late
+    reorder ceiling behind
+  the reorder cache is full  -> the OLDEST held key is erased to make room
+  the package ends           -> the DAC relay erases what is still held
+  the caller gives up        -> discardAmeSessionSkipped()
+  rotation                   -> every held key of the old epoch is erased
+```
+
+So after the first derivation the session holds, at any moment: LK1 and LK2
+(lane keys, 64 bytes each), NS (next secret, 32 bytes, for the whole epoch), and at most
+`reorder ceiling` held keys per lane (32 bytes each). The lane keys do NOT
+wait for late messages: a lane key always steps forward at once, and only the
+MKs (message keys) of the skipped positions are kept.
+
+### Step 1: one derivation, three pieces
+
+Every KEM secret of the handshake (the ISS, initial shared secret) goes
+through **one** GB3HKDF (Gimli BLAKE3 KDF) call, together with the epoch number, the KEM list,
+the layout, the tier and the transcript. The 160 output bytes are cut into
+three pieces by position:
+
+```text
+ISS + transcript + layout + tier + epoch
                  │
               GB3HKDF  (one call, 160 bytes out)
                  │
-┌──────────────────┬──────────────────┬───────────────────┐
-│ LK1   bytes 0..63│ LK2  bytes 64..127│ NS  bytes 128..159│
-└──────────────────┴──────────────────┴───────────────────┘
-  lane 1 chain key   lane 2 chain key    next secret
+┌───────────────────┬────────────────────┬────────────────────┐
+│ LK1(0) bytes 0..63│ LK2(0) bytes 64..127│ NS(1) bytes 128..159│
+└───────────────────┴────────────────────┴────────────────────┘
+  lane 1 key          lane 2 key            next secret
 ```
 
-The secrets and the 160-byte block are erased at once. **There is no root
-key.** There used to be one: a 64-byte value derived first, then split
-again. It bought nothing (the one call already separates the pieces by
-position) and it was one more secret that had to exist for a moment.
+The ISS (the KEM secrets) is erased. LK1, LK2 (the lane keys) and NS are copied into the
+session state and **kept** (see the table above); the 160-byte scratch copy
+is erased. There is no root key. A root key, derived first and then split
+again, added one more secret and no separation: the one call already
+separates the pieces by position.
 
-Using every slot is the point. A tier that names Kyber *and* X25519 but
-derived from one of them would be a hybrid in name only — breaking the single
-contributing algorithm would be enough.
+Every switched-on KEM slot enters the call. A tier that names Kyber AND X25519
+but derived from one of them would be a hybrid in name only.
 
-**Def. — lane key (LK).** One of the two chain keys. Lane 1 always carries
-initiator-to-responder traffic, lane 2 the reverse, so both sides agree
-without negotiating.
-
-**Def. — next secret (NS).** 32 bytes that are never used for a message. They
-have exactly two jobs:
+NS (next secret) has exactly two jobs:
 
 ```text
-1. the next KEM rotation:   NS + fresh KEM secrets ──GB3HKDF──▶ LK1' | LK2' | NS'
-2. the next handshake:      ameNextHandshakeSecret() = GB3HKDF(NS, "next handshake")
-                            ──▶ withAmeNextSecret(...) on both sides
+1. the next rotation:   NS(n) + new KEM secrets ──GB3HKDF──▶ LK1 | LK2 | NS(n+1)
+2. the next session:    CS = GB3HKDF(NS, "next handshake")
+                        ──▶ withAmeNextSecret(CS) on both endpoints
 ```
 
-NS is a one-way image of the epoch's secret. Someone who steals it cannot
-work back to any lane key, so it opens no message. It only matters together
-with the NEXT KEM result, which that person does not have.
+NS (the next secret) is a one-way image of the epoch's secret. An attacker who
+steals it cannot compute any lane key from it, so it opens no message. It
+matters only together with the NEXT KEM secrets, which that attacker does not
+have.
 
-**Step 3 — the chain.** Each send advances the sender's outbound lane one
-step. One GB3HKDF call turns the current chain key `CK(i)` into the next chain
-key plus one 32-byte message key per direction; the sender keeps its own and
-erases the other:
+### Step 2: the steps
+
+Each sent message moves the sender's lane one step. One GB3HKDF (Gimli BLAKE3
+KDF) call turns `LK(i)` into `LK(i+1)` and one 32-byte MK (message key) per
+direction; the sender keeps the
+MK of its own lane and erases the other:
 
 ```text
 lane 1 (initiator -> responder)          lane 2 (responder -> initiator)
 
-CK1(0) --GB3HKDF--> CK1(1) + MK1(0)      CK2(0) --GB3HKDF--> CK2(1) + MK2(0)
+LK1(0) --GB3HKDF--> LK1(1) + MK1(0)      LK2(0) --GB3HKDF--> LK2(1) + MK2(0)
    X erased            |                    X erased            |
                        v                                        v
-CK1(1) --GB3HKDF--> CK1(2) + MK1(1)      seal message index 0 on lane 2
+LK1(1) --GB3HKDF--> LK1(2) + MK1(1)      seal message 0 on lane 2
    X erased            |
                        v
-              seal message index 1 on lane 1
+              seal message 1 on lane 1
 ```
 
-Every derivation input carries a version label, the lane, the epoch, and the
-index, so no two positions in any chain can produce the same bytes.
+Every derivation input carries a version label, the lane, the epoch and the
+index. No two positions in any lane produce the same bytes.
 
-**Step 4 — one expansion, sliced.** The 32-byte message key is expanded, in a
-single GB3HKDF call, into the whole block the slot construction needs:
+### Step 3: one key block per message
+
+The 32-byte MK (message key) expands, in one GB3HKDF call, into the key block:
 
 ```text
-[ nonce ][ key for cipher slot 0 ][ key for cipher slot 1 ][ mac keys... ]
+[ nonce ][ key, cipher slot 0 ][ key, cipher slot 1 ][ MAC keys... ]
 ```
 
-The nonce sits at the front and **never travels**. Both sides derive the same
-block from the same ratchet step, so sending it would repeat something the
-receiver already holds. Because the message key is used exactly once, the
-derived nonce is used exactly once, and a broken random generator cannot cause
-nonce reuse.
+The nonce is at the front and **never travels**: both endpoints derive the
+same key block from the same step. Each MK is used exactly once, so each nonce
+is used exactly once, and a broken random generator cannot repeat a nonce.
 
-**Step 5 — seal.** The payload is XORed through every switched-on cipher in
-turn, and the tag is the XOR of every switched-on authenticator:
+### Step 4: seal
+
+The payload is XORed through every switched-on cipher in turn. The tag is the
+XOR of every switched-on MAC:
 
 ```text
 plaintext --XOR slot 0--> --XOR slot 1--> ciphertext
                                              |
                         MAC slot 0 --> tag A +
-                        MAC slot 1 --> tag B +--> XOR --> the one tag on wire
+                        MAC slot 1 --> tag B +--> XOR --> the one tag of the frame
 ```
 
-Undoing the ciphers is the same walk again, because XOR is its own inverse. An
-attacker has to break **every** switched-on cipher, not the weakest one, and
-forging needs every authenticator at once.
+Decryption is the same walk again (XOR is its own inverse). An attacker must
+break **every** switched-on cipher; a forgery needs every switched-on MAC.
 
-Encrypt first, then authenticate the ciphertext. A receiver therefore checks
-the tag before it decrypts anything, and never touches attacker-chosen
-plaintext. The tag covers a label, the layout, the tier, the tag length, the
-message's epoch/index/lane, the caller's binding bytes (the whole AME header),
-and the ciphertext.
+Seal = encrypt, then tag the ciphertext. A receiver checks the tag before it
+decrypts, and never touches plaintext an attacker chose. The tag covers a
+label, the layout, the tier, the tag length, the message's epoch, index and
+lane, the AAD (the whole AME header), and the ciphertext.
 
-This is the same construction the at-rest package sealer uses — one piece of
-code, in `ame/level1/tier_aead.nim`, so there is exactly one thing to read and
-exactly one to get right.
+The at-rest package sealer uses the same code (`ame/level1/tier_aead.nim`).
 
-**Step 6 — open (transactional).** The receiver never mutates live state on a
-bad message. It clones the state, advances the clone's inbound lane up to the
-received index, verifies the tag, and only then swaps the clone in. A forged
-message costs one derivation and changes nothing — it cannot burn ratchet
-positions or fill the skipped-key cache.
+### Step 5: open, all or nothing
 
-Out-of-order and replay handling:
+The receiver never changes its live state for a message that fails. It copies
+the state, steps the copy's lane up to the received index, checks the tag, and
+only then replaces the live state with the copy. A forged message costs one
+derivation and changes nothing: it cannot advance a lane or fill the reorder
+cache (the held message keys).
 
 ```text
-receive index 5, chain expects 3
-  -> derive keys 3 and 4, park them in the skipped-key cache
-  -> derive key 5, open the message
+receive index 5, lane expects 3
+  -> derive MK(3) and MK(4), keep them as held keys
+  -> derive MK(5), open message 5
 
-receive index 3 later     -> take key 3 from the cache, open, remove it
-receive index 3 again     -> not in cache, not derivable backward -> rejected
-receive index 3 + window  -> gap too large -> rejected (window starts at 16)
+receive index 3 later            -> take the held key MK(3), open, erase it
+receive index 3 again            -> no held key, no way backward -> refused
+receive index 3 + window + 1     -> too far ahead -> refused
 ```
 
-**Def. — the reorder window.** How far ahead of the next expected position a
-message may sit and still be opened. It is the one number that bounds both
-costs of arriving out of order:
+### Step 6: the reorder window
+
+The reorder window (how far ahead a message may sit) bounds two costs.
+
+Memory:
 
 ```text
-  window of  4  ->  at most  4 parked keys  ->  about 256 bytes held
-  window of 16  ->  at most 16 parked keys  ->  about   1 kilobyte held
-  window of 64  ->  at most 64 parked keys  ->  about   4 kilobytes held
+  ceiling  4  ->  at most  4 held keys per lane  ->  128 bytes
+  ceiling 16  ->  at most 16 held keys per lane  ->  512 bytes
+  ceiling 64  ->  at most 64 held keys per lane  ->  2 kilobytes
 ```
 
-It bounds a second cost that is easier to miss. A message claiming a position
-`N` ahead makes this side derive `N` keys **before** its tag can be checked:
+Work: a message that claims a position `N` ahead makes the receiver derive
+`N` MKs **before** its tag can be checked:
 
 ```text
   one forged datagram in
         |
         v
-  N key derivations                  <- paid before the tag is looked at
+  N derivations                      <- paid before the tag is checked
         |
         v
-  tag fails, everything thrown away  <- paid for nothing
+  tag fails, everything discarded    <- paid for nothing
 ```
 
-So a wide window is a wide amplifier: one cheap packet in, `N` derivations
-out. This is why it is not a fixed setting. It starts at 16 and moves with
-what the lane actually sees:
+A wide window is therefore a wide amplifier. The window starts at 16 and
+follows what the lane measures:
 
 ```text
-  message sits exactly where expected   -> narrow, after 64 of them
-  message sits out of position by N     -> widen to 2N, at once
+  message at exactly the expected index   -> narrow, after 64 of them
+  message N positions out of order        -> widen to 2N, at once
 ```
 
-Widening happens on the **copy** of the state that is kept only once the tag
-verifies. A forged message is thrown away before its measurement is committed,
-so nobody can walk the window up and then aim the full amplifier at this side.
-An honest peer on a badly reordering path widens it within a few messages.
+Widening happens on the **copy** of the state, which is kept only when the tag
+matches. A forged message cannot widen the window. An honest endpoint on a
+reordering path widens it within a few messages.
 
-The ceiling is fixed when the ratchet is built and the window never grows
-past it. It comes from `config.toml` (`fomkeReorderCeiling`, default 64,
-allowed 4 .. 4096), so a very lossy or reordering link can be given more room
-without a rebuild:
+The window never exceeds the reorder ceiling (largest window, most held keys).
+The ceiling is fixed per session and comes from `config.toml`:
 
 ```toml
 [fomke]
-fomkeReorderCeiling = 64     # keys held per lane for late messages, 32 B each
+fomkeReorderCeiling = 64     # 4 .. 4096; held keys per lane, 32 B each
 ```
 
-Loss on a datagram link is usually handled below this layer anyway — DAC
-rebuilds a missing frame from repair shards, or asks for it again — so the
-window rarely needs to be wide.
+On a datagram link DAC usually repairs loss first (parity or a repair
+request), so the window rarely needs to be wide.
 
-**Step 7 — epoch upgrade.** An AME tier transition prepares candidate chains
-for epoch `n+1` beside the live epoch `n` chains, again with ONE GB3HKDF call:
+### Step 7: rotation
+
+A rotation prepares candidate lanes for epoch `n+1` next to the live lanes of
+epoch `n`, again with ONE GB3HKDF call:
 
 ```text
-NS(n) + fresh KEM secrets + the commit ──GB3HKDF──▶
-    [ LK1(n+1) | LK2(n+1) | NS(n+1) | confirmation key ]
-       64         64         32         32 bytes
+NS(n) + new KEM secrets + the FKU1 commit ──GB3HKDF──▶
+    [ LK1(0) | LK2(0) | NS(n+1) | confirmation key ]    of epoch n+1
+       64       64       32        32 bytes
 ```
 
-Mixing the old NS keeps out an attacker who only saw the new exchange; mixing
-the new secrets lets a session recover from a past compromise, because the
-attacker never saw the new KEM result.
+NS(n) keeps out an attacker who saw only the new KEM exchange. The new KEM
+secrets let a session recover from an earlier compromise, because the
+attacker never saw them.
 
-The live lane keys are **not** an input. They were once, and that tied the new
-epoch to the exact position each lane had reached. The two sides only agree on
-that position once every message in flight has landed. NS is fixed for the
-whole epoch, so both sides always hold the same one.
+The live lane keys are **not** an input. They were once, and that bound the
+new epoch to the exact index each lane had reached, a value both endpoints
+agree on only after every message in flight has arrived. NS(n) is constant for
+the whole epoch, so both endpoints always hold the same one.
 
-Data is paused; the FKU1 commit must match request id, epochs, target tier,
-KEM exchange mask, slot generations, both lane counters, and a confirmation
-tag taken with the confirmation key above. Only then do the candidates
-(both lanes AND the new NS) atomically replace the live ones, and the tier
-changes with them. On any mismatch the candidates are erased and epoch `n`
-continues.
+Data is paused. The FKU1 commit must match: request id, epochs, target tier,
+exchange mask, slot generations, both lane indices, and a confirmation tag
+computed with the confirmation key above. Only then do the candidates (both
+lane keys AND NS(n+1)) replace the live values in one step, and the tier
+changes with them. The old lane keys, NS(n) and every held key of epoch n are
+erased. On any mismatch the candidates are erased and epoch `n` continues.
 
+### Loss is not lateness ⌜guide⌟
 
-### When a message is not late but gone ⌜guide⌟
-
-Steps 5 and 6 above hold on to the keys for messages that were jumped over, so
-a datagram that turns up late still opens. The message arriving is what takes
-its key back out of the cache.
-
-**Loss is not lateness, and that is the whole difficulty.** A lost datagram is
-never re-sent by DAC. DAC re-sends the CHUNK, inside a **new frame at a new
-position**, so the key for the old frame waits for something that will never
-exist:
+Held keys exist so a late datagram still opens. The arriving message is what
+removes its held key. A **lost** datagram never arrives: DAC sends the lost
+CHUNK again inside a **new frame at a new index**, so the held key of the old
+index waits for nothing:
 
 ```text
   frames 100..130 sealed and sent
         |
         +--> 104 and 117 are lost on the path
-        |      their keys are held, waiting
+        |      their MKs are held keys now
         |
-        +--> DAC re-sends those two chunks as frames 131 and 132
-               nothing will ever claim 104 or 117 again
+        +--> DAC sends those two chunks again as frames 131 and 132
+               nothing ever claims 104 or 117 again
 ```
 
-Left alone, that cache fills with keys for messages that are not coming, and
-a session on a 2% path used to stop receiving **permanently** within a few
-hundred frames. Three rules now stop it, and all three run on their own:
+Without limits, the reorder cache fills with keys for messages that never
+come; a session on a 2% loss path once stopped receiving **for good** within a
+few hundred frames. Three rules run on their own:
 
 ```text
-  too far behind    a held key whose message is further behind than
-                    reorderCeiling is erased. Further behind than the widest
-                    reordering this lane will ever agree to is not late.
+  too far behind    a held key more than the reorder ceiling behind the
+                    lane is erased: that message is lost, not late.
 
-  capped by the     the cache holds at most reorderCeiling keys -- the memory
-  ceiling           bound the lane was built with -- not reorderWindow, which
-                    moves, and used to shrink below what was already held.
+  capped by the     the reorder cache holds at most the reorder ceiling of
+  ceiling           keys per lane, not the reorder window, which moves.
 
-  room is made,     a cache at its ceiling gives up its OLDEST key rather than
-  never refused     refusing the message. Giving a key up costs one datagram
-                    the carrier re-sends; refusing cost the whole session.
+  room is made,     a full reorder cache erases its OLDEST held key instead
+  never refused     of refusing the message. Losing one key costs one
+                    datagram the carrier sends again; refusing cost the
+                    whole session.
 ```
 
-The bound that stops a stranger making this side derive without limit is
-**untouched**: a message claiming a position further ahead than
-`reorderWindow` is still refused before any key is derived.
+The bound against an outsider is **unchanged**: a message further ahead than
+the reorder window is still refused before any derivation.
 
-On top of that, the DAC relay gives up whatever is still held **when a package
-ends**. That is the moment it becomes knowable that nothing outstanding can
-still be useful, and the relay is the only thing that knows it:
+The DAC relay erases every remaining held key **when a package ends**. From
+that moment nothing outstanding can still arrive, and only the relay knows
+that moment:
 
 ```text
   package completes or fails
         |
         v
-  every chunk is either here or given up on
+  every chunk is either here or given up
         |
         v
-  so anything still held is waiting on nothing -- let it go
+  every remaining held key waits for nothing -- erase it
 ```
 
-It matters for a second reason: a rekey refuses to run while any held key is
-outstanding, so without this a long-lived lossy session could never rotate its
-epoch.
+This matters twice: a rotation refuses to start while any held key exists, so
+without this a long lossy session could never rotate.
 
-**Asking by hand.** A caller that is not using the DAC relay -- or one that
-simply knows a gap is dead -- still has the same door:
+**By hand.** A caller without the DAC relay, or one that knows a gap is lost:
 
 ```nim
 if ameSessionSkippedMessages(connection) > 0:
@@ -1542,81 +1676,85 @@ if ameSessionSkippedMessages(connection) > 0:
   echo "gave up on ", gaveUp, " message(s)"
 ```
 
-This erases those keys. The messages behind them can never be opened
-afterwards, even if the network does eventually deliver them.
+Those held keys are erased. The messages behind them can never be opened
+afterwards, even if the network delivers them later.
 
-**The one refusal that remains.** A burst of losses **wider than
-`reorderWindow`** is still refused, and a refusal advances nothing -- so every
-message after it sits further ahead still, and that lane cannot recover. This
-is the deliberate half: letting a gap that wide through is exactly the
-amplifier a forged datagram wants.
+**The one refusal that remains.** A burst of losses **wider than the reorder
+window** is refused, and a refusal advances nothing, so every later message
+sits further ahead and the lane cannot recover. This is deliberate: letting a
+gap that wide through is the amplifier a forged datagram wants.
 
-It is rarer than it sounds, because bursts that wide are rarer than they
-sound. A soak hit it steadily until the SOCKET QUEUE was sized -- the bursts
-were the kernel emptying a full receive buffer, not the path losing runs of
-datagrams -- and then stopped hitting it at all. See "The one socket setting a
-server must not leave alone" further down. When it does happen the peer
-recovers by building a new session, which is what DTLS does in the same
-situation. Narrowing is also floored at the number of keys the lane is
-holding, so a lane that has recently seen gaps no longer shrinks its way into
-one.
+It is rare. A soak hit it steadily until the SOCKET QUEUE was sized (the
+bursts were the kernel emptying a full receive buffer, not path loss), then
+never. See "The one socket setting a server must set" below. When it happens,
+the endpoint builds a new session, as DTLS does. Narrowing never goes below
+the number of held keys, so a lane with recent gaps does not narrow itself
+into one.
 
 ### Preparing ahead, and what it costs ₊˚⊹♡
 
-A sender may prepare a bounded run of future slots off the latency-sensitive
-path. This is **off by default**, and the reason is worth stating plainly:
+**Definitions**
 
-> A filled cache holds the key material for the next N messages in memory.
-> Forward secrecy for messages already **sent** is unaffected. But a machine
-> seized while the cache is full gives up the next N messages that had not
-> gone out yet.
+- `send cache` := MKs and key blocks derived before their messages are sent.
 
-Turn it on when latency matters and the machine cannot be taken; leave it off
-otherwise. `fomkePreparedSecretBytes` reports exactly how much secret material
-a cache is holding, so the trade is countable rather than guessed at.
+A sender may prepare a bounded run of future key blocks off the latency path.
+This is **off by default**:
+
+> A full send cache (keys prepared in advance) holds the keys of the next N
+> messages. Forward secrecy for messages already **sent** is unchanged. A
+> device seized while the send cache is full gives up the next N messages
+> that were not sent yet.
+
+Switch it on when latency matters and the device cannot be seized.
+`fomkePreparedSecretBytes` reports how many secret bytes a send cache holds.
 
 ```nim
 setAmeFomkePregeneration(connection, enabled = true, messageCount = 8)
 ```
 
-### The Building Blocks
+### The building blocks
 
-`GB3HKDF` (Gimli BLAKE3 Hash Key Derivation Function) is Bifrost's
-domain-separated, XOR-combined Gimli/BLAKE3 KDF. It is not RFC 5869 HKDF. Each
-round computes one Gimli sponge branch and one BLAKE3 branch over the same
-length-framed input and XORs them, so an attacker must break both hash
-constructions to learn the output. It supports configurable rounds (default
-3), indexed 32-byte output blocks, multiple ordered secret inputs, and an
-optional bounded memory-mixed mode for password-style hardening.
+`GB3HKDF` (Gimli BLAKE3 Hash Key Derivation Function) is Bifrost's own KDF. It
+is not RFC 5869 HKDF. Each round computes one Gimli sponge branch and one
+BLAKE3 branch over the same length-framed input and XORs them, so an attacker
+must break both constructions. It supports configurable rounds (default 3),
+indexed 32-byte output blocks, several ordered secret inputs, and an optional
+bounded memory-mixed mode for password hardening.
 
-The ciphers and authenticators themselves come from the session's **slot
-layout**, not from anything FOMKE chooses. Switching a second cipher on is a
-layout decision, and it costs what the benchmark says it costs
-(`fomke_seal_1slot` against `fomke_seal_2slot`).
+The ciphers and MACs come from the session's **layout**, not from FOMKE.
+Switching on a second cipher is a layout decision and costs what the benchmark
+shows (`fomke_seal_1slot` against `fomke_seal_2slot`).
 
-`TMEAEAD` and `GGAEAD` are gone as separate code. They were two fixed AEAD
-constructions, and the slot construction generalises both: run every
-switched-on cipher over the payload in turn, XOR every switched-on
-authenticator into one tag. What they used to be is now two named slot
-selections in `ame/level1/presets.nim`:
+`TMEAEAD` and `GGAEAD` are no longer separate code. The slot construction
+covers both: every switched-on cipher in turn, every switched-on MAC XORed into
+one tag. They remain as two named layouts in `ame/level1/presets.nim`:
 
-| Preset | Ciphers | Authenticators |
+| preset | ciphers | MACs |
 |---|---|---|
 | `tmeAeadAmeLayout` | XChaCha20, AES-CTR, Gimli | Gimli, Poly1305 |
 | `ggAeadAmeLayout` | Gimli | Gimli |
 
-`presetAmeTier(L)` switches on everything the preset layout holds. The bytes
-are **not** the old formats — keys now come from one derivation over the whole
-slot block, each cipher gets its own nonce slice, and the tag is whatever
-length the session agreed. Nothing sealed by the old code opens under these,
-and nothing should: the old formats are not in the library any more.
-## Relaying Through A VPS 🌊
+`presetAmeTier(L)` switches on every slot of the preset layout. The bytes are
+**not** the old formats. Nothing sealed by the old code opens under these.
 
-The problem is reachability, not trust. A home NAS has no address the world
-can reach; a small rented VPS does. So the VPS forwards:
+## Relaying through a VPS 🌊
+
+**Definitions**
+
+- `VPS` := virtual private server: a small rented machine with a public
+  address.
+- `NAS` := network-attached storage: here, a home machine with no public
+  address.
+- `relay` := the process on the VPS that forwards datagrams. It holds no key.
+- `relay tag` := the number the relay gives one client; one local socket
+  toward the NAS per relay tag.
+- `overflow buffer` := datagrams the relay holds while the NAS is silent.
+
+The problem is reachability, not trust. The NAS (home machine) has no public
+address; the VPS (rented machine) has one. So the VPS (rented machine) forwards:
 
 ```text
-clients            a small VPS                a home NAS
+clients            VPS                        NAS
 (many, anywhere)   (weak CPU, public IP)      (strong, no public IP)
      |                    |                        |
      +---- datagram ----->|                        |
@@ -1625,168 +1763,165 @@ clients            a small VPS                a home NAS
      |<--- answer --------+
 ```
 
-**Def. — the relay.** The VPS process. It holds no key, opens no frame, and
-does not know a session id from a sequence number. It moves bytes.
+The relay holds no key, opens no frame, and does not tell a session id from a
+sequence number. It moves bytes.
 
-### Why it must not authenticate ⌜guide⌟
+### Why the relay does not authenticate ⌜guide⌟
 
-Authenticating would mean running the exchange, holding keys, and paying a key
-derivation per datagram **on the weakest machine in the picture**. It would
-also mean the relay could read everything. Both are the wrong trade.
+Authenticating would mean running the handshake, holding keys, and one key
+derivation per datagram **on the weakest machine**. It would also let the
+relay read everything.
 
-Cheap filtering that needs no secrets is welcome there — refusing an address
-range, refusing an oversized datagram. Anything needing a key belongs on the
-NAS.
+Filtering without secrets is fine there: refusing an address range, refusing
+an oversized datagram. Anything that needs a key belongs on the NAS.
 
 ### How an answer finds its way back
 
-The relay gives each client a **tag**, and uses a different local socket
-toward the NAS per tag. The NAS answers to whichever socket it was addressed
-from, so the tag comes back with the answer and names the client:
+The relay gives each client a relay tag (one socket toward the NAS per
+client). The NAS answers to the socket that sent to it, so the relay tag comes
+back with the answer and names the client:
 
 ```text
-client A --> [ tag 1 ] --> NAS      NAS --> [ tag 1 ] --> client A
-client B --> [ tag 2 ] --> NAS      NAS --> [ tag 2 ] --> client B
+client A --> [ relay tag 1 ] --> NAS      NAS --> [ relay tag 1 ] --> client A
+client B --> [ relay tag 2 ] --> NAS      NAS --> [ relay tag 2 ] --> client B
 ```
 
-This is exactly what a home router does, and it is why **neither end has to
-know the relay is there**. Nothing is added to the datagram, so the bytes the
-NAS sees are the bytes the client sent, and the frame the client sealed is the
-frame the NAS opens.
+A home router works the same way, and **neither endpoint needs to know the
+relay exists**. Nothing is added to the datagram: the NAS receives the bytes
+the client sent.
 
-A late answer whose slot has already been released is **dropped**, never sent
-to whoever holds the tag now. Guessing there would hand one client another
-client's bytes, which is the single worst thing a relay can do.
+A late answer whose relay tag was already released is **discarded**, never
+sent to the client that holds that relay tag now. Sending it would give one
+client another client's bytes.
 
 ### When the NAS goes away
 
-A home line reboots, changes address, or drops off. While the NAS is silent,
-datagrams for it go into a small buffer rather than into a hole:
+While the NAS is silent, datagrams for it go into the overflow buffer:
 
 ```text
-NAS answering    -> forward straight through, buffer stays empty
+NAS answering    -> forward at once, the overflow buffer stays empty
 NAS silent       -> hold the most recent few, keep listening
-buffer full      -> drop the OLDEST and count it
-NAS returns      -> drain in order, then carry on
+buffer full      -> discard the OLDEST and count it
+NAS returns      -> send the held datagrams in order, then carry on
 ```
 
-The buffer is **overflow protection, not a mailbox**: it covers a reboot, not
-an outage. Everything in it is a datagram the real transport can ask for again
-— DAC rebuilds a missing frame from repair shards or re-requests it — so
-holding more would spend memory to save something already recoverable.
+The overflow buffer **covers a reboot, not an outage**. Every datagram in it
+is one the carrier can recover (DAC repair or a repair request), so holding
+more would spend memory on something already recoverable.
 
-The relay follows the NAS to a new address when it reappears, because
-insisting on the configured one means a relay that never recovers.
+The relay follows the NAS to a new address when it reappears.
 
 ### The numbers, and why each one is a ceiling
 
-| setting | default | what it bounds |
+| setting | default | bounds |
 |---|---:|---|
-| `udpForwardMaxClients` | 512 | slots a stranger can make the VPS allocate |
-| `udpForwardClientIdleMs` | 120 000 | how long an unused slot holds its tag |
-| `udpForwardNasKeepaliveMs` | 20 000 | how often the NAS is poked when quiet |
+| `udpForwardMaxClients` | 512 | relay tags an outsider can make the VPS allocate |
+| `udpForwardClientIdleMs` | 120 000 | how long an unused relay tag stays reserved |
+| `udpForwardNasKeepaliveMs` | 20 000 | how often a quiet NAS is contacted |
 | `udpForwardNasSilentMs` | 60 000 | silence before the NAS counts as away |
-| `udpForwardBufferDatagrams` | 64 | datagrams held for an absent NAS |
-| `udpForwardBufferBytes` | 262 144 | and the same limit in bytes |
+| `udpForwardBufferDatagrams` | 64 | datagrams in the overflow buffer |
+| `udpForwardBufferBytes` | 262 144 | the same limit in bytes |
 
-Anyone who can send a datagram gets a slot, so the table must have a top or a
-stranger sending from many addresses grows it until the VPS runs out of
-memory. When it is full the **newcomer is refused** — evicting somebody to
-make room would let the stranger push out the clients really using the relay.
+Anyone who can send a datagram gets a relay tag, so the table has a top. When
+it is full the **newcomer is refused**. Evicting an existing client would let
+an outsider push out real clients.
 
-A nonsensical setting is an error rather than something quietly corrected,
-because each one is a bound on memory a stranger can make the process spend.
+A nonsensical setting is refused, not corrected: each one bounds memory an
+outsider can make the process spend.
 
 ### No sockets in the module
 
-`src/protocols/relay/udp_forward.nim` is the decision-making half only. It
-takes "a datagram arrived from here at this time" and answers "send these
-bytes there"; the caller owns the sockets. That is the same split the DAC link
-modules use, and it is what makes every rule above testable without a network.
+`src/protocols/relay/udp_forward.nim` only decides. It takes "a datagram
+arrived from here at this time" and returns "send these bytes there"; the
+caller owns the sockets. Every rule above is testable without a network.
 
 ```nim
 var
   F: UdpForwarder = initUdpForwarder(initUdpAddress("10.0.0.2", 9000'u16))
   step: UdpForwardStep = fromClient(F, client, datagram, nowMs)
-## step.send is what to put on the wire, in order. step.send[i].tag names the
+## step.send lists what to send, in order. step.send[i].tag names the
 ## local socket to send from; step.send[i].peer is where it goes.
 ```
 
-### The one socket setting a server must not leave alone ⟡
+### The one socket setting a server must set ⟡
 
-A UDP socket has one queue, and when it is full the kernel throws the next
-datagram away silently — no error, no signal, nothing on the wire. The default
-is 208 KB on Linux (`net.core.rmem_default`), which is generous for one
-conversation and small for a listener carrying dozens of peers:
+**Definitions**
+
+- `receive queue` := the kernel's buffer of datagrams not yet read by the
+  program.
+
+A UDP socket has one receive queue (kernel buffer of unread datagrams). When
+it is full, the kernel discards the next datagram without any signal. The
+Linux default is 208 KB (`net.core.rmem_default`): enough for one
+conversation, too small for a listener with dozens of endpoints.
 
 ```nim
-# 4 MB of kernel queue for this listener. The kernel may give less: Linux
-# doubles the value for its own bookkeeping and caps it at net.core.rmem_max.
+# 4 MB of receive queue for this listener. Linux doubles the value for its
+# own bookkeeping and caps it at net.core.rmem_max.
 var sock = openDacListener(initDacAddress("0.0.0.0", 9000), 4 * 1024 * 1024)
 ```
 
-It matters more than the raw loss rate suggests, because a full queue drops
-everything until it drains — so the losses arrive in RUNS, and a run is the
-one shape of loss the ratchet cannot absorb. Two places count them, and they
-are the only two:
+A full receive queue (kernel buffer) discards everything until it drains, so
+the losses arrive in RUNS, and a run is the one loss shape FOMKE cannot
+absorb. Two places count them:
 
 ```text
-  /proc/net/snmp   the RcvbufErrors column, for the whole machine
+  /proc/net/snmp   the RcvbufErrors column, whole machine
   /proc/net/udp    the last column, per socket
 ```
 
-A soak measured this directly: 2,787 kernel drops in seventy-two seconds with
-the default, 2 with four megabytes, and a third more work done.
+A soak measured it: 2,787 kernel discards in 72 seconds with the default, 2
+with 4 MB, and one third more work done.
 
 ## Layout
 
-Three protocols do the work and the rest are tools they use or things that
-happen to live here too:
+**Definitions**
 
-| Path | Purpose |
+- `protocol folder` := one folder below `src/protocols/`.
+- `level folder` := `level0/` to `level3/` inside a protocol folder; the
+  number limits what a file may import.
+
+| path | purpose |
 |---|---|
-| `src/protocols/ame/` | **Who you are talking to, and how a message is wrapped.** Algorithms, epochs, the handshake, framing, the carriers |
-| `src/protocols/fomke/` | **A fresh key for every single message.** GB3HKDF, the two directional ratchets, the 13-byte envelope |
-| `src/protocols/dac/` | **How bytes are cut up, paced and repaired.** Chunking, parity, receipts, path lanes |
-| `src/protocols/relay/` | The blind VPS forwarder: address mapping, NAS keepalive, overflow buffer. Holds no key |
+| `src/protocols/ame/` | **Who the other endpoint is, and how a frame is sealed.** Algorithms, epochs, handshake, framing, carriers |
+| `src/protocols/fomke/` | **One key per message.** GB3HKDF, the two lanes, the 13-byte envelope |
+| `src/protocols/dac/` | **How bytes are cut, paced and repaired.** Chunks, parity, receipts, path lanes |
+| `src/protocols/relay/` | The VPS relay: address mapping, NAS keepalive, overflow buffer. Holds no key |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
 | `src/protocols/transport/` | TCP, UDP, TLS, stream framing, bounded async stream I/O |
-| `src/protocols/tls13/` | Pure-Nim TLS 1.3 records, handshake, and client/server sessions |
+| `src/protocols/tls13/` | Pure-Nim TLS 1.3 records, handshake, client and server sessions |
 | `src/protocols/bfx2/` | Tagged binary envelopes |
 | `evaluation/tests/` | Unit and protocol tests |
 | `evaluation/benchmarks/` | Performance measurements |
 | `evaluation/statistics/` | Repository and code statistics |
 
-### The numbered folders ⌜guide⌟
+### The level folders ⌜guide⌟
 
-Inside each protocol the folders are numbered, and the number means exactly
-one thing: **what a file is allowed to import.**
+The number of a level folder (`level0/` .. `level3/`) says what a file may
+import:
 
 ```text
   types.nim   the shapes. Imports almost nothing.
-  level0/     may use types.        the alphabet: read a number, write a number
+  level0/     may use types.        read a number, write a number
   level1/     may use level0.       one idea each: one message body, one policy
   level2/     may use level1.       one whole job: a session, a package
   level3/     may use level2.       the loop that runs it all
 ```
 
-So a file can only ever reach *downward*, and reading a folder in order takes
-you from bytes to behaviour. If you want to know what something does, start at
-`level3/` and read backwards; if you want to know how it is built, start at
-`level0/` and read forwards.
-
-The two files most people are looking for:
+A file only reaches *downward*. To learn what something does, start at
+`level3/` and read backward; to learn how it is built, start at `level0/` and
+read forward.
 
 ```text
   src/protocols/dac/level3/link.nim        the DAC loop -- every decision
-  src/protocols/ame/level2/framing.nim     the seam -- every seal and open
+  src/protocols/ame/level2/framing.nim     every seal and open of a frame
 ```
 
-Each protocol folder has its own `README.md` with a one-line-per-file table.
+Each protocol folder has its own `README.md` with one line per file.
 
 ## Tasks
 
-| Task | Command |
+| task | command |
 |---|---|
 | Build library | `nimble buildLib` |
 | Run tests | `nimble test` |
@@ -1799,60 +1934,63 @@ Each protocol folder has its own `README.md` with a one-line-per-file table.
 | Test CHUNKYAEAD | `nimble testChunkyAead` |
 | Test FOMKE AVX2 server profile | `nimble testFomkeServerSimd` |
 | Test native TLS against OpenSSL | `nimble testNativeTlsInterop` |
+| Check the slim build profiles | `nimble testMinimalAme` |
 | Check generated files | `nimble releaseHygiene` |
 | Remove generated files | `nimble cleanGenerated` |
 
-`nimble soak` is the odd one out and is deliberately not part of `nimble
-test`. It starts separate server and client PROCESSES on separate loopback
-addresses, gives them real UDP sockets, drops datagrams on purpose and churns
-peers, for as long as it is told to:
+`nimble soak` is not part of `nimble test`. It starts separate server and
+client PROCESSES on separate loopback addresses with real UDP sockets, loses
+datagrams on purpose and replaces endpoints, for as long as it is told:
 
 ```sh
 nimble soak                                   # two minutes, default shape
-nimble soak --seconds=3600 --clients=4        # an hour, four client processes
+nimble soak --seconds=3600 --clients=4        # one hour, four client processes
 nimble soak --loss=0 --churn=0 --peers=8      # throughput, nothing induced
 ```
 
 It ends with `soak: every process finished clean` when no payload arrived
-wrong and nothing escaped a loop. A twenty-five minute run verifies about
-half a million packages and eleven gigabytes byte for byte.
-
-`docs/soak.md` explains every switch, how to read a report line, and what the
-soak has found so far -- four faults that no unit test could have reached, all
-fixed, and three design gaps it deliberately did not.
+wrong and no error escaped a loop. `docs/soak.md` explains every switch, the
+report lines, and what the soak has found.
 
 ## Wire Formats: Low-Level View
 
-Every magic is **three letters plus one version byte**, so the first four
-bytes of any layer read as a name and a number:
+**Definitions**
+
+- `magic` := the first three letters of a record, followed by one version
+  byte.
+- `u8/u16/u32/u64` := unsigned integers of 1/2/4/8 bytes, little-endian.
+- `offset` := byte position, from 0, inside one layer.
+
+Every magic (three letters + version byte) makes the first four bytes of a
+layer read as a name and a number:
 
 ```text
-DAC   -> chunking, parity, ACK pacing, repair    (dac/level*, no framing)
+DAC   -> chunking, parity, receipts, repair       (dac/level*, no framing)
 AME4  -> routing header, then one FOMKE envelope   (ame/level2/wire.nim)
 FOMKE -> the message envelope: header, tag, ct     (fomke/level2/wire.nim)
-FKU1  -> tier-bound AME/FOMKE upgrade confirmation (fomke/level2/wire.nim)
+FKU1  -> rotation confirmation                     (fomke/level2/wire.nim)
 ```
 
-Handshake records travel as ordinary AME frames with a handshake packet kind,
-because there are no session keys yet to protect them with:
+Handshake records travel as ordinary AME frames with a handshake kind, because
+there are no session keys yet:
 
 ```text
-AMC2  -> client hello   (packet kind 0x0C)
-AMR2  -> hello retry    (packet kind 0x0D)  -- the cookie challenge
-AMS2  -> server hello   (packet kind 0x0E)
-AMF2  -> client finish  (packet kind 0x0F)
-ASP1  -> secure package, for bytes that sit still somewhere
+AMC2  -> client hello   (kind 0x0C)
+AMR2  -> hello retry    (kind 0x0D)  -- the cookie
+AMS2  -> server hello   (kind 0x0E)
+AMF2  -> client finish  (kind 0x0F)
+ASP1  -> secure package, for stored bytes
 ```
 
-All multi-byte integers below are little-endian. `u8/u16/u32/u64` are unsigned
-integers of 1/2/4/8 bytes. Offsets start at 0 for that layer.
+The three letters name the RECORD (C = client hello, S = server hello, R =
+retry, F = finish). They are not authentication modes: AMS2 is the server
+hello in every mode; AM1S is the pin mode.
 
+### One layer of encryption
 
-### One layer of encryption, not two
-
-**Def. 3 — the frame body.** After the handshake, an AME frame's payload is
-one FOMKE envelope. Nothing wraps that envelope and nothing sits inside it but
-the application's own bytes. A frame is encrypted exactly once.
+After the handshake, the body of an AME frame is one FOMKE envelope. Nothing
+wraps it, and nothing is inside it but the application's bytes. A frame is
+sealed exactly once.
 
 ```text
 PHASE A -- the handshake (no session keys yet)
@@ -1864,48 +2002,45 @@ PHASE B -- after the handshake
 
 ### Which mask does which job ⌜guide⌟
 
-A tier is six bit masks (KEM, cipher, MAC, hash, signature, KDF). Each one
-switches slots on for **one** job and is never borrowed for another:
+A tier (one mask per family) has six masks. Each mask switches slots on for
+**one** job and is never used for another:
 
 ```text
 mask        used for                                    where
 ----------  ------------------------------------------  -----------------------
-KEM         which key exchanges run                     exchange_paths
+KEM         which KEM exchanges run                     exchange_paths
 cipher      the keystreams a payload is XORed through   tier_aead (ameTierCrypt)
-MAC         THE tag on the wire -- one per frame        tier_aead (ameTierTag)
-hash        transcript hash, secret stack, selection    suites (hashAmeTier)
-            hash -- never a tag
+MAC         THE tag of a frame -- one per frame         tier_aead (ameTierTag)
+hash        transcript hash, stack, selection hash --   suites (hashAmeTier)
+            never a tag
 signature   identity proofs and signed rotations        suites / handshake
 KDF         header keys and storage keys                derivation
 ```
 
-**There is one tag per frame, not two.** The cipher's authentication and the
-"MAC on the wire" are the same thing here. The tag is taken over the
-ciphertext AND the AME header (passed in as associated data), so the header
-cannot be edited without breaking it:
+**One tag per frame.** The tag of the cipher and the "MAC on the wire" are
+the same tag. It covers the ciphertext AND the AME header (the AAD), so an
+edited header fails the tag:
 
 ```text
-per-message key block (from ONE GB3HKDF call on the message key):
+key block (ONE GB3HKDF call on MK(i)):
 [ nonce | cipher key, slot 0 | cipher key, slot 1 | MAC key, slot 0 | MAC key, slot 1 ]
-          └──────── cipher mask ────────────────┘   └──────── MAC mask ─────────┘
+          └────────── cipher mask ──────────────┘   └────────── MAC mask ───────┘
 
 plaintext ─XOR cipher 0─XOR cipher 1─▶ ciphertext
 tag = MAC0(input) XOR MAC1(input)     input = layout | tier | AME header | nonce | ciphertext
 ```
 
 Every cipher slot and every MAC slot has its **own** 32-byte key from its own
-position in the block, so no key is ever used by two algorithms. A second,
-separate wire MAC would add bytes to every frame and protect nothing the one
-tag does not already protect.
+position in the key block. No key is used by two algorithms. A second wire MAC
+would add bytes to every frame and cover nothing the one tag does not.
 
 Three places use fixed BLAKE3 on purpose, outside the masks: header
-protection (both ends must always agree, see above), the anti-flood cookie
-(only the server ever checks it), and the AM1P proofs and binder (the shared
-secret is the post-quantum anchor, and BLAKE3 is the one primitive every
-build carries). Message keys always come from GB3HKDF, never from the KDF
-mask.
+protection (both endpoints must always agree, see below), the cookie (only
+the responder checks it), and the AM1P proofs and binder (the PSK is the
+post-quantum anchor, and BLAKE3 is in every build). MKs always come from
+GB3HKDF, never from the KDF mask.
 
-### TCP/TLS stream frame
+### TCP stream frame
 
 ```text
 offset 0        4
@@ -1916,10 +2051,9 @@ offset 0        4
 Total = 4 + Len
 ```
 
-### DAC message — no frame of its own
+### DAC word: no frame of its own
 
-DAC had a 27-byte envelope of its own and it is **gone**. Every message it
-sends is the body of an AME frame, and its kind is the first byte of that
+A DAC word is the body of an AME frame. Its DAC kind is the first byte of that
 body:
 
 ```text
@@ -1928,28 +2062,34 @@ body:
   +------------------------------|----------+
                                  |
                     +------------v-------------+
-                    | DacKind u8 | DAC body    |
+                    | DAC kind u8 | DAC body   |
                     +--------------------------+
 ```
 
-The kind is recovered only after the tag checks out, so a stranger cannot
-present one. Before this, the kind sat in a header nobody had authenticated
-and a bare frame from an unknown address could claim a slot in the link table.
-
-What went with the envelope, and why none of it is missed:
+The DAC kind is readable only after the tag matched. DAC once had its own
+27-byte envelope with an unencrypted, unauthenticated DAC kind, and a frame
+from an unknown address could claim a slot in the link table. That envelope is
+gone:
 
 | field | why it is gone |
 |---|---|
-| Magic, Ver | the AME header already names the frame and its version |
+| Magic, Ver | the AME header names the frame and its version |
 | Kind | now the first byte of the sealed body, so it is authenticated |
-| Flags | never read by a peer; the loop sets them for its own use |
-| Session, Lane, Seq | the AME header carries all three, and binds them |
-| Epoch | AME epochs are the only epochs; DAC never had its own |
-| BodyLen | the carrier delimits the frame, and the tag covers the length |
+| Flags | never read by the other endpoint |
+| Session, Lane, Seq | the AME header carries all three, under the tag |
+| Epoch | AME epochs are the only epochs |
+| BodyLen | the carrier delimits the frame; the tag covers the length |
 
-### AME Frame — fixed **26 B**
+### AME frame: fixed **26 B** header
 
-Magic is three bytes, `"AME"`; the version byte after it is **4**.
+**Definitions**
+
+- `Seq` := the frame counter of one lane, +1 per frame.
+- `header key` := per epoch and per direction, the key that masks `Seq`.
+- `session id label` := the `sessionId` field in the header. Rotates.
+- `session identity` := `auth.sessionId`, mixed into every key. Never rotates.
+
+Magic `"AME"`, version byte **4**.
 
 ```text
 offset  0     3    4     5      6        14      18     22      26
@@ -1960,59 +2100,44 @@ offset  0     3    4     5      6        14      18     22      26
 Total = 26 + n
 ```
 
-Two fields that used to sit here are gone, both for the same reason — they
-restated something the receiver already had:
+- **No payload length.** The carrier delimits the frame: TCP by its 4-byte
+  prefix, DAC by the datagram. The tag covers the ciphertext length. A frame
+  cut in transit fails its tag.
+- **No parent lane id.** It always equalled the root lane id.
 
-- **No payload length.** The decoder required it to equal `frame.len - header`,
-  which the caller already knew: a stream carrier delimits the frame with its
-  own 4-byte prefix, a datagram carrier is delimited by the datagram. The tag
-  still commits to the ciphertext length, which is where that belongs. A frame
-  truncated in flight now fails on the tag rather than on a length field —
-  the better of the two failures, since the check that catches it is the
-  authenticated one.
-- **No parent lane id.** It was set equal to the root lane id when a session
-  was built and never changed after, so it carried a copy of the field four
-  bytes to its left.
-
-
-Byte 5 carries two fields, because neither needs a whole byte:
+Byte 5 holds two fields:
 
 ```text
 bit  7   6   5   4   3   2   1   0
      |   |   |   |   |   +---+---+-- message class (eight values)
      |   |   |   |   +-------------- payload is padded
-     +---+---+---+------------------ unused, refused unless zero
+     +---+---+---+------------------ unused, refused unless 0
 ```
 
-The header is in the clear — a receiver must read it before it knows which
-keys to reach for. It is still **authenticated**: every byte above goes into
-the tag over the payload, so a header edited in flight makes the body fail to
-open. That covers the flags: clearing the padded bit does not get a receiver
-to hand filler up as data, it gets a frame that will not open at all. An
-unknown flag bit is refused rather than ignored, so a flag added later can
-never be silently dropped by a peer that would not honour it.
+The header is unencrypted: a receiver must read it to pick its keys. It is
+**authenticated**: every byte is AAD (covered by the tag). Clearing the
+padded bit does not make a receiver treat filler as data; the frame fails to
+open. An unknown flag bit is refused, not ignored.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
 `0x10` SessionIdRequest, `0x11` SessionIdAssign.
 
-#### The one masked field: **Seq** at offset 22 ⌜guide⌟
+#### The masked field: Seq at offset 22 ⌜guide⌟
 
-Authenticated is not the same as private, and one field in that header is a
-privacy problem on its own. The sequence counts up by one per frame, forever:
+Authenticated is not private. Seq (the frame counter) grows by one per frame:
 
 ```text
 watching one link              watching two links
 -----------------              -------------------------------------------
-how much you sent              "these two flows count up together, so they
-when you were idle              are the same conversation"
-when you restarted
+how much was sent              "these two flows count up together, so they
+when it was idle                are the same conversation"
+when it restarted
 ```
 
-The second column is what matters for a relay. The whole point of forwarding
-through one is that traffic going in and traffic coming out should not
-obviously be the same traffic, and a counter in the clear on both sides undoes
-that by itself. So the four bytes at offset 22 are masked:
+The second column defeats a relay: frames in and frames out would match by
+counter. So the four bytes at offset 22 are masked with the header key
+(per-epoch, per-direction masking key):
 
 ```text
 offset 0          22        26        39            55
@@ -2021,359 +2146,326 @@ offset 0          22        26        39            55
        |          | masked  | 13 B    |  16 B       |             |
        +----------+----|----+---------+------|------+-------------+
                        |                     |
-                       |     BLAKE3-MAC(headerKey, sample) -> 4 B
+                       |     BLAKE3-MAC(header key, sample) -> 4 B
                        |                     |
                        +<------- XOR --------+
 ```
 
-The mask input is 16 bytes of the **authentication tag**, which is a different
-unpredictable value on every frame — so the mask is too. If it were drawn from
-the sequence instead, the same counter value would always produce the same
-bytes and the counter would be back in the clear one step removed.
+The sample is 16 bytes of the **tag**, which differs on every frame, so the
+mask does too. A mask derived from Seq itself would give equal bytes for equal
+counters.
 
-Reading it back is the same operation. XOR is its own inverse, and the sample
-sits in the part of the frame the mask never touches, so a receiver can take
-it before it has unmasked anything. There is no pair of routines to get the
-wrong way round.
+Unmasking is the same XOR. The sample lies outside the masked bytes, so a
+receiver reads it first.
 
-Three things worth being exact about:
+- **This is not a second encryption layer.** It hides one counter from an
+  observer. An edit gains nothing: a flipped bit changes the Seq the receiver
+  recovers, that Seq is tag input, and the frame fails to open.
+- **The header key is derived once per epoch and direction**, never per frame.
+  Deriving it runs every switched-on KDF slot; masking is one keyed BLAKE3
+  call over 16 bytes.
+- **BLAKE3, not Gimli.** Both endpoints must produce the same mask, and it
+  cannot be negotiated. `-d:bifrostSymmetric=` could leave Gimli out of one
+  build; BLAKE3 is always compiled.
 
-- **This is not a second layer of encryption.** It hides one counter from
-  someone *watching*. It buys nothing against someone *editing* — and needs
-  to buy nothing, because the real sequence was always covered by the tag. A
-  flipped bit here changes the sequence the receiver recovers, that number
-  goes into the tag input, and the frame fails to open exactly as before.
-- **The header key is per epoch and per direction**, derived once when the
-  epoch is built — never per frame. Deriving it runs every switched-on KDF
-  slot; masking a frame is one keyed BLAKE3 call over 16 bytes.
-- **BLAKE3, not Gimli.** Both ends must produce the same mask or every frame
-  fails, and there is no way to negotiate it, so it cannot depend on a
-  primitive `-d:bifrostSymmetric=` might have left out of one of the two
-  builds. BLAKE3 is the only primitive always compiled.
+#### Rotating the session id label ⌜guide⌟
 
-#### Rotating the session id ⌜guide⌟
-
-With the counter masked, the session id becomes the last field that links a
-conversation to itself — eight bytes, identical on every frame. So it rotates,
-in three frames:
+With Seq masked, the session id label (routing value in the header) is the
+last field that links frames: eight equal bytes on every frame. It rotates in
+two frames:
 
 ```text
-requester                             responder
----------                             ---------
+requester                             answerer
+---------                             --------
 SessionIdRequest  ------------------>
-                                      picks an id nothing else is using
+                                      picks an unused id
                   <------------------ SessionIdAssign (new id inside)
-adopts the new id                     adopts the new id
+takes the new id                      takes the new id
 ```
 
-Both frames are sealed under the **old** id, because that is the only id both
-sides share while the exchange is in flight. Each side switches only after the
-assign frame is safely sealed or safely opened.
-
-There are two session ids and the difference is the whole reason this is
-cheap:
+Both frames are sealed under the **old** label, the only one both endpoints
+share during the exchange. Each endpoint switches only after the assign frame
+is sealed or opened.
 
 | | what it is | rotates? |
 |---|---|---|
-| `auth.sessionId` | the **cryptographic** identity, mixed into every derived key | never |
-| `sessionId` | the **label** written into the header, for routing and demux | yes |
+| `auth.sessionId` | the session identity, mixed into every key | never |
+| `sessionId` | the session id label, for routing | yes |
 
-Rotating the label therefore re-derives nothing. Every traffic key, both
-header keys, and any sealed package stay exactly as they were. The label is
-still authenticated — it is part of the header, and the header is part of the
-tag — so nobody can edit it in flight either.
+Rotating the label derives nothing again. Every traffic key, both header keys
+and every sealed package stay the same. The label is still under the tag.
 
-The receiver answers to the previous id as well, for `ameSessionIdGraceFrames`
-(100) arriving frames. That window exists for one carrier only:
+The receiver accepts the previous label for `ameSessionIdGraceFrames` (100)
+more frames, for one carrier only:
 
 ```text
-TCP   order is guaranteed, so every frame after the assign already carries
-      the new id and the window never fires
-DAC   datagrams reorder, so a frame sealed before the assign can easily
-      land after it
+TCP   order is guaranteed; every frame after the assign has the new label
+DAC   datagrams reorder; a frame sealed before the assign can arrive after it
 ```
 
-What the window holds is one integer, not a second set of keys — forgetting it
-early costs a dropped datagram the transport re-sends, never a lost secret.
+The grace window holds one integer, not a key.
 
 ### Padding
 
-Off by default, and a property of the epoch rather than of one message, so
-both endpoints hold the same value or the frame is refused. `setAmePadding(S,
-apadBlock64)` stages it; it takes effect at the next tier rotation, riding in
-the exchange request the way the tag length does. The responder names it for
-the first epoch in its server hello.
+Off by default. It is a property of the epoch, so both endpoints hold the same
+value or the frame is refused. `setAmePadding(S, apadBlock64)` stages it; it
+takes effect at the next rotation, inside the offer, like the tag length. The
+responder names it for epoch 1 in its server hello.
 
-When it is on, the payload is rounded up to whole 64 bytes before sealing —
-same construction as the package path above, filler count in the last byte —
-and the padded flag goes in the header. It costs **1 to 64 bytes on every
-frame**, which is real money on a link carrying small messages, so it is
-switched on when message sizes would say something (which command, who is
-typing) rather than by default. `ameFrameOverheadBytes(S)` returns the
-worst-case total per frame, for a caller sizing datagrams against an MTU.
+When on, the payload is rounded up to whole 64-byte blocks before sealing
+(same filler rule as packages, count in the last byte) and the padded bit is
+set in the header. It costs **1 to 64 bytes on every frame**. Switch it on
+when message sizes would reveal something (which command, who is typing).
+`ameFrameOverheadBytes(S)` returns the worst-case bytes per frame, for sizing
+datagrams against an MTU (maximum transmission unit).
 
-### FOMKE Envelope — header **13 B**
+### FOMKE envelope: header **13 B**
 
 ```text
 offset  0       4            12     13
         +-------+------------+------+--------+------------+
-        | Epoch | Index      | Lane | AuthTag| Ciphertext |
+        | Epoch | Index      | Lane | Tag    | Ciphertext |
         | u32   | u64        | u8   | T bytes| n bytes    |
         +-------+------------+------+--------+------------+
 Total = 13 + T + n     (T is 16, 24 or 32; n equals the plaintext length)
 ```
 
-Thirteen bytes, and every one of them is something the receiver cannot work
-out for itself. Four fields a reader might expect are **absent**:
+Four fields are **absent** on purpose:
 
-- **No magic and no version.** This envelope only ever travels as the body of
-  an AME frame, and that frame's packet kind already says what the body is. A
-  second name for the same thing cost four bytes on every message.
-- **No nonce.** Both sides derive it from the same ratchet step, so sending it
-  would only repeat something the receiver already holds. That is 24 bytes per
-  message saved and one fewer field an attacker can influence.
-- **No ciphertext length.** It is whatever follows the tag; the frame already
-  delimits the envelope.
-- **No tag length.** The receiver splits tag from ciphertext using the length
-  its own epoch agreed, and would refuse any other value anyway. Removing the
-  field removed a number an attacker could edit, and left exactly one place
-  that decides where the tag ends: the epoch both sides negotiated.
+- **No magic, no version.** The envelope only travels as the body of an AME
+  frame, whose kind already names it.
+- **No nonce.** Both endpoints derive it from the same step. 24 bytes saved
+  per message, and one less field an attacker can set.
+- **No ciphertext length.** It is whatever follows the tag.
+- **No tag length.** The receiver uses the length its own epoch agreed and
+  would refuse any other. A frame of the previous epoch is refused, and the
+  carrier sends it again. A package can outlive its epoch; it carries its own
+  tag length in its `ASP` (secure package) header.
 
-  A frame sealed under the previous epoch has no second chance at a different
-  split — it is refused, and the transport sends it again. A sealed *package*
-  is the one thing that can outlive its epoch, and it carries its own tag
-  length in its own header (`ASP`), so it never depended on this field.
+The tag covers: a label, the layout, the tier, the tag length, the message's
+epoch, index and lane, the AAD (the whole AME header), and the ciphertext.
 
-What the tag covers: a label, the slot layout, the tier, the tag length, the
-message's epoch/index/lane, the caller's binding bytes (which include the
-whole AME header), and the ciphertext. Encrypt first, then authenticate the
-ciphertext — so a receiver checks the tag before it decrypts anything.
-
-### FKU1 Commit (FOMKE upgrade) — fixed **108 B**
+### FKU1 commit (rotation confirmation): fixed **108 B**
 
 Travels inside an authenticated EpochReady frame.
 
-### Size cheat sheet (default tier, 32-byte tag)
+### Size table (default tier, 32-byte tag)
 
-| Item | Bytes |
+| item | bytes |
 |---|---:|
-| Stream header | 4 |
+| stream header | 4 |
 | AME header | 26 |
 | FOMKE header + tag | 13 + 32 = 45 |
 | FKU1 | 108 |
 | **TCP data overhead** | **4 + 26 + 45 + P = 75 + P** |
 | **DAC data overhead** | **27 + 26 + 45 + P = 98 + P** |
 
-With a 16-byte tag the last two become **59 + P** and **82 + P**.
-
-Where that number came from, in three steps:
+With a 16-byte tag the last two are **59 + P** and **82 + P**.
 
 | | AME header | envelope + tag | per frame |
 |---|---:|---:|---:|
 | two nested AEADs | 36 | 12 + 24 + 32, then 27 + 24 + 32 | **187** |
-| one AEAD | 34 | 22 + 32 | **88** |
-| nothing restated | 26 | 13 + 32 | **71** |
-
-The first step removed a whole layer of encryption. The second removed six
-fields that each repeated something the receiver already had — two lengths,
-two names, a version and a tag length. Nothing was traded away for either:
-every byte dropped was a byte a receiver either ignored or refused.
+| one AEAD (encryption + one tag) | 34 | 22 + 32 | **88** |
+| no repeated fields | 26 | 13 + 32 | **71** |
 
 ### Handshake records
 
 ```text
-AMC2 hello  = "AMC" | ver | session u64 | mode u8 | nonce (32, fixed)
-                    | u16+layout | u16+tier | u16+cookie | ... tail
-                      tail, AM1A / AM1S:    u32+offer            (clear)
-                      tail, AM1P / AM1P+S:  flag u8 | salt (32) | tag (32)
-                                            | u32+sealed offer   (sealed)
-AMR2 retry  = "AMR" | ver | session u64 | u16+cookie
-AMS2 hello  = "AMS" | ver | mode u8 | nonce (32) | u32+KEM reply
-                    | tagLen u8 | padding u8 | tag | u32+sealed block
-AMF2 finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed block
+AMC2 client hello  = "AMC" | ver | session u64 | mode u8 | nonce (32)
+                           | u16+layout | u16+tier | u16+cookie | ... tail
+                             tail, AM1A / AM1S:    u32+offer            (unencrypted)
+                             tail, AM1P / AM1P+S:  flag u8 | salt (32) | tag (32)
+                                                   | u32+sealed offer   (sealed)
+AMR2 hello retry   = "AMR" | ver | session u64 | u16+cookie
+AMS2 server hello  = "AMS" | ver | mode u8 | nonce (32) | u32+KEM reply
+                           | tagLen u8 | padding u8 | tag | u32+sealed block
+AMF2 client finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed block
 ```
 
-`ver` is 2 since the pre-shared hello got its seal. The mode byte reads
-`0` AM1A, `1` AM1S, `2` AM1P, `3` AM1P+S, and it alone decides which hello
-tail follows. The `flag` byte is `1` when the seal and the key schedule also
-took a next secret, `0` otherwise.
+- `ver` = 2.
+- `mode`: `0` AM1A, `1` AM1S, `2` AM1P, `3` AM1P+S. It alone decides which
+  tail follows.
+- `flag`: `1` when the sealed hello and the key schedule also took a CS
+  (carried secret), `0` otherwise.
 
-Note the names: the three letters are the RECORD (C = client hello, S = server
-hello, R = retry, F = finish). They are not the authentication mode —
-"AMS2" is the server hello in every mode, AM1S is the pinned-key mode.
+Fixed-size fields carry no length. Variable fields use `u16` where the field
+is small by design and `u32` only where a post-quantum key can reach
+megabytes.
 
-Fixed-size fields carry no length: the nonce is always 32 bytes, so writing
-"32" in front of it every time would say nothing. Variable fields use `u16`
-where the field is small by construction and `u32` only where a post-quantum
-key can genuinely run to megabytes.
+The two bytes after the KEM reply are epoch 1's tag length and padding
+policy. The **responder** chooses; the initiator accepts or stops. They are
+unencrypted because the initiator needs them to open the next block, and the
+block's tag covers them. With padding on, the sealed blocks are padded too:
+hiding who connects while showing the size of their certificate would do half
+the job.
 
-Those two bytes after the KEM reply are the first epoch's tunables — tag
-length and padding policy. The **responder** picks them; the client adopts
-them or gives up. They ride in the clear because the client needs them to open
-the block that follows, and they are bound into that block's tag, so editing
-one in flight breaks the handshake instead of downgrading it. When padding is
-on, the sealed identity blocks are padded too: hiding *who* is connecting
-while leaving the size of their certificate on the wire only does half the
-job.
-
-The **sealed block** in the last two is ciphertext. Opened, it holds up to
-two halves, in a fixed order; each mode leaves out the halves it does not
-use:
+A sealed block holds up to two halves, in a fixed order:
 
 ```text
-server block                         AM1A/AM1S   AM1P   AM1P+S
+server hello block                   AM1A/AM1S   AM1P   AM1P+S
   u32+name | u32 count (1) + tag         -        yes     yes
   certificate body                      yes        -      yes
-  u32 count + authority proofs          yes        -      yes
+  u32 count + authority signatures      yes        -      yes
   u32 count + signatures                yes        -      yes
 
-client block                         AM1A/AM1S   AM1P   AM1P+S
+client finish block                  AM1A/AM1S   AM1P   AM1P+S
   u32+name | u32 count (1) + tag         -        yes     yes
   certificate body                      yes        -      yes
-  u32 count + authority proofs          yes        -      yes
+  u32 count + authority signatures      yes        -      yes
   u32+transcript hash                   yes       yes     yes
   u32 count + signatures                yes        -      yes
 ```
 
-All shapes are padded under the same policy, so which mode is running is not
-readable from the length of the block either.
+All shapes are padded under the same policy, so the block length does not show
+the mode.
 
-The certificate body goes in raw rather than length-framed, because it is the
-exact byte string the authority signed. Wrapping it in another length would
-mean the bytes that verified and the bytes that were stored were not the same
-thing.
+The certificate body is not length-framed: it is the exact byte string the
+authority signed. A length frame would make the verified bytes and the stored
+bytes differ.
 
-Offer and reply sizes grow with the selected KEM public keys and ciphertexts
+Offer and reply sizes grow with the KEM public keys and ciphertexts
 (FireSaber pk 1312 / ct 1472; X25519 pk 32 / sender pk 32).
 
 ## Issue Playbook
 
-- **"client hello did not open under the shared secret"** (AM1P, AM1P+S) means
-  the two sides do not hold the same key for the hello seal. Check, in order:
-  the same `pskId` and secret bytes on both ends; that both ends agree on the
-  next secret (same `kept` bytes, or neither has one). A peer restored from a
-  backup has an older next secret -- drop it on both sides with
-  `withAmeNextSecret(@[])` and start over from psk-only.
-- **"client used a next secret this side does not hold"** means the client
-  kept one from an earlier session and the responder did not. Either give the
-  responder the same bytes, or have the client drop its copy.
-- **"client hello did not carry the required next secret"** means the
-  responder was built with `required = true` and the client came without one.
-  This is the setting doing its job; it is what stops a forced fallback. Turn
-  it off only while you re-establish the next secret on a peer that lost it.
-- Handshake records from before the key-schedule rework (`ver` byte 1, the
-  old mode names AM1C / AM1M) are refused with "AME handshake wire version
-  mismatch". Both ends must run the same build. So are FOMKE checkpoints
-  written before the next secret existed ("FOMKE state version mismatch"):
-  there is no conversion, rebuild the session with a fresh handshake.
+**Handshake and PSK**
+
+- **"client hello did not open under the shared secret"** (AM1P, AM1P+S): the
+  two endpoints do not hold the same key for the sealed hello. Check, in
+  order: the same PSK name and PSK bytes on both endpoints; the same CS
+  (carried secret) on both endpoints, or none on either. An endpoint restored
+  from a backup holds an older CS: remove it on both endpoints with
+  `withAmeNextSecret(@[])` and start again with the PSK only.
+- **"client used a next secret this side does not hold"**: the initiator kept
+  a CS from an earlier session and the responder did not. Give the responder
+  the same CS, or remove it from the initiator.
+- **"client hello did not carry the required next secret"**: the responder
+  was built with `required = true` and the initiator sent no CS. This setting
+  prevents a forced fallback. Set it to `false` only while an endpoint that
+  lost its CS gets a new one.
+- **"client asked for an authentication mode this side does not run"**: the
+  two endpoints are configured with different modes. Nothing is negotiated;
+  configure both the same.
+- Records from before the key-schedule rework (`ver` 1, mode names AM1C / AM1M)
+  are refused with "AME handshake wire version mismatch". Both endpoints must
+  run the same build. FOMKE checkpoints written before NS existed are refused
+  with "FOMKE state version mismatch". There is no conversion; run a new
+  handshake.
+- **"certificate proof count does not match the pinned root"**: the
+  certificate has fewer authority signatures than the authority has slots,
+  usually from an older single-algorithm authority. Issue it again.
+- **"local clock is too far outside the identity validity window"**: this
+  machine's clock is more than one day outside the certificate's window. Fix
+  the clock; the library does not guess.
+- **"AME handshake step number is wrong"**: a record arrived where another one
+  belongs. Records carry their step in the frame sequence; a wrong order is
+  refused before parsing.
+- `AmeAuthorityRoot` must come from `initAmeAuthorityRoot`. A hand-filled root
+  with default values has an empty authority name and is refused.
+
+**Rotation**
+
+- A layout mismatch is refused. Compare the output of `encodeAmeSuiteLayout`.
+- A tier mismatch is refused. Compare the output of `encodeAmeMaskTier`.
+- A stale offer is refused. Check the request id and the base epoch id.
+- A mask with a bit for an unoccupied slot is refused.
+- "AME cannot start an exchange while a peer candidate epoch is pending": the
+  other endpoint's rotation arrived first. Finish it, then start yours.
+- "AME initiator keeps its own exchange during a simultaneous start": both
+  endpoints started at once. The responder yields; nothing is lost.
+- A tier whose KEM mask equals the current one rotates without a new KEM
+  exchange only when `rekeyMask = 0` is passed. The default runs one.
+- Data triggers count successfully transferred plaintext bytes, not bytes sent
+  again.
+
+**FOMKE**
+
+- **"FOMKE epoch or sender lane mismatch" right after `initAmeSession`**:
+  the endpoint role was set *after* `initAmeSession`. The session starts its
+  lanes immediately and reads the role from the auth package, so the role must
+  be right in `initAmeAuthPackage`.
+- **"FOMKE KEM upgrade is pending"** when sealing: a rotation was staged before
+  this endpoint finished sending. A responder calls
+  `stageAmeSessionFomkeUpgrade` *after* its reply frame is sealed; the carrier
+  calls already do this in that order.
+- **"FOMKE upgrade confirmation mismatch"**: the two endpoints staged at
+  different lane indices. Deliver outstanding messages and empty the reorder
+  cache before a rotation.
+- **"FOMKE skipped messages must be resolved before a KEM upgrade"**: held
+  keys exist. The DAC relay erases them when a package ends; without the relay,
+  call `discardAmeSessionSkipped`.
 - `fomkeReorderCeiling` outside 4 .. 4096 in `config.toml` refuses the whole
   config at load time. Raise it for links that reorder heavily, not for loss:
-  a lost datagram's key is dropped once it falls further behind than the
-  ceiling anyway.
-- A layout mismatch is rejected. Compare `encodeAmeSuiteLayout` output.
-- A tier mismatch is rejected. Compare `encodeAmeMaskTier` output.
-- A stale exchange is rejected. Check request id and base epoch id.
-- A mask selecting an unoccupied slot is rejected.
-- "AME cannot start an exchange while a peer candidate epoch is pending" means
-  the peer's transition arrived first. Finish it, then start yours.
-- "AME initiator keeps its own exchange during a simultaneous start" means both
-  endpoints triggered at once. The responder yields; nothing is lost.
-- A tier whose KEM mask equals the current one rotates the epoch without new
-  key agreement. Pass `rekeyMask` when you want forward secrecy to advance.
-- `AmeAuthorityRoot` must come from `initAmeAuthorityRoot`. A hand-filled root
-  left at its defaults has an empty authority name and is refused.
-- **"FOMKE epoch or sender lane mismatch" right after setting up a session**
-  almost always means the endpoint role was set *after* `initAmeSession`. The
-  session starts its ratchet immediately and reads the role off the auth
-  package, so the role has to be right in `initAmeAuthPackage` — assigning
-  `auth.endpointRole` afterwards changes nothing about which lane it sends on.
-- **"FOMKE KEM upgrade is pending"** when sealing means an upgrade was staged
-  before this side finished sending. A responder must call
-  `stageAmeSessionFomkeUpgrade` *after* its reply frame has been sealed; the
-  carrier entry points already do this in the right order.
-- **"FOMKE upgrade confirmation mismatch"** means the two endpoints staged at
-  different lane positions. Deliver outstanding messages and empty the
-  skipped-key cache before starting a transition.
-- **"certificate proof count does not match the pinned root"** means the
-  certificate carries fewer proofs than the authority has slots — usually a
-  certificate issued by an older, single-algorithm authority. Reissue it.
-- **"local clock is too far outside the identity validity window"** means this
-  machine's clock is more than a day outside the certificate's window. Fix the
-  clock; the library will not guess.
-- **"AME handshake step number is wrong"** means a record arrived where a
-  different one belonged. Records carry their step in the frame sequence, and
-  a mis-ordered handshake is refused before it is parsed.
-- Data triggers count successful plaintext transfer bytes, not retry bytes.
-- Tier changes and rekeys use authenticated Offer -> Reply -> EpochReady frames.
-- AVX2 tasks produce host-specific binaries. Use the ordinary tasks for x86
-  clients or servers that may run on CPUs without AVX2.
-- Peer trust is supplied by a caller-owned certificate or provisioning verifier.
-- Initial authority trust uses `beginAmeHandshake`, `answerAmeHandshake`,
-  `finishAmeHandshake`, and `acceptAmeHandshake`; over a socket, use
-  `ameTcpClientHandshake` and `ameTcpServerHandshake`, which run the whole
-  exchange including the cookie retry.
-- Package repair uses XOR recovery for one loss and exact-chunk fallback for
-  wider loss; Eir parity verifies recovered groups.
-- Native TLS accepts only TLS 1.3, X25519, Ed25519, SHA-256, and
-  `TLS_CHACHA20_POLY1305_SHA256`; unsupported suites fail closed.
-- Native TLS client trust is pinned-root only. Public operating-system trust
-  stores and RSA/ECDSA certificate paths remain unsupported.
-- TLS record compression is intentionally absent. Compress HTTP content before
-  encryption when the application negotiates a standard content encoding.
+  a held key of a lost datagram is erased once it falls further behind than
+  the reorder ceiling anyway.
 
-The benchmark task keeps its executable under `--out:build/benchmarks/...`.
-The default `nimble build` command is not a supported artifact path here; use
-`nimble buildLib`.
+**Builds and transports**
 
-`nix flake check path:$PWD` validates the package build, reproducible TLS
-transport checks, and NixOS module rules.
+- AVX2 tasks produce binaries for one CPU family. Use the ordinary tasks for
+  x86 machines that may lack AVX2.
+- Package repair uses XOR recovery for one lost chunk and exact-chunk requests
+  for more; Eir parity checks rebuilt groups.
+- Native TLS accepts only TLS 1.3, X25519, Ed25519, SHA-256 and
+  `TLS_CHACHA20_POLY1305_SHA256`; anything else is refused.
+- Native TLS client trust is a pinned root only. Operating-system trust stores
+  and RSA/ECDSA certificate paths are not supported.
+- TLS record compression is absent on purpose. Compress HTTP content before
+  sealing when the application negotiates a standard content encoding.
+- The benchmark task keeps its binary under `--out:build/benchmarks/...`. The
+  default `nimble build` command is not a supported artifact path; use
+  `nimble buildLib`.
+- `nix flake check path:$PWD` validates the package build, the reproducible
+  TLS transport tests, and the NixOS module rules.
 
+### Findings the evaluation tools report on purpose ⌜guide⌟
 
-### Findings the evaluation tools raise that are meant to be there ⌜guide⌟
+`otter-gate.sh` reports these every time. They were checked; they are the tool
+being careful, not the code being wrong.
 
-`otter-gate.sh` reports a few things in this repository every time. They have
-been looked at; they are the tool being careful rather than the code being
-wrong. Written down so the next person does not chase them twice.
-
-| What it says | Why it is fine |
+| report | reason |
 |---|---|
-| PLACEHOLDERS: `raiseExcludedKem` / `raiseExcludedSig` / `raiseExcludedSym` | "The body only refuses to work" is the whole job. These exist so a build without a KEM family refuses a layout naming it, loudly, at the point the layout is built. |
-| PLACEHOLDERS: `buildTlsContext` | Only the `when not defined(ssl)` half is flagged. Raising is what a build without TLS should do. |
-| PLACEHOLDERS: `defaultDacProbeCount`, `defaultAmeCompressionPolicy`, `initChunkedDecoder`, `initTls13SocketSession` | "Hands back the same answer whatever comes in" is what a default provider and a zero-argument constructor are for. |
-| STATE: `AmeSession.lastErr`, `Tls13ClientOutput.connected` | Read by tests under `evaluation/`, which the tool does not scan for reads. Check a field there before believing it is dead — one of these was nearly deleted on the tool's word. |
-| STATE: `DacGroupRepairReport.err` | Public API. `repairGroup` is documented as saying *why* it refused, and a consumer reads it even though nothing inside this repository does. |
-| DEAD CODE: unused public | Bifrost is a library. Most of its exports exist for a consumer, and the tool can only see callers inside this tree. |
-| SECRETS in `evaluation/` and `.android-sdk/` | Test vectors and a vendored NDK. Neither is a key of ours. |
-| EMBEDDED CODE | Almost all of it is the vendored Android NDK's own Python. |
-
-Two of these have a real lesson rather than a shrug:
+| PLACEHOLDERS: `raiseExcludedKem` / `raiseExcludedSig` / `raiseExcludedSym` | Refusing is the whole job: a build without a family refuses a layout that names it. |
+| PLACEHOLDERS: `buildTlsContext` | Only the `when not defined(ssl)` half is flagged. A build without TLS must raise there. |
+| PLACEHOLDERS: `defaultAmeCompressionPolicy`, `initChunkedDecoder`, `initTls13SocketSession` | A default provider and a constructor without arguments return the same answer every time. |
+| STATE: `AmeSession.lastErr`, `Tls13ClientOutput.connected` | Read by tests below `evaluation/`, which the tool does not scan for reads. |
+| STATE: `DacGroupRepairReport.err` | Public API; a caller reads it. |
+| DEAD CODE: unused public | Bifrost is a library; its callers live outside this tree. |
+| SECRETS in `evaluation/` and `.android-sdk/` | Test vectors and a vendored NDK (Android native development kit). Not keys of ours. |
+| EMBEDDED CODE | Almost all of it is Python inside the vendored NDK. |
 
 - **Check `evaluation/` before deleting a "never read" field.** The tool does
-  not look there, so its list is a list of candidates, not a verdict.
-- **`stage: stDone` does not silence a placeholder finding.** It suppresses
-  the other stage values only; a routine that legitimately just raises or just
-  returns a constant will keep being listed.
+  not scan it, so its list is a list of candidates.
+- **`stage: stDone` does not silence a placeholder finding.** A routine that
+  only raises or only returns a constant stays listed.
 
 ### Standing risks
 
-- **The primitives are homemade.** GB3HKDF and the XOR-combined multi-MAC tag
-  have no external analysis.
-  The constructions *around* them are careful — domain separation everywhere,
-  encrypt-then-MAC, transcript binding, constant-time comparison on secrets,
-  transactional state, secrets wiped — but layering discipline cannot rescue a
-  primitive that turns out to be weak. This is the thing to keep front of
-  mind, above any specific item above.
-- **Metadata is visible by design.** The AME header is authenticated but not
-  encrypted: session id, lane ids, sequence and length are readable by anyone
-  on the path. Identities are not, but traffic patterns are. Padding
-  (`setAmePadding`) blurs the length into 64-byte steps; it does not hide the
-  rest of the header, and it does not hide *when* a message was sent.
-- **Preparing send slots ahead weakens forward secrecy for messages not yet
-  sent.** It is off by default for that reason. See the FOMKE section.
+- **The primitives are self-made.** GB3HKDF and the XOR-combined multi-MAC tag
+  have no external analysis. The constructions around them are careful
+  (domain separation, encrypt-then-MAC, transcript binding, constant-time
+  comparison of secrets, all-or-nothing state updates, erased secrets), but
+  that cannot rescue a weak primitive. This risk comes first.
+- **Metadata is visible by design.** The AME header is authenticated but
+  unencrypted: session id label, lane ids and frame length are readable on the
+  path (Seq is masked). Identities are not readable; traffic patterns are.
+  Padding reduces lengths to 64-byte steps; it does not hide the header or
+  the time a frame was sent.
+- **A sealed pre-shared hello can be replayed.** A replay gains no key (the
+  answer uses a new KEM exchange) but costs the responder one KEM
+  encapsulation. The cookie limits this to addresses that can receive.
+- **Preparing key blocks ahead weakens forward secrecy for messages not yet
+  sent.** Off by default. See the FOMKE section.
+
 # Direct LAN Messenger
 
-Bifrost includes matching Android and Nim-WebUI desktop clients. They exchange
-the same length-prefixed `BMSG` frames used by the automated transport test.
+**Definitions**
+
+- `BMSG` := the length-prefixed frame of the LAN messenger.
+- `LAN` := local area network: devices on the same router or switch.
+
+Bifrost includes an Android client and a Nim-WebUI desktop client. Both
+exchange the same BMSG (length-prefixed messenger) frames as the automated
+transport test.
 
 ```text
 desktop :48371  <---- local Wi-Fi / Ethernet ---->  Android :48371
@@ -2385,7 +2477,7 @@ Run the desktop client:
 nimble runWebui
 ```
 
-Build it without launching the UI:
+Build it without starting the UI:
 
 ```sh
 nimble buildWebui
@@ -2397,15 +2489,14 @@ Build both Android APKs and run the physical host/phone exchange:
 nimble androidLanTest
 ```
 
-No router port forwarding is needed when both devices are on the same subnet.
-The machine firewall must allow phone-to-host TCP. On NixOS, add these ports to
-the active system configuration and rebuild:
+No router port forwarding is needed when both devices are in the same subnet.
+The machine firewall must allow phone-to-host TCP. On NixOS, add these ports
+to the system configuration and rebuild:
 
 ```nix
 networking.firewall.allowedTCPPorts = [ 48371 49371 ];
 ```
 
-`48371` is the interactive messenger port. `49371` is isolated for the
-instrumented physical-device test. The test first proves host-to-phone traffic,
-then phone-to-host traffic, and fails with a firewall-specific message if only
-the return path is blocked.
+`48371` is the messenger port. `49371` is reserved for the instrumented
+device test. The test checks host-to-phone traffic first, then phone-to-host
+traffic, and names the firewall when only the return path is blocked.
