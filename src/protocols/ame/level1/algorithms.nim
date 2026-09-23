@@ -91,18 +91,35 @@ template excludedKemMessage(a: untyped): string =
     "' to -d:bifrostKems= or omit the flag to compile every family"
 
 proc raiseExcludedKem(a: AmeKemAlgorithm) {.role: helper, noreturn.} =
-  ## a: slot whose family this build left out.
+  ## a: slot whose family this build left out -- or, for Saber, a slot
+  ## larger than Tyr's -d:saberMaxRank allows.
+  if ameKemFamily(a) in ameKemsBuilt:
+    raise newException(ValueError, "AME KEM " & ameKemName(a) &
+      " is larger than this build's -d:saberMaxRank; raise it or omit it")
   raise newException(ValueError, excludedKemMessage(a))
 
 proc ameKemBuilt*(a: AmeKemAlgorithm): bool {.role: parser.} =
   ## a: exact KEM slot. True when this build can actually run it, so a peer's
-  ## proposal can be refused before any key material is touched.
+  ## proposal can be refused before any key material is touched. Saber is the
+  ## one family where a slot can be missing although the family is built
+  ## (Tyr's -d:saberMaxRank), so it is asked slot by slot.
   result = ameKemFamily(a) in ameKemsBuilt
+  when akfSaber in ameKemsBuilt:
+    if result and ameKemFamily(a) == akfSaber:
+      result = saberSlotBuilt(a)
 
 proc requireAmeKemBuilt*(a: AmeKemAlgorithm) {.role: parser.} =
   ## a: exact KEM slot rejected unless this build carries its family.
   if not ameKemBuilt(a):
     raiseExcludedKem(a)
+
+proc builtDefaultSlot(f: AmeKemFamily): AmeKemAlgorithm {.role: configurator.} =
+  ## f: family AME picks for itself. Its strongest slot, except that Saber
+  ## gives the strongest one Tyr's -d:saberMaxRank left in this build.
+  result = defaultAmeKemSlot(f)
+  when akfSaber in ameKemsBuilt:
+    if f == akfSaber:
+      result = strongestSaberSlot()
 
 const
   ameKemPqPreference: array[5, AmeKemFamily] = [
@@ -121,7 +138,7 @@ proc defaultAmeKemSlots*(): seq[AmeKemAlgorithm] {.role: configurator.} =
   var i: int = 0
   while i < ameKemPqPreference.len:
     if ameKemPqPreference[i] in ameKemsBuilt:
-      result.add(defaultAmeKemSlot(ameKemPqPreference[i]))
+      result.add(builtDefaultSlot(ameKemPqPreference[i]))
       break
     i = i + 1
   if akfX25519 in ameKemsBuilt:

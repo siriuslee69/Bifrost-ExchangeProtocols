@@ -231,6 +231,8 @@ proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
   if modeByte > uint8(ord(high(AmeTrustMode))):
     raise newException(ValueError, "AME authentication mode is invalid")
   result.mode = AmeTrustMode(modeByte)
+  if not ameModeBuilt(result.mode):
+    raise newException(ValueError, ameModeBuiltError(result.mode))
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readSmallField(A, cursor)
   result.layout = decodeAmeSuiteLayout(B)
@@ -293,6 +295,8 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
   if modeByte > uint8(ord(high(AmeTrustMode))):
     raise newException(ValueError, "AME authentication mode is invalid")
   result.mode = AmeTrustMode(modeByte)
+  if not ameModeBuilt(result.mode):
+    raise newException(ValueError, ameModeBuiltError(result.mode))
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readLargeField(A, cursor)
   result.reply = decodeAmeExchangeReply(L.kems, B)

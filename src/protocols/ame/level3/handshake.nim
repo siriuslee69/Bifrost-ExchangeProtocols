@@ -364,7 +364,7 @@ proc certificateHalfVerdict(L: AmeSuiteLayout, t: AmeMaskTier,
   except ValueError as e:
     result.err = "peer certificate is malformed: " & e.msg
     return
-  if a.mode == atmAuthorityCertificate:
+  if ameModeUsesAuthority(a.mode):
     result = verifyAmeIdentityCertificate(C, a.root, nowUnix, revokedSerials)
     result.mode = am1a
   else:

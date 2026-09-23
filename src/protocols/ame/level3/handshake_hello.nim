@@ -54,6 +54,8 @@ proc beginAmeHandshake*(sessionId: uint64, L: AmeSuiteLayout,
     keys: AmeExchangeKeys = default(AmeExchangeKeys)
   if sessionId == 0'u64:
     raise newException(ValueError, "AME client session id must be positive")
+  if not ameModeBuilt(a.mode):
+    raise newException(ValueError, ameModeBuiltError(a.mode))
   validateAmeTier(L, initialTier)
   request = initAmeExchangeRequest(L.kems, initialTier, initialTier.masks.kem)
   keys = generateAmeExchangeKeys(L.kems, request)
@@ -224,6 +226,8 @@ proc responderIdentityError(c: AmeClientHello, a: AmeAuthentication,
   ## c/a/descriptor/identity: the identity material this mode actually needs.
   ## AM1P needs no certificate, so a responder running it is not made to
   ## carry a signature key it will never use. AM1P+S needs both.
+  if not ameModeBuilt(a.mode):
+    return ameModeBuiltError(a.mode)
   if ameModeUsesPsk(a.mode) and (a.psk.len < 16 or a.pskId.len == 0):
     return "AME PSK authentication is not configured"
   if not ameModeUsesSignatures(a.mode):

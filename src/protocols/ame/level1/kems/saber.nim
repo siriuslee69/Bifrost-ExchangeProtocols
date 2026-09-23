@@ -18,6 +18,24 @@ proc saberVariant(a: AmeKemAlgorithm): tyr_saber.SaberVariant {.role: parser.} =
   else:
     raise newException(ValueError, "AME KEM slot is not Saber: " & ameKemName(a))
 
+proc saberSlotBuilt*(a: AmeKemAlgorithm): bool {.role: parser.} =
+  ## a: Saber slot. Tyr's `-d:saberMaxRank` can leave the larger parameter
+  ## sets out, so the family being built does not mean every slot is:
+  ##
+  ##   -d:saberMaxRank   LightSaber   Saber   FireSaber
+  ##   ---------------   ----------   -----   ---------
+  ##   4 (default)       yes          yes     yes
+  ##   3                 yes          yes     no
+  ##   2                 yes          no      no
+  result = tyr_saber.saberVariantBuilt(saberVariant(a))
+
+proc strongestSaberSlot*(): AmeKemAlgorithm {.role: configurator.} =
+  ## The largest Saber slot this build can run: FireSaber unless Tyr's
+  ## `-d:saberMaxRank` cut it off.
+  when tyr_saber.saberMaxRank >= 4: result = akaFireSaber
+  elif tyr_saber.saberMaxRank == 3: result = akaSaber
+  else: result = akaLightSaber
+
 proc saberAmeKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   ## a: Saber slot to key independently.
   assignAmeKeypair(tyr_saber.saberTyrKeypair(saberVariant(a)))

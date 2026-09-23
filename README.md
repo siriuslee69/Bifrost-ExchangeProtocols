@@ -410,7 +410,7 @@ nimble test
 
 A device with one KEM (key encapsulation mechanism) and one carrier (TCP or
 DAC) needs no
-code for the others. Four build flags decide what enters the binary. The
+code for the others. Five build flags decide what enters the binary. The
 source code stays the same between a full build and a slim build.
 
 ```text
@@ -432,6 +432,9 @@ nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
 |                           | argon2                  |                     |
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostCarriers=<list> | tcp dac                 | both carriers       |
++---------------------------+-------------------------+---------------------+
+| -d:bifrostHandshakes=    | am1a am1s am1p am1ps    | all four modes      |
+|   <list>                  | (am1p+s also accepted)  |                     |
 +---------------------------+-------------------------+---------------------+
 ```
 
@@ -474,8 +477,122 @@ everything after it moved down by one). AME no longer depends on liboqs.
 Check all slim profiles at once:
 
 ```text
-nimble testMinimalAme
+nimble testMinimalAme        # algorithm and carrier flags
+nimble testHandshakeFlags    # each AM1 mode alone, and mixes
 ```
+
+### Tiny devices (under 100 KB of RAM) 🌱
+
+**Definitions**
+
+- `flash` := where the program itself sits. It is read, never written.
+- `RAM total` := globals + the most heap alive at once + the deepest stack.
+  This is what a device must have free.
+- `rank` := how many polynomials one Saber key is built from. LightSaber
+  uses 2, Saber 3, FireSaber 4.
+
+Every flag below passes straight through Bifrost into Tyr. Nim flags are
+global, so Tyr sees them without Bifrost doing anything:
+
+```text
+  nim c  -d:bifrostKems=saber,x25519  -d:saberMaxRank=2  -d:avx2  app.nim
+           |                            |                  |
+           Bifrost: which KEM families  Tyr: Saber arrays  Tyr: SIMD code
+           are compiled at all          sized for rank 2   (omit = scalar)
+```
+
+```text
++------------------------------+-------------------------------------------+
+| flag                         | what it does on a tiny device             |
++------------------------------+-------------------------------------------+
+| -d:bifrostKems / Sigs /      | leave out whole algorithm families        |
+|   Symmetric / Carriers       | (see the table above)                     |
+| -d:bifrostDac=off            | leave out DAC's adaptive layer; the DAC   |
+|                              | wire format itself stays                  |
+| -d:bifrostHandshakes=am1p    | keep only the named AM1 modes (any list). |
+|                              | AM1P alone drops every certificate and    |
+|                              | signature routine: Ed25519 is not linked. |
+|                              | A left-out mode does not compile, and one |
+|                              | arriving from the wire is refused.        |
+| -d:saberMaxRank=2            | Tyr sizes every Saber matrix for          |
+|                              | LightSaber: 8 KB -> 2 KB each. About      |
+|                              | 14 KB less stack. Saber and FireSaber     |
+|                              | are then refused with an error naming     |
+|                              | this flag. (3 keeps Saber too.)           |
+| (no -d:sse2 / -d:avx2 /      | Bifrost builds scalar (plain, one value   |
+|  -d:neon)                    | at a time) unless one of these is given.  |
+|                              | Scalar is the smallest.                   |
+| -d:danger --opt:size         | no run-time checks, optimise for size     |
+| -d:useMalloc                 | use the C library's allocator. Nim's own  |
+|                              | takes memory in large blocks.             |
+| -d:noSignalHandler           | no crash handler                          |
+|   --panics:on                |                                           |
+| --passC:-flto --passL:-flto  | let the C compiler drop and merge code    |
+|                              | across all files (link-time optimising)   |
+| --passC:-ffunction-sections  | put every routine in its own section, so  |
+|   --passC:-fdata-sections    | the linker can throw away unused ones     |
+|   --passL:-Wl,--gc-sections  |                                           |
+| --passC:-fno-unwind-tables   | drop about 40 KB of tables Nim never      |
+|   --passC:-fno-asynchronous- | reads (its exceptions do not unwind the   |
+|   unwind-tables              | C stack)                                  |
++------------------------------+-------------------------------------------+
+```
+
+The numbers below are written by `nimble benchLowMem`. It builds
+`evaluation/benchmarks/lowmem/lowmem_probe.nim` once per profile. The probe
+runs one whole handshake and seals and opens one frame. Then the numbers
+here are replaced. The probe runs **both** ends in one program, so heap and
+stack are an upper bound: a device holds one end.
+
+<!-- lowmem:begin -->
+```text
++----------------------------------------+-----------+-----------+-----------+-----------+-----------+
+| profile                                | program   | RAM total | heap peak | stack     | globals   |
++----------------------------------------+-----------+-----------+-----------+-----------+-----------+
+| AM1P, whole library, -d:release        | 1019.0 KB |  260.8 KB |   26.7 KB |   42.9 KB |  191.2 KB |
+| AM1P, whole library, tiny flags        |  383.9 KB |   75.7 KB |   26.7 KB |   41.5 KB |    7.6 KB |
+| AM1P, X25519                           |  168.2 KB |   41.0 KB |   16.2 KB |   21.5 KB |    3.3 KB |
+| AM1P, Kyber768 + X25519                |  187.5 KB |   87.2 KB |   38.7 KB |   44.8 KB |    3.8 KB |
+| AM1P, LightSaber + X25519              |  181.9 KB |   57.5 KB |   26.7 KB |   27.0 KB |    3.8 KB |
+| AM1P or AM1P+S, LightSaber + X25519    |  207.2 KB |   65.8 KB |   34.2 KB |   27.5 KB |    4.0 KB |
+| AM1P+S, LightSaber + X25519, Ed25519   |  207.3 KB |   65.6 KB |   34.2 KB |   27.4 KB |    4.0 KB |
+| AM1S, LightSaber + X25519, Ed25519     |  195.9 KB |   61.2 KB |   30.1 KB |   27.4 KB |    3.7 KB |
+| AM1P+S, LightSaber, saberMaxRank=4     |  207.3 KB |   79.5 KB |   34.2 KB |   41.2 KB |    4.0 KB |
+| AM1P+S, LightSaber, AVX2               |  210.7 KB |   65.6 KB |   34.2 KB |   27.4 KB |    4.0 KB |
++----------------------------------------+-----------+-----------+-----------+-----------+-----------+
+```
+
+Code per module, profile "AM1P+S, LightSaber + X25519, Ed25519":
+
+```text
++------------------------------------------+-----------+
+| module                                   | code      |
++------------------------------------------+-----------+
+| Bifrost AME handshake     (ame/level3)   |   39.5 KB |
+| Bifrost AME session/frame (ame/level2)   |   31.4 KB |
+| Bifrost AME suites/keys   (ame/level1)   |   26.0 KB |
+| the probe itself                         |   19.5 KB |
+| Bifrost FOMKE ratchet     (fomke)        |   12.6 KB |
+| Tyr Ed25519                              |   10.9 KB |
+| Tyr hashes (BLAKE3, SHA-3)               |    7.9 KB |
+| Tyr X25519                               |    6.7 KB |
+| C library / start-up                     |    4.5 KB |
+| Tyr Saber                                |    4.4 KB |
+| Tyr other (MACs, random, helpers)        |    4.1 KB |
+| Tyr ciphers (ChaCha20)                   |    2.8 KB |
+| Nim runtime (system)                     |    2.8 KB |
+| Nim runtime (std)                        |    0.9 KB |
+| Bifrost AME bytes         (ame/level0)   |    0.8 KB |
+| Bifrost other                            |    0.4 KB |
++------------------------------------------+-----------+
+| total named code                         |  175.5 KB |
++------------------------------------------+-----------+
+```
+<!-- lowmem:end -->
+
+McEliece, Frodo and the large signatures (Falcon, Dilithium, SPHINCS+) do not
+fit: their keys alone are several KB to 1 MB. For AM1S and AM1P+S under
+100 KB, use Ed25519.
 
 ## Native TLS 1.3
 

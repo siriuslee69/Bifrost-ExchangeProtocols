@@ -454,6 +454,9 @@ task vectors, "Regenerate committed BFX2 test vectors":
 task benchmarks, "Run the committed protocol benchmark harness":
   runNim("c", "evaluation/benchmarks/bench_protocols.nim", @["-d:release", "-r"])
 
+task benchLowMem, "Build each tiny-device profile, measure flash/heap/stack, update README":
+  runNim("c", "evaluation/benchmarks/lowmem/bench_lowmem_sizes.nim", @["-r"])
+
 task benchmarksServerSimd, "Run protocol benchmarks with server AVX2 batching":
   runNim("c", "evaluation/benchmarks/bench_protocols.nim", @[
     "-d:release", "-d:sse2", "-d:avx2",
@@ -554,6 +557,16 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
     "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
   ])
 
+
+task testHandshakeFlags, "Run the AME handshake-mode tests under each -d:bifrostHandshakes list":
+  ## All four modes, each alone, and two mixes. Every build completes a
+  ## handshake in each mode it carries and refuses the ones it left out.
+  for hs in ["", "am1a", "am1s", "am1p", "am1ps", "am1p,am1ps", "am1a,am1s"]:
+    if hs.len == 0:
+      runNim("c", "evaluation/tests/test_ame_handshake_flags.nim", @["-r"])
+    else:
+      runNim("c", "evaluation/tests/test_ame_handshake_flags.nim", @[
+        "-d:bifrostHandshakes=" & hs, "-r"])
 
 task testDacFlag, "Check that -d:bifrostDac=off removes the adaptive layer":
   ## The wire and the fixed profiles must still build with the flag off, the

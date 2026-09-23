@@ -1,8 +1,13 @@
 # Progress
 
-Commit Message: Take the generic nimble tasks from Nimble-Tasks; desktop -> runWebui, androidDebug -> buildAndroid
+Commit Message: Tiny-device builds: -d:bifrostHandshakes, saberMaxRank pass-through, benchLowMem size table
 
 Features (Planned):
+- Kyber has the same fixed-size buffers Saber had (Kyber768 row in the
+  README lowmem table: 45 KB stack). A `-d:kyberMaxRank` in Tyr, like
+  `-d:saberMaxRank`, would bring it close to LightSaber.
+- The lowmem numbers come from x86-64 Linux with glibc; an MCU build
+  (newlib, Cortex-M) is not measured yet.
 - DAC rework (asked for, not started). DAC today is a self-diagnosing
   parameter setter living inside the data path. Wanted: DAC as its own,
   separate thing focused on MESSAGE MANAGEMENT, with its own channel -- a set

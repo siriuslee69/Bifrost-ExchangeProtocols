@@ -40,6 +40,8 @@
 ## The constructors that say which are at the bottom of this file, side by
 ## side, so the choice is one place and not four.
 
+import std/strutils
+
 import ../../types
 import ../types
 import ../level0/bytes
@@ -133,19 +135,120 @@ type
 ##   the next secret the last      withAmeNextSecret(a, kept)
 ##     session handed out
 
+## ╭⟢ which modes this build carries
+##
+## Like -d:bifrostKems for algorithms, one flag decides which modes exist:
+##
+##   nim c -d:bifrostHandshakes=am1p app.nim          AM1P only
+##   nim c -d:bifrostHandshakes=am1p,am1ps app.nim    AM1P and AM1P+S
+##
+##   -d:bifrostHandshakes=<list>   what drops out of the program
+##   ---------------------------   --------------------------------------
+##   (omitted)                     nothing; all four modes
+##   am1p                          certificates, signatures, authority
+##                                 checks: every signature routine
+##   am1s / am1ps                  authority checks (AM1A)
+##   am1a                          the sealed hello and the PSK binder
+##
+## How the code drops out: the two questions every handshake step asks,
+## "does this mode use a PSK?" and "does it sign?", become fixed answers
+## when every built mode answers alike. The C compiler then removes the
+## branch that can no longer run. Calling the constructor of a mode that is
+## left out does not compile, and the error names the flag. A mode that
+## arrives from the wire, or sits in a default-built value, is refused while
+## running.
+
+proc parseAmeTrustModes(s: string): set[AmeTrustMode] {.role: parser.} =
+  ## s: comma-separated mode names from `-d:bifrostHandshakes=`. Empty is
+  ## all four. Runs while compiling; an unknown name stops the build.
+  var
+    t: string = ""
+  if s.strip().len == 0:
+    return {atmAuthorityCertificate .. atmPreSharedPinned}
+  for raw in s.split(','):
+    t = raw.strip().toLowerAscii()
+    case t
+    of "am1a": result.incl(atmAuthorityCertificate)
+    of "am1s": result.incl(atmPinnedPeerKey)
+    of "am1p": result.incl(atmPreSharedKey)
+    of "am1ps", "am1p+s": result.incl(atmPreSharedPinned)
+    else:
+      raise newException(ValueError, "unknown -d:bifrostHandshakes entry '" &
+        t & "' (expected: am1a, am1s, am1p, am1ps, or omit the flag for all)")
+
+const
+  bifrostHandshakes* {.strdefine.}: string = ""
+    ## Comma-separated AM1 modes to compile. Empty (the default) is all four.
+  ameModesBuilt* = parseAmeTrustModes(bifrostHandshakes)
+    ## The modes this build actually carries.
+  amePskModes: set[AmeTrustMode] = {atmPreSharedKey, atmPreSharedPinned}
+  ameSignatureModes: set[AmeTrustMode] = {atmAuthorityCertificate,
+    atmPinnedPeerKey, atmPreSharedPinned}
+
+when ameModesBuilt == {}:
+  {.error: "-d:bifrostHandshakes= selected no mode; omit the flag to keep all".}
+
+## The gates on the four constructors below: empty when the mode is built,
+## a compile error naming the flag when it is not.
+when atmAuthorityCertificate in ameModesBuilt:
+  {.pragma: am1aGate.}
+else:
+  {.pragma: am1aGate, error: "AM1A is not in this build; add am1a to " &
+    "-d:bifrostHandshakes= or omit the flag".}
+when atmPinnedPeerKey in ameModesBuilt:
+  {.pragma: am1sGate.}
+else:
+  {.pragma: am1sGate, error: "AM1S is not in this build; add am1s to " &
+    "-d:bifrostHandshakes= or omit the flag".}
+when atmPreSharedKey in ameModesBuilt:
+  {.pragma: am1pGate.}
+else:
+  {.pragma: am1pGate, error: "AM1P is not in this build; add am1p to " &
+    "-d:bifrostHandshakes= or omit the flag".}
+when atmPreSharedPinned in ameModesBuilt:
+  {.pragma: am1psGate.}
+else:
+  {.pragma: am1psGate, error: "AM1P+S is not in this build; add am1ps to " &
+    "-d:bifrostHandshakes= or omit the flag".}
+
+proc ameModeBuilt*(m: AmeTrustMode): bool {.role: parser, inline.} =
+  ## m: true when this build can run that mode.
+  result = m in ameModesBuilt
+
+proc ameModeBuiltError*(m: AmeTrustMode): string {.role: parser.} =
+  ## m: "" when the mode is built, otherwise the refusal to report. Callers
+  ## ask this first, so a mode left out never reaches the two fixed answers
+  ## below (which would otherwise speak for a mode they were not built for).
+  if m notin ameModesBuilt:
+    result = "AME authentication mode " & $m & " is not in this build " &
+      "(-d:bifrostHandshakes)"
+
 proc ameModeUsesPsk*(m: AmeTrustMode): bool {.role: parser, inline.} =
   ## m: true for the modes that hold a pre-shared key (AM1P, AM1P+S). Those
   ## are the ones whose hello is encrypted and whose key schedule takes a
-  ## binder from the shared secret.
-  result = m == atmPreSharedKey or m == atmPreSharedPinned
+  ## binder from the shared secret. Fixed while compiling when every built
+  ## mode answers alike.
+  when ameModesBuilt <= amePskModes: result = true
+  elif (ameModesBuilt * amePskModes) == {}: result = false
+  else: result = m in amePskModes
 
 proc ameModeUsesSignatures*(m: AmeTrustMode): bool {.role: parser, inline.} =
   ## m: true for the modes whose sealed blocks carry a certificate and one
-  ## signature per active slot (AM1A, AM1S, AM1P+S).
-  result = m != atmPreSharedKey
+  ## signature per active slot (AM1A, AM1S, AM1P+S). Fixed while compiling
+  ## when every built mode answers alike.
+  when ameModesBuilt <= ameSignatureModes: result = true
+  elif (ameModesBuilt * ameSignatureModes) == {}: result = false
+  else: result = m in ameSignatureModes
+
+proc ameModeUsesAuthority*(m: AmeTrustMode): bool {.role: parser, inline.} =
+  ## m: true for AM1A, the one mode that checks an authority's signature on
+  ## the peer's certificate. False for every mode when AM1A is left out.
+  when atmAuthorityCertificate notin ameModesBuilt: result = false
+  elif ameModesBuilt == {atmAuthorityCertificate}: result = true
+  else: result = m == atmAuthorityCertificate
 
 proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthentication {.
-    role: configurator, tag: "appApi".} =
+    role: configurator, tag: "appApi", am1aGate.} =
   ## root: authority key stack used to validate certificates (AM1A).
   if root.authority.len == 0 or root.signingKeys.len == 0:
     raise newException(ValueError, "AME certificate authentication is incomplete")
@@ -153,7 +256,7 @@ proc initAmeCertificateAuthentication*(root: AmeAuthorityRoot): AmeAuthenticatio
   result.root = root
 
 proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthentication {.
-    role: configurator, tag: "appApi".} =
+    role: configurator, tag: "appApi", am1sGate.} =
   ## peer: public key expected from the remote endpoint (AM1S).
   if peer.subject.len == 0 or peer.signingKeys.len == 0:
     raise newException(ValueError, "AME pinned authentication is incomplete")
@@ -162,7 +265,7 @@ proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthenticatio
 
 proc initAmePskAuthentication*(identifier: string,
     secret: openArray[uint8]): AmeAuthentication {.role: configurator,
-    tag: "appApi".} =
+    tag: "appApi", am1pGate.} =
   ## identifier/secret: AM1P provisioning material -- a name for the shared
   ## secret, and the secret itself (at least 16 bytes, 32 recommended).
   if identifier.len == 0 or secret.len < 16:
@@ -174,7 +277,7 @@ proc initAmePskAuthentication*(identifier: string,
 proc initAmePskPinnedAuthentication*(identifier: string,
     secret: openArray[uint8],
     peer: AmePinnedPeerIdentity): AmeAuthentication {.role: configurator,
-    tag: "appApi".} =
+    tag: "appApi", am1psGate.} =
   ## identifier/secret/peer: AM1P+S -- the shared secret of AM1P plus the
   ## peer's pinned public key of AM1S. Both must check out:
   ##
@@ -185,10 +288,13 @@ proc initAmePskPinnedAuthentication*(identifier: string,
   ## Costs one signature and one verification per side, once per handshake.
   ## This side must also hand its own identity key to the handshake calls,
   ## exactly as in AM1S.
-  result = initAmePskAuthentication(identifier, secret)
+  if identifier.len == 0 or secret.len < 16:
+    raise newException(ValueError, "AME PSK authentication is incomplete")
   if peer.subject.len == 0 or peer.signingKeys.len == 0:
     raise newException(ValueError, "AME pinned authentication is incomplete")
   result.mode = atmPreSharedPinned
+  result.pskId = identifier
+  result.psk = @secret
   result.expectedPeer = peer
 
 proc withAmeNextSecret*(a: AmeAuthentication, nextSecret: openArray[uint8],
