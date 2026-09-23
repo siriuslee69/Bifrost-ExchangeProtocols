@@ -41,7 +41,7 @@ when isMainModule:
   bobAme = initAmeExchangeState(kems)
   applyAmeExchange(aliceAme, layout, initialRequest, initialSender.sharedSecrets)
   applyAmeExchange(bobAme, layout, initialRequest, initialReceiver)
-  ## One GB3HKDF call absorbs EVERY KEM slot the tier switches on, not just
+  ## One XHKDF call absorbs EVERY KEM slot the tier switches on, not just
   ## one, so a hybrid exchange is a hybrid in fact. Its output is cut into
   ## [ lane 1 key | lane 2 key | next secret ] -- no root key in between.
   alice = initFomkeFromAme(aliceAme, layout, initialTier, frInitiator)

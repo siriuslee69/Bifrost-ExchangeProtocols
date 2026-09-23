@@ -523,7 +523,7 @@ proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] =
   var
     i: int = 0
   while i < 8:
-    result.add(deriveGb3Hkdf(@[byte seed + uint8(i)], @[], @[seed],
+    result.add(deriveXhkdf(@[byte seed + uint8(i)], @[], @[seed],
       int(outLen)))
     i = i + 1
 

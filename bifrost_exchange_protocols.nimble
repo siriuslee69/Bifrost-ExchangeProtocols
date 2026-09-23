@@ -459,8 +459,7 @@ task benchLowMem, "Build each tiny-device profile, measure flash/heap/stack, upd
 
 task benchmarksServerSimd, "Run protocol benchmarks with server AVX2 batching":
   runNim("c", "evaluation/benchmarks/bench_protocols.nim", @[
-    "-d:release", "-d:sse2", "-d:avx2",
-    "--passC:-msse4.1 -mavx2", "--passL:-mavx2", "-r"
+    "-d:release", "-d:tyrSimd=avx2", "-r"
   ])
 
 task buildTestUi, "Build the pragma-driven Otter test UI":
@@ -481,6 +480,8 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_fomke.nim", @["-r"])
     runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_xhkdf.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_handshake_flags.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_session.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_header_protection.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_handshake_package.nim", @["-r"])
@@ -556,6 +557,11 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
     "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac",
     "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
   ])
+  ## XHKDF with and without Gimli: the default branch mask must shrink to
+  ## BLAKE3 and still derive, and the full build must keep the GB3HKDF bytes.
+  runNim("c", "evaluation/tests/test_xhkdf.nim", @["-r"])
+  runNim("c", "evaluation/tests/test_xhkdf.nim", @[
+    "-d:bifrostSymmetric=blake3,chacha20", "-r"])
 
 
 task testHandshakeFlags, "Run the AME handshake-mode tests under each -d:bifrostHandshakes list":
@@ -690,7 +696,7 @@ task soak, "Run the AME+DAC soak: separate processes, real sockets, induced loss
     @["-d:release", "--outdir:build/soak"])
   runCommand(soakRunnerPath(), soakForwardedArgs())
 
-task testFomke, "Run GB3HKDF, AEAD preset, and FOMKE ratchet tests":
+task testFomke, "Run XHKDF, AEAD preset, and FOMKE ratchet tests":
   if not handoffTestTaskToLibsodiumShell("testFomke"):
     runNim("c", "evaluation/tests/test_fomke.nim", @["-r"])
     runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
@@ -705,8 +711,7 @@ task testChunkyAead, "Run CHUNKYAEAD chunk encryption and hash tests":
 task testFomkeServerSimd, "Run FOMKE tests with server AVX2 batching":
   if not handoffTestTaskToLibsodiumShell("testFomkeServerSimd"):
     runNim("c", "evaluation/tests/test_fomke.nim", @[
-      "-d:release", "-d:sse2", "-d:avx2",
-      "--passC:-msse4.1 -mavx2", "--passL:-mavx2", "-r"
+      "-d:release", "-d:tyrSimd=avx2", "-r"
     ])
 
 task examples, "Run all Bifrost examples":

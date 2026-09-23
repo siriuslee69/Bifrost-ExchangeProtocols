@@ -56,7 +56,7 @@ src/protocols
 │                    per-peer link table; both transport-agnostic
 ├── fomke/
 │   ├── types.nim
-│   ├── level0/  <- GB3HKDF and protocol descriptor
+│   ├── level0/  <- XHKDF and protocol descriptor
 │   ├── level1/  <- directional chains, the epoch split [LK1|LK2|NS], and
 │   │                exact AME upgrade commits (NS + new KEM -> next epoch)
 │   │                (the ratchet is the ONLY payload protection)

@@ -88,7 +88,7 @@ import ../level1/header_protection
 import ./wire
 import ./session
 import ../../fomke/types
-import ../../fomke/level0/gb3hkdf
+import ../../fomke/level0/xhkdf
 import ../../fomke/level1/chain
 import ../../fomke/level2/wire
 import ../../config

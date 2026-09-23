@@ -22,13 +22,13 @@
 ##
 ## ╭─ ❧ where the two chains come from 🌊
 ##
-## ONE GB3HKDF call, and its output cut into three pieces. There is no root
+## ONE XHKDF call, and its output cut into three pieces. There is no root
 ## key in between -- nothing is left over to erase, because nothing else
 ## was made:
 ##
 ##   every KEM secret (ISS) + transcript + layout + tier
 ##                 │
-##              GB3HKDF  (one call, 160 bytes out)
+##              XHKDF  (one call, 160 bytes out)
 ##                 │
 ##   ┌─────────────┼──────────────┬──────────────────┐
 ##   │ LK1  0..63  │ LK2  64..127 │ NS  128..159     │
@@ -38,7 +38,7 @@
 ##
 ## A KEM rotation does the same with the NS in place of nothing:
 ##
-##   NS + the fresh KEM secrets + the commit ──GB3HKDF──▶
+##   NS + the fresh KEM secrets + the commit ──XHKDF──▶
 ##       [ LK1' | LK2' | NS' | confirmation key ]
 ##
 ## So the new epoch needs BOTH the old NS and the new KEM result. An
@@ -63,13 +63,13 @@ import ../../ame/level1/exchange_paths
 import ../../ame/level1/suites
 import ../../ame/level1/tier_aead
 import ../types
-import ../level0/gb3hkdf
+import ../level0/xhkdf
 import runePragmas
 
 const
   fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeNextSecretBytes
     ## [ LK1 | LK2 | NS ] -- what one epoch derivation hands out.
-  fomkeConfirmKeyBytes = gb3BlockBytes
+  fomkeConfirmKeyBytes = xhkdfBlockBytes
     ## A rotation also derives the key its confirmation tag is taken with.
 
 type
@@ -323,7 +323,7 @@ proc takeFomkeEpochKeys(K: var ByteSeq, lane1, lane2: var FomkeChainState,
 proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     L: AmeSuiteLayout, t: AmeMaskTier, role: FomkeRole,
     context: openArray[uint8] = [],
-    c: Gb3KdfConfig = initGb3KdfConfig(),
+    c: XhkdfConfig = initXhkdfConfig(),
     reorderCeiling: uint32 = fomkeDefaultReorderCeiling,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
@@ -354,7 +354,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
   validateAmeTier(L, t)
   info = buildFomkeEpochInfo(A, L, t, 1'u32, context)
   appendAmeLabel(seed, "FOMKE-INITIAL-SECRETS-v2")
-  keys = deriveGb3HkdfInputs(seed, S, info, fomkeEpochKeyBytes, c)
+  keys = deriveXhkdfInputs(seed, S, info, fomkeEpochKeyBytes, c)
   result.role = role
   result.epoch = 1'u32
   result.algorithms = A
@@ -377,7 +377,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
 
 proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
     t: AmeMaskTier, role: FomkeRole, context: openArray[uint8] = [],
-    c: Gb3KdfConfig = initGb3KdfConfig(),
+    c: XhkdfConfig = initXhkdfConfig(),
     reorderCeiling: uint32 = fomkeDefaultReorderCeiling,
     tagLen: AmeAuthTagLen = aatl32): FomkeState {.
     role: truthBuilder,
@@ -421,7 +421,7 @@ proc buildFomkeBlockInfo(lane: FomkeLane, epoch: uint32,
   appendAmeU64(result, index)
 
 proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
-    epoch: uint32, c: Gb3KdfConfig): FomkeChainBlock {.role: truthBuilder,
+    epoch: uint32, c: XhkdfConfig): FomkeChainBlock {.role: truthBuilder,
     tag: "cryptoBoundary|fomke|kdf".} =
   ## C/lane/epoch/c: chain and exact derivation context. One step yields the
   ## replacement chain key plus one message key per direction; the caller
@@ -433,7 +433,7 @@ proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
   if C.chainKey.len != fomkeChainKeyBytes or C.nextIndex == high(uint64):
     raise newException(ValueError, "FOMKE chain is invalid or exhausted")
   info = buildFomkeBlockInfo(lane, epoch, C.nextIndex)
-  output = deriveGb3Hkdf(C.chainKey, @[], info, outputBytes, c)
+  output = deriveXhkdf(C.chainKey, @[], info, outputBytes, c)
   result.nextChainKey = sliceFomkeBytes(output, 0, fomkeChainKeyBytes)
   result.mk1 = sliceFomkeBytes(output, fomkeChainKeyBytes,
     fomkeMessageKeyBytes)
@@ -442,7 +442,7 @@ proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
   secureClearAmeBytes(output)
 
 proc advanceFomkeChain(C: var FomkeChainState, lane: FomkeLane,
-    epoch: uint32, c: Gb3KdfConfig): tuple[index: uint64,
+    epoch: uint32, c: XhkdfConfig): tuple[index: uint64,
     keyMaterial: ByteSeq] {.role: actor,
     tag: "cryptoBoundary|fomke|kdf".} =
   ## C/lane/epoch/c: chain advanced by exactly one message key.
@@ -490,7 +490,7 @@ proc deriveFomkeMessageMaterial(S: FomkeState, mk: openArray[uint8],
   appendAmeU32(info, epoch)
   appendAmeU64(info, index)
   info.add(uint8(ord(lane)))
-  result = deriveGb3Hkdf(mk, @[], info,
+  result = deriveXhkdf(mk, @[], info,
     ameTierKeyMaterialLen(S.layout, S.tier), S.kdf)
   secureClearAmeBytes(info)
 
@@ -950,7 +950,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   ## r/candidate: exact upgrade mask and resulting AME state.
   ##
   ## The new epoch is derived from BOTH this epoch's next secret (NS) and the
-  ## fresh KEM secrets, in one GB3HKDF call:
+  ## fresh KEM secrets, in one XHKDF call:
   ##
   ##   NS + new KEM secrets + commit ──▶ [ LK1' | LK2' | NS' | confirm key ]
   ##
@@ -986,7 +986,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   result.lane2Index = S.lane2.nextIndex
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
-  keys = deriveGb3HkdfInputs(S.nextSecret, secretRows, metadata,
+  keys = deriveXhkdfInputs(S.nextSecret, secretRows, metadata,
     fomkeEpochKeyBytes + fomkeConfirmKeyBytes, S.kdf)
   S.pending.active = true
   S.pending.commit = result
@@ -996,7 +996,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   appendAmeLabel(confirmInfo, "FOMKE-UPGRADE-CONFIRM-v4")
   appendFomkeField(confirmInfo, metadata)
   result.confirmationTag = tyr_blake3.blake3KeyedHash(confirmKey, confirmInfo,
-    gb3BlockBytes)
+    xhkdfBlockBytes)
   S.pending.commit.confirmationTag = copyFomkeBytes(result.confirmationTag)
   secureClearAmeBytes(metadata)
   clearFomkeSecretRows(secretRows)
@@ -1115,11 +1115,11 @@ proc fomkeHandshakeSecret*(S: FomkeState): ByteSeq {.role: truthBuilder,
   ## rotation). One secret doing two jobs is how a proof about one of them
   ## stops holding for the other, so the export is its own derivation:
   ##
-  ##   NS ──GB3HKDF("FOMKE-NEXT-HANDSHAKE-v1", epoch)──▶ 32 bytes
+  ##   NS ──XHKDF("FOMKE-NEXT-HANDSHAKE-v1", epoch)──▶ 32 bytes
   var
     info: ByteSeq = @[]
   validateFomkeState(S)
   appendAmeLabel(info, "FOMKE-NEXT-HANDSHAKE-v1")
   appendAmeU32(info, S.epoch)
-  result = deriveGb3Hkdf(S.nextSecret, @[], info, fomkeNextSecretBytes, S.kdf)
+  result = deriveXhkdf(S.nextSecret, @[], info, fomkeNextSecretBytes, S.kdf)
   secureClearAmeBytes(info)

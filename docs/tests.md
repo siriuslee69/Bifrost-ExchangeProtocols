@@ -7,7 +7,7 @@
 | Command                   | Coverage                                      |
 +---------------------------+----------------------------------------------+
 | nimble test               | full Nim suite                               |
-| nimble testFomke          | GB3HKDF, standalone AEADs, the FOMKE ratchet, its forward-secrecy properties, and AME session composition |
+| nimble testFomke          | XHKDF, standalone AEADs, the FOMKE ratchet, its forward-secrecy properties, and AME session composition |
 | nimble testChunkyAead    | CHUNKYAEAD chunk encryption, authentication, and hash tree |
 | nimble testDac            | DAC defaults, wire codecs, ACK pacing and the five ACK modes, repair, scramble, path adaptation, link loop, link table, fuzz |
 | nimble testDacFlag        | -d:bifrostDac=off keeps the wire and refuses the adaptive layer |
@@ -344,7 +344,7 @@ UDP forward (the blind VPS relay)
   -> a replayed DAC control message is refused
 
 FOMKE
-  -> sequential, indexed-block, multi-input, and memory-mixed GB3HKDF
+  -> sequential, indexed-block, multi-input, and memory-mixed XHKDF
   -> the TMEAEAD and GGAEAD presets, and that every slot they name matters
   -> payload padding: block rounding, malformed filler, and epoch agreement
   -> independent asynchronous lane chains and bounded out-of-order receive

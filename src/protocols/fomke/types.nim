@@ -25,22 +25,22 @@ import ../ame/types
 import runePragmas
 
 const
-  gb3BlockBytes* = 32
-  gb3DefaultRounds* = 3'u32
-  gb3DefaultMemoryBlocks* = 64'u32
-  gb3MaxRounds* = 1_000_000'u32
-  gb3MaxMemoryBlocks* = 65_536'u32
-  gb3MaxOutputBytes* = 1_048_576
-  gb3MaxWorkBlocks* = 16_777_216'u64
+  xhkdfBlockBytes* = 32
+  xhkdfDefaultRounds* = 3'u32
+  xhkdfDefaultMemoryBlocks* = 64'u32
+  xhkdfMaxRounds* = 1_000_000'u32
+  xhkdfMaxMemoryBlocks* = 65_536'u32
+  xhkdfMaxOutputBytes* = 1_048_576
+  xhkdfMaxWorkBlocks* = 16_777_216'u64
 
   fomkeChainKeyBytes* = 64
   fomkeNextSecretBytes* = 32
     ## The "next secret" (NS). Born next to the two lane keys and never used
     ## for a message. Its only job is to be carried into the NEXT epoch:
     ##
-    ##   ISS ──GB3HKDF──▶ [ LK1 (64) | LK2 (64) | NS (32) ]
+    ##   ISS ──XHKDF──▶ [ LK1 (64) | LK2 (64) | NS (32) ]
     ##                                            │
-    ##   rotation:  NS + fresh KEM secrets ──GB3HKDF──▶ [ LK1' | LK2' | NS' ]
+    ##   rotation:  NS + fresh KEM secrets ──XHKDF──▶ [ LK1' | LK2' | NS' ]
     ##
     ## It is a one-way image of the epoch's secret, so holding it opens no
     ## message of this epoch -- but the next epoch cannot be derived without
@@ -121,15 +121,33 @@ const
   fomkeCheckpointKeyMinBytes* = 32
 
 type
-  Gb3KdfMode* = enum
-    gb3Sequential = 0x00'u8,
-    gb3MemoryMixed = 0x01'u8
+  XhkdfMode* = enum
+    xhSequential = 0x00'u8,
+    xhMemoryMixed = 0x01'u8
 
-  Gb3KdfConfig* {.role: configurator, tag: "fomke|kdf|types".} = object
+  XhkdfBranch* = enum
+    ## One hash function XHKDF runs per round. Every selected branch derives
+    ## 32 bytes from the same input, and the branches are XORed together:
+    ##
+    ##   round r:  state --+--> BLAKE3   --+
+    ##                     +--> SHAKE256 --+--XOR--> next state
+    ##                     +--> Gimli    --+
+    ##
+    ## The output stays secret while ANY ONE selected branch stays unbroken.
+    ## A `set[XhkdfBranch]` is stored as one byte, bit n = the value n below,
+    ## so it doubles as the wire / checkpoint bit mask.
+    xbBlake3 = 0,   ## bit 0 (0x01), always compiled
+    xbShake256 = 1, ## bit 1 (0x02), needs `sha3` in -d:bifrostSymmetric
+    xbGimli = 2     ## bit 2 (0x04), needs `gimli` in -d:bifrostSymmetric
+
+  XhkdfConfig* {.role: configurator, tag: "fomke|kdf|types".} = object
     rounds*: uint32
     blockIndex*: uint64
-    mode*: Gb3KdfMode
+    mode*: XhkdfMode
     memoryBlocks*: uint32
+    branches*: set[XhkdfBranch]
+      ## Which hash functions run. Built from the agreed layout's active KDF
+      ## slots (`xhkdfBranchesOf`), so both ends always choose alike.
 
   FomkeRole* = enum
     frInitiator = 0x01'u8,
@@ -212,7 +230,7 @@ type
       ## when the ratchet is built and never moved afterwards.
     orderedRun*: uint32
       ## Messages that have arrived in order since the window last moved.
-    kdf*: Gb3KdfConfig
+    kdf*: XhkdfConfig
     pending*: FomkePendingUpgrade
 
   FomkeMessage* {.role: truthState, tag: "fomke|packet|types".} = object

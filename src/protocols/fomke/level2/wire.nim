@@ -54,7 +54,7 @@ proc validateFomkeUpgradeShape(c: FomkeUpgradeCommit) {.role: parser,
       c.targetTier.masks.kem == 0'u8 or c.targetTier.masks.cipher == 0'u8 or
       c.targetTier.masks.mac == 0'u8 or c.targetTier.masks.hash == 0'u8 or
       c.targetTier.masks.signature == 0'u8 or c.targetTier.masks.kdf == 0'u8 or
-      c.confirmationTag.len != gb3BlockBytes:
+      c.confirmationTag.len != xhkdfBlockBytes:
     raise newException(ValueError, "FOMKE upgrade commit is invalid")
   while i < ameMaxAlgorithmSlots:
     selected = (c.exchangeMask and (1'u8 shl
@@ -204,7 +204,7 @@ proc decodeFomkeUpgradeCommit*(A: openArray[uint8]): FomkeUpgradeCommit {.
   offset = offset + 1
   if result.requestId == 0'u32 or result.baseEpoch == 0'u32 or
       result.targetEpoch != result.baseEpoch + 1'u32 or
-      tagLen != gb3BlockBytes or
+      tagLen != xhkdfBlockBytes or
       A.len != offset + tagLen:
     raise newException(ValueError, "FOMKE upgrade commit is invalid")
   result.confirmationTag = @A[offset ..< offset + tagLen]

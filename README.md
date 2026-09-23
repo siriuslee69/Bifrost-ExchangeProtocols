@@ -110,8 +110,9 @@ in brackets the first two times it is used after that.
 - `DAC` := Data Adaptive Connection. Delivery: chunks, receipts, repair.
 - `AME` := Adaptive Message Encryption. Algorithm slots, handshake, sessions.
 - `FOMKE` := Forward-Only Message Key Extension. One fresh key per message.
-- `GB3HKDF` := Gimli BLAKE3 Hash Key Derivation Function. Turns secret bytes
-  into any number of key bytes.
+- `XHKDF` := XOR Hash Key Derivation Function. Runs each chosen hash
+  (BLAKE3, SHAKE256, Gimli) over the same secret bytes and XORs the answers.
+  Turns secret bytes into any number of key bytes.
 - `BFX2` := Bifrost Exchange format 2. Tagged binary envelopes.
 
 **Cryptographic terms**
@@ -410,7 +411,7 @@ nimble test
 
 A device with one KEM (key encapsulation mechanism) and one carrier (TCP or
 DAC) needs no
-code for the others. Five build flags decide what enters the binary. The
+code for the others. Six build flags decide what enters the binary. The
 source code stays the same between a full build and a slim build.
 
 ```text
@@ -435,6 +436,9 @@ nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostHandshakes=    | am1a am1s am1p am1ps    | all four modes      |
 |   <list>                  | (am1p+s also accepted)  |                     |
++---------------------------+-------------------------+---------------------+
+| -d:tyrSimd=<list>         | scalar native sse2 avx2 | scalar              |
+|   (Tyr's flag)            | aesni neon              |                     |
 +---------------------------+-------------------------+---------------------+
 ```
 
@@ -495,10 +499,11 @@ Every flag below passes straight through Bifrost into Tyr. Nim flags are
 global, so Tyr sees them without Bifrost doing anything:
 
 ```text
-  nim c  -d:bifrostKems=saber,x25519  -d:saberMaxRank=2  -d:avx2  app.nim
+  nim c  -d:bifrostKems=saber,x25519  -d:saberMaxRank=2  -d:tyrSimd=avx2  app.nim
            |                            |                  |
-           Bifrost: which KEM families  Tyr: Saber arrays  Tyr: SIMD code
-           are compiled at all          sized for rank 2   (omit = scalar)
+           Bifrost: which KEM families  Tyr: Saber arrays  Tyr + SIMD-Nexus:
+           are compiled at all          sized for rank 2   vector code (omit
+                                                           = scalar)
 ```
 
 ```text
@@ -519,9 +524,11 @@ global, so Tyr sees them without Bifrost doing anything:
 |                              | 14 KB less stack. Saber and FireSaber     |
 |                              | are then refused with an error naming     |
 |                              | this flag. (3 keeps Saber too.)           |
-| (no -d:sse2 / -d:avx2 /      | Bifrost builds scalar (plain, one value   |
-|  -d:neon)                    | at a time) unless one of these is given.  |
-|                              | Scalar is the smallest.                   |
+| -d:tyrSimd=scalar            | plain code, one value at a time: the      |
+|   (the default)              | smallest, runs on every CPU. `avx2`,      |
+|                              | `neon`, `native` switch on vector code;   |
+|                              | the C flags come with them. Same flag     |
+|                              | inside Tyr (Tyr-Crypto/tyr_simd.nims).    |
 | -d:danger --opt:size         | no run-time checks, optimise for size     |
 | -d:useMalloc                 | use the C library's allocator. Nim's own  |
 |                              | takes memory in large blocks.             |
@@ -549,16 +556,16 @@ stack are an upper bound: a device holds one end.
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
 | profile                                | program   | RAM total | heap peak | stack     | globals   |
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
-| AM1P, whole library, -d:release        | 1019.0 KB |  260.8 KB |   26.7 KB |   42.9 KB |  191.2 KB |
-| AM1P, whole library, tiny flags        |  383.9 KB |   75.7 KB |   26.7 KB |   41.5 KB |    7.6 KB |
-| AM1P, X25519                           |  168.2 KB |   41.0 KB |   16.2 KB |   21.5 KB |    3.3 KB |
-| AM1P, Kyber768 + X25519                |  187.5 KB |   87.2 KB |   38.7 KB |   44.8 KB |    3.8 KB |
-| AM1P, LightSaber + X25519              |  181.9 KB |   57.5 KB |   26.7 KB |   27.0 KB |    3.8 KB |
-| AM1P or AM1P+S, LightSaber + X25519    |  207.2 KB |   65.8 KB |   34.2 KB |   27.5 KB |    4.0 KB |
-| AM1P+S, LightSaber + X25519, Ed25519   |  207.3 KB |   65.6 KB |   34.2 KB |   27.4 KB |    4.0 KB |
-| AM1S, LightSaber + X25519, Ed25519     |  195.9 KB |   61.2 KB |   30.1 KB |   27.4 KB |    3.7 KB |
-| AM1P+S, LightSaber, saberMaxRank=4     |  207.3 KB |   79.5 KB |   34.2 KB |   41.2 KB |    4.0 KB |
-| AM1P+S, LightSaber, AVX2               |  210.7 KB |   65.6 KB |   34.2 KB |   27.4 KB |    4.0 KB |
+| AM1P, whole library, -d:release        | 1020.4 KB |  260.9 KB |   26.6 KB |   43.0 KB |  191.3 KB |
+| AM1P, whole library, tiny flags        |  385.1 KB |   75.9 KB |   26.6 KB |   41.5 KB |    7.7 KB |
+| AM1P, X25519                           |  167.8 KB |   41.0 KB |   16.2 KB |   21.4 KB |    3.4 KB |
+| AM1P, Kyber768 + X25519                |  187.1 KB |   87.4 KB |   38.8 KB |   44.8 KB |    3.8 KB |
+| AM1P, LightSaber + X25519              |  181.5 KB |   57.6 KB |   26.7 KB |   27.1 KB |    3.8 KB |
+| AM1P or AM1P+S, LightSaber + X25519    |  206.8 KB |   65.9 KB |   34.3 KB |   27.6 KB |    4.1 KB |
+| AM1P+S, LightSaber + X25519, Ed25519   |  207.0 KB |   65.8 KB |   34.3 KB |   27.4 KB |    4.1 KB |
+| AM1S, LightSaber + X25519, Ed25519     |  195.6 KB |   61.3 KB |   30.1 KB |   27.5 KB |    3.8 KB |
+| AM1P+S, LightSaber, saberMaxRank=4     |  207.0 KB |   79.6 KB |   34.3 KB |   41.3 KB |    4.1 KB |
+| AM1P+S, LightSaber, AVX2               |  210.1 KB |   65.7 KB |   34.2 KB |   27.4 KB |    4.1 KB |
 +----------------------------------------+-----------+-----------+-----------+-----------+-----------+
 ```
 
@@ -568,24 +575,24 @@ Code per module, profile "AM1P+S, LightSaber + X25519, Ed25519":
 +------------------------------------------+-----------+
 | module                                   | code      |
 +------------------------------------------+-----------+
-| Bifrost AME handshake     (ame/level3)   |   39.5 KB |
+| Bifrost AME handshake     (ame/level3)   |   39.6 KB |
 | Bifrost AME session/frame (ame/level2)   |   31.4 KB |
 | Bifrost AME suites/keys   (ame/level1)   |   26.0 KB |
 | the probe itself                         |   19.5 KB |
-| Bifrost FOMKE ratchet     (fomke)        |   12.6 KB |
+| Bifrost FOMKE ratchet     (fomke)        |   12.4 KB |
 | Tyr Ed25519                              |   10.9 KB |
 | Tyr hashes (BLAKE3, SHA-3)               |    7.9 KB |
 | Tyr X25519                               |    6.7 KB |
-| C library / start-up                     |    4.5 KB |
+| C library / start-up                     |    4.6 KB |
 | Tyr Saber                                |    4.4 KB |
 | Tyr other (MACs, random, helpers)        |    4.1 KB |
-| Tyr ciphers (ChaCha20)                   |    2.8 KB |
 | Nim runtime (system)                     |    2.8 KB |
+| Tyr ciphers (ChaCha20)                   |    2.3 KB |
 | Nim runtime (std)                        |    0.9 KB |
 | Bifrost AME bytes         (ame/level0)   |    0.8 KB |
 | Bifrost other                            |    0.4 KB |
 +------------------------------------------+-----------+
-| total named code                         |  175.5 KB |
+| total named code                         |  174.8 KB |
 +------------------------------------------+-----------+
 ```
 <!-- lowmem:end -->
@@ -710,7 +717,7 @@ and an independent security review.
 - `sealed hello` := a client hello whose KEM public keys are sealed (pre-shared
   modes only).
 - `CS` := carried secret. 32 bytes a finished session hands to the NEXT
-  handshake with the same endpoint. `CS = GB3HKDF(NS, "next handshake")`, see
+  handshake with the same endpoint. `CS = XHKDF(NS, "next handshake")`, see
   [FOMKE](#fomke) for NS. Code names: `ameNextHandshakeSecret` returns it,
   `withAmeNextSecret` takes it, the hello flag is `usesNextSecret`.
 
@@ -849,7 +856,7 @@ In the pre-shared modes the KEM public keys of the client hello are never
 unencrypted. They are sealed under a key derived from the PSK and the salt:
 
 ```text
-key  = GB3HKDF( PSK ‖ CS if present,  salt,
+key  = XHKDF( PSK ‖ CS if present,  salt,
                 "AME-AM1P-HELLO-v1" + PSK name + every unencrypted hello field )
 seal = the session's own tier AEAD (encryption + one tag): every switched-on cipher, every
        switched-on MAC -- the same masks every later frame uses
@@ -1479,7 +1486,7 @@ call, and never on measured link conditions. A test checks it.
   Code name: `chainKey`.
 - `NS(n)` := next secret of epoch n, 32 bytes. Never used for a message.
 - `MK(i)` := message key of message i on one lane, 32 bytes.
-- `step` := one GB3HKDF call that turns LK(i) into LK(i+1) and MK(i).
+- `step` := one XHKDF call that turns LK(i) into LK(i+1) and MK(i).
 - `key block` := the bytes one MK expands into: nonce, one key per switched-on
   cipher slot, one key per switched-on MAC slot.
 - `held key` := an MK kept for a message that has not arrived yet, while later
@@ -1507,9 +1514,9 @@ Every other step below only explains one row of it.
 ```text
 value        size   created                      erased
 -----------  -----  ---------------------------  ---------------------------------------
-ISS          var.   KEM exchange                 right after the one GB3HKDF call
+ISS          var.   KEM exchange                 right after the one XHKDF call
              (initial shared secret)
-160-byte     160    that GB3HKDF call            right after LK1(0), LK2(0), NS(1) are
+160-byte     160    that XHKDF call            right after LK1(0), LK2(0), NS(1) are
 output                                           copied out of it (same call)
 LK1(i)       64     step i-1 of lane 1           at step i of lane 1 (LK1(i+1) replaces it)
 LK2(i)       64     step i-1 of lane 2           at step i of lane 2
@@ -1545,14 +1552,14 @@ MKs (message keys) of the skipped positions are kept.
 ### Step 1: one derivation, three pieces
 
 Every KEM secret of the handshake (the ISS, initial shared secret) goes
-through **one** GB3HKDF (Gimli BLAKE3 KDF) call, together with the epoch number, the KEM list,
+through **one** XHKDF call, together with the epoch number, the KEM list,
 the layout, the tier and the transcript. The 160 output bytes are cut into
 three pieces by position:
 
 ```text
 ISS + transcript + layout + tier + epoch
                  │
-              GB3HKDF  (one call, 160 bytes out)
+              XHKDF  (one call, 160 bytes out)
                  │
 ┌───────────────────┬────────────────────┬────────────────────┐
 │ LK1(0) bytes 0..63│ LK2(0) bytes 64..127│ NS(1) bytes 128..159│
@@ -1572,8 +1579,8 @@ but derived from one of them would be a hybrid in name only.
 NS (next secret) has exactly two jobs:
 
 ```text
-1. the next rotation:   NS(n) + new KEM secrets ──GB3HKDF──▶ LK1 | LK2 | NS(n+1)
-2. the next session:    CS = GB3HKDF(NS, "next handshake")
+1. the next rotation:   NS(n) + new KEM secrets ──XHKDF──▶ LK1 | LK2 | NS(n+1)
+2. the next session:    CS = XHKDF(NS, "next handshake")
                         ──▶ withAmeNextSecret(CS) on both endpoints
 ```
 
@@ -1584,18 +1591,18 @@ have.
 
 ### Step 2: the steps
 
-Each sent message moves the sender's lane one step. One GB3HKDF (Gimli BLAKE3
-KDF) call turns `LK(i)` into `LK(i+1)` and one 32-byte MK (message key) per
+Each sent message moves the sender's lane one step. One XHKDF
+call turns `LK(i)` into `LK(i+1)` and one 32-byte MK (message key) per
 direction; the sender keeps the
 MK of its own lane and erases the other:
 
 ```text
 lane 1 (initiator -> responder)          lane 2 (responder -> initiator)
 
-LK1(0) --GB3HKDF--> LK1(1) + MK1(0)      LK2(0) --GB3HKDF--> LK2(1) + MK2(0)
+LK1(0) --XHKDF---> LK1(1) + MK1(0)      LK2(0) --XHKDF---> LK2(1) + MK2(0)
    X erased            |                    X erased            |
                        v                                        v
-LK1(1) --GB3HKDF--> LK1(2) + MK1(1)      seal message 0 on lane 2
+LK1(1) --XHKDF---> LK1(2) + MK1(1)      seal message 0 on lane 2
    X erased            |
                        v
               seal message 1 on lane 1
@@ -1606,7 +1613,7 @@ index. No two positions in any lane produce the same bytes.
 
 ### Step 3: one key block per message
 
-The 32-byte MK (message key) expands, in one GB3HKDF call, into the key block:
+The 32-byte MK (message key) expands, in one XHKDF call, into the key block:
 
 ```text
 [ nonce ][ key, cipher slot 0 ][ key, cipher slot 1 ][ MAC keys... ]
@@ -1707,10 +1714,10 @@ request), so the window rarely needs to be wide.
 ### Step 7: rotation
 
 A rotation prepares candidate lanes for epoch `n+1` next to the live lanes of
-epoch `n`, again with ONE GB3HKDF call:
+epoch `n`, again with ONE XHKDF call:
 
 ```text
-NS(n) + new KEM secrets + the FKU1 commit ──GB3HKDF──▶
+NS(n) + new KEM secrets + the FKU1 commit ──XHKDF──▶
     [ LK1(0) | LK2(0) | NS(n+1) | confirmation key ]    of epoch n+1
        64       64       32        32 bytes
 ```
@@ -1831,10 +1838,38 @@ setAmeFomkePregeneration(connection, enabled = true, messageCount = 8)
 
 ### The building blocks
 
-`GB3HKDF` (Gimli BLAKE3 Hash Key Derivation Function) is Bifrost's own KDF. It
-is not RFC 5869 HKDF. Each round computes one Gimli sponge branch and one
-BLAKE3 branch over the same length-framed input and XORs them, so an attacker
-must break both constructions. It supports configurable rounds (default 3),
+`XHKDF` (XOR Hash Key Derivation Function) is Bifrost's own KDF. It is not
+RFC 5869 HKDF. Each round runs every chosen hash ("branch") over the same
+length-framed input and XORs the 32-byte answers, so an attacker must break
+every chosen branch:
+
+```text
+  state(r) --+--> BLAKE3   --+
+             +--> SHAKE256 --+--XOR--> state(r+1)
+             +--> Gimli    --+
+```
+
+The branches are a one-byte bit mask, taken from the layout's switched-on
+KDF slots, so both endpoints always pick the same ones:
+
+```text
++-----+-------+-----------+--------------------+--------------------------+
+| bit | value | branch    | KDF slot           | compiled when            |
++-----+-------+-----------+--------------------+--------------------------+
+|  0  | 0x01  | BLAKE3    | akfaBlake3         | always                   |
+|  1  | 0x02  | SHAKE256  | akfaSha3Shake256   | sha3 in bifrostSymmetric |
+|  2  | 0x04  | Gimli-XOF | akfaGimliXof       | gimli in bifrostSymmetric|
++-----+-------+-----------+--------------------+--------------------------+
+  Argon2id slots ask for no branch. No branch at all -> BLAKE3.
+```
+
+The default layout switches on BLAKE3 and GimliXof (mask `0x05`). That mask
+derives exactly the bytes the earlier GB3HKDF did, so its "GB3-..." labels
+stay. Any other mask is bound into the input, so two masks never share an
+output. A build with `-d:bifrostSymmetric=blake3,...` carries no Gimli code at
+all. Where several parts use Gimli (XHKDF, AM1P, frame tags), the binary still
+holds one Gimli: every part calls the same Tyr module, and Nim compiles a
+module once. It supports configurable rounds (default 3),
 indexed 32-byte output blocks, several ordered secret inputs, and an optional
 bounded memory-mixed mode for password hardening.
 
@@ -2001,7 +2036,7 @@ with 4 MB, and one third more work done.
 | path | purpose |
 |---|---|
 | `src/protocols/ame/` | **Who the other endpoint is, and how a frame is sealed.** Algorithms, epochs, handshake, framing, carriers |
-| `src/protocols/fomke/` | **One key per message.** GB3HKDF, the two lanes, the 13-byte envelope |
+| `src/protocols/fomke/` | **One key per message.** XHKDF, the two lanes, the 13-byte envelope |
 | `src/protocols/dac/` | **How bytes are cut, paced and repaired.** Chunks, parity, receipts, path lanes |
 | `src/protocols/relay/` | The VPS relay: address mapping, NAS keepalive, overflow buffer. Holds no key |
 | `src/protocols/chunkyaead/` | Chunked file encryption and tree hashing |
@@ -2139,7 +2174,7 @@ the same tag. It covers the ciphertext AND the AME header (the AAD), so an
 edited header fails the tag:
 
 ```text
-key block (ONE GB3HKDF call on MK(i)):
+key block (ONE XHKDF call on MK(i)):
 [ nonce | cipher key, slot 0 | cipher key, slot 1 | MAC key, slot 0 | MAC key, slot 1 ]
           └────────── cipher mask ──────────────┘   └────────── MAC mask ───────┘
 
@@ -2155,7 +2190,7 @@ Three places use fixed BLAKE3 on purpose, outside the masks: header
 protection (both endpoints must always agree, see below), the cookie (only
 the responder checks it), and the AM1P proofs and binder (the PSK is the
 post-quantum anchor, and BLAKE3 is in every build). MKs always come from
-GB3HKDF, never from the KDF mask.
+XHKDF, whose branches follow the KDF mask (see "The building blocks").
 
 ### TCP stream frame
 
@@ -2557,7 +2592,7 @@ being careful, not the code being wrong.
 
 ### Standing risks
 
-- **The primitives are self-made.** GB3HKDF and the XOR-combined multi-MAC tag
+- **The primitives are self-made.** XHKDF and the XOR-combined multi-MAC tag
   have no external analysis. The constructions around them are careful
   (domain separation, encrypt-then-MAC, transcript binding, constant-time
   comparison of secrets, all-or-nothing state updates, erased secrets), but

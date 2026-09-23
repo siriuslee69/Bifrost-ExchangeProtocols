@@ -57,7 +57,7 @@ import ../level1/symmetric
 import ../level1/tier_aead
 import ./handshake_authentication
 import ./handshake_records
-import ../../fomke/level0/gb3hkdf
+import ../../fomke/level0/xhkdf
 import runePragmas
 
 proc requireAmePsk(a: AmeAuthentication) {.role: parser, inline,
@@ -181,7 +181,7 @@ proc clientHelloSubject*(h: AmeClientHello): ByteSeq {.role: truthBuilder.} =
 ##
 ## In the pre-shared modes the KEM public keys are sealed before they leave:
 ##
-##   key   = GB3HKDF( psk ‖ next secret?,  salt = offerSalt,
+##   key   = XHKDF( psk ‖ next secret?,  salt = offerSalt,
 ##                    info = "AME-AM1P-HELLO-v1" + clear hello )
 ##           -> exactly one key block for the hello's own slot layout
 ##   seal  = tier AEAD (every switched-on cipher, every switched-on MAC)
@@ -212,8 +212,9 @@ proc helloOfferKey(a: AmeAuthentication, h: AmeClientHello,
   appendAmeLabel(info, "AME-AM1P-HELLO-v1")
   appendHandshakeString(info, a.pskId)
   appendHandshakeBytes(info, clear)
-  result = deriveGb3Hkdf(key, h.offerSalt, info,
-    ameTierKeyMaterialLen(h.layout, h.initialTier))
+  result = deriveXhkdf(key, h.offerSalt, info,
+    ameTierKeyMaterialLen(h.layout, h.initialTier),
+    initXhkdfConfig(branches = xhkdfBranchesOf(h.layout, h.initialTier)))
   secureClearAmeBytes(key)
   secureClearAmeBytes(info)
 
@@ -306,8 +307,9 @@ proc handshakeKeyMaterial*(L: AmeSuiteLayout, t: AmeMaskTier,
   appendHandshakeBytes(info, encodeAmeMaskTier(t))
   appendHandshakeBytes(info, transcript)
   appendAmeLabel(seed, "AME-HANDSHAKE-SECRETS-v1")
-  result = deriveGb3HkdfInputs(seed, S, info,
-    ameTierKeyMaterialLen(L, t), initGb3KdfConfig())
+  result = deriveXhkdfInputs(seed, S, info,
+    ameTierKeyMaterialLen(L, t), initXhkdfConfig(
+    branches = xhkdfBranchesOf(L, t)))
   secureClearAmeBytes(info)
   secureClearAmeBytes(seed)
 

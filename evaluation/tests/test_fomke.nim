@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## FOMKE Tests <- GB3HKDF, AEAD presets, ratchets, and AME upgrades
+## FOMKE Tests <- XHKDF, AEAD presets, ratchets, and AME upgrades
 ## -------------------------------------------------------------------------
 
 import std/[os, unittest]
@@ -19,7 +19,7 @@ import ../../src/protocols/ame/level2/protection
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level2/framing
 import ../../src/protocols/fomke/types
-import ../../src/protocols/fomke/level0/gb3hkdf
+import ../../src/protocols/fomke/level0/xhkdf
 import ../../src/protocols/fomke/level0/protocols
 import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
@@ -94,7 +94,7 @@ proc installSignaturePeers(A, B: var AmeSession) {.role: actor.} =
   B.auth.localSignatureSecretKeys = bKeys.secretKeys
   B.auth.peerSignaturePublicKeys = aKeys.publicKeys
 
-suite "GB3HKDF":
+suite "XHKDF":
   # {.testKind: tkUnit.}
   test "sequential derivation is deterministic and block selectable":
     var
@@ -104,14 +104,14 @@ suite "GB3HKDF":
       again: ByteSeq = @[]
       later: ByteSeq = @[]
       moreRounds: ByteSeq = @[]
-    base = deriveGb3Hkdf(input, @[byte 6], info, 96,
-      initGb3KdfConfig(rounds = 2'u32))
-    again = deriveGb3Hkdf(input, @[byte 6], info, 96,
-      initGb3KdfConfig(rounds = 2'u32))
-    later = deriveGb3Hkdf(input, @[byte 6], info, 96,
-      initGb3KdfConfig(rounds = 2'u32, blockIndex = 7'u64))
-    moreRounds = deriveGb3Hkdf(input, @[byte 6], info, 96,
-      initGb3KdfConfig(rounds = 3'u32))
+    base = deriveXhkdf(input, @[byte 6], info, 96,
+      initXhkdfConfig(rounds = 2'u32))
+    again = deriveXhkdf(input, @[byte 6], info, 96,
+      initXhkdfConfig(rounds = 2'u32))
+    later = deriveXhkdf(input, @[byte 6], info, 96,
+      initXhkdfConfig(rounds = 2'u32, blockIndex = 7'u64))
+    moreRounds = deriveXhkdf(input, @[byte 6], info, 96,
+      initXhkdfConfig(rounds = 3'u32))
     check base.len == 96
     check base == again
     check base != later
@@ -120,16 +120,16 @@ suite "GB3HKDF":
   # {.testKind: tkUnit.}
   test "memory-mixed mode is deterministic and distinct":
     var
-      config: Gb3KdfConfig
+      config: XhkdfConfig
       first: ByteSeq = @[]
       second: ByteSeq = @[]
       sequential: ByteSeq = @[]
-    config = initGb3KdfConfig(rounds = 2'u32, blockIndex = 3'u64,
-      mode = gb3MemoryMixed, memoryBlocks = 16'u32)
-    first = deriveGb3Hkdf(@[byte 4, 5, 6], @[], @[byte 7], 80, config)
-    second = deriveGb3Hkdf(@[byte 4, 5, 6], @[], @[byte 7], 80, config)
-    sequential = deriveGb3Hkdf(@[byte 4, 5, 6], @[], @[byte 7], 80,
-      initGb3KdfConfig(rounds = 2'u32, blockIndex = 3'u64))
+    config = initXhkdfConfig(rounds = 2'u32, blockIndex = 3'u64,
+      mode = xhMemoryMixed, memoryBlocks = 16'u32)
+    first = deriveXhkdf(@[byte 4, 5, 6], @[], @[byte 7], 80, config)
+    second = deriveXhkdf(@[byte 4, 5, 6], @[], @[byte 7], 80, config)
+    sequential = deriveXhkdf(@[byte 4, 5, 6], @[], @[byte 7], 80,
+      initXhkdfConfig(rounds = 2'u32, blockIndex = 3'u64))
     check first == second
     check first != sequential
 
@@ -140,16 +140,16 @@ suite "GB3HKDF":
       reversed: ByteSeq = @[]
       secrets: seq[ByteSeq] = @[@[byte 1, 2], @[byte 3, 4]]
       reverseSecrets: seq[ByteSeq] = @[@[byte 3, 4], @[byte 1, 2]]
-    first = deriveGb3HkdfInputs(@[byte 9, 9], secrets, @[byte 1], 64)
-    reversed = deriveGb3HkdfInputs(@[byte 9, 9], reverseSecrets,
+    first = deriveXhkdfInputs(@[byte 9, 9], secrets, @[byte 1], 64)
+    reversed = deriveXhkdfInputs(@[byte 9, 9], reverseSecrets,
       @[byte 1], 64)
     check first != reversed
     expect ValueError:
-      discard initGb3KdfConfig(rounds = 0'u32)
+      discard initXhkdfConfig(rounds = 0'u32)
     expect ValueError:
-      discard initGb3KdfConfig(mode = gb3MemoryMixed, memoryBlocks = 7'u32)
+      discard initXhkdfConfig(mode = xhMemoryMixed, memoryBlocks = 7'u32)
     expect ValueError:
-      discard deriveGb3Hkdf(@[byte 1], @[], @[], gb3MaxOutputBytes + 1)
+      discard deriveXhkdf(@[byte 1], @[], @[], xhkdfMaxOutputBytes + 1)
 
 suite "AEAD presets":
   ## TMEAEAD and GGAEAD used to be two hand-built constructions with their own
@@ -193,7 +193,7 @@ suite "AEAD presets":
     var
       L: AmeSuiteLayout = tmeAeadAmeLayout(fomkeKems)
       t: AmeMaskTier = presetAmeTier(L)
-      material: ByteSeq = deriveGb3Hkdf(@[byte 1, 2, 3, 4], @[], @[byte 5],
+      material: ByteSeq = deriveXhkdf(@[byte 1, 2, 3, 4], @[], @[byte 5],
         ameTierKeyMaterialLen(L, t))
       plaintext: ByteSeq = @[byte 4, 8, 15, 16, 23, 42]
       sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
@@ -221,7 +221,7 @@ suite "AEAD presets":
       narrow: AmeMaskTier
       material: ByteSeq = @[]
       i: int = 0
-    material = deriveGb3Hkdf(@[byte 9, 9, 9, 9], @[], @[byte 1],
+    material = deriveXhkdf(@[byte 9, 9, 9, 9], @[], @[byte 1],
       ameTierKeyMaterialLen(L, full))
     whole = ameTierCrypt(L, full, material, plaintext)
     ## Drop one cipher slot at a time. If the dropped one had contributed
@@ -232,7 +232,7 @@ suite "AEAD presets":
         full.masks.kem, full.masks.cipher and not slotMask(i),
         full.masks.mac, full.masks.hash, full.masks.signature,
         full.masks.kdf))
-      partial = ameTierCrypt(L, narrow, deriveGb3Hkdf(@[byte 9, 9, 9, 9],
+      partial = ameTierCrypt(L, narrow, deriveXhkdf(@[byte 9, 9, 9, 9],
         @[], @[byte 1], ameTierKeyMaterialLen(L, narrow)), plaintext)
       check partial != whole
       i = i + 1
@@ -247,10 +247,10 @@ suite "AEAD presets":
       sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq]
       opened: tuple[ok: bool, payload: ByteSeq]
     sealed = sealAmeTier(wide, wideTier,
-      deriveGb3Hkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
+      deriveXhkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
       ameTierKeyMaterialLen(wide, wideTier)), @[byte 5, 5, 5], @[], aatl32)
     opened = openAmeTier(compact, compactTier,
-      deriveGb3Hkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
+      deriveXhkdf(@[byte 7, 7, 7, 7], @[], @[byte 2],
       ameTierKeyMaterialLen(compact, compactTier)), sealed.ciphertext,
       sealed.authTag, @[], aatl32)
     check not opened.ok
@@ -260,7 +260,7 @@ suite "AEAD presets":
     var
       L: AmeSuiteLayout = ggAeadAmeLayout(fomkeKems)
       t: AmeMaskTier = presetAmeTier(L)
-      storageKey: ByteSeq = deriveGb3Hkdf(@[byte 3, 1, 4, 1], @[], @[], 32)
+      storageKey: ByteSeq = deriveXhkdf(@[byte 3, 1, 4, 1], @[], @[], 32)
       nonce: ByteSeq = randomAmeNonce(L, t)
       sealed: AmeProtectedMessage
       opened: tuple[ok: bool, payload: ByteSeq]

@@ -86,3 +86,23 @@ else:
   echo "config.nims: cannot find runePragmas. Run `git submodule update " &
     "--init` (one level, NOT --recursive), or clone Rune-Pragmas next to " &
     "this repository."
+
+## CPU vector code (SIMD) for Tyr and SIMD-Nexus: one flag, read by Tyr's own
+## `tyr_simd.nims`, so it means the same here as inside Tyr:
+##
+##   nim c -d:tyrSimd=avx2 app.nim      AVX2 code + its C flags
+##   nim c app.nim                      scalar (Bifrost's default: smallest,
+##                                      runs on every CPU)
+##
+## The table of accepted values sits at the top of that file. The same
+## sibling-first order as the Tyr path above applies.
+when not defined(bifrostPinnedTyr) and
+    fileExists(thisDir() & "/../Tyr-Crypto/tyr_simd.nims"):
+  include "../Tyr-Crypto/tyr_simd.nims"
+  applyTyrSimd("scalar")
+elif fileExists(thisDir() & "/submodules/Tyr-Crypto/tyr_simd.nims"):
+  include "submodules/Tyr-Crypto/tyr_simd.nims"
+  applyTyrSimd("scalar")
+else:
+  echo "config.nims: Tyr's tyr_simd.nims was not found; -d:tyrSimd is " &
+    "ignored. Update the Tyr-Crypto submodule."

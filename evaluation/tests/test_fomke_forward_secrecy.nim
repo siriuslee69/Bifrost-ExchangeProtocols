@@ -29,7 +29,7 @@ import ../../src/protocols/ame/level1/secret_stack
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/tier_aead
 import ../../src/protocols/fomke/types
-import ../../src/protocols/fomke/level0/gb3hkdf
+import ../../src/protocols/fomke/level0/xhkdf
 import ../../src/protocols/fomke/level1/chain
 import ../../src/protocols/fomke/level2/wire
 import runePragmas

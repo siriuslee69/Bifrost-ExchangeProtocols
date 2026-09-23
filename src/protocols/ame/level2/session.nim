@@ -35,7 +35,7 @@ import ../level1/padding
 import ../level1/header_protection
 import ./wire
 import ../../fomke/types
-import ../../fomke/level0/gb3hkdf
+import ../../fomke/level0/xhkdf
 import ../../fomke/level1/chain
 import ../../fomke/level2/wire
 import ../../config
@@ -809,7 +809,8 @@ proc initAmeSession*(a: AmeAuthPackage,
     result.auth.current.layout, result.auth.current.tier,
     fomkeRoleFor(result.auth.endpointRole),
     result.auth.current.transcriptSalt,
-    initGb3KdfConfig(), runtime.fomkeReorderCeiling,
+    initXhkdfConfig(branches = xhkdfBranchesOf(result.auth.current.layout,
+      result.auth.current.tier)), runtime.fomkeReorderCeiling,
     result.auth.current.params.authTagLen)
   refreshAmeHeaderKeys(result)
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)

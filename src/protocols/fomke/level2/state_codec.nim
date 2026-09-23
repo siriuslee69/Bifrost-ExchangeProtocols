@@ -8,14 +8,14 @@ import ../../ame/level0/bytes
 import ../../ame/level1/exchange_paths
 import ../../ame/level1/suites
 import ../types
-import ../level0/gb3hkdf
+import ../level0/xhkdf
 import ../level1/chain
 import ./wire
 import runePragmas
 
 const
   fomkeStateMagic = [uint8('F'), uint8('S'), uint8('R')]
-  fomkeStateVersion = 3'u8
+  fomkeStateVersion = 4'u8
     ## 3 added the next secret (NS) after the two lanes, and the candidate
     ## NS after the two candidate lanes.
 
@@ -83,7 +83,7 @@ proc decodeStateEnum[T: enum](v: uint8, what: string): T {.role: parser,
   ##
   ##   FomkeRole   0x01 frInitiator   0x02 frResponder    (0x00 invalid)
   ##   FomkeLane   0x01 flLane1       0x02 flLane2        (0x00 invalid)
-  ##   Gb3KdfMode  0x00 gb3Sequential 0x01 gb3MemoryMixed
+  ##   XhkdfMode  0x00 xhSequential 0x01 xhMemoryMixed
   ##
   ## Casting instead would quietly accept 0x00 as a role and a lane.
   for e in T:
@@ -101,10 +101,10 @@ proc decodeStateLane(v: uint8): FomkeLane {.role: parser,
   ## v: stable FOMKE lane identifier.
   result = decodeStateEnum[FomkeLane](v, "lane")
 
-proc decodeStateKdfMode(v: uint8): Gb3KdfMode {.role: parser,
+proc decodeStateKdfMode(v: uint8): XhkdfMode {.role: parser,
     tag: "fomke|parsing".} =
-  ## v: stable GB3HKDF mode identifier.
-  result = decodeStateEnum[Gb3KdfMode](v, "KDF mode")
+  ## v: stable XHKDF mode identifier.
+  result = decodeStateEnum[XhkdfMode](v, "KDF mode")
 
 proc decodeStateTagLen(v: uint8): AmeAuthTagLen {.role: parser,
     tag: "fomke|parsing".} =
@@ -188,6 +188,7 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
   appendAmeU32(result, S.kdf.rounds)
   appendAmeU64(result, S.kdf.blockIndex)
   appendAmeU32(result, S.kdf.memoryBlocks)
+  result.add(xhkdfBranchMask(S.kdf.branches))
   appendAmeU32(result, uint32(S.skipped.len))
   while i < S.skipped.len:
     appendStateSkipped(result, S.skipped[i])
@@ -241,8 +242,9 @@ proc decodeFomkeState*(A: openArray[uint8]): FomkeState {.role: parser,
   result.kdf.rounds = readStateU32(A, cursor)
   result.kdf.blockIndex = readStateU64(A, cursor)
   result.kdf.memoryBlocks = readStateU32(A, cursor)
-  discard initGb3KdfConfig(result.kdf.rounds, result.kdf.blockIndex,
-    result.kdf.mode, result.kdf.memoryBlocks)
+  result.kdf.branches = xhkdfBranchesFromMask(readStateU8(A, cursor))
+  discard initXhkdfConfig(result.kdf.rounds, result.kdf.blockIndex,
+    result.kdf.mode, result.kdf.memoryBlocks, result.kdf.branches)
   count = readStateU32(A, cursor)
   ## The cache is capped by the CEILING, not by the moving window -- see
   ## `acquireFomkeInboundKey`. A lane that narrowed its window while still

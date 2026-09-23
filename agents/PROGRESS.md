@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Tiny-device builds: -d:bifrostHandshakes, saberMaxRank pass-through, benchLowMem size table
+Commit Message: GB3HKDF -> XHKDF with a branch bit mask; -d:tyrSimd through the shared tyr_simd.nims
 
 Features (Planned):
 - Kyber has the same fixed-size buffers Saber had (Kyber768 row in the
@@ -68,7 +68,19 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
-- Key schedule reworked (FOMKE): no root key. ONE GB3HKDF call over every KEM
+- Tiny-device builds (2026-09-23). Measured with `nimble benchLowMem`
+  (table in README "Tiny devices"): AM1P+S with LightSaber + X25519 +
+  Ed25519 runs in about 66 KB RAM, AM1P with X25519 in 41 KB.
+  * `-d:bifrostHandshakes=am1a,am1s,am1p,am1ps` -- any list of AM1 modes.
+  * Tyr `-d:saberMaxRank=2|3|4`, honoured by `ameKemBuilt` and the defaults.
+  * Tyr `-d:tyrSimd=scalar|native|sse2|avx2|aesni|neon`, from the shared
+    `Tyr-Crypto/tyr_simd.nims` that config.nims includes. Bifrost default:
+    scalar. A bare `-d:avx2` now gets its C flag automatically.
+  * GB3HKDF -> XHKDF: branches (BLAKE3 / SHAKE256 / Gimli) are a one-byte
+    mask from the layout's active KDF slots. Default mask 0x05 derives the
+    old GB3HKDF bytes exactly (pinned in test_xhkdf). FOMKE checkpoint
+    format is now version 4 (adds the mask byte); version 3 is refused.
+- Key schedule reworked (FOMKE): no root key. ONE XHKDF call over every KEM
   secret (ISS) + transcript is cut into [LK1 64 | LK2 64 | NS 32]. The next
   secret (NS) is never used for a message; a rotation derives
   [LK1'|LK2'|NS'|confirm key] from NS + the fresh KEM secrets. The live lane
@@ -79,7 +91,7 @@ Features (Done):
   AM1P+S (`atmPreSharedPinned`, `initAmePskPinnedAuthentication`): shared
   secret AND pinned signature key, both required, rotations signed.
 - Pre-shared hello sealed: in AM1P / AM1P+S the KEM public keys travel
-  sealed under GB3HKDF(psk ‖ next secret?, 32-byte random salt, clear hello)
+  sealed under XHKDF(psk ‖ next secret?, 32-byte random salt, clear hello)
   with the session's own cipher and MAC masks. Handshake wire version 2
   (records AMC2/AMR2/AMS2/AMF2).
 - Next secret carried across sessions: `ameNextHandshakeSecret(session)` ->
@@ -223,6 +235,11 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last big change: tiny-device builds (above). Problem met: the request
+  "compile Gimli once although XHKDF, AM1P and the tags all use it" needed
+  no change -- Nim compiles each module once per program; verified with nm
+  (one copy of every Gimli routine). The real gap was XHKDF hard-wiring
+  Gimli regardless of -d:bifrostSymmetric; fixed by the branch mask.
 - Last big change: the key-schedule rework above (2026-09-23).
   Problem met: `nimble test` stops at `test_bfx2_geojson` because the SIBLING
   Tyr-Crypto checkout has uncommitted edits that do not compile

@@ -61,8 +61,7 @@ const
     "-d:bifrostDac=off"]
   lightSaber: seq[string] = @["-d:bifrostKems=saber,x25519",
     "-d:saberMaxRank=2"]
-  avx2Flags: seq[string] = @["-d:sse2", "-d:avx2",
-    "--passC:-msse4.1 -mavx2", "--passL:-mavx2"]
+  avx2Flags: seq[string] = @["-d:tyrSimd=avx2"]
   referenceProfile: int = 6
     ## Index of the profile whose modules are broken down (AM1P+S, LightSaber).
 
