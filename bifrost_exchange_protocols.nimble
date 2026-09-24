@@ -443,6 +443,13 @@ proc ensureAndroidJava() =
 proc runGradle(args: openArray[string]) =
   ## Execute the repo-local Gradle wrapper for Android client tasks.
   ensureAndroidJava()
+  ## An SDK unpacked into the repo (`.android-sdk/`, git-ignored) is used
+  ## when ANDROID_HOME names no SDK that exists, so a fresh shell builds
+  ## without setup.
+  if not dirExists(getEnv("ANDROID_HOME")) and
+      dirExists(joinPath(getCurrentDir(), ".android-sdk")):
+    putEnv("ANDROID_HOME", joinPath(getCurrentDir(), ".android-sdk"))
+    putEnv("ANDROID_SDK_ROOT", joinPath(getCurrentDir(), ".android-sdk"))
   let androidRoot = joinPath(getCurrentDir(), "src", "clients", "android")
   when defined(windows):
     runCommand("cmd", @["/c", joinPath(androidRoot, "gradlew.bat"),

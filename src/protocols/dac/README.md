@@ -620,7 +620,7 @@ PackageCommit is the receiver's final package receipt.
 | types.nim                   | shared enums, defaults, message schemas       |
 | build.nim                   | is the adaptive layer in this build at all    |
 | level0/transport.nim        | DAC address and socket helpers                |
-| level0/wire_helpers.nim     | little-endian readers/writers and kind names  |
+| level0/wire_helpers.nim     | message-kind ids and names (LE helpers: body_codec) |
 | level0/body_codec.nim       | shared body codec helpers                     |
 | level0/defaults.nim         | the path profile table, as data               |
 | level0/path_stats.nim       | the receiver's path report, on the wire       |

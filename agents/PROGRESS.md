@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Production pass: std recv/send traps fixed (TLS socket driver, async relay), every public routine tested, dead helpers removed, licences and deps declared
+Commit Message: Duplicate DAC LE helpers removed; buildAndroid finds the repo SDK; nesting, layout and coverage passes done
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -8,7 +8,8 @@ Features (Planned):
   Tls13ControlledResult.clientState/serverState/err). Each is a result for
   the caller and is read only inside `test "..."` blocks, which Otter does
   not see as routines. Not dead; left as they are.
-- PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
+- PUSH Nimble-Tasks and Tyr-Crypto (tested; blocked on permission), then
+  `nimble updateSubmodules`. Until
   the pins move, a fresh clone (and the nix build, which uses submodules/)
   lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the
   .nimble file stops with "preset.nims not found". Sibling checkouts work.
@@ -303,7 +304,18 @@ Notes:
   How: new tests first (test_tls13_socket_server, test_socket_read,
   test_ame_dac_client, async relay, sweepDacRepair, ameDacSendDelayMs,
   server key update); each failed, then the fix. Worked: 647 tests pass.
-- Still unchecked for release: `nimble buildAndroid` (needs the SDK).
+- 2026-09-25, second pass: nesting 84 -> 0; routines moved beside their
+  first caller (apart 69 -> 43, the rest are shared helpers); chain.nim split
+  (chain_send.nim); duplicate LE helpers in dac/level0/wire_helpers.nim
+  removed (body_codec.nim has them). Untested library routines 124 -> 47 after
+  Otter learned the walk; the 47 are compile-time preset code, implicit calls
+  (converters, operators, hash), a second overload (Otter assumes the
+  first), or -d:ssl only (`nimble testTls` passes). buildAndroid and
+  androidTest pass: runGradle now uses `.android-sdk/` when ANDROID_HOME
+  names no SDK that exists.
+- BLOCKED on a push (needs the owner): Nimble-Tasks is 1 and Tyr-Crypto 6
+  commits ahead of origin; until they reach main and the submodule pins
+  move, a fresh clone lacks preset.nims / tyr_simd.nims.
 - Last big change: tiny-device builds (above). Problem met: the request
   "compile Gimli once although XHKDF, AM1P and the tags all use it" needed
   no change -- Nim compiles each module once per program; verified with nm

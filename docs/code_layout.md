@@ -54,7 +54,7 @@ src/protocols
 │                    assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim
-│   ├── level0/  <- transport, little-endian wire helpers, body codecs, and
+│   ├── level0/  <- transport, message-kind ids, body codecs (with the LE helpers), and
 │   │                the path-profile table
 │   ├── level1/  <- DAC message bodies, the self-inferred ACK/repair pacing,
 │   │                what the receiver measures (path_meter), and what it does
