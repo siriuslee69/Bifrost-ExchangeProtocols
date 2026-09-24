@@ -999,27 +999,34 @@ restore from backup.
 #### Proving an in-session request
 
 Every request after the handshake (one more KEM exchange, a change of
-algorithms) is an offer and a reply, and each is proved by the endpoint that
-sent it. The request itself names how, in its proof byte:
+algorithms) is an offer and a reply. The request names in its proof byte
+how both are proved:
 
 ```text
 proof byte  name            what proves it                          modes
 ----------  --------------  --------------------------------------  -----------
-0           session (AM1P)  one 32-byte tag under a key derived     all
-            DEFAULT         from the CURRENT epoch's secrets
-1           signatures      one signature per switched-on           AM1A, AM1S,
-                            signature slot                          AM1P+S
+0           frame           the frame tag alone; the offer and      all
+            DEFAULT         reply carry no proof bytes
+1           signatures      the frame tag, plus one signature per   AM1A, AM1S,
+                            switched-on signature slot              AM1P+S
 ```
 
-The session tag is the default because the two ends already share a secret:
-only they hold the current epoch, so only they can make the tag, and it costs
-one hash instead of a (post-quantum) signature. The key changes with every
-epoch, so an old tag never proves a new request.
+Def. (frame tag): the keyed hash at the end of every sealed frame. Its key
+comes from that message's ratchet step, which only the two ends can make.
+Offers and replies only ever travel inside such frames:
 
 ```text
-current epoch secrets --[ "AME-EXCHANGE-PROOF-v1" ]--> proof key
-proof key + offer bytes                              --> 32-byte tag
+┌──────────────── control frame (ratchet-sealed) ─────────────────┐
+│ index | encrypted: [ offer | signatures: none ] | frame tag     │
+└─────────────────────────────────────────────────────────────────┘
+                                                      ▲
+                             a frame that opens was sent by the other end
 ```
+
+A second keyed hash inside the offer would prove the same thing a second
+time, so there is none. An offer with proof byte 0 that still carries proof
+bytes is refused. Signatures add something the frame tag cannot: proof tied
+to a long-term identity key rather than the shared session secret.
 
 Signatures are used when a request asks for them
 (`ameAddExchangeRequest(S, [..], signed = true)`) or when
@@ -1288,7 +1295,7 @@ frame = beginAmeTcpExchangeFrame(S, ameChangeRequest(S, t))
 # one more LightSaber exchange: new key material, nothing else changes
 frame = beginAmeTcpExchangeFrame(S, ameAddExchangeRequest(S, [akaLightSaber]))
 
-# the same, proved with signatures instead of the session tag
+# the same, also proved with signatures
 frame = beginAmeTcpExchangeFrame(S,
   ameAddExchangeRequest(S, [akaLightSaber], signed = true))
 

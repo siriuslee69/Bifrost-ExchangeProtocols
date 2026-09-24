@@ -547,8 +547,8 @@ suite "AME mask-tier sessions":
     check client.pendingExchange.active
 
   # {.testKind: tkEdgeCase, covers: "exchangeSubjectProved".}
-  test "a tampered session tag is rejected before candidate mutation":
-    ## The default proof: one tag under a key from the current epoch.
+  test "a frame-proved offer carrying a proof is rejected before candidate mutation":
+    ## The default proof is the frame tag: the offer itself carries nothing.
     var
       client: AmeSession = exactUpgradeSession(aerInitiator)
       server: AmeSession = exactUpgradeSession(aerResponder)
@@ -558,9 +558,8 @@ suite "AME mask-tier sessions":
         target, 0b01000000'u8)
       offer: AmeExchangeOffer = default(AmeExchangeOffer)
     offer = beginAmeSessionExchange(client, request)
-    check offer.signatures.len == 1
-    check offer.signatures[0].len == 32
-    offer.signatures[0][0] = offer.signatures[0][0] xor 1'u8
+    check offer.signatures.len == 0
+    offer.signatures = @[newSeq[byte](32)]
     expect ValueError:
       discard answerAmeSessionExchange(server, offer)
     check not server.pendingIncoming.active

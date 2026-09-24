@@ -136,7 +136,7 @@ proc exchangeIds*(A: AmeKemAlgorithms, m: uint8): seq[AmeKemAlgorithm] {.
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
     exchangeMask: uint8,
     params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32),
-    proof: AmeExchangeProof = aepSession):
+    proof: AmeExchangeProof = aepFrame):
     AmeExchangeRequest {.role: configurator.} =
   ## A/targetTier: immutable KEM layout and complete next-epoch selection.
   ## exchangeMask: target KEM slots receiving fresh secrets; zero is permitted.
@@ -288,7 +288,7 @@ proc canonicalExchangeMask*(A: AmeKemAlgorithms, target, current,
 proc exchangeProofFromId(id: uint8): AmeExchangeProof {.role: parser.} =
   ## id: the proof byte of a request.
   case id
-  of 0'u8: result = aepSession
+  of 0'u8: result = aepFrame
   of 1'u8: result = aepSignatures
   else:
     raise newException(ValueError, "AME exchange proof kind is not 0 or 1")

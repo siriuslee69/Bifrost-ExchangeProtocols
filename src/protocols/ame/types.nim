@@ -225,17 +225,18 @@ type
 
   ## How the two ends prove an in-session exchange request and its reply.
   ##
-  ##   aepSession     a tag under a key derived from the CURRENT epoch's
-  ##                  secrets (the AM1P way). Works in every mode, costs one
-  ##                  hash, and is the default: a session that already shares
-  ##                  a secret has no need to sign with it.
+  ##   aepFrame       nothing extra (DEFAULT). The frame carrying the request
+  ##                  is sealed and tagged by the session ratchet; only the
+  ##                  two ends hold its keys, so that tag already proves who
+  ##                  sent it. The `signatures` field stays empty.
   ##   aepSignatures  one signature per switched-on signature slot (the AM1S
-  ##                  way). Only for sessions that hold signature keys.
+  ##                  way): proof tied to a long-term identity key. Only for
+  ##                  sessions that hold signature keys.
   ##
   ## Either way the frame carrying it is sealed by the session's ratchet, so
   ## the public keys and ciphertexts inside are never readable on the wire.
   AmeExchangeProof* = enum
-    aepSession = 0'u8,
+    aepFrame = 0'u8,
     aepSignatures = 1'u8
 
   AmeExchangeRequest* {.role: truthState.} = object

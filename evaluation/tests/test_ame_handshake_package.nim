@@ -760,10 +760,10 @@ suite "AME handshake transport":
       peerTrust = clientDone.peerTrust)
     b = initAmeSession(serverDone.auth, handshakePath(layout, tier), 74'u64,
       peerTrust = serverDone.peerTrust)
-    ## An offer and a reply that carry MAC proofs instead of signatures.
+    ## An offer and a reply proved by the frame tag: no proof bytes at all.
     offer = beginAmeSessionExchange(a, initAmeExchangeRequest(layout.kems,
       tier, tier.masks.kem))
-    check offer.signatures.len == 1
+    check offer.signatures.len == 0
     reply = answerAmeSessionExchange(b, offer)
     stageAmeSessionFomkeUpgrade(b)
     finishAmeSessionExchange(a, reply)
@@ -778,10 +778,10 @@ suite "AME handshake transport":
     opened = openAmeTcpFrame(b, frame)
     check opened.ok
     check opened.packet.payload == @[byte 5, 6, 7]
-    ## A tampered proof is refused rather than ignored.
+    ## Proof bytes the frame-proved offer should not carry are refused.
     offer = beginAmeSessionExchange(a, initAmeExchangeRequest(layout.kems,
       tier, tier.masks.kem))
-    offer.signatures[0][0] = offer.signatures[0][0] xor 0xFF'u8
+    offer.signatures = @[newSeq[byte](32)]
     expect ValueError:
       discard answerAmeSessionExchange(b, offer)
   # {.testKind: tkRegression.}

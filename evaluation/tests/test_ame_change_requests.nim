@@ -239,7 +239,7 @@ suite "AME exchange requests: ids on the wire":
     check bytes[10] == 2'u8
     check bytes[11] == 0x01'u8
     check bytes[12] == 0x01'u8
-    check bytes[13] == uint8(ord(aepSession))
+    check bytes[13] == uint8(ord(aepFrame))
 
   # {.testKind: tkEdgeCase, covers: "exchangeMaskFromIds".}
   test "an id feeds the instance being switched on before one already on":
@@ -269,12 +269,12 @@ suite "AME exchange requests: ids on the wire":
         p.a.auth.current.tier.masks.kem, bytes)
 
 suite "AME exchange requests: proof":
-  # {.testKind: tkIntegration, covers: "proveExchangeSubject|exchangeProofKey".}
-  test "by default a request is proved with the session tag":
+  # {.testKind: tkIntegration, covers: "proveExchangeSubject".}
+  test "by default a request is proved by the frame tag alone":
     var
       p: tuple[a, b: AmeSession] = pairSessions()
       r: AmeExchangeRequest = ameAddExchangeRequest(p.a, [akaFireSaber])
-    check r.proof == aepSession
+    check r.proof == aepFrame
     switchVia(p.a, p.b, r)
     check p.b.auth.current.epochId == 2'u32
     check talks(p.a, p.b)

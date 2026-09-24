@@ -1,14 +1,11 @@
 # Progress
 
-Commit Message: A failed write never rewinds the ratchet; own socket write loop replaces std send
+Commit Message: Drop the session-tag proof: in-session requests are proved by the frame tag, signatures optional
 
 Features (Planned):
 - async stream path (async_stream_ops.nim, asyncnet `send`) still uses the
   std send: with SafeDisconn a broken connection is swallowed silently.
   Route it through a write that raises, like writeAllSocket.
-- DECIDE: the session-tag proof of in-session requests mostly repeats the
-  FOMKE frame tag (both prove "holds the current epoch"). Keep, or drop it
-  and let the frame tag be the proof. Asked the user.
 - PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
   the pins move, a fresh clone (and the nix build, which uses submodules/)
   lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the

@@ -92,11 +92,11 @@ proc ameChangeRequest*(S: AmeSession, target: AmeMaskTier,
   ## S/target: a request to switch to `target`.
   ## exchanges: KEMs (already on) that run one more exchange as well; every
   ## KEM `target` newly switches on runs one anyway.
-  ## signed: prove with signatures instead of the session tag.
+  ## signed: prove with signatures as well as the frame tag.
   var
     L: AmeSuiteLayout = S.auth.current.layout
     fresh: uint8 = target.masks.kem and not S.auth.current.tier.masks.kem
-    proof: AmeExchangeProof = aepSession
+    proof: AmeExchangeProof = aepFrame
   if exchanges.len > 0:
     fresh = fresh or ameSelectionMask(L.kems, exchanges)
   if signed:
@@ -110,7 +110,7 @@ proc ameAddExchangeRequest*(S: AmeSession,
     AmeExchangeRequest {.role: configurator, tag: "appApi".} =
   ## S/exchanges: one more exchange for each named KEM -- new key material
   ## for the session, nothing else changes.
-  ## signed: prove with signatures instead of the session tag.
+  ## signed: prove with signatures as well as the frame tag.
   ##
   ##   ameAddExchangeRequest(S, [akaLightSaber])          one KEM
   ##   ameAddExchangeRequest(S, [akaX25519, akaX25519])   both X25519 instances

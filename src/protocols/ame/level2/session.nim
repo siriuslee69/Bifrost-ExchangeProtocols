@@ -242,33 +242,25 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
 ## ╭⟢ proving an in-session exchange
 ##
 ## Every exchange request after the handshake (more key material, a change
-## of algorithms) is an offer and a reply, and each is proved by the side
-## that sent it. The REQUEST says how (`AmeExchangeProof`):
+## of algorithms) is an offer and a reply. The REQUEST says how each is
+## proved (`AmeExchangeProof`):
 ##
-##   aepSession (default)  one tag under a key derived from the CURRENT
-##                         epoch's secrets -- the AM1P way. Every mode can
-##                         do it; it costs one hash instead of a signature.
-##   aepSignatures         one signature per switched-on signature slot --
-##                         the AM1S way. Needs signature keys, so never AM1P.
+##   aepFrame (default)  nothing extra. Offers and replies only travel as
+##                       control frames, sealed and tagged by the session
+##                       ratchet. Only the two ends hold those keys, so a
+##                       frame that opens was sent by the other end.
+##   aepSignatures       one signature per switched-on signature slot --
+##                       the AM1S way, tied to a long-term identity key.
+##                       Needs signature keys, so never AM1P.
 ##
-## Why the session tag is enough: only the two ends hold the current
-## epoch's secrets, so only they can make it. It is the same thing the
-## handshake proved, carried forward. And the whole request rides inside a
-## frame the ratchet already encrypts, so the public keys and ciphertexts
-## are never readable on the wire in either case.
+##   ┌──────────── control frame (ratchet-sealed) ────────────┐
+##   │ index | encrypted offer, `signatures` empty | frame tag│
+##   └────────────────────────────────────────────────────────┘
+##                                                     ▲ the proof
 ##
-##   current epoch secrets --[ label "AME-EXCHANGE-PROOF-v1" ]--> proof key
-##   proof key + offer bytes  --> 32-byte tag  (in the `signatures` field)
-##
-## The key changes with every epoch, so a tag from an old epoch never
-## proves a new request.
-
-proc exchangeProofKey(S: AmeSession): ByteSeq {.role: truthBuilder,
-    tag: "cryptoBoundary|kdf".} =
-  ## S: session whose current epoch the proof key is derived from.
-  result = deriveAmeLayerKey(S.auth.current.exchange, S.auth.current.layout,
-    S.auth.current.tier, "AME-EXCHANGE-PROOF-v1", 32,
-    S.auth.current.transcriptSalt)
+## The session-level procs below take an offer or reply that has ALREADY
+## been opened from such a frame (framing.nim). Handed one from anywhere
+## else, an aepFrame offer is proved by nothing.
 
 proc exchangeProofError*(S: AmeSession, p: AmeExchangeProof): string {.
     role: parser.} =
@@ -278,19 +270,13 @@ proc exchangeProofError*(S: AmeSession, p: AmeExchangeProof): string {.
     result = "AME signed exchange needs signature keys on both sides " &
       "(this session has none)"
 
-proc sessionTag(S: AmeSession, subject: openArray[uint8]): ByteSeq {.
-    role: truthBuilder, tag: "cryptoBoundary".} =
-  ## S/subject: the session-proof tag over one offer or reply.
-  var key: ByteSeq = exchangeProofKey(S)
-  result = ameMacTag(amaBlake3, key, subject, 32)
-  secureClearAmeBytes(key)
-
 proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
     p: AmeExchangeProof, subject: openArray[uint8]): seq[ByteSeq] {.
     role: truthBuilder, tag: "cryptoBoundary|exchange".} =
-  ## S/t/p/subject: this endpoint's proof of kind `p` over one offer or reply.
-  if p == aepSession:
-    return @[sessionTag(S, subject)]
+  ## S/t/p/subject: this endpoint's proof of kind `p` over one offer or
+  ## reply; empty for aepFrame (the frame tag proves it).
+  if p == aepFrame:
+    return @[]
   result = signAmeTier(S.auth.current.layout, t, subject,
     activeAmeSignatureKeys(S.auth.current.layout, t,
       S.auth.localSignatureSecretKeys))
@@ -300,16 +286,12 @@ proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
     P: openArray[ByteSeq]): bool {.role: parser,
     tag: "cryptoBoundary|exchange|validation".} =
   ## S/t/p/subject/P: the peer's proof of kind `p` over one offer or reply.
-  var expected: ByteSeq = @[]
-  if p == aepSignatures:
-    return verifyAmeTier(S.auth.current.layout, t, subject,
-      activeAmeSignatureKeys(S.auth.current.layout, t,
-        S.auth.peerSignaturePublicKeys), P)
-  if P.len != 1:
-    return
-  expected = sessionTag(S, subject)
-  result = constantTimeEqualAme(expected, P[0])
-  secureClearAmeBytes(expected)
+  ## aepFrame carries none: anything in P is refused.
+  if p == aepFrame:
+    return P.len == 0
+  result = verifyAmeTier(S.auth.current.layout, t, subject,
+    activeAmeSignatureKeys(S.auth.current.layout, t,
+      S.auth.peerSignaturePublicKeys), P)
 
 proc outboundAmeDirection*(r: AmeEndpointRole): AmeTrafficDirection {.
     role: parser.} =
@@ -521,7 +503,7 @@ proc ameRequestPolicyError*(S: AmeSession, r: AmeExchangeRequest): string {.
   if result.len > 0:
     return
   result = exchangeProofError(S, r.proof)
-  if result.len == 0 and r.proof == aepSession and
+  if result.len == 0 and r.proof == aepFrame and
       currentBifrostConfig().ameSignedExchanges:
     result = "AME this side accepts only signed exchange requests " &
       "(ameSignedExchanges)"
