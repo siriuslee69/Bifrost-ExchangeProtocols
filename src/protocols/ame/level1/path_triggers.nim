@@ -30,23 +30,27 @@ proc validateAmeTierIndex(S: AmeTierPath, i: int) {.role: parser.} =
   if i < 0 or i >= int(S.tierCount):
     raise newException(ValueError, "AME trigger tier is outside the tier path")
 
+proc requireNewTierId(T: openArray[AmeMaskTier], i: int) {.role: parser.} =
+  ## T/i: refuses tier `i` when an earlier tier already uses its id.
+  var
+    j: int = 0
+  while j < i:
+    if T[j].tierId == T[i].tierId:
+      raise newException(ValueError, "AME tier path contains duplicate ids")
+    j = j + 1
+
 proc initAmeTierPath*(L: AmeSuiteLayout,
     T: openArray[AmeMaskTier]): AmeTierPath {.role: configurator.} =
   ## L/T: immutable algorithm layout and ordered stable mask tiers.
   var
     i: int = 0
-    j: int = 0
   if T.len == 0 or T.len > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME tier path must contain 1..8 tiers")
   result.layout = L
   result.tierCount = uint8(T.len)
   while i < T.len:
     validateAmeTier(L, T[i])
-    j = 0
-    while j < i:
-      if T[j].tierId == T[i].tierId:
-        raise newException(ValueError, "AME tier path contains duplicate ids")
-      j = j + 1
+    requireNewTierId(T, i)
     result.tiers[i] = T[i]
     result.triggers[i].kind = if i == 0: aptElapsedMs else: aptTransferredMiB
     result.triggers[i].threshold = if i == 0: 0'u64 else:

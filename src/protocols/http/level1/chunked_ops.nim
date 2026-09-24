@@ -100,9 +100,7 @@ proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
     of ' ', '\t':
       ## Trailing spaces before the extension separator are tolerated, but a
       ## digit may never follow them -- otherwise "1 2" would read as 0x12.
-      if not onlyBlanksLeft(l, i, stop):
-        return (false, 0'i64)
-      break
+      return (seen > 0 and onlyBlanksLeft(l, i, stop), v)
     else:
       return (false, 0'i64)
     if seen > 15:
@@ -113,6 +111,11 @@ proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
   if seen == 0:
     return (false, 0'i64)
   result = (true, v)
+
+proc dropOneCr(s: var string) {.inline, role: sanitizer, tag: "protocol".} =
+  ## s: a line; ONE `\r` at its end goes, as `\r\n` ends a line.
+  if s.len > 0 and s[^1] == '\r':
+    s.setLen(s.len - 1)
 
 proc takeLine(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
     maxLen: int): tuple[have: bool, bad: bool] {.role: parser,
@@ -128,8 +131,7 @@ proc takeLine(D: var ChunkedDecoder; A: openArray[byte]; i: var int;
     c = A[i]
     i = i + 1
     if c == byte('\n'):
-      if D.line.len > 0 and D.line[^1] == '\r':
-        D.line.setLen(D.line.len - 1)
+      dropOneCr(D.line)
       return (true, false)
     D.line.add(char(c))
     if D.line.len > maxLen:

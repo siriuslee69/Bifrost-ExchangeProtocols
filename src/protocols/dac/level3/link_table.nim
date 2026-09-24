@@ -273,15 +273,16 @@ proc tickDacLinkTable*(T: var DacLinkTable, nowMs: uint32): seq[DacLinkRoute] {.
   ## one pass and no allocation beyond the empty result.
   var
     i: int = 0
-    r: DacLinkRoute
+    r: DacLinkRoute = default(DacLinkRoute)
   while i < T.slots.len:
-    if T.slots[i].used:
-      r.admit = dlaExisting
-      r.slot = i
-      r.step = tickDacLink(T.slots[i].link, nowMs)
-      if r.step.kind != dlkNone or r.step.messages.len > 0:
-        T.slots[i].lastSeenMs = nowMs
-        result.add(r)
+    if not T.slots[i].used:
+      i = i + 1
+      continue
+    r = DacLinkRoute(admit: dlaExisting, slot: i,
+      step: tickDacLink(T.slots[i].link, nowMs))
+    if r.step.kind != dlkNone or r.step.messages.len > 0:
+      T.slots[i].lastSeenMs = nowMs
+      result.add(r)
     i = i + 1
 
 proc closeDacLink*(T: var DacLinkTable, k: DacLinkKey): bool {.

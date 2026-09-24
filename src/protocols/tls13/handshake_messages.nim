@@ -64,12 +64,30 @@ proc encodeTls13EncryptedExtensions*(alpn: string = ""): ByteSeq {.
   result = encodeTls13Handshake(Tls13Handshake(
     messageType: thtEncryptedExtensions, body: body))
 
+proc decodeAlpnSelection(A: openArray[byte], o, n: int,
+    seen: bool): tuple[alpn, err: string] {.role: parser,
+    tag: "tls|read|validation".} =
+  ## A/o/n/seen: the ALPN extension whose body starts at `o + 4` and is `n`
+  ## bytes: `list length u16 | name length u8 | name`, exactly one name.
+  var
+    listLen: int = 0
+    nameLen: int = 0
+  if seen or not readU16(A, o + 4, listLen) or listLen != n - 2 or listLen < 2:
+    return ("", "TLS ALPN selection is invalid or duplicated")
+  nameLen = int(A[o + 6])
+  if nameLen != listLen - 1:
+    return ("", "TLS ALPN selected name length is invalid")
+  result.alpn = newString(nameLen)
+  for i in 0 ..< nameLen:
+    result.alpn[i] = char(A[o + 7 + i])
+
 proc decodeTls13EncryptedExtensions*(A: openArray[byte]): tuple[
     ok: bool, alpn, err: string] {.role: parser,
     tag: "tls|read|validation".} =
   ## A: EncryptedExtensions body without handshake header.
   var
-    total, kind, n, listLen, nameLen, o: int = 0
+    total, kind, n, o: int = 0
+    alpn: tuple[alpn, err: string] = ("", "")
   if not readU16(A, 0, total) or total != A.len - 2:
     result.err = "TLS EncryptedExtensions length is invalid"
     return
@@ -80,17 +98,11 @@ proc decodeTls13EncryptedExtensions*(A: openArray[byte]): tuple[
       result.err = "TLS encrypted extension is incomplete"
       return
     if kind == 16:
-      if result.alpn.len > 0 or not readU16(A, o + 4, listLen) or
-          listLen != n - 2 or listLen < 2:
-        result.err = "TLS ALPN selection is invalid or duplicated"
-        return
-      nameLen = int(A[o + 6])
-      if nameLen != listLen - 1:
-        result.err = "TLS ALPN selected name length is invalid"
-        return
-      result.alpn = newString(nameLen)
-      for i in 0 ..< nameLen:
-        result.alpn[i] = char(A[o + 7 + i])
+      alpn = decodeAlpnSelection(A, o, n, result.alpn.len > 0)
+      result.err = alpn.err
+      result.alpn = alpn.alpn
+    if result.err.len > 0:
+      return
     o = o + 4 + n
   result.ok = true
 

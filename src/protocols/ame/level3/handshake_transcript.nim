@@ -313,6 +313,16 @@ proc handshakeKeyMaterial*(L: AmeSuiteLayout, t: AmeMaskTier,
   secureClearAmeBytes(info)
   secureClearAmeBytes(seed)
 
+proc secretRow(A: AmeKemAlgorithms, i: int, S: openArray[ByteSeq],
+    used: int): ByteSeq {.role: truthBuilder, tag: "cryptoBoundary".} =
+  ## A/i/S/used: `slot | algorithm | secret` for slot `i`, whose secret is
+  ## `S[used]`; a missing or empty one is refused.
+  if used >= S.len or S[used].len == 0:
+    raise newException(ValueError, "AME handshake is missing a KEM secret")
+  result.add(uint8(i))
+  result.add(uint8(ord(A.algorithms[i])))
+  appendHandshakeBytes(result, S[used])
+
 proc secretRows*(A: AmeKemAlgorithms, mask: uint8,
     S: openArray[ByteSeq]): seq[ByteSeq] {.role: truthBuilder,
     tag: "cryptoBoundary".} =
@@ -321,16 +331,9 @@ proc secretRows*(A: AmeKemAlgorithms, mask: uint8,
   var
     i: int = 0
     used: int = 0
-    row: ByteSeq = @[]
   while i < int(A.length):
     if algorithmSlotSelected(mask, i):
-      if used >= S.len or S[used].len == 0:
-        raise newException(ValueError, "AME handshake is missing a KEM secret")
-      row = @[]
-      row.add(uint8(i))
-      row.add(uint8(ord(A.algorithms[i])))
-      appendHandshakeBytes(row, S[used])
-      result.add(row)
+      result.add(secretRow(A, i, S, used))
       used = used + 1
     i = i + 1
   if used != S.len:

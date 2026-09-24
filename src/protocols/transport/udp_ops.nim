@@ -46,14 +46,23 @@ proc addResolvedUdpTarget(order: var seq[ResolvedUdpTarget], host: string,
     i = i + 1
   order.add(ResolvedUdpTarget(host: host, domain: d))
 
+proc collectUdpTargets(R: var seq[ResolvedUdpTarget], aiList: ptr AddrInfo) {.
+    role: truthBuilder.} =
+  ## R/aiList: every address the resolver returned, in a family we know.
+  var
+    it: ptr AddrInfo = aiList
+    known: Option[Domain] = none(Domain)
+  while it != nil:
+    known = toKnownDomain(it.ai_family)
+    if known.isSome and known.get() != AF_UNSPEC:
+      addResolvedUdpTarget(R, normalizeUdpHost(getAddrString(it.ai_addr)), known.get())
+    it = it.ai_next
+
 proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
   ## h: UDP host literal or hostname whose concrete targets should be tried.
   var
     clean: string
     aiList: ptr AddrInfo = nil
-    it: ptr AddrInfo = nil
-    known: Option[Domain]
-    literal: string = ""
   clean = normalizeUdpHost(h)
   if clean.contains(':'):
     result.add(ResolvedUdpTarget(host: clean, domain: AF_INET6))
@@ -64,13 +73,7 @@ proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
     return
   try:
     aiList = getAddrInfo(clean, Port(0), AF_UNSPEC, SOCK_DGRAM, IPPROTO_UDP)
-    it = aiList
-    while it != nil:
-      known = toKnownDomain(it.ai_family)
-      if known.isSome and known.get() != AF_UNSPEC:
-        literal = getAddrString(it.ai_addr)
-        addResolvedUdpTarget(result, normalizeUdpHost(literal), known.get())
-      it = it.ai_next
+    collectUdpTargets(result, aiList)
   except CatchableError:
     discard
   finally:
@@ -234,10 +237,7 @@ proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestra
       return sock
     except CatchableError as e:
       lastErr = e.msg
-      try:
-        sock.close()
-      except CatchableError:
-        discard
+      closeSocketQuietly(sock)
   if lastErr.len == 0:
     lastErr = "failed to connect UDP socket"
   raise newException(IOError, lastErr)

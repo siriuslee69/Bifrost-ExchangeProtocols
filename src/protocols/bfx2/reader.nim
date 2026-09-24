@@ -121,6 +121,13 @@ proc parsePacket(bs: ByteSeq): tuple[ok: bool, wt: BfxWireType, raw: ByteSeq, er
   result.wt = BfxWireType(wtRaw)
   result.raw = bs[5 .. ^1]
 
+proc fieldInOrder(hasPrev: bool, prevId: uint16, prevName: string,
+    id: uint16, name: string): bool {.gcsafe, role: parser.} =
+  ## hasPrev/prevId/prevName/id/name: object fields are sorted by id, then
+  ## by name among equal ids, each exactly once; the first is always fine.
+  result = not hasPrev or id > prevId or
+    (id == prevId and cmp(name, prevName) > 0)
+
 proc parseObject(raw: ByteSeq, depth: int): tuple[ok: bool, node: JsonNode, err: string] {.gcsafe, role: parser.} =
   ## parseObject: parse object.
   var
@@ -176,11 +183,9 @@ proc parseObject(raw: ByteSeq, depth: int): tuple[ok: bool, node: JsonNode, err:
     keyName = bytesToStr(keyBs)
     if hashFieldId(keyName) != fieldId:
       return (false, newJNull(), bfxErrInvalidObjectField)
-    if hasPrevField:
-      if fieldId < prevFieldId:
-        return (false, newJNull(), bfxErrInvalidObjectField)
-      if fieldId == prevFieldId and cmp(keyName, prevKeyName) <= 0:
-        return (false, newJNull(), bfxErrInvalidObjectField)
+    if not fieldInOrder(hasPrevField, prevFieldId, prevKeyName, fieldId,
+        keyName):
+      return (false, newJNull(), bfxErrInvalidObjectField)
     prevFieldId = fieldId
     prevKeyName = keyName
     hasPrevField = true

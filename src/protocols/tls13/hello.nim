@@ -113,14 +113,10 @@ proc collectVectorU16(A: openArray[byte], start, n: int): seq[uint16] {.
 proc anySupportedScheme(offered: openArray[uint16]): bool {.role: parser,
     tag: "tls|validation".} =
   ## offered: signature schemes advertised by the peer.
-  var i, j: int = 0
-  while i < offered.len:
-    j = 0
-    while j < tls13SupportedSignatureSchemes.len:
-      if offered[i] == tls13SupportedSignatureSchemes[j]:
-        return true
-      j = j + 1
-    i = i + 1
+  result = false
+  for s in offered:
+    if s in tls13SupportedSignatureSchemes:
+      return true
 
 proc vectorContainsU16(A: openArray[byte], start, n: int,
     wanted: uint16): bool {.role: parser, tag: "tls|read".} =
@@ -136,6 +132,14 @@ proc vectorContainsU16(A: openArray[byte], start, n: int,
       return true
     o = o + 2
 
+proc x25519ShareError(have: int, n: uint16): string {.role: parser,
+    tag: "tls|validation".} =
+  ## have/n: X25519 bytes already taken, and this entry's length.
+  if have > 0:
+    return "TLS X25519 key_share is duplicated"
+  if n != 32:
+    return "TLS X25519 key_share is invalid"
+
 proc parseClientKeyShares(A: openArray[byte], start, finish: int,
     key: var ByteSeq): string {.role: parser,
     tag: "tls|read|validation".} =
@@ -146,16 +150,42 @@ proc parseClientKeyShares(A: openArray[byte], start, finish: int,
     if not readU16(A, o, group) or not readU16(A, o + 2, n) or
         o + 4 + int(n) > finish:
       return "TLS client key_share entry is invalid"
+    if group == tls13GroupX25519 and x25519ShareError(key.len, n).len > 0:
+      return x25519ShareError(key.len, n)
     if group == tls13GroupX25519:
-      if key.len > 0:
-        return "TLS X25519 key_share is duplicated"
-      if n != 32:
-        return "TLS X25519 key_share is invalid"
       key = @A[o + 4 ..< o + 4 + int(n)]
     o = o + 4 + int(n)
   if o != finish or key.len != 32:
     return "TLS ClientHello has no usable X25519 key_share"
   result = ""
+
+proc addSniExtension(E: var ByteSeq, host: string) {.role: dataWriter,
+    tag: "tls|write".} =
+  ## E/host: `server_name`: one host_name entry, lowercased.
+  var
+    N: ByteSeq = @[byte 0]
+    V: ByteSeq = @[]
+  if not validHelloHost(host):
+    raise newException(ValueError, "TLS SNI hostname is invalid")
+  addU16(N, uint16(host.len))
+  addAscii(N, host.toLowerAscii())
+  addVector16(V, N)
+  addExtension(E, extServerName, V)
+
+proc addAlpnExtension(E: var ByteSeq, P: openArray[string]) {.
+    role: dataWriter, tag: "tls|write".} =
+  ## E/P: `application_layer_protocol_negotiation`: each name as
+  ## `length u8 | name`, 1..255 bytes.
+  var
+    N: ByteSeq = @[]
+    V: ByteSeq = @[]
+  for p in P:
+    if p.len == 0 or p.len > 255:
+      raise newException(ValueError, "TLS ALPN identifier length is invalid")
+    N.add(byte(p.len))
+    addAscii(N, p)
+  addVector16(V, N)
+  addExtension(E, extAlpn, V)
 
 proc buildClientExtensions(H: Tls13ClientHello): ByteSeq {.
     role: truthBuilder, tag: "tls|write".} =
@@ -176,26 +206,9 @@ proc buildClientExtensions(H: Tls13ClientHello): ByteSeq {.
     i = i + 1
   addExtension(E, extSignatureAlgorithms, V)
   if H.serverName.len > 0:
-    if not validHelloHost(H.serverName):
-      raise newException(ValueError, "TLS SNI hostname is invalid")
-    N = @[byte 0]
-    addU16(N, uint16(H.serverName.len))
-    addAscii(N, H.serverName.toLowerAscii())
-    V = @[]
-    addVector16(V, N)
-    addExtension(E, extServerName, V)
+    addSniExtension(E, H.serverName)
   if H.alpn.len > 0:
-    N = @[]
-    i = 0
-    while i < H.alpn.len:
-      if H.alpn[i].len == 0 or H.alpn[i].len > 255:
-        raise newException(ValueError, "TLS ALPN identifier length is invalid")
-      N.add(byte(H.alpn[i].len))
-      addAscii(N, H.alpn[i])
-      i = i + 1
-    V = @[]
-    addVector16(V, N)
-    addExtension(E, extAlpn, V)
+    addAlpnExtension(E, H.alpn)
   if H.x25519PublicKey.len != 32:
     raise newException(ValueError, "TLS X25519 ClientHello key share must be 32 bytes")
   N = @[]
@@ -370,6 +383,17 @@ proc parseAlpnExt(A: openArray[byte], dataStart, dataEnd: int,
     alpn.add(readHelloText(A, p, nameLen))
     p = p + nameLen
 
+proc clientOnlyExtensionError(kind: uint16): string {.role: parser,
+    tag: "tls|validation".} =
+  ## kind: an extension a server may not send; "" for one it may.
+  case kind
+  of extSupportedGroups: "TLS supported_groups extension is invalid or duplicated"
+  of extSignatureAlgorithms:
+    "TLS signature_algorithms extension is invalid or duplicated"
+  of extServerName: "TLS server_name extension is invalid or duplicated"
+  of extAlpn: "TLS ALPN extension is invalid or duplicated"
+  else: ""
+
 proc parseExtensions(A: openArray[byte], start, finish: int,
     server: bool, key: var ByteSeq, versionOk: var bool,
     serverName: var string, alpn: var seq[string],
@@ -397,6 +421,8 @@ proc parseExtensions(A: openArray[byte], start, finish: int,
     if kind in seenKinds:
       return "TLS extension is duplicated"
     seenKinds.add(kind)
+    if server and clientOnlyExtensionError(kind).len > 0:
+      return clientOnlyExtensionError(kind)
     case kind
     of extSupportedVersions:
       seenVersion = true
@@ -405,23 +431,15 @@ proc parseExtensions(A: openArray[byte], start, finish: int,
       seenKey = true
       result = parseKeyShareExt(A, dataStart, dataEnd, server, key)
     of extSupportedGroups:
-      if server:
-        return "TLS supported_groups extension is invalid or duplicated"
       seenGroups = true
       result = parseGroupsExt(A, dataStart, n)
     of extSignatureAlgorithms:
-      if server:
-        return "TLS signature_algorithms extension is invalid or duplicated"
       seenSignatures = true
       result = parseSignaturesExt(A, dataStart, n, sigSchemes)
     of extServerName:
-      if server:
-        return "TLS server_name extension is invalid or duplicated"
       seenSni = true
       result = parseSniExt(A, dataStart, dataEnd, serverName)
     of extAlpn:
-      if server:
-        return "TLS ALPN extension is invalid or duplicated"
       seenAlpn = true
       result = parseAlpnExt(A, dataStart, dataEnd, alpn)
     else:

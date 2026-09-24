@@ -124,6 +124,24 @@ proc stackAmeSecret*(L: AmeSuiteLayout, t: AmeMaskTier,
   secureClearAmeBytes(seed)
   secureClearAmeBytes(carried)
 
+proc absorbAmeSlot(S: var AmeExchangeState, L: AmeSuiteLayout,
+    r: AmeExchangeRequest, i: int, secret: openArray[uint8],
+    binder: openArray[uint8]) {.role: actor, tag: "cryptoBoundary|exchange".} =
+  ## S/L/r/i: slot `i` absorbs `secret` (and the binder) on top of its stack,
+  ## one generation deeper; the old stack is wiped.
+  var
+    stacked: ByteSeq = @[]
+  if secret.len == 0:
+    raise newException(ValueError, "AME exchange shared secret is empty")
+  if S.generation[i] == high(uint32):
+    raise newException(ValueError, "AME exchange generation is exhausted")
+  stacked = stackAmeSecret(L, r.targetTier, S.stackedSecrets[i], binder,
+    secret, i, S.algorithms.algorithms[i], S.generation[i] + 1'u32)
+  secureClearAmeBytes(S.stackedSecrets[i])
+  S.stackedSecrets[i] = stacked
+  S.generation[i] = S.generation[i] + 1'u32
+  S.activeMask = S.activeMask or slotMask(i)
+
 proc applyAmeExchange*(S: var AmeExchangeState, L: AmeSuiteLayout,
     r: AmeExchangeRequest, sharedSecrets: openArray[ByteSeq],
     binder: openArray[uint8] = []) {.role: actor,
@@ -135,7 +153,6 @@ proc applyAmeExchange*(S: var AmeExchangeState, L: AmeSuiteLayout,
   ## Absorb, not replace. See `stackAmeSecret` for what that buys and why it
   ## costs no forward secrecy.
   var
-    stacked: ByteSeq = @[]
     i: int = 0
     j: int = 0
   discard initAmeExchangeRequest(S.algorithms, r.targetTier, r.exchangeMask)
@@ -145,18 +162,21 @@ proc applyAmeExchange*(S: var AmeExchangeState, L: AmeSuiteLayout,
     raise newException(ValueError, "AME exchange shared-secret count mismatch")
   while i < int(S.algorithms.length):
     if algorithmSlotSelected(r.exchangeMask, i):
-      if sharedSecrets[j].len == 0:
-        raise newException(ValueError, "AME exchange shared secret is empty")
-      if S.generation[i] == high(uint32):
-        raise newException(ValueError, "AME exchange generation is exhausted")
-      stacked = stackAmeSecret(L, r.targetTier, S.stackedSecrets[i], binder,
-        sharedSecrets[j], i, S.algorithms.algorithms[i], S.generation[i] + 1'u32)
-      secureClearAmeBytes(S.stackedSecrets[i])
-      S.stackedSecrets[i] = stacked
-      S.generation[i] = S.generation[i] + 1'u32
-      S.activeMask = S.activeMask or slotMask(i)
+      absorbAmeSlot(S, L, r, i, sharedSecrets[j], binder)
       j = j + 1
     i = i + 1
+
+proc appendSeedSlot(B: var ByteSeq, S: AmeExchangeState, i: int) {.
+    role: dataWriter, tag: "cryptoBoundary|exchange".} =
+  ## B/S/i: `slot | algorithm | generation u32 | length u32 | stack` for
+  ## slot `i`, which must hold a secret.
+  if S.generation[i] == 0'u32 or S.stackedSecrets[i].len == 0:
+    raise newException(ValueError, "AME selected KEM secret is unavailable")
+  B.add(uint8(i))
+  B.add(uint8(ord(S.algorithms[i])))
+  appendAmeU32(B, S.generation[i])
+  appendAmeU32(B, uint32(S.stackedSecrets[i].len))
+  appendAmeBytes(B, S.stackedSecrets[i])
 
 proc buildAmeExchangeSeed*(S: AmeExchangeState,
     selectedMask: uint8): ByteSeq {.role: truthBuilder,
@@ -177,13 +197,7 @@ proc buildAmeExchangeSeed*(S: AmeExchangeState,
   result.add(selectedMask)
   while i < int(S.algorithms.length):
     if algorithmSlotSelected(selectedMask, i):
-      if S.generation[i] == 0'u32 or S.stackedSecrets[i].len == 0:
-        raise newException(ValueError, "AME selected KEM secret is unavailable")
-      result.add(uint8(i))
-      result.add(uint8(ord(S.algorithms[i])))
-      appendAmeU32(result, S.generation[i])
-      appendAmeU32(result, uint32(S.stackedSecrets[i].len))
-      appendAmeBytes(result, S.stackedSecrets[i])
+      appendSeedSlot(result, S, i)
     i = i + 1
 
 proc ameStackDepth*(S: AmeExchangeState, selectedMask: uint8): uint32 {.

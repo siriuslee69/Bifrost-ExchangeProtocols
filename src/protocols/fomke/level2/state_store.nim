@@ -76,6 +76,15 @@ proc checkpointStringToBytes(s: string): ByteSeq {.role: helper,
     result[i] = uint8(ord(s[i]))
     i = i + 1
 
+proc syncCheckpointFile(f: File) {.role: dataWriter,
+    tag: "cryptoBoundary|fomke|write".} =
+  ## f: pushed to the disk itself, not just the OS cache (POSIX fsync).
+  when defined(posix):
+    if posix.fsync(cint(getFileHandle(f))) != 0:
+      raise newException(IOError, "failed to sync FOMKE checkpoint")
+  else:
+    discard f
+
 proc flushCheckpointFile(path: string, A: openArray[uint8]) {.
     role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## path/A: write, flush, and close one temporary checkpoint file.
@@ -87,12 +96,10 @@ proc flushCheckpointFile(path: string, A: openArray[uint8]) {.
   try:
     if A.len > 0:
       written = writeBuffer(f, unsafeAddr A[0], A.len)
-      if written != A.len:
-        raise newException(IOError, "short FOMKE checkpoint write")
+    if written != A.len:
+      raise newException(IOError, "short FOMKE checkpoint write")
     flushFile(f)
-    when defined(posix):
-      if posix.fsync(cint(getFileHandle(f))) != 0:
-        raise newException(IOError, "failed to sync FOMKE checkpoint")
+    syncCheckpointFile(f)
   finally:
     close(f)
 

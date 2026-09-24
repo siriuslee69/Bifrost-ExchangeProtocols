@@ -47,3 +47,11 @@ proc writeAllSocket*(sock: Socket, data: string) {.role: dataWriter.} =
       raise newException(OSError, "socket write made no progress")
     if sent > 0:
       written = written + sent
+
+proc closeSocketQuietly*(sock: Socket) {.role: actor.} =
+  ## sock: closed, ignoring an error while closing -- used on a path that is
+  ## already failing, where the first error is the one worth reporting.
+  try:
+    sock.close()
+  except CatchableError:
+    discard

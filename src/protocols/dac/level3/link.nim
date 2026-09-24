@@ -716,10 +716,9 @@ proc unackedDacGroups(S: DacLink): seq[uint32] {.role: parser.} =
     i: int = 0
     g: uint32 = 0'u32
   while i < S.outgoing.acked.len:
-    if not S.outgoing.acked[i]:
-      g = S.outgoing.plan.chunks[i].groupId
-      if g notin result:
-        result.add(g)
+    g = S.outgoing.plan.chunks[i].groupId
+    if not S.outgoing.acked[i] and g notin result:
+      result.add(g)
     i = i + 1
 
 proc resendDacParity(S: var DacLink, F: var seq[DacTaggedMessage]) {.role: actor.} =

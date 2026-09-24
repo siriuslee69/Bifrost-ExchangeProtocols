@@ -173,6 +173,12 @@ proc parseAlert(C: var Tls13Connection, A: openArray[byte]): Tls13Event {.
   if A[0] == 2'u8:
     C.failed = true
 
+proc keyUpdateError(C: var Tls13Connection, m: Tls13Handshake): string {.
+    role: actor, tag: "tls|parsing".} =
+  ## C/m: applies a peer KeyUpdate; "" for any other message, or on success.
+  if m.messageType == thtKeyUpdate:
+    result = C.applyPeerKeyUpdate(m)
+
 proc drainHandshakeEvents(C: var Tls13Connection,
     E: var seq[Tls13Event]) {.role: orchestrator,
     tag: "tls|parsing".} =
@@ -189,11 +195,10 @@ proc drainHandshakeEvents(C: var Tls13Connection,
       return
     event.kind = tekHandshake
     event.handshake = R.message
-    if R.message.messageType == thtKeyUpdate:
-      event.err = C.applyPeerKeyUpdate(R.message)
-      if event.err.len > 0:
-        E.add(C.errorEvent(event.err))
-        return
+    event.err = keyUpdateError(C, R.message)
+    if event.err.len > 0:
+      E.add(C.errorEvent(event.err))
+      return
     E.add(event)
     C.handshakeBuffer.dropPrefix(R.consumed)
 

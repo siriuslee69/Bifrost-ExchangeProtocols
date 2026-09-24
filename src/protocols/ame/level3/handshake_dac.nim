@@ -81,13 +81,6 @@ const
     ## socket could hold a handshake open forever by sending noise.
 
 type
-  ## One record the initiator may have to send again, kept so a timeout does
-  ## not have to reconstruct it -- rebuilding a hello would generate fresh
-  ## keys and invalidate the cookie it was answering.
-  AmeDacRetransmit {.role: memory.} = object
-    frame: ByteSeq
-    step: uint32
-
   ## One record a driver is prepared to accept at this point in the exchange.
   AmeHandshakeExpect {.role: configurator.} = object
     kind: AmePacketKind
@@ -184,12 +177,11 @@ proc awaitStep(sock: DacSocket, wanted: openArray[AmeHandshakeExpect],
       continue
     if sessionId != 0'u64 and got.frame.sessionId != sessionId:
       continue
-    if matchesExpected(got.frame, wanted):
-      if not matchRemote:
-        remote = got.remote
-      result.frame = got.frame
-      result.ok = true
-      return
+    if not matchesExpected(got.frame, wanted):
+      continue
+    if not matchRemote:
+      remote = got.remote
+    return (true, got.frame, "")
   result.err = "AME handshake saw only unrelated datagrams"
 
 proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
@@ -325,6 +317,55 @@ proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     peerTrust = accepted.peerTrust)
   result.outcome.ok = true
 
+proc awaitWithResend(sock: DacSocket, peer: var DacAddress, frame: ByteSeq,
+    wanted: openArray[AmeHandshakeExpect], sessionId: uint64,
+    timeoutMs, maxDatagramBytes: int, noAnswer, resendFailed: string):
+    tuple[ok: bool, frame: AmeHandshakeFrame, err: string] {.
+    role: orchestrator.} =
+  ## Wait for one of `wanted`; after each silent wait send `frame` again,
+  ## byte for byte, up to `ameDacHandshakeRetries` waits in all.
+  ## noAnswer/resendFailed: the error for each way of giving up.
+  var
+    attempts: int = 1
+  result = awaitStep(sock, wanted, sessionId, timeoutMs, maxDatagramBytes,
+    peer, true)
+  while not result.ok and attempts < ameDacHandshakeRetries:
+    try:
+      sendRecord(sock, peer, frame, maxDatagramBytes)
+    except CatchableError as e:
+      return (false, default(AmeHandshakeFrame), resendFailed & e.msg)
+    attempts = attempts + 1
+    result = awaitStep(sock, wanted, sessionId, timeoutMs, maxDatagramBytes,
+      peer, true)
+  if not result.ok:
+    result.err = noAnswer
+
+proc answerHelloRetry(sock: DacSocket, peer: var DacAddress,
+    c: AmeInitiatorPolicy, sessionId: uint64, retryRecord: ByteSeq,
+    state: var AmeClientHandshake, pending: var ByteSeq,
+    timeoutMs, maxDatagramBytes: int):
+    tuple[ok: bool, frame: AmeHandshakeFrame, err: string] {.
+    role: orchestrator.} =
+  ## The responder wants proof this address can receive: build a fresh
+  ## hello -- fresh KEM keys and all -- carrying its cookie, send it, and
+  ## wait for the server hello.
+  var
+    retry: AmeHelloRetry = default(AmeHelloRetry)
+  try:
+    retry = decodeAmeHelloRetry(retryRecord)
+    clearAmeClientHandshake(state)
+    state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
+      retry.cookie, c.authentication)
+    pending = encodeAmeClientHelloFrame(state.hello, retried = true)
+    sendRecord(sock, peer, pending, maxDatagramBytes)
+  except CatchableError as e:
+    return (false, default(AmeHandshakeFrame),
+      "AME hello retry failed: " & e.msg)
+  result = awaitWithResend(sock, peer, pending, [AmeHandshakeExpect(
+    kind: ampkServerHello, step: ameHandshakeStepServerHello)], sessionId,
+    timeoutMs, maxDatagramBytes, "AME handshake got no server hello",
+    "AME retried hello resend failed: ")
+
 proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
     c: AmeInitiatorPolicy, sessionId: uint64, nowUnix: int64,
     timeoutMs: int = 2000,
@@ -336,12 +377,12 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
   var
     state: AmeClientHandshake
     got: tuple[ok: bool, frame: AmeHandshakeFrame, err: string]
-    pending: AmeDacRetransmit
-    retry: AmeHelloRetry
+    pending: ByteSeq = @[]
+      ## The record the initiator may have to send again, kept byte for byte:
+      ## rebuilding a hello would make fresh keys and void its cookie.
     serverHello: AmeServerHello
     finished: AmeHandshakeResult
     peer: DacAddress = remote
-    attempts: int = 0
 
   if sessionId == 0'u64:
     result.err = "AME client session id must be positive"
@@ -349,9 +390,8 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
   try:
     state = beginAmeHandshake(sessionId, c.layout, c.initialTier,
       a = c.authentication)
-    pending.frame = encodeAmeClientHelloFrame(state.hello)
-    pending.step = ameHandshakeStepHello
-    sendRecord(sock, peer, pending.frame, maxDatagramBytes)
+    pending = encodeAmeClientHelloFrame(state.hello)
+    sendRecord(sock, peer, pending, maxDatagramBytes)
   except CatchableError as e:
     clearAmeClientHandshake(state)
     result.err = "AME client hello send failed: " & e.msg
@@ -365,59 +405,19 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
   ## cookie sends a retry; one that does not sends its hello straight away.
   ## Waiting for only the first would read the second, decide it was not what
   ## was asked for, and discard the record the handshake depends on.
-  while true:
-    attempts = attempts + 1
-    got = awaitStep(sock, [
-      AmeHandshakeExpect(kind: ampkHelloRetry, step: ameHandshakeStepRetry),
-      AmeHandshakeExpect(kind: ampkServerHello,
-        step: ameHandshakeStepServerHello)], sessionId, timeoutMs,
-      maxDatagramBytes, peer, true)
-    if got.ok:
-      break
-    if attempts >= ameDacHandshakeRetries:
-      clearAmeClientHandshake(state)
-      result.err = "AME handshake got no answer to the client hello"
-      return
-    try:
-      sendRecord(sock, peer, pending.frame, maxDatagramBytes)
-    except CatchableError as e:
-      clearAmeClientHandshake(state)
-      result.err = "AME client hello resend failed: " & e.msg
-      return
-
-  if got.frame.kind == ampkHelloRetry:
-    ## The responder wants proof this address can receive. Build a fresh
-    ## hello -- fresh KEM keys and all -- carrying its cookie.
-    try:
-      retry = decodeAmeHelloRetry(got.frame.record)
-      clearAmeClientHandshake(state)
-      state = beginAmeHandshake(sessionId, c.layout, c.initialTier, 1'u32,
-        retry.cookie, c.authentication)
-      pending.frame = encodeAmeClientHelloFrame(state.hello, retried = true)
-      pending.step = ameHandshakeStepRetriedHello
-      sendRecord(sock, peer, pending.frame, maxDatagramBytes)
-    except CatchableError as e:
-      clearAmeClientHandshake(state)
-      result.err = "AME hello retry failed: " & e.msg
-      return
-    attempts = 0
-    while true:
-      attempts = attempts + 1
-      got = awaitStep(sock, [AmeHandshakeExpect(kind: ampkServerHello,
-        step: ameHandshakeStepServerHello)], sessionId, timeoutMs,
-        maxDatagramBytes, peer, true)
-      if got.ok:
-        break
-      if attempts >= ameDacHandshakeRetries:
-        clearAmeClientHandshake(state)
-        result.err = "AME handshake got no server hello"
-        return
-      try:
-        sendRecord(sock, peer, pending.frame, maxDatagramBytes)
-      except CatchableError as e:
-        clearAmeClientHandshake(state)
-        result.err = "AME retried hello resend failed: " & e.msg
-        return
+  got = awaitWithResend(sock, peer, pending, [
+    AmeHandshakeExpect(kind: ampkHelloRetry, step: ameHandshakeStepRetry),
+    AmeHandshakeExpect(kind: ampkServerHello,
+      step: ameHandshakeStepServerHello)], sessionId, timeoutMs,
+    maxDatagramBytes, "AME handshake got no answer to the client hello",
+    "AME client hello resend failed: ")
+  if got.ok and got.frame.kind == ampkHelloRetry:
+    got = answerHelloRetry(sock, peer, c, sessionId, got.frame.record, state,
+      pending, timeoutMs, maxDatagramBytes)
+  if not got.ok:
+    clearAmeClientHandshake(state)
+    result.err = got.err
+    return
   try:
     serverHello = decodeAmeServerHello(c.layout, got.frame.record)
   except CatchableError as e:
@@ -442,9 +442,8 @@ proc ameDacClientHandshake*(sock: DacSocket, remote: DacAddress,
   ## it fails, and this side discovers it when its first data frame goes
   ## unanswered. Every handshake with a one-flight ending behaves this way.
   try:
-    pending.frame = encodeAmeClientFinishFrame(sessionId, finished.finish)
-    pending.step = ameHandshakeStepFinish
-    sendRecord(sock, peer, pending.frame, maxDatagramBytes)
+    pending = encodeAmeClientFinishFrame(sessionId, finished.finish)
+    sendRecord(sock, peer, pending, maxDatagramBytes)
   except CatchableError as e:
     result.err = "AME client finish send failed: " & e.msg
     return

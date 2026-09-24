@@ -106,32 +106,18 @@ proc requireSelection(n, m: uint8, what: string) {.role: parser.} =
   if (m and not occupiedAmeMask(n)) != 0'u8:
     raise newException(ValueError, "AME " & what & " mask selects an empty slot")
 
-proc requireUniqueActiveHashes(P: AmeHashAlgorithms, m: uint8) {.
-    role: parser.} =
-  ## P/m: reject duplicate active hashes before XOR overlay cancellation.
+proc requireUniqueActive[P](L: P, m: uint8, what: string) {.role: parser.} =
+  ## L/m/what: refuse two switched-on slots holding the same algorithm.
+  ## Two equal layers XOR-overlaid cancel out, so the pair would add nothing.
   var
-    seen: set[AmeHashAlgorithm] = {}
+    seen: set[typeof(L.algorithms[0])] = {}
     i: int = 0
-  while i < int(P.length):
+  while i < int(L.length):
+    if algorithmSlotSelected(m, i) and L.algorithms[i] in seen:
+      raise newException(ValueError,
+        "AME " & what & " layout contains a duplicate active algorithm")
     if algorithmSlotSelected(m, i):
-      if P.algorithms[i] in seen:
-        raise newException(ValueError,
-          "AME hash layout contains a duplicate active algorithm")
-      seen.incl(P.algorithms[i])
-    i = i + 1
-
-proc requireUniqueActiveKdfs(P: AmeKdfAlgorithms, m: uint8) {.
-    role: parser.} =
-  ## P/m: reject duplicate active KDFs before XOR overlay cancellation.
-  var
-    seen: set[AmeKdfAlgorithm] = {}
-    i: int = 0
-  while i < int(P.length):
-    if algorithmSlotSelected(m, i):
-      if P.algorithms[i] in seen:
-        raise newException(ValueError,
-          "AME KDF layout contains a duplicate active algorithm")
-      seen.incl(P.algorithms[i])
+      seen.incl(L.algorithms[i])
     i = i + 1
 
 proc initAmeSuiteLayout*(kems: AmeKemAlgorithms,
@@ -187,8 +173,8 @@ proc validateAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier) {.role: parser.} =
   requireSelection(L.hashes.length, t.masks.hash, "hash")
   requireSelection(L.signatures.length, t.masks.signature, "signature")
   requireSelection(L.kdfs.length, t.masks.kdf, "KDF")
-  requireUniqueActiveHashes(L.hashes, t.masks.hash)
-  requireUniqueActiveKdfs(L.kdfs, t.masks.kdf)
+  requireUniqueActive(L.hashes, t.masks.hash, "hash")
+  requireUniqueActive(L.kdfs, t.masks.kdf, "KDF")
 
 proc initAmeMaskTier*(L: AmeSuiteLayout, tierId: uint32,
     masks: AmeTierMasks): AmeMaskTier {.role: configurator.} =
@@ -288,19 +274,19 @@ proc fullAmeMaskTier*(L: AmeSuiteLayout,
     occupiedAmeMask(L.macs.length), occupiedAmeMask(L.hashes.length),
     occupiedAmeMask(L.signatures.length), occupiedAmeMask(L.kdfs.length)))
 
-template encodeNibbleLayout(result: var ByteSeq, P: untyped) {.
-    role: dataWriter.} =
-  result.add(P.length)
-  block:
-    var
-      i: int = 0
-      packed: uint8 = 0'u8
-    while i < int(P.length):
-      packed = uint8(ord(P.algorithms[i])) shl 4
-      if i + 1 < int(P.length):
-        packed = packed or uint8(ord(P.algorithms[i + 1]))
-      result.add(packed)
-      i = i + 2
+proc encodeNibbleLayout[P](B: var ByteSeq, L: P) {.role: dataWriter.} =
+  ## B/L: one family's slots as `count | two ids per byte`, high nibble
+  ## first; an odd count pads the last low nibble with 0.
+  var
+    i: int = 0
+    packed: uint8 = 0'u8
+  B.add(L.length)
+  while i < int(L.length):
+    packed = uint8(ord(L.algorithms[i])) shl 4
+    if i + 1 < int(L.length):
+      packed = packed or uint8(ord(L.algorithms[i + 1]))
+    B.add(packed)
+    i = i + 2
 
 proc encodeAmeSuiteLayout*(L: AmeSuiteLayout): ByteSeq {.
     role: dataWriter.} =
@@ -320,32 +306,39 @@ proc requireSuiteBytes(A: openArray[uint8], cursor, n: int) {.role: parser.} =
   if cursor < 0 or n < 0 or cursor > A.len - n:
     raise newException(ValueError, "AME suite layout is truncated")
 
-template decodeNibbleLayout(A: untyped, cursor: var int, P: untyped,
-    EnumType: typedesc, what: string) {.role: parser.} =
+proc decodeNibbleLayout[P](A: openArray[uint8], cursor: var int, L: var P,
+    what: string) {.role: parser.} =
+  ## A/cursor: layout bytes, and where this family starts (moved past it)
+  ## L/what: the family filled in, and its name for an error message.
+  ## The reverse of `encodeNibbleLayout`: ids must be known, in wire order,
+  ## and an odd count's padding nibble must be 0.
+  type
+    E = typeof(L.algorithms[0])
+  var
+    n: int = 0
+    packedLen: int = 0
+    packed: uint8 = 0'u8
+    id: uint8 = 0'u8
+    i: int = 0
   requireSuiteBytes(A, cursor, 1)
-  block:
-    var
-      n: int = int(A[cursor])
-      packedLen: int = (n + 1) div 2
-      packed: uint8 = 0'u8
-      id: uint8 = 0'u8
-      i: int = 0
-    requirePathLength(n, what)
-    cursor = cursor + 1
-    requireSuiteBytes(A, cursor, packedLen)
-    P.length = uint8(n)
-    while i < n:
-      packed = A[cursor + (i div 2)]
-      id = if (i and 1) == 0: packed shr 4 else: packed and 0x0f'u8
-      if id < uint8(ord(low(EnumType))) or id > uint8(ord(high(EnumType))):
-        raise newException(ValueError, "AME " & what & " algorithm id is unknown")
-      if i > 0:
-        requireWireOrder(uint8(ord(P.algorithms[i - 1])), id, what)
-      P.algorithms[i] = EnumType(id)
-      i = i + 1
-    if (n and 1) != 0 and (A[cursor + packedLen - 1] and 0x0f'u8) != 0'u8:
-      raise newException(ValueError, "AME " & what & " layout padding is non-zero")
-    cursor = cursor + packedLen
+  n = int(A[cursor])
+  packedLen = (n + 1) div 2
+  requirePathLength(n, what)
+  cursor = cursor + 1
+  requireSuiteBytes(A, cursor, packedLen)
+  L.length = uint8(n)
+  while i < n:
+    packed = A[cursor + (i div 2)]
+    id = if (i and 1) == 0: packed shr 4 else: packed and 0x0f'u8
+    if id < uint8(ord(low(E))) or id > uint8(ord(high(E))):
+      raise newException(ValueError, "AME " & what & " algorithm id is unknown")
+    if i > 0:
+      requireWireOrder(uint8(ord(L.algorithms[i - 1])), id, what)
+    L.algorithms[i] = E(id)
+    i = i + 1
+  if (n and 1) != 0 and (A[cursor + packedLen - 1] and 0x0f'u8) != 0'u8:
+    raise newException(ValueError, "AME " & what & " layout padding is non-zero")
+  cursor = cursor + packedLen
 
 proc decodeAmeSuiteLayout*(A: openArray[uint8]): AmeSuiteLayout {.
     role: parser.} =
@@ -366,12 +359,11 @@ proc decodeAmeSuiteLayout*(A: openArray[uint8]): AmeSuiteLayout {.
     kemBytes[i] = A[cursor + i]
   result.kems = decodeAmeKemAlgorithms(kemBytes)
   cursor = cursor + n + 1
-  decodeNibbleLayout(A, cursor, result.ciphers, AmeCipherAlgorithm, "cipher")
-  decodeNibbleLayout(A, cursor, result.macs, AmeMacAlgorithm, "MAC")
-  decodeNibbleLayout(A, cursor, result.hashes, AmeHashAlgorithm, "hash")
-  decodeNibbleLayout(A, cursor, result.signatures, AmeSignatureAlgorithm,
-    "signature")
-  decodeNibbleLayout(A, cursor, result.kdfs, AmeKdfAlgorithm, "KDF")
+  decodeNibbleLayout(A, cursor, result.ciphers, "cipher")
+  decodeNibbleLayout(A, cursor, result.macs, "MAC")
+  decodeNibbleLayout(A, cursor, result.hashes, "hash")
+  decodeNibbleLayout(A, cursor, result.signatures, "signature")
+  decodeNibbleLayout(A, cursor, result.kdfs, "KDF")
   if cursor != A.len:
     raise newException(ValueError, "AME suite layout has trailing bytes")
   result = initAmeSuiteLayout(result.kems, result.ciphers, result.macs,

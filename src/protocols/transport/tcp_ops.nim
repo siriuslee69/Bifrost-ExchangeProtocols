@@ -62,14 +62,23 @@ proc addResolvedTcpTarget(order: var seq[ResolvedTcpTarget], host: string,
     i = i + 1
   order.add(ResolvedTcpTarget(host: host, domain: d))
 
+proc collectTcpTargets(R: var seq[ResolvedTcpTarget], aiList: ptr AddrInfo) {.
+    role: truthBuilder.} =
+  ## R/aiList: every address the resolver returned, in a family we know.
+  var
+    it: ptr AddrInfo = aiList
+    known: Option[Domain] = none(Domain)
+  while it != nil:
+    known = toKnownDomain(it.ai_family)
+    if known.isSome and known.get() != AF_UNSPEC:
+      addResolvedTcpTarget(R, normalizeHostLiteral(getAddrString(it.ai_addr)), known.get())
+    it = it.ai_next
+
 proc resolvedTcpTargets(h: string): seq[ResolvedTcpTarget] {.role: helper.} =
   ## h: TCP host literal or hostname whose concrete targets should be tried.
   var
     clean: string
     aiList: ptr AddrInfo = nil
-    it: ptr AddrInfo = nil
-    known: Option[Domain]
-    literal: string = ""
   clean = normalizeHostLiteral(h)
   if isIpv6Host(clean):
     result.add(ResolvedTcpTarget(host: clean, domain: AF_INET6))
@@ -80,13 +89,7 @@ proc resolvedTcpTargets(h: string): seq[ResolvedTcpTarget] {.role: helper.} =
     return
   try:
     aiList = getAddrInfo(clean, Port(0), AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP)
-    it = aiList
-    while it != nil:
-      known = toKnownDomain(it.ai_family)
-      if known.isSome and known.get() != AF_UNSPEC:
-        literal = getAddrString(it.ai_addr)
-        addResolvedTcpTarget(result, normalizeHostLiteral(literal), known.get())
-      it = it.ai_next
+    collectTcpTargets(result, aiList)
   except CatchableError:
     discard
   finally:
@@ -282,29 +285,33 @@ proc recvTcpFrame*(sock: Socket, timeoutMs: int,
   result.payload = stringToBytes(body)
   result.err = ""
 
+proc openTcpTarget(target: ResolvedTcpTarget, port: uint16, timeoutMs: int,
+    t: TlsConfig, host: string): Socket {.role: orchestrator.} =
+  ## target/port/timeoutMs: connect to one resolved address; t/host: wrap
+  ## it in TLS when enabled. A failure closes the socket and raises.
+  result = newSocket(target.domain, SOCK_STREAM, IPPROTO_TCP)
+  try:
+    result.connect(target.host, Port(port), timeoutMs)
+    if t.enabled:
+      wrapSocketTls(result, t, trClient, host)
+  except CatchableError:
+    closeSocketQuietly(result)
+    raise
+
 proc connectTcp*(a: TcpAddress, timeoutMs: int,
     t: TlsConfig = defaultTlsConfig()): Socket {.role: orchestrator.} =
   ## connectTcp: connect TCP.
   var
     host: string
     targets: seq[ResolvedTcpTarget] = @[]
-    sock: Socket
     lastErr: string = ""
   host = normalizeHostLiteral(a.host)
   targets = resolvedTcpTargets(host)
   for target in targets:
-    sock = newSocket(target.domain, SOCK_STREAM, IPPROTO_TCP)
     try:
-      sock.connect(target.host, Port(a.port), timeoutMs)
-      if t.enabled:
-        wrapSocketTls(sock, t, trClient, host)
-      return sock
+      return openTcpTarget(target, a.port, timeoutMs, t, host)
     except CatchableError as e:
       lastErr = e.msg
-      try:
-        sock.close()
-      except CatchableError:
-        discard
   if lastErr.len == 0:
     lastErr = "failed to connect TCP socket"
   raise newException(IOError, lastErr)
@@ -339,10 +346,7 @@ proc acceptTcpClient*(sock: Socket,
     try:
       wrapSocketTls(result, t, trServer)
     except CatchableError:
-      try:
-        result.close()
-      except CatchableError:
-        discard
+      closeSocketQuietly(result)
       raise
 
 proc acceptTcpClient*(sock: Socket, e: TcpEndpoint): Socket {.role: orchestrator.} =

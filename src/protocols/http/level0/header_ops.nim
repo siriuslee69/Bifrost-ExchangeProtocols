@@ -90,28 +90,6 @@ proc addHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
   ## Appends without touching any existing field of the same name.
   H.add(HttpHeader(name: n, value: v))
 
-proc setHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
-    tag: "protocol|write".} =
-  ## H/n/v: header list to update, field name, replacement value.
-  ##
-  ## Replaces the first match in place and drops any later duplicates,
-  ## so the field is left appearing exactly once.
-  var
-    i: int = 0
-    found: bool = false
-    keep: HttpHeaders = @[]
-  while i < H.len:
-    if httpNamesEqual(H[i].name, n):
-      if not found:
-        found = true
-        keep.add(HttpHeader(name: n, value: v))
-    else:
-      keep.add(H[i])
-    i = i + 1
-  if not found:
-    keep.add(HttpHeader(name: n, value: v))
-  H = keep
-
 proc delHeader*(H: var HttpHeaders; n: string) {.role: dataWriter,
     tag: "protocol|write".} =
   ## H/n: header list to prune and field name to remove entirely.
@@ -123,6 +101,25 @@ proc delHeader*(H: var HttpHeaders; n: string) {.role: dataWriter,
       keep.add(H[i])
     i = i + 1
   H = keep
+
+proc setHeader*(H: var HttpHeaders; n: string; v: string) {.role: dataWriter,
+    tag: "protocol|write".} =
+  ## H/n/v: header list to update, field name, replacement value.
+  ##
+  ## Replaces the first match in place and drops any later duplicates,
+  ## so the field is left appearing exactly once.
+  var
+    at: int = -1
+    i: int = 0
+  while i < H.len and at < 0:
+    if httpNamesEqual(H[i].name, n):
+      at = i
+    i = i + 1
+  if at < 0:
+    H.add(HttpHeader(name: n, value: v))
+    return
+  delHeader(H, n)            # every copy goes ...
+  H.insert(HttpHeader(name: n, value: v), at)   # ... and one returns in place
 
 proc isTokenChar(c: char): bool {.inline, role: parser,
     tag: "protocol|validation".} =
@@ -190,18 +187,7 @@ proc headerHasToken*(H: HttpHeaders; n: string; t: string): bool {.
   ##
   ## `Connection: keep-alive, Upgrade` holds two tokens; this finds
   ## either one without matching a longer word that merely contains it.
-  var
-    A: seq[string] = @[]
-    P: seq[string] = @[]
-    i: int = 0
-    j: int = 0
-  A = getHeaderAll(H, n)
-  while i < A.len:
-    P = A[i].split(',')
-    j = 0
-    while j < P.len:
-      if httpNamesEqual(trimFieldValue(P[j]), t):
-        return true
-      j = j + 1
-    i = i + 1
   result = false
+  for token in getHeaderAll(H, n).join(",").split(','):
+    if httpNamesEqual(trimFieldValue(token), t):
+      return true

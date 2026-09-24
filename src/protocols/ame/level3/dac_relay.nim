@@ -301,27 +301,28 @@ proc tickAmeDacRelay*(R: var AmeDacRelay,
     step: AmeDacRelayStep = default(AmeDacRelayStep)
     inner: DacLinkStep = default(DacLinkStep)
   while i < R.table.slots.len:
-    if R.table.slots[i].used:
-      step = default(AmeDacRelayStep)
-      step.peer = R.table.slots[i].key
-      inner = tickDacLink(R.table.slots[i].link, nowMs)
-      applyLinkStep(R, i, inner, step)
-      ## `lastSeenMs` is NOT touched here, and that is the point of the field.
-      ## It means "when this peer was last HEARD FROM", which only
-      ## `feedAmeDacDatagram` can know. A tick is this side SPEAKING, and a
-      ## link that keeps speaking to a peer that has gone -- repair rounds, a
-      ## receipt, anything -- used to refresh its own timestamp and so never
-      ## look quiet:
-      ##
-      ##   this side sends  ->  lastSeenMs = now  ->  the slot looks alive
-      ##                                              because WE are alive
-      ##
-      ## Nothing is lost by dropping it. A slot mid-transfer is protected by
-      ## `dacSlotReclaimable` refusing any link with either direction active,
-      ## whatever the timestamp says -- so the timestamp is free to mean the
-      ## one thing it should.
-      if step.kind != adrNone or step.send.len > 0:
-        result.add(step)
+    if not R.table.slots[i].used:
+      i = i + 1
+      continue
+    step = AmeDacRelayStep(peer: R.table.slots[i].key)
+    inner = tickDacLink(R.table.slots[i].link, nowMs)
+    applyLinkStep(R, i, inner, step)
+    ## `lastSeenMs` is NOT touched here, and that is the point of the field.
+    ## It means "when this peer was last HEARD FROM", which only
+    ## `feedAmeDacDatagram` can know. A tick is this side SPEAKING, and a
+    ## link that keeps speaking to a peer that has gone -- repair rounds, a
+    ## receipt, anything -- used to refresh its own timestamp and so never
+    ## look quiet:
+    ##
+    ##   this side sends  ->  lastSeenMs = now  ->  the slot looks alive
+    ##                                              because WE are alive
+    ##
+    ## Nothing is lost by dropping it. A slot mid-transfer is protected by
+    ## `dacSlotReclaimable` refusing any link with either direction active,
+    ## whatever the timestamp says -- so the timestamp is free to mean the
+    ## one thing it should.
+    if step.kind != adrNone or step.send.len > 0:
+      result.add(step)
     i = i + 1
 
 proc sweepAmeDacRelay*(R: var AmeDacRelay, nowMs: uint32): int {.

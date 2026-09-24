@@ -212,6 +212,34 @@ proc acceptEncryptedExtensions(S: var Tls13ClientSession, H: Tls13Handshake,
   S.transcript.appendTls13Transcript(H.encoded)
   S.state = tcsAwaitCertificate
 
+proc serverChainError(S: Tls13ClientSession, E: seq[Tls13CertificateEntry],
+    leaf: X509Certificate): string {.role: parser,
+    tag: "tls|validation|cryptoBoundary".} =
+  ## S/E/leaf: "" when the leaf is trusted, else why not.
+  ##
+  ##   pinned        the leaf alone, under the one pinned root
+  ##   trust store   the leaf plus the intermediates after it, up to an anchor
+  var
+    policy: tuple[ok: bool, err: string] = (ok: false, err: "")
+    parsed: X509ReadResult = X509ReadResult()
+    intermediates: seq[X509Certificate] = @[]
+    chain: ChainVerifyResult = ChainVerifyResult()
+    i: int = 1
+  if S.pinned:
+    policy = verifyPinnedServerCertificate(leaf, S.rootCertificate,
+      S.config.nowUnix, S.config.serverName)
+    return policy.err
+  while i < E.len:
+    parsed = parseX509CertificateDer(E[i].certificateDer)
+    if not parsed.ok:
+      return parsed.err
+    intermediates.add(parsed.certificate)
+    i = i + 1
+  chain = verifyCertificateChain(leaf, intermediates, S.trustAnchors,
+    S.config.nowUnix, S.config.serverName)
+  if not chain.ok:
+    result = chain.err
+
 proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
     tag: "tls|validation|cryptoBoundary".} =
@@ -220,12 +248,8 @@ proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
   ## an anchor, which is what a server nobody provisioned actually sends.
   var
     R = decodeTls13Certificate(H.body)
-    leaf: X509ReadResult
-    parsed: X509ReadResult
-    intermediates: seq[X509Certificate] = @[]
-    policy: tuple[ok: bool, err: string]
-    chain: ChainVerifyResult
-    i: int = 1
+    leaf: X509ReadResult = X509ReadResult()
+    err: string = ""
   if not R.ok or R.message.requestContext.len != 0 or
       R.message.entries.len == 0:
     S.failClient(O, if R.err.len > 0: R.err else:
@@ -241,28 +265,30 @@ proc acceptCertificate(S: var Tls13ClientSession, H: Tls13Handshake,
   if not leaf.ok:
     S.failClient(O, leaf.err)
     return
-  if S.pinned:
-    policy = verifyPinnedServerCertificate(leaf.certificate,
-      S.rootCertificate, S.config.nowUnix, S.config.serverName)
-    if not policy.ok:
-      S.failClient(O, policy.err)
-      return
-  else:
-    while i < R.message.entries.len:
-      parsed = parseX509CertificateDer(R.message.entries[i].certificateDer)
-      if not parsed.ok:
-        S.failClient(O, parsed.err)
-        return
-      intermediates.add(parsed.certificate)
-      i = i + 1
-    chain = verifyCertificateChain(leaf.certificate, intermediates,
-      S.trustAnchors, S.config.nowUnix, S.config.serverName)
-    if not chain.ok:
-      S.failClient(O, chain.err)
-      return
+  err = serverChainError(S, R.message.entries, leaf.certificate)
+  if err.len > 0:
+    S.failClient(O, err)
+    return
   S.peerCertificate = leaf.certificate
   S.transcript.appendTls13Transcript(H.encoded)
   S.state = tcsAwaitCertificateVerify
+
+proc rsaCertificateVerifyOk(S: Tls13ClientSession, signature: openArray[byte],
+    h: Sha256Digest): bool {.role: parser, tag: "tls|validation|cryptoBoundary".} =
+  ## S/signature/h: an RSA-PSS CertificateVerify under the leaf's key.
+  var
+    k: RsaPublicKeyResult = parseRsaSpki(S.peerCertificate.publicKeySpki)
+  result = k.ok and verifyTls13CertificateVerifyRsaPss(k.key, signature,
+    true, h)
+
+proc ecdsaCertificateVerifyOk(S: Tls13ClientSession,
+    signature: openArray[byte], h: Sha256Digest): bool {.role: parser,
+    tag: "tls|validation|cryptoBoundary".} =
+  ## S/signature/h: an ECDSA P-256 CertificateVerify under the leaf's key.
+  var
+    k: P256PublicKeyResult = parseP256Spki(S.peerCertificate.publicKeySpki)
+  result = k.ok and verifyTls13CertificateVerifyEcdsaP256(k.point, signature,
+    true, h)
 
 proc acceptCertificateVerify(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
@@ -271,8 +297,6 @@ proc acceptCertificateVerify(S: var Tls13ClientSession, H: Tls13Handshake,
     R = decodeTls13CertificateVerify(H.body)
     transcriptHash: Sha256Digest = S.transcript.tls13TranscriptHash()
     verified: bool = false
-    rsaKey: RsaPublicKeyResult
-    ecKey: P256PublicKeyResult
   if not R.ok:
     S.failClient(O, if R.err.len > 0: R.err else:
       "TLS server CertificateVerify is invalid")
@@ -282,21 +306,15 @@ proc acceptCertificateVerify(S: var Tls13ClientSession, H: Tls13Handshake,
   # authorized.
   case S.peerCertificate.publicKeyAlgorithm
   of oidEd25519:
-    if R.scheme == tls13SignatureEd25519:
-      verified = verifyTls13CertificateVerify(S.peerCertificate.publicKey,
-        R.signature, true, transcriptHash)
+    verified = R.scheme == tls13SignatureEd25519 and
+      verifyTls13CertificateVerify(S.peerCertificate.publicKey, R.signature,
+        true, transcriptHash)
   of oidRsaEncryption:
-    if R.scheme == tls13SignatureRsaPssRsaeSha256:
-      rsaKey = parseRsaSpki(S.peerCertificate.publicKeySpki)
-      if rsaKey.ok:
-        verified = verifyTls13CertificateVerifyRsaPss(rsaKey.key, R.signature,
-          true, transcriptHash)
+    verified = R.scheme == tls13SignatureRsaPssRsaeSha256 and
+      rsaCertificateVerifyOk(S, R.signature, transcriptHash)
   of oidEcPublicKey:
-    if R.scheme == tls13SignatureEcdsaSecp256r1Sha256:
-      ecKey = parseP256Spki(S.peerCertificate.publicKeySpki)
-      if ecKey.ok:
-        verified = verifyTls13CertificateVerifyEcdsaP256(ecKey.point,
-          R.signature, true, transcriptHash)
+    verified = R.scheme == tls13SignatureEcdsaSecp256r1Sha256 and
+      ecdsaCertificateVerifyOk(S, R.signature, transcriptHash)
   else:
     verified = false
   if not verified:
@@ -401,19 +419,24 @@ proc acceptClientEvent(S: var Tls13ClientSession, E: Tls13Event,
     S.acceptClientHandshake(E.handshake, O)
     result = S.state == tcsFailed
 
+proc acceptClientEvents(S: var Tls13ClientSession, E: seq[Tls13Event],
+    O: var Tls13ClientOutput): bool {.role: actor,
+    tag: "tls|transport|cryptoBoundary".} =
+  ## S/E/O: act on each event of one feed step; true once one ends the feed.
+  result = false
+  for e in E:
+    if acceptClientEvent(S, e, O):
+      return true
+
 proc feedTls13Client*(S: var Tls13ClientSession,
     A: openArray[byte]): Tls13ClientOutput {.role: orchestrator,
     tag: "tls|transport|cryptoBoundary".} =
   ## S/A: client session and arbitrary next transport bytes.
   var
     step: Tls13FeedStep = S.connection.feedTls13One(A)
-    i: int = 0
   while true:
-    i = 0
-    while i < step.events.len:
-      if acceptClientEvent(S, step.events[i], result):
-        return
-      i = i + 1
+    if acceptClientEvents(S, step.events, result):
+      return
     if not step.progressed:
       return
     step = S.connection.feedTls13One([])

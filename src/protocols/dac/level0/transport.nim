@@ -265,34 +265,37 @@ proc sendDacFrameBytes*(sock: DacSocket, bs: ByteSeq) {.role: orchestrator.} =
     return
   udp_ops.sendUdpDatagram(sock, bs)
 
+proc sendLocalhostFanout(sock: DacSocket, port: uint16, bs: ByteSeq) {.
+    role: dataWriter.} =
+  ## sock/port/bs: send to BOTH loopback addresses; fine if one takes it.
+  var
+    sent: bool = false
+    lastErr: string = "failed to send UDP datagram"
+  for alias in [initDacAddress("::1", port), initDacAddress("127.0.0.1",
+      port)]:
+    try:
+      udp_ops.sendUdpDatagram(sock, carrierAddressFromDac(alias), bs)
+      sent = true
+    except CatchableError as e:
+      lastErr = e.msg
+  if not sent:
+    raise newException(IOError, lastErr)
+
 proc sendDacFrameBytes*(sock: DacSocket, a: DacAddress,
     bs: ByteSeq) {.role: orchestrator.} =
   ## sock: DAC endpoint handle.
   ## a: remote DAC endpoint.
   ## bs: complete encoded DAC frame bytes.
   var
-    host: string
-    sent: bool = false
-    lastErr: string = ""
-  host = a.host.strip().toLowerAscii()
+    host: string = a.host.strip().toLowerAscii()
   # `localhost` can resolve to both loopback families. UDP send succeeds
   # without proving a peer exists, so a single-family choice can silently
   # black-hole the first packet. Fan out only across the local loopback aliases
   # here; once AME authenticates traffic, higher layers pin to the concrete
   # literal source address and stop using the hostname.
   if host == "localhost":
-    for alias in [initDacAddress("::1", a.port), initDacAddress("127.0.0.1",
-        a.port)]:
-      try:
-        udp_ops.sendUdpDatagram(sock, carrierAddressFromDac(alias), bs)
-        sent = true
-      except CatchableError as e:
-        lastErr = e.msg
-    if sent:
-      return
-    if lastErr.len == 0:
-      lastErr = "failed to send UDP datagram"
-    raise newException(IOError, lastErr)
+    sendLocalhostFanout(sock, a.port, bs)
+    return
   udp_ops.sendUdpDatagram(sock, carrierAddressFromDac(a), bs)
 
 proc recvDacFrameBytes*(sock: DacSocket, maxBytes: int,

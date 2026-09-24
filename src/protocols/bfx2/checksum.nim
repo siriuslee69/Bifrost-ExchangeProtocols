@@ -8,23 +8,21 @@ import runePragmas
 const
   crc32Poly = 0xEDB88320'u32
 
+proc crc32Byte(c: uint32, b: uint8): uint32 {.inline, gcsafe, role: math.} =
+  ## c/b: the running CRC after one more byte (reflected, 0xEDB88320).
+  var
+    j: int = 0
+  result = c xor uint32(b)
+  while j < 8:
+    result = (result shr 1) xor (crc32Poly and (0'u32 - (result and 1'u32)))
+    j = j + 1
+
 proc crc32*(bs: ByteSeq): uint32 {.gcsafe, role: truthBuilder.} =
   ## crc32: build crc 32.
   var
     c: uint32 = 0xFFFFFFFF'u32
-    i: int = 0
-    j: int = 0
-  i = 0
-  while i < bs.len:
-    c = c xor uint32(bs[i])
-    j = 0
-    while j < 8:
-      if (c and 1'u32) != 0'u32:
-        c = (c shr 1) xor crc32Poly
-      else:
-        c = c shr 1
-      j.inc
-    i.inc
+  for b in bs:
+    c = crc32Byte(c, b)
   result = not c
 
 

@@ -111,91 +111,81 @@ proc isNestedGeneratedDirName(name: string): bool {.role: parser.} =
     i = i + 1
 
 proc addFinding(S: var seq[HygieneFinding]; relPath: string; isDir: bool;
-    kind: HygieneFindingKind; cleanable: bool) {.role: helper.}
+    kind: HygieneFindingKind; cleanable: bool) {.role: helper.} =
+  ## S/relPath/isDir/kind/cleanable: one more finding.
+  S.add(HygieneFinding(relPath: relPath, isDir: isDir, kind: kind,
+    cleanable: cleanable))
 
 proc addSourceRootFindings(root, dir: string,
     S: var seq[HygieneFinding]) {.role: truthBuilder.} =
+  ## root/dir/S: build output left inside a source folder, walked down.
   var
     relPath: string = ""
-    name: string = ""
+    generatedDir: bool = false
   for kind, p in walkDir(dir):
     relPath = relPathFrom(root, p)
-    name = splitPath(relPath).tail
-    if kind == pcDir:
-      if isNestedGeneratedDirName(name):
-        S.addFinding(relPath, true, hfkGenerated, true)
-      else:
-        addSourceRootFindings(root, p, S)
+    generatedDir = kind == pcDir and
+      isNestedGeneratedDirName(splitPath(relPath).tail)
+    if generatedDir:
+      S.addFinding(relPath, true, hfkGenerated, true)
+    elif kind == pcDir:
+      addSourceRootFindings(root, p, S)
     elif isSourceArtifact(p):
       S.addFinding(relPath, false, hfkGenerated, true)
 
-proc addFinding(S: var seq[HygieneFinding]; relPath: string; isDir: bool;
-    kind: HygieneFindingKind; cleanable: bool) {.role: helper.} =
-  S.add(HygieneFinding(
-    relPath: relPath,
-    isDir: isDir,
-    kind: kind,
-    cleanable: cleanable
-  ))
+proc isRootBinary(relPath: string): bool {.role: parser.} =
+  ## relPath: a file at the repo root. True for a built program:
+  ## `bifrost_exchange_protocols` or `bifrost_exchange_protocols_*`, with no
+  ## extension or a build extension.
+  var
+    parts: tuple[dir, name, ext: string] = splitFile(relPath)
+  result = (parts.name == "bifrost_exchange_protocols" or
+    parts.name.startsWith("bifrost_exchange_protocols_")) and
+    (parts.ext.len == 0 or hasGeneratedExt(relPath))
+
+proc addRootEntryFindings(S: var seq[HygieneFinding], relPath: string,
+    kind: PathComponent) {.role: truthBuilder.} =
+  ## S/relPath/kind: one entry at the repo root that build output left.
+  var
+    name: string = splitPath(relPath).tail
+  for prefix in RootGeneratedPrefixes:
+    if name.startsWith(prefix):
+      S.addFinding(relPath, kind == pcDir, hfkGenerated, true)
+  if kind == pcFile and isRootBinary(relPath):
+    S.addFinding(relPath, false, hfkGenerated, true)
+  if relPath == "result" or relPath.startsWith("result-"):
+    S.addFinding(relPath, kind == pcDir, hfkGenerated, true)
 
 proc repoHygieneFindings*(root: string): seq[HygieneFinding] {.
     role: truthBuilder.} =
+  ## root: everything in the checkout that is build output or local-only.
   var
     absPath: string = ""
-    relPath: string = ""
-    scanRoot: string = ""
-    name: string = ""
   for relRoot in GeneratedRoots:
     absPath = joinPath(root, relRoot)
-    if dirExists(absPath):
-      result.addFinding(relRoot, true, hfkGenerated, true)
-    elif fileExists(absPath):
-      result.addFinding(relRoot, false, hfkGenerated, true)
-
+    if dirExists(absPath) or fileExists(absPath):
+      result.addFinding(relRoot, dirExists(absPath), hfkGenerated, true)
   for relFile in LocalFiles:
-    absPath = joinPath(root, relFile)
-    if fileExists(absPath):
+    if fileExists(joinPath(root, relFile)):
       result.addFinding(relFile, false, hfkLocal, true)
-
-  if dirExists(joinPath(root, ".iron")):
-    for p in walkDirRec(joinPath(root, ".iron")):
-      relPath = relPathFrom(root, p)
-      if relPath.contains("/.local") and not relPath.endsWith(".template"):
-        result.addFinding(relPath, false, hfkLocal, true)
-
   for relRoot in SourceArtifactRoots:
-    scanRoot = joinPath(root, relRoot)
-    if not dirExists(scanRoot):
-      continue
-    addSourceRootFindings(root, scanRoot, result)
-
+    if dirExists(joinPath(root, relRoot)):
+      addSourceRootFindings(root, joinPath(root, relRoot), result)
   for kind, p in walkDir(root):
-    relPath = relPathFrom(root, p)
-    name = splitPath(relPath).tail
-    for prefix in RootGeneratedPrefixes:
-      if name.startsWith(prefix):
-        result.addFinding(relPath, kind == pcDir, hfkGenerated, true)
-    if kind == pcFile:
-      var parts: tuple[dir, name, ext: string] = splitFile(relPath)
-      if parts.name == "bifrost_exchange_protocols" and
-          (parts.ext.len == 0 or hasGeneratedExt(relPath)):
-        result.addFinding(relPath, false, hfkGenerated, true)
-      elif parts.name.startsWith("bifrost_exchange_protocols_") and
-          (parts.ext.len == 0 or hasGeneratedExt(relPath)):
-        result.addFinding(relPath, false, hfkGenerated, true)
-    if relPath == "result" or relPath.startsWith("result-"):
-      result.addFinding(relPath, kind == pcDir, hfkGenerated, true)
+    addRootEntryFindings(result, relPathFrom(root, p), kind)
 
 proc removeFinding*(root: string; finding: HygieneFinding) {.role: actor.} =
-  var absPath: string = joinPath(root, finding.relPath)
-  if finding.isDir:
-    if dirExists(absPath):
-      removeDir(absPath)
-  elif fileExists(absPath):
+  ## root/finding: deleted from disk, if it is still there.
+  var
+    absPath: string = joinPath(root, finding.relPath)
+  if finding.isDir and dirExists(absPath):
+    removeDir(absPath)
+  if not finding.isDir and fileExists(absPath):
     removeFile(absPath)
 
 proc renderFindings*(root: string;
     findings: openArray[HygieneFinding]): string {.role: dataWriter.} =
+  ## root/findings: the report, one line per finding.
   result.add("repo root: " & normalizedRoot(root) & "\n")
   if findings.len == 0:
     result.add("status: clean\n")
@@ -208,35 +198,42 @@ proc renderFindings*(root: string;
     of hfkLocal:
       result.add("local: " & finding.relPath & "\n")
 
+proc readOption(key, val: string, root: var string, clean: var bool) {.
+    role: parser.} =
+  ## key/val: one `--root=DIR` or `--clean`; anything else stops the tool.
+  case key.toLowerAscii().strip()
+  of "root":
+    root = val
+  of "clean":
+    clean = true
+  else:
+    stderr.writeLine("unknown option: " & key)
+    quit(1)
+
+proc cleanFindings(root: string, findings: seq[HygieneFinding]) {.
+    role: actor.} =
+  ## root/findings: every cleanable finding removed.
+  for finding in findings:
+    if finding.cleanable:
+      removeFinding(root, finding)
+
 proc main() {.role: metaOrchestrator.} =
   var
     parser = initOptParser(commandLineParams())
     root: string = getCurrentDir()
     clean: bool = false
     findings: seq[HygieneFinding] = @[]
-  while true:
-    parser.next()
-    case parser.kind
-    of cmdEnd:
-      break
-    of cmdLongOption, cmdShortOption:
-      case parser.key.toLowerAscii().strip()
-      of "root":
-        root = parser.val
-      of "clean":
-        clean = true
-      else:
-        stderr.writeLine("unknown option: " & parser.key)
-        quit(1)
-    of cmdArgument:
+  parser.next()
+  while parser.kind != cmdEnd:
+    if parser.kind == cmdArgument:
       stderr.writeLine("unexpected argument: " & parser.key)
       quit(1)
+    readOption(parser.key, parser.val, root, clean)
+    parser.next()
   root = normalizedRoot(root)
   findings = repoHygieneFindings(root)
   if clean:
-    for finding in findings:
-      if finding.cleanable:
-        removeFinding(root, finding)
+    cleanFindings(root, findings)
     findings = repoHygieneFindings(root)
   stdout.write(renderFindings(root, findings))
   if findings.len > 0:

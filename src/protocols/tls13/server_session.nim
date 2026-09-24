@@ -135,15 +135,11 @@ proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
 
 proc chooseAlpn(offered, supported: openArray[string]): string {.role: parser,
     tag: "tls|validation".} =
-  var
-    i, j: int = 0
-  while i < supported.len:
-    j = 0
-    while j < offered.len:
-      if offered[j] == supported[i]:
-        return supported[i]
-      j = j + 1
-    i = i + 1
+  ## offered/supported: the first of OUR protocols the client also offered.
+  result = ""
+  for s in supported:
+    if s in offered:
+      return s
 
 proc schemeForKeyKind(k: Tls13ServerKeyKind): uint16 {.role: helper,
     tag: "tls".} =
@@ -382,19 +378,24 @@ proc acceptServerEvent(S: var Tls13ServerSession, E: Tls13Event,
   of tekHandshake:
     result = acceptServerHandshake(S, E.handshake, O)
 
+proc acceptServerEvents(S: var Tls13ServerSession, E: seq[Tls13Event],
+    O: var Tls13ServerOutput): bool {.role: actor,
+    tag: "tls|transport|cryptoBoundary".} =
+  ## S/E/O: act on each event of one feed step; true once one ends the feed.
+  result = false
+  for e in E:
+    if acceptServerEvent(S, e, O):
+      return true
+
 proc feedTls13Server*(S: var Tls13ServerSession,
     A: openArray[byte]): Tls13ServerOutput {.role: orchestrator,
     tag: "tls|transport|cryptoBoundary".} =
   ## S/A: server session and arbitrary next transport bytes.
   var
     step: Tls13FeedStep = S.connection.feedTls13One(A)
-    i: int = 0
   while true:
-    i = 0
-    while i < step.events.len:
-      if acceptServerEvent(S, step.events[i], result):
-        return
-      i = i + 1
+    if acceptServerEvents(S, step.events, result):
+      return
     if not step.progressed:
       return
     step = S.connection.feedTls13One([])

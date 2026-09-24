@@ -366,36 +366,44 @@ proc feedHead(P: var HttpRequestParser; A: openArray[byte];
     P.state = hpsComplete
   result.ok = true
 
+proc feedFixedBody(P: var HttpRequestParser; A: openArray[byte];
+    i: var int) {.role: actor, tag: "protocol|parsing".} =
+  ## P/A/i: a `Content-Length` body: take what is left of it, no more.
+  var
+    take: int = int(min(int64(A.len - i), P.contentLength - P.bodyRead))
+  if take > 0:
+    P.request.body.add(A[i ..< i + take])
+    i = i + take
+    P.bodyRead = P.bodyRead + int64(take)
+  if P.bodyRead >= P.contentLength:
+    P.state = hpsComplete
+
+proc feedChunkedBody(P: var HttpRequestParser; A: openArray[byte];
+    i: var int): HttpFeedResult {.role: actor, tag: "protocol|parsing".} =
+  ## P/A/i: a chunked body: decode what arrived, refuse past the limit.
+  var
+    ch: ChunkedFeedResult = feedChunked(P.chunked, A.toOpenArray(i,
+      A.len - 1), P.maxBodyBytes)
+  result.ok = true
+  i = i + ch.consumed
+  if not ch.ok:
+    return failParse(P, hpeInvalidChunk, ch.err)
+  P.request.body.add(ch.data)
+  if int64(P.request.body.len) > P.maxBodyBytes:
+    return failParse(P, hpeBodyTooLarge, "request body exceeds limit")
+  if ch.done:
+    P.state = hpsComplete
+
 proc feedBody(P: var HttpRequestParser; A: openArray[byte];
     i: var int): HttpFeedResult {.role: orchestrator,
     tag: "protocol|parsing".} =
   ## P/A/i: parser, input bytes, and read cursor advanced in place.
-  var
-    take: int = 0
-    ch: ChunkedFeedResult
   result.ok = true
   case P.bodyMode
   of hbmContentLength:
-    take = A.len - i
-    if int64(take) > P.contentLength - P.bodyRead:
-      take = int(P.contentLength - P.bodyRead)
-    if take > 0:
-      P.request.body.add(A[i ..< i + take])
-      i = i + take
-      P.bodyRead = P.bodyRead + int64(take)
-    if P.bodyRead >= P.contentLength:
-      P.state = hpsComplete
+    feedFixedBody(P, A, i)
   of hbmChunked:
-    ch = feedChunked(P.chunked, A.toOpenArray(i, A.len - 1), P.maxBodyBytes)
-    i = i + ch.consumed
-    if not ch.ok:
-      return failParse(P, hpeInvalidChunk, ch.err)
-    if ch.data.len > 0:
-      P.request.body.add(ch.data)
-      if int64(P.request.body.len) > P.maxBodyBytes:
-        return failParse(P, hpeBodyTooLarge, "request body exceeds limit")
-    if ch.done:
-      P.state = hpsComplete
+    result = feedChunkedBody(P, A, i)
   else:
     P.state = hpsComplete
 

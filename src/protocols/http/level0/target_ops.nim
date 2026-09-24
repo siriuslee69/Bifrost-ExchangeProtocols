@@ -34,6 +34,27 @@ proc hexDigitValue(c: char): int {.inline, role: parser,
   of 'A'..'F': ord(c) - ord('A') + 10
   else: -1
 
+proc decodedByteAt(s: string, i: int): tuple[value, step: int] {.inline,
+    role: parser, tag: "protocol|parsing|validation".} =
+  ## s/i: the byte the text at `i` stands for, and how many characters it
+  ## took. `value = -1` refuses it:
+  ##
+  ##   "%41"   -> 65, 3        "%4"  or "%zz" -> -1 (truncated, not hex)
+  ##   "a"     -> 97, 1        "%00" or a NUL -> -1 (truncates C paths)
+  var
+    hi: int = -1
+    lo: int = -1
+  if s[i] == '\0':
+    return (-1, 1)
+  if s[i] != '%':
+    return (ord(s[i]), 1)
+  if i + 2 < s.len:
+    hi = hexDigitValue(s[i + 1])
+    lo = hexDigitValue(s[i + 2])
+  if hi < 0 or lo < 0 or (hi == 0 and lo == 0):
+    return (-1, 3)
+  result = (hi * 16 + lo, 3)
+
 proc percentDecode*(s: string): tuple[ok: bool, value: string] {.
     role: sanitizer, tag: "protocol|parsing|validation".} =
   ## s: percent-encoded text to decode.
@@ -41,31 +62,17 @@ proc percentDecode*(s: string): tuple[ok: bool, value: string] {.
   ## Fails closed on a truncated or non-hex escape rather than passing
   ## the raw `%` through, so `%` can never survive into a filesystem path.
   ## A decoded NUL byte is also refused: it truncates C-side path handling.
+  ## `+` stays `+` here; only form decoding turns it into a space.
   var
     i: int = 0
-    hi: int = 0
-    lo: int = 0
+    b: tuple[value, step: int] = (0, 0)
     t: string = ""
   while i < s.len:
-    if s[i] == '%':
-      if i + 2 >= s.len:
-        return (false, "")
-      hi = hexDigitValue(s[i + 1])
-      lo = hexDigitValue(s[i + 2])
-      if hi < 0 or lo < 0:
-        return (false, "")
-      if hi == 0 and lo == 0:
-        return (false, "")
-      t.add(char(hi * 16 + lo))
-      i = i + 3
-    elif s[i] == '+':
-      t.add('+')
-      i = i + 1
-    else:
-      if s[i] == '\0':
-        return (false, "")
-      t.add(s[i])
-      i = i + 1
+    b = decodedByteAt(s, i)
+    if b.value < 0:
+      return (false, "")
+    t.add(char(b.value))
+    i = i + b.step
   result = (true, t)
 
 proc percentDecodeForm*(s: string): tuple[ok: bool, value: string] {.
@@ -132,6 +139,22 @@ proc stripAbsoluteForm*(p: string): string {.role: sanitizer,
     return "/"
   result = p[slash .. ^1]
 
+proc foldPathSegment(S: var seq[string], seg: string): bool {.role: actor,
+    tag: "protocol|validation".} =
+  ## S/seg: fold one segment into the path so far. False means the path
+  ## climbed above the root.
+  ##
+  ##   ""  "."   nothing       ".."   drop the last one   else  append
+  if seg.len == 0 or seg == ".":
+    return true
+  if seg != "..":
+    S.add(seg)
+    return true
+  if S.len == 0:
+    return false
+  S.setLen(S.len - 1)
+  result = true
+
 proc normalizeHttpPath*(p: string): tuple[ok: bool, path: string] {.
     role: sanitizer, tag: "protocol|validation".} =
   ## p: already percent-decoded path to normalise.
@@ -140,54 +163,22 @@ proc normalizeHttpPath*(p: string): tuple[ok: bool, path: string] {.
   ## each `..`. Reports `ok = false` when a `..` would climb above the
   ## root, and when a backslash appears (Windows treats `\` as a
   ## separator, so allowing it would reopen traversal on that platform).
+  ##
+  ##   "/a//b/./c/../d/"  ->  "/a/b/d/"      "/../x"  ->  refused
   var
     S: seq[string] = @[]
-    seg: string = ""
-    i: int = 0
-    c: char = '\0'
-    trailing: bool = false
-
-  proc flushSegment(): bool {.closure.} =
-    ## Fold one finished segment into the stack. False means escape.
-    if seg.len == 0 or seg == ".":
-      seg = ""
-      return true
-    if seg == "..":
-      if S.len == 0:
-        return false
-      S.setLen(S.len - 1)
-      seg = ""
-      return true
-    S.add(seg)
-    seg = ""
-    result = true
-
   if p.len == 0:
     return (true, "/")
-  while i < p.len:
-    c = p[i]
-    if c == '\\':
-      return (false, "")
-    if c == '/':
-      if not flushSegment():
-        return (false, "")
-    else:
-      seg.add(c)
-    i = i + 1
-  trailing = p.len > 0 and p[^1] == '/'
-  if not flushSegment():
+  if '\\' in p:
     return (false, "")
+  for seg in p.split('/'):
+    if not foldPathSegment(S, seg):
+      return (false, "")
   if S.len == 0:
     return (true, "/")
-  i = 0
-  seg = ""
-  while i < S.len:
-    seg.add('/')
-    seg.add(S[i])
-    i = i + 1
-  if trailing:
-    seg.add('/')
-  result = (true, seg)
+  result = (true, "/" & S.join("/"))
+  if p[^1] == '/':
+    result.path.add('/')
 
 proc addQueryPair(P: var seq[HttpQueryParam], piece: string) {.inline,
     role: dataWriter, tag: "protocol|parsing".} =
@@ -215,18 +206,10 @@ proc parseQueryParams*(q: string): seq[HttpQueryParam] {.role: parser,
   ## A key with no `=` yields an empty value. Pairs that fail to decode
   ## are skipped rather than failing the whole request, because one bad
   ## parameter should not cost the client its page.
-  var
-    i: int = 0
-    start: int = 0
   result = @[]
-  if q.len == 0:
-    return
-  while i <= q.len:
-    if i == q.len or q[i] == '&':
-      if i > start:
-        addQueryPair(result, q[start ..< i])
-      start = i + 1
-    i = i + 1
+  for piece in q.split('&'):
+    if piece.len > 0:
+      addQueryPair(result, piece)
 
 proc getQueryParam*(P: seq[HttpQueryParam]; k: string;
     d: string = ""): string {.role: parser, tag: "protocol|read".} =
