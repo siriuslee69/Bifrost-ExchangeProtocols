@@ -124,15 +124,6 @@ proc padFramePayload(S: AmeSession,
   ## length and that length must already include the padding.
   result = padAmeMessage(payload, S.auth.current.params.padding)
 
-proc buildAad(carrier: AmeCarrier,
-    h: AmeFrameHeader): ByteSeq {.role: truthBuilder.} =
-  ## carrier/h: transport and the whole frame header, bound into the tag.
-  ## Everything a receiver reads before it can pick keys is in here, so a
-  ## header field edited in flight makes the body fail to open.
-  appendAmeLabel(result, "AME-AAD-v2")
-  result.add(uint8(ord(carrier)))
-  appendAmeBytes(result, encodeAmeFrameHeader(h))
-
 proc encodeProtectedFrame(S: AmeSession, h: AmeFrameHeader,
     body: openArray[uint8]): ByteSeq {.role: dataWriter,
     tag: "ame|cryptoBoundary|wire".} =
@@ -166,19 +157,6 @@ proc recvHeaderKey(S: AmeSession, useCandidate: bool = false): ByteSeq {.
     ameEpochKeyContext(S.pendingIncoming.candidate, S.auth.sessionId,
       inboundAmeDirection(S.auth.endpointRole)))
 
-proc decodeProtectedFrame*(S: AmeSession, frame: openArray[uint8],
-    useCandidate: bool = false): AmeDecodedFrame {.role: parser,
-    tag: "ame|cryptoBoundary|parsing".} =
-  ## S/frame/useCandidate: one arriving frame, with its counter put back the
-  ## way the sender wrote it before anything else looks at it.
-  ##
-  ## Everything downstream -- the binding checks, the replay window, the tag
-  ## itself -- reads `header.sequence`, so this is the only place that needs
-  ## to know the number on the wire was ever masked.
-  result = decodeAmeFrame(frame)
-  result.header.sequence = unmaskedAmeFrameSequence(frame,
-    recvHeaderKey(S, useCandidate))
-
 proc requireAmeMaySend(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
   ## S/kind: refuses a frame while this side must stay silent:
   ##
@@ -197,6 +175,15 @@ proc requireAmeMaySend(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
     raise newException(ValueError, "AME waits for the peer's epoch-ready " &
       "before sending anything else")
 
+proc buildAad(carrier: AmeCarrier,
+    h: AmeFrameHeader): ByteSeq {.role: truthBuilder.} =
+  ## carrier/h: transport and the whole frame header, bound into the tag.
+  ## Everything a receiver reads before it can pick keys is in here, so a
+  ## header field edited in flight makes the body fail to open.
+  appendAmeLabel(result, "AME-AAD-v2")
+  result.add(uint8(ord(carrier)))
+  appendAmeBytes(result, encodeAmeFrameHeader(h))
+
 proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator,
     tag: "cryptoBoundary|fomke|protocol".} =
@@ -214,62 +201,6 @@ proc sealFrameBody(S: var AmeSession, h: AmeFrameHeader, carrier: AmeCarrier,
     result = encodeFomkeMessage(message)
   finally:
     secureClearAmeBytes(aad)
-
-proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
-    carrier: AmeCarrier): tuple[ok: bool, payload: ByteSeq, err: string] {.
-    role: orchestrator, tag: "cryptoBoundary|fomke|protocol".} =
-  ## S/f/carrier: authenticate and open one frame body.
-  ##
-  ## There is one ratchet and it is the current one. A frame sealed under the
-  ## previous epoch is refused here, and the transport is what recovers it --
-  ## DAC rebuilds it from repair shards or asks for it again, TCP retransmits.
-  ##
-  ## This used to keep the PREVIOUS ratchet alive for a hundred frames as a
-  ## second way to open such a frame. It never once ran, because three other
-  ## rules each make the situation it was built for impossible:
-  ##
-  ##   TCP needs an exact sequence, so a held-back frame is a gap and is
-  ##     refused before it ever reaches a ratchet
-  ##   FOMKE refuses to rotate while a skipped key is outstanding, so a frame
-  ##     cannot be held back across the rotation from before it
-  ##   FOMKE refuses to seal while an upgrade is pending, so one cannot be
-  ##     made after it either
-  ##
-  ## Keeping a whole second ratchet -- including its cache of skipped keys --
-  ## to answer a question the protocol refuses to ask was memory and key
-  ## material spent on nothing.
-  var
-    aad: ByteSeq = @[]
-    message: FomkeMessage = default(FomkeMessage)
-    opened: FomkeOpenResult = default(FomkeOpenResult)
-    padding: AmePaddingPolicy = S.auth.current.params.padding
-  ## The envelope carries no tag length, so the split between tag and
-  ## ciphertext comes from what THIS epoch agreed.
-  aad = buildAad(carrier, f.header)
-  try:
-    message = decodeFomkeMessage(f.payload, S.fomke.tagLen)
-    opened = openFomkeMessage(S.fomke, message, aad)
-  except ValueError as exc:
-    secureClearAmeBytes(aad)
-    result.err = exc.msg
-    return
-  secureClearAmeBytes(aad)
-  if not opened.ok:
-    result.err = "AME authentication failed: " & opened.err
-    return
-  ## The flag and the policy have to say the same thing. Both were bound into
-  ## the tag, so a disagreement here is a peer configured differently, never
-  ## an attacker: an edited flag bit would already have failed to open.
-  if ((f.header.flags and ameFrameFlagPadded) != 0'u8) !=
-      (padding != apadNone):
-    result.err = "AME frame padding disagrees with the epoch policy"
-    return
-  try:
-    result.payload = unpadAmeMessage(opened.payload, padding)
-  except ValueError as exc:
-    result.err = exc.msg
-    return
-  result.ok = true
 
 proc sealAmeTcpFrame*(S: var AmeSession,
     payload: openArray[uint8]): ByteSeq {.role: orchestrator.} =
@@ -372,6 +303,62 @@ proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
   W.bitmap = W.bitmap or bit
   result = true
 
+proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
+    carrier: AmeCarrier): tuple[ok: bool, payload: ByteSeq, err: string] {.
+    role: orchestrator, tag: "cryptoBoundary|fomke|protocol".} =
+  ## S/f/carrier: authenticate and open one frame body.
+  ##
+  ## There is one ratchet and it is the current one. A frame sealed under the
+  ## previous epoch is refused here, and the transport is what recovers it --
+  ## DAC rebuilds it from repair shards or asks for it again, TCP retransmits.
+  ##
+  ## This used to keep the PREVIOUS ratchet alive for a hundred frames as a
+  ## second way to open such a frame. It never once ran, because three other
+  ## rules each make the situation it was built for impossible:
+  ##
+  ##   TCP needs an exact sequence, so a held-back frame is a gap and is
+  ##     refused before it ever reaches a ratchet
+  ##   FOMKE refuses to rotate while a skipped key is outstanding, so a frame
+  ##     cannot be held back across the rotation from before it
+  ##   FOMKE refuses to seal while an upgrade is pending, so one cannot be
+  ##     made after it either
+  ##
+  ## Keeping a whole second ratchet -- including its cache of skipped keys --
+  ## to answer a question the protocol refuses to ask was memory and key
+  ## material spent on nothing.
+  var
+    aad: ByteSeq = @[]
+    message: FomkeMessage = default(FomkeMessage)
+    opened: FomkeOpenResult = default(FomkeOpenResult)
+    padding: AmePaddingPolicy = S.auth.current.params.padding
+  ## The envelope carries no tag length, so the split between tag and
+  ## ciphertext comes from what THIS epoch agreed.
+  aad = buildAad(carrier, f.header)
+  try:
+    message = decodeFomkeMessage(f.payload, S.fomke.tagLen)
+    opened = openFomkeMessage(S.fomke, message, aad)
+  except ValueError as exc:
+    secureClearAmeBytes(aad)
+    result.err = exc.msg
+    return
+  secureClearAmeBytes(aad)
+  if not opened.ok:
+    result.err = "AME authentication failed: " & opened.err
+    return
+  ## The flag and the policy have to say the same thing. Both were bound into
+  ## the tag, so a disagreement here is a peer configured differently, never
+  ## an attacker: an edited flag bit would already have failed to open.
+  if ((f.header.flags and ameFrameFlagPadded) != 0'u8) !=
+      (padding != apadNone):
+    result.err = "AME frame padding disagrees with the epoch policy"
+    return
+  try:
+    result.payload = unpadAmeMessage(opened.payload, padding)
+  except ValueError as exc:
+    result.err = exc.msg
+    return
+  result.ok = true
+
 proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
     carrier: AmeCarrier,
     remoteDac: DacAddress = default(DacAddress),
@@ -427,6 +414,19 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
   consumeSessionIdGrace(S)
   circ_seq.push(S.inbox, result.packet)
   S.lastErr = ""
+
+proc decodeProtectedFrame*(S: AmeSession, frame: openArray[uint8],
+    useCandidate: bool = false): AmeDecodedFrame {.role: parser,
+    tag: "ame|cryptoBoundary|parsing".} =
+  ## S/frame/useCandidate: one arriving frame, with its counter put back the
+  ## way the sender wrote it before anything else looks at it.
+  ##
+  ## Everything downstream -- the binding checks, the replay window, the tag
+  ## itself -- reads `header.sequence`, so this is the only place that needs
+  ## to know the number on the wire was ever masked.
+  result = decodeAmeFrame(frame)
+  result.header.sequence = unmaskedAmeFrameSequence(frame,
+    recvHeaderKey(S, useCandidate))
 
 proc openAmeTcpFrame*(S: var AmeSession, frame: openArray[uint8],
     remote: transport_types.TcpAddress = default(transport_types.TcpAddress)):

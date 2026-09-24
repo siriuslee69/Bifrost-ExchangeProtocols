@@ -35,15 +35,6 @@ else:
   const chunkyThreaded = false
 
 
-proc constantTimeEqual(a, b: openArray[uint8]): bool {.role: helper,
-    tag: "chunkyAead|cryptoBoundary|validation".} =
-  if a.len != b.len:
-    return false
-  var diff: uint8 = 0
-  for i in 0 ..< a.len:
-    diff = diff or (a[i] xor b[i])
-  diff == 0
-
 proc storeU16Le(v: uint16, bs: var openArray[uint8], o: int) {.role: helper,
     tag: "chunkyAead|codecBoundary".} =
   bs[o] = uint8(v and 0xff)
@@ -132,59 +123,6 @@ proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
     o = o + 1
   result = h
 
-proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
-    tag: "chunkyAead|codecBoundary|write".} =
-  var
-    bs: array[chunkHeaderLen, uint8]
-    wrote: int = 0
-  bs = encodeHeader(h)
-  wrote = f.writeBuffer(addr bs[0], bs.len)
-  if wrote != bs.len:
-    raise newException(IOError, "failed to write chunk header")
-
-proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
-    tag: "chunkyAead|codecBoundary|read".} =
-  var
-    bs: array[chunkHeaderLen, uint8]
-    readBytes: int = 0
-  readBytes = f.readBuffer(addr bs[0], bs.len)
-  if readBytes != bs.len:
-    raise newException(IOError, "failed to read chunk header")
-  result = decodeHeader(bs)
-
-proc ensureDir(p: string) {.role: helper, tag: "chunkyAead|write".} =
-  if p.len == 0:
-    return
-  if not dirExists(p):
-    createDir(p)
-
-proc calcChunkCount(sz, cs: int64): int {.role: parser,
-    tag: "chunkyAead".} =
-  if sz <= 0:
-    return 1
-  result = int((sz + cs - 1) div cs)
-
-proc buildChunkName(bs: string, i: int): string {.role: helper,
-    tag: "chunkyAead".} =
-  result = bs & ".chunk" & $i & ".bin"
-
-proc resolveOutputDir(i, o: string, opt: ChunkyOptions): string {.
-    role: configurator, tag: "chunkyAead".} =
-  if o.len > 0:
-    return o
-  if opt.outputDir.len > 0:
-    return opt.outputDir
-  let parts = splitFile(i)
-  result = joinPath(parts.dir, parts.name & ".chunks")
-
-proc resolveTagLen(opt: ChunkyOptions, s: ChunkyCipherState): uint16 {.
-    role: configurator, tag: "chunkyAead".} =
-  if opt.tagLen != 0'u16:
-    return opt.tagLen
-  if s.tagLen != 0'u16:
-    return s.tagLen
-  result = defaultTagLen
-
 proc requireKey32(s: ChunkyCipherState, idx: int,
     name: string): array[32, uint8] {.role: parser,
     tag: "chunkyAead|cryptoBoundary|validation".} =
@@ -196,9 +134,27 @@ proc zeroKey32(): array[32, uint8] {.role: helper,
     tag: "chunkyAead|cryptoBoundary".} =
   result = default(array[32, uint8])
 
-proc requireNonce24(s: ChunkyCipherState): array[24, uint8] {.role: parser,
-    tag: "chunkyAead|cryptoBoundary|validation".} =
-  result = s.nonce
+when chunkyThreaded:
+  proc fetchTaskIndex(l: var Lock, n: var int): int {.role: actor,
+      tag: "chunkyAead".} =
+    acquire(l)
+    result = n
+    n = n + 1
+    release(l)
+
+## ╭⟢ moving bytes: every read and write is all-or-error
+
+## ╭⟢ one chunk: encrypt, decrypt, hash
+
+proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
+    tag: "chunkyAead|codecBoundary|write".} =
+  var
+    bs: array[chunkHeaderLen, uint8]
+    wrote: int = 0
+  bs = encodeHeader(h)
+  wrote = f.writeBuffer(addr bs[0], bs.len)
+  if wrote != bs.len:
+    raise newException(IOError, "failed to write chunk header")
 
 proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
     a: ChunkyAlgo, t: uint16): ChunkHeader {.role: truthBuilder,
@@ -212,16 +168,6 @@ proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
   h.plainLen = uint64(l)
   h.nonce = ns
   result = h
-
-when chunkyThreaded:
-  proc fetchTaskIndex(l: var Lock, n: var int): int {.role: actor,
-      tag: "chunkyAead".} =
-    acquire(l)
-    result = n
-    n = n + 1
-    release(l)
-
-## ╭⟢ moving bytes: every read and write is all-or-error
 
 proc takeLen(remaining: int64, bufferBytes: int): int {.inline, role: math,
     tag: "chunkyAead".} =
@@ -242,36 +188,6 @@ proc writeExactly(f: var File, buf: var seq[uint8], n: int, what: string) {.
   ## f/buf/n/what: write the first `n` bytes of `buf`, or raise naming `what`.
   if n > 0 and f.writeBuffer(addr buf[0], n) != n:
     raise newException(IOError, "failed to write " & what)
-
-proc chunkLenAt(idx: int, chunkBytes, sizeBytes: int64): int64 {.role: math,
-    tag: "chunkyAead".} =
-  ## idx/chunkBytes/sizeBytes: how many bytes chunk `idx` of the file holds;
-  ## the last chunk may be short, and a chunk past the end holds none.
-  result = min(chunkBytes, sizeBytes - int64(idx) * chunkBytes)
-  if result < 0:
-    result = 0
-
-proc chunkKeys(s: ChunkyCipherState, a: ChunkyAlgo): tuple[x, aes,
-    g: array[32, uint8]] {.role: parser, tag: "chunkyAead|cryptoBoundary".} =
-  ## s/a: the keys each stage of algorithm `a` uses, in the order the state
-  ## holds them; a stage `a` does not run gets zeros.
-  ##
-  ##   algorithm            keys[0]    keys[1]   keys[2]
-  ##   XChaCha20+Gimli      xchacha20  gimli
-  ##   AES+Gimli            aes-ctr    gimli
-  ##   XChaCha20+AES+Gimli  xchacha20  aes-ctr   gimli
-  case a
-  of caXChaCha20Gimli:
-    result = (requireKey32(s, 0, "xchacha20"), zeroKey32(),
-      requireKey32(s, 1, "gimli"))
-  of caAesGimli:
-    result = (zeroKey32(), requireKey32(s, 0, "aes-ctr"),
-      requireKey32(s, 1, "gimli"))
-  of caXChaCha20AesGimli:
-    result = (requireKey32(s, 0, "xchacha20"), requireKey32(s, 1, "aes-ctr"),
-      requireKey32(s, 2, "gimli"))
-
-## ╭⟢ one chunk: encrypt, decrypt, hash
 
 proc encryptChunkBody(t: ChunkEncryptTask, st: var ChunkCryptoState,
     fIn, fOut: var File) {.role: encryptor, tag: "chunkyAead|cryptoBoundary".} =
@@ -327,6 +243,16 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
     close(fIn)
     close(fOut)
 
+proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
+    tag: "chunkyAead|codecBoundary|read".} =
+  var
+    bs: array[chunkHeaderLen, uint8]
+    readBytes: int = 0
+  readBytes = f.readBuffer(addr bs[0], bs.len)
+  if readBytes != bs.len:
+    raise newException(IOError, "failed to read chunk header")
+  result = decodeHeader(bs)
+
 proc requireChunkHeader(h: ChunkHeader, t: ChunkDecryptTask) {.role: parser,
     tag: "chunkyAead|validation".} =
   ## h/t: refuses a header that is not the one this task expects.
@@ -342,6 +268,15 @@ proc requireChunkHeader(h: ChunkHeader, t: ChunkDecryptTask) {.role: parser,
     raise newException(ValueError, "chunk index mismatch")
   if h.nonce != deriveChunkNonce(t.baseNonce, t.chunkIndex):
     raise newException(ValueError, "chunk nonce mismatch")
+
+proc constantTimeEqual(a, b: openArray[uint8]): bool {.role: helper,
+    tag: "chunkyAead|cryptoBoundary|validation".} =
+  if a.len != b.len:
+    return false
+  var diff: uint8 = 0
+  for i in 0 ..< a.len:
+    diff = diff or (a[i] xor b[i])
+  diff == 0
 
 proc decryptChunkBody(t: ChunkDecryptTask, h: ChunkHeader,
     st: var ChunkCryptoState, fIn, fOut: var File) {.role: decryptor,
@@ -444,12 +379,6 @@ proc hashChunkTask(t: var ChunkHashTask) {.role: orchestrator,
 ##                       and run that one task, until none are left
 ##   otherwise           one after the other, on this thread
 
-proc runTasksSerial[T](ts: var seq[T], work: proc (t: var T) {.nimcall,
-    gcsafe.}) {.role: orchestrator, tag: "chunkyAead".} =
-  ## ts/work: run every task, in order, on this thread.
-  for t in ts.mitems:
-    work(t)
-
 when chunkyThreaded:
   proc taskWorker[T](ctx: ptr TaskCtx[T]) {.thread, role: orchestrator,
       tag: "chunkyAead".} =
@@ -477,22 +406,6 @@ when chunkyThreaded:
       joinThread(th)
     deinitLock(l)
 
-proc runTasks[T](ts: var seq[T], tc: int, work: proc (t: var T) {.nimcall,
-    gcsafe.}) {.role: orchestrator, tag: "chunkyAead".} =
-  ## ts/tc/work: every task, on threads when this build has them.
-  when chunkyThreaded:
-    runTasksThreaded(ts, tc, work)
-  else:
-    runTasksSerial(ts, work)
-
-proc ensureTasksOk[T](ts: seq[T]) {.role: parser,
-    tag: "chunkyAead|validation".} =
-  ## ts: finished tasks of one kind (encrypt, decrypt, hash); the first
-  ## failure is raised with its own message.
-  for t in ts:
-    if not t.ok:
-      raise newException(IOError, t.err)
-
 ## ╭⟢ merging and the hash tree
 
 proc appendChunkFile(fOut: var File, path: string,
@@ -513,20 +426,6 @@ proc appendChunkFile(fOut: var File, path: string,
       got = fIn.readBuffer(addr buf[0], buf.len)
   finally:
     close(fIn)
-
-proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
-    role: dataWriter, tag: "chunkyAead|write".} =
-  ## paths/outPath/b: the chunk files, in order, as one file.
-  var
-    fOut: File = nil
-    buf: seq[uint8] = newSeq[uint8](b)
-  if not open(fOut, outPath, fmWrite):
-    raise newException(IOError, "failed to open merge output")
-  try:
-    for p in paths:
-      appendChunkFile(fOut, p, buf)
-  finally:
-    close(fOut)
 
 proc hashPair(a, b: seq[uint8], algo: HashAlgo): seq[uint8] {.
     role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
@@ -550,18 +449,94 @@ proc nextTreeLevel(current: seq[seq[uint8]], a: HashAlgo): seq[seq[uint8]] {.
   if i < current.len:
     result.add(current[i])
 
-proc buildTreeHash(hs: seq[seq[uint8]], a: HashAlgo): seq[uint8] {.
-    role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
-  ## hs/a: the chunk hashes folded level by level into one root.
-  var
-    current: seq[seq[uint8]] = hs
-  if hs.len == 0:
-    return @[]
-  while current.len > 1:
-    current = nextTreeLevel(current, a)
-  result = current[0]
-
 ## ╭⟢ whole files
+
+proc requireNonce24(s: ChunkyCipherState): array[24, uint8] {.role: parser,
+    tag: "chunkyAead|cryptoBoundary|validation".} =
+  result = s.nonce
+
+proc ensureDir(p: string) {.role: helper, tag: "chunkyAead|write".} =
+  if p.len == 0:
+    return
+  if not dirExists(p):
+    createDir(p)
+
+proc chunkKeys(s: ChunkyCipherState, a: ChunkyAlgo): tuple[x, aes,
+    g: array[32, uint8]] {.role: parser, tag: "chunkyAead|cryptoBoundary".} =
+  ## s/a: the keys each stage of algorithm `a` uses, in the order the state
+  ## holds them; a stage `a` does not run gets zeros.
+  ##
+  ##   algorithm            keys[0]    keys[1]   keys[2]
+  ##   XChaCha20+Gimli      xchacha20  gimli
+  ##   AES+Gimli            aes-ctr    gimli
+  ##   XChaCha20+AES+Gimli  xchacha20  aes-ctr   gimli
+  case a
+  of caXChaCha20Gimli:
+    result = (requireKey32(s, 0, "xchacha20"), zeroKey32(),
+      requireKey32(s, 1, "gimli"))
+  of caAesGimli:
+    result = (zeroKey32(), requireKey32(s, 0, "aes-ctr"),
+      requireKey32(s, 1, "gimli"))
+  of caXChaCha20AesGimli:
+    result = (requireKey32(s, 0, "xchacha20"), requireKey32(s, 1, "aes-ctr"),
+      requireKey32(s, 2, "gimli"))
+
+proc runTasksSerial[T](ts: var seq[T], work: proc (t: var T) {.nimcall,
+    gcsafe.}) {.role: orchestrator, tag: "chunkyAead".} =
+  ## ts/work: run every task, in order, on this thread.
+  for t in ts.mitems:
+    work(t)
+
+proc runTasks[T](ts: var seq[T], tc: int, work: proc (t: var T) {.nimcall,
+    gcsafe.}) {.role: orchestrator, tag: "chunkyAead".} =
+  ## ts/tc/work: every task, on threads when this build has them.
+  when chunkyThreaded:
+    runTasksThreaded(ts, tc, work)
+  else:
+    runTasksSerial(ts, work)
+
+proc buildChunkName(bs: string, i: int): string {.role: helper,
+    tag: "chunkyAead".} =
+  result = bs & ".chunk" & $i & ".bin"
+
+proc resolveOutputDir(i, o: string, opt: ChunkyOptions): string {.
+    role: configurator, tag: "chunkyAead".} =
+  if o.len > 0:
+    return o
+  if opt.outputDir.len > 0:
+    return opt.outputDir
+  let parts = splitFile(i)
+  result = joinPath(parts.dir, parts.name & ".chunks")
+
+proc resolveTagLen(opt: ChunkyOptions, s: ChunkyCipherState): uint16 {.
+    role: configurator, tag: "chunkyAead".} =
+  if opt.tagLen != 0'u16:
+    return opt.tagLen
+  if s.tagLen != 0'u16:
+    return s.tagLen
+  result = defaultTagLen
+
+proc chunkLenAt(idx: int, chunkBytes, sizeBytes: int64): int64 {.role: math,
+    tag: "chunkyAead".} =
+  ## idx/chunkBytes/sizeBytes: how many bytes chunk `idx` of the file holds;
+  ## the last chunk may be short, and a chunk past the end holds none.
+  result = min(chunkBytes, sizeBytes - int64(idx) * chunkBytes)
+  if result < 0:
+    result = 0
+
+proc ensureTasksOk[T](ts: seq[T]) {.role: parser,
+    tag: "chunkyAead|validation".} =
+  ## ts: finished tasks of one kind (encrypt, decrypt, hash); the first
+  ## failure is raised with its own message.
+  for t in ts:
+    if not t.ok:
+      raise newException(IOError, t.err)
+
+proc calcChunkCount(sz, cs: int64): int {.role: parser,
+    tag: "chunkyAead".} =
+  if sz <= 0:
+    return 1
+  result = int((sz + cs - 1) div cs)
 
 proc encryptFileChunks*(i: string, o: string, s: ChunkyCipherState,
     opt: ChunkyOptions): ChunkyManifest {.role: orchestrator,
@@ -629,6 +604,20 @@ proc removeIfPresent(p: string) {.role: actor, tag: "chunkyAead|write".} =
   if fileExists(p):
     removeFile(p)
 
+proc mergeChunks(paths: seq[string], outPath: string, b: int) {.
+    role: dataWriter, tag: "chunkyAead|write".} =
+  ## paths/outPath/b: the chunk files, in order, as one file.
+  var
+    fOut: File = nil
+    buf: seq[uint8] = newSeq[uint8](b)
+  if not open(fOut, outPath, fmWrite):
+    raise newException(IOError, "failed to open merge output")
+  try:
+    for p in paths:
+      appendChunkFile(fOut, p, buf)
+  finally:
+    close(fOut)
+
 proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
     s: ChunkyCipherState, opt: ChunkyOptions) {.role: orchestrator,
     tag: "appApi|chunkyAead|cryptoBoundary|read|write".} =
@@ -673,6 +662,17 @@ proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
     removeIfPresent(p)
   if dirExists(tempDir):
     removeDir(tempDir)
+
+proc buildTreeHash(hs: seq[seq[uint8]], a: HashAlgo): seq[uint8] {.
+    role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
+  ## hs/a: the chunk hashes folded level by level into one root.
+  var
+    current: seq[seq[uint8]] = hs
+  if hs.len == 0:
+    return @[]
+  while current.len > 1:
+    current = nextTreeLevel(current, a)
+  result = current[0]
 
 proc hashFileChunks*(i: string, opt: ChunkyOptions,
     a: HashAlgo): seq[uint8] {.role: orchestrator,

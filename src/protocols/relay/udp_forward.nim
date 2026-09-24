@@ -216,17 +216,6 @@ proc initUdpForwarder*(nas: transport_types.UdpAddress,
   result.index = initTable[transport_types.UdpAddress, int]()
   result.buffer = initDeque[UdpForwardOut]()
 
-proc nasIsAway(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
-    tag: "relay|udp", inline.} =
-  ## F/nowMs: whether the NAS counts as gone right now.
-  ##
-  ## Before the first answer ever arrives the NAS is NOT treated as away.
-  ## A relay that starts up alongside a booting NAS would otherwise buffer
-  ## everything until the first reply, which is the opposite of useful.
-  if not F.nasStarted:
-    return false
-  result = nowMs > F.nasSeenMs and nowMs - F.nasSeenMs > F.cfg.nasSilentMs
-
 proc dropOldestBuffered(F: var UdpForwarder): int {.role: actor,
     tag: "relay|udp".} =
   ## F: one datagram given up on to make room, and how many that was.
@@ -261,13 +250,6 @@ proc bufferForNas(F: var UdpForwarder, item: UdpForwardOut): int {.role: actor,
   F.buffer.addLast(item)
   F.bufferBytes = F.bufferBytes + item.payload.len
 
-proc drainBuffer(F: var UdpForwarder, S: var UdpForwardStep) {.role: actor,
-    tag: "relay|udp".} =
-  ## F/S: everything held for the NAS, queued in the order it arrived.
-  while F.buffer.len > 0:
-    S.send.add(F.buffer.popFirst())
-  F.bufferBytes = 0
-
 proc releaseSlot(F: var UdpForwarder, i: int) {.role: actor,
     tag: "relay|udp".} =
   ## F/i: one client's slot returned to the pool.
@@ -276,18 +258,6 @@ proc releaseSlot(F: var UdpForwarder, i: int) {.role: actor,
   F.index.del(F.slots[i].client)
   F.slots[i].inUse = false
   F.slots[i].client = default(transport_types.UdpAddress)
-
-proc reapIdleSlots(F: var UdpForwarder, nowMs: uint64): int {.role: actor,
-    tag: "relay|udp".} =
-  ## F/nowMs: slots with no traffic for longer than the idle limit, released.
-  var
-    i: int = 0
-  while i < F.slots.len:
-    if F.slots[i].inUse and nowMs > F.slots[i].lastSeenMs and
-        nowMs - F.slots[i].lastSeenMs > F.cfg.clientIdleMs:
-      releaseSlot(F, i)
-      result = result + 1
-    i = i + 1
 
 proc freeSlotIndex(F: var UdpForwarder): int {.role: parser,
     tag: "relay|udp".} =
@@ -302,6 +272,18 @@ proc freeSlotIndex(F: var UdpForwarder): int {.role: parser,
     return -1
   F.slots.add(UdpForwardSlot(tag: uint32(F.slots.len) + 1'u32))
   result = F.slots.len - 1
+
+proc reapIdleSlots(F: var UdpForwarder, nowMs: uint64): int {.role: actor,
+    tag: "relay|udp".} =
+  ## F/nowMs: slots with no traffic for longer than the idle limit, released.
+  var
+    i: int = 0
+  while i < F.slots.len:
+    if F.slots[i].inUse and nowMs > F.slots[i].lastSeenMs and
+        nowMs - F.slots[i].lastSeenMs > F.cfg.clientIdleMs:
+      releaseSlot(F, i)
+      result = result + 1
+    i = i + 1
 
 proc slotForClient(F: var UdpForwarder, client: transport_types.UdpAddress,
     nowMs: uint64): int {.role: actor, tag: "relay|udp".} =
@@ -324,6 +306,13 @@ proc slotForClient(F: var UdpForwarder, client: transport_types.UdpAddress,
   F.slots[result].inUse = true
   F.index[client] = result
 
+proc drainBuffer(F: var UdpForwarder, S: var UdpForwardStep) {.role: actor,
+    tag: "relay|udp".} =
+  ## F/S: everything held for the NAS, queued in the order it arrived.
+  while F.buffer.len > 0:
+    S.send.add(F.buffer.popFirst())
+  F.bufferBytes = 0
+
 proc noteNasSeen*(F: var UdpForwarder, nas: transport_types.UdpAddress,
     nowMs: uint64): UdpForwardStep {.role: actor, tag: "appApi|relay|udp".} =
   ## F/nas/nowMs: the NAS answered, possibly from somewhere new.
@@ -339,6 +328,17 @@ proc noteNasSeen*(F: var UdpForwarder, nas: transport_types.UdpAddress,
   F.nasSeenMs = nowMs
   F.nasStarted = true
   drainBuffer(F, result)
+
+proc nasIsAway(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
+    tag: "relay|udp", inline.} =
+  ## F/nowMs: whether the NAS counts as gone right now.
+  ##
+  ## Before the first answer ever arrives the NAS is NOT treated as away.
+  ## A relay that starts up alongside a booting NAS would otherwise buffer
+  ## everything until the first reply, which is the opposite of useful.
+  if not F.nasStarted:
+    return false
+  result = nowMs > F.nasSeenMs and nowMs - F.nasSeenMs > F.cfg.nasSilentMs
 
 proc fromClient*(F: var UdpForwarder, client: transport_types.UdpAddress,
     payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.

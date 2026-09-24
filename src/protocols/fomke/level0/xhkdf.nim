@@ -127,22 +127,6 @@ proc initXhkdfConfig*(rounds: uint32 = xhkdfDefaultRounds,
   result.memoryBlocks = memoryBlocks
   result.branches = branches
 
-proc validateXhkdfRequest(c: XhkdfConfig, outLen: int) {.role: parser,
-    tag: "fomke|kdf|validation".} =
-  ## c/outLen: bounded work and output request.
-  discard initXhkdfConfig(c.rounds, c.blockIndex, c.mode, c.memoryBlocks,
-    c.branches)
-  if outLen <= 0 or outLen > xhkdfMaxOutputBytes:
-    raise newException(ValueError,
-      "XHKDF output length must be in 1..1048576")
-  if c.mode == xhMemoryMixed and
-      uint64(c.rounds) * uint64(c.memoryBlocks) > xhkdfMaxWorkBlocks:
-    raise newException(ValueError, "XHKDF memory work exceeds its limit")
-  if c.mode == xhSequential and uint64(c.rounds) *
-      uint64((outLen + xhkdfBlockBytes - 1) div xhkdfBlockBytes) >
-      xhkdfMaxWorkBlocks:
-    raise newException(ValueError, "XHKDF sequential work exceeds its limit")
-
 proc appendXhkdfField(A: var ByteSeq, B: openArray[uint8]) {.
     role: dataWriter, tag: "fomke|kdf".} =
   ## A/B: destination and one length-framed byte field.
@@ -150,24 +134,6 @@ proc appendXhkdfField(A: var ByteSeq, B: openArray[uint8]) {.
     raise newException(ValueError, "XHKDF input field exceeds u32")
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
-
-proc buildXhkdfInput(ikm, salt, info: openArray[uint8],
-    c: XhkdfConfig): ByteSeq {.role: truthBuilder,
-    tag: "cryptoBoundary|fomke|kdf".} =
-  ## ikm/salt/info/c: secret input, salt, purpose, and work policy. A branch
-  ## set other than the GB3HKDF pair is bound in, so two masks can never
-  ## share an output; the pair itself adds nothing and keeps its old bytes.
-  appendAmeLabel(result, "BIFROST-GB3HKDF-v1")
-  result.add(uint8(ord(c.mode)))
-  appendAmeU32(result, c.rounds)
-  appendAmeU64(result, c.blockIndex)
-  appendAmeU32(result, c.memoryBlocks)
-  if c.branches != xhkdfLegacyBranches:
-    appendAmeLabel(result, "XHKDF-BRANCHES-v1")
-    result.add(xhkdfBranchMask(c.branches))
-  appendXhkdfField(result, salt)
-  appendXhkdfField(result, info)
-  appendXhkdfField(result, ikm)
 
 proc xhkdfBranchSeed(label: string, material: openArray[uint8],
     blockIndex: uint64, round: uint32): ByteSeq {.role: helper,
@@ -323,6 +289,40 @@ proc appendXhkdfOutput(resultBytes: var ByteSeq, outputChunk: openArray[uint8],
   while i < count:
     resultBytes.add(outputChunk[i])
     i = i + 1
+
+proc validateXhkdfRequest(c: XhkdfConfig, outLen: int) {.role: parser,
+    tag: "fomke|kdf|validation".} =
+  ## c/outLen: bounded work and output request.
+  discard initXhkdfConfig(c.rounds, c.blockIndex, c.mode, c.memoryBlocks,
+    c.branches)
+  if outLen <= 0 or outLen > xhkdfMaxOutputBytes:
+    raise newException(ValueError,
+      "XHKDF output length must be in 1..1048576")
+  if c.mode == xhMemoryMixed and
+      uint64(c.rounds) * uint64(c.memoryBlocks) > xhkdfMaxWorkBlocks:
+    raise newException(ValueError, "XHKDF memory work exceeds its limit")
+  if c.mode == xhSequential and uint64(c.rounds) *
+      uint64((outLen + xhkdfBlockBytes - 1) div xhkdfBlockBytes) >
+      xhkdfMaxWorkBlocks:
+    raise newException(ValueError, "XHKDF sequential work exceeds its limit")
+
+proc buildXhkdfInput(ikm, salt, info: openArray[uint8],
+    c: XhkdfConfig): ByteSeq {.role: truthBuilder,
+    tag: "cryptoBoundary|fomke|kdf".} =
+  ## ikm/salt/info/c: secret input, salt, purpose, and work policy. A branch
+  ## set other than the GB3HKDF pair is bound in, so two masks can never
+  ## share an output; the pair itself adds nothing and keeps its old bytes.
+  appendAmeLabel(result, "BIFROST-GB3HKDF-v1")
+  result.add(uint8(ord(c.mode)))
+  appendAmeU32(result, c.rounds)
+  appendAmeU64(result, c.blockIndex)
+  appendAmeU32(result, c.memoryBlocks)
+  if c.branches != xhkdfLegacyBranches:
+    appendAmeLabel(result, "XHKDF-BRANCHES-v1")
+    result.add(xhkdfBranchMask(c.branches))
+  appendXhkdfField(result, salt)
+  appendXhkdfField(result, info)
+  appendXhkdfField(result, ikm)
 
 proc deriveXhkdfSequential(base: openArray[uint8], outLen: int,
     c: XhkdfConfig): ByteSeq {.role: truthBuilder,

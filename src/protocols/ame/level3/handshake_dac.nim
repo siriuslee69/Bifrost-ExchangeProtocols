@@ -105,12 +105,6 @@ proc requireDatagramFits(frame: openArray[uint8], maxDatagramBytes: int) {.
       " bytes, over the " & $maxDatagramBytes &
       "-byte datagram limit; use a layout with smaller KEM keys or the TCP carrier")
 
-proc sendRecord(sock: DacSocket, remote: DacAddress, frame: ByteSeq,
-    maxDatagramBytes: int) {.role: dataWriter.} =
-  ## sock/remote/frame/maxDatagramBytes: one record as one datagram.
-  requireDatagramFits(frame, maxDatagramBytes)
-  sendDacFrameBytes(sock, remote, frame)
-
 proc readHandshakeFrame(sock: DacSocket, timeoutMs: int,
     maxDatagramBytes: int): tuple[ok: bool, frame: AmeHandshakeFrame,
     remote: DacAddress, err: string] {.role: dataFetcher.} =
@@ -183,6 +177,12 @@ proc awaitStep(sock: DacSocket, wanted: openArray[AmeHandshakeExpect],
       remote = got.remote
     return (true, got.frame, "")
   result.err = "AME handshake saw only unrelated datagrams"
+
+proc sendRecord(sock: DacSocket, remote: DacAddress, frame: ByteSeq,
+    maxDatagramBytes: int) {.role: dataWriter.} =
+  ## sock/remote/frame/maxDatagramBytes: one record as one datagram.
+  requireDatagramFits(frame, maxDatagramBytes)
+  sendDacFrameBytes(sock, remote, frame)
 
 proc ameDacServerHandshake*(sock: DacSocket, c: AmeResponderPolicy,
     nowUnix: int64, timeoutMs: int = 2000,

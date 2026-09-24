@@ -140,21 +140,6 @@ proc appendIdentitySigningKeys(A: var ByteSeq,
     appendHandshakeBytes(A, K[i].publicKey)
     i = i + 1
 
-proc identityKeysEqual*(A, B: openArray[AmeIdentitySigningKey]): bool {.
-    role: parser.} =
-  ## A/B: ordered algorithms and public keys compared without short-circuiting
-  ## on the key bytes, so a near-miss key does not leak how near it was.
-  var
-    i: int = 0
-  if A.len != B.len:
-    return false
-  result = true
-  while i < A.len:
-    if A[i].algorithm != B[i].algorithm or
-        not constantTimeEqualAme(A[i].publicKey, B[i].publicKey):
-      result = false
-    i = i + 1
-
 proc copyByteStack*(K: openArray[ByteSeq]): seq[ByteSeq] {.role: helper.} =
   ## K: byte rows copied so session erasure cannot alter provisioned identities.
   var
@@ -173,15 +158,6 @@ proc copyIdentitySigningKeys(K: openArray[AmeIdentitySigningKey]):
     key.algorithm = K[i].algorithm
     key.publicKey = K[i].publicKey & @[]
     result.add(key)
-    i = i + 1
-
-proc identityAlgorithms(K: openArray[AmeIdentitySigningKey]):
-    seq[AmeSignatureAlgorithm] {.role: parser.} =
-  ## K: the algorithms a key stack covers, in slot order.
-  var
-    i: int = 0
-  while i < K.len:
-    result.add(K[i].algorithm)
     i = i + 1
 
 proc requireIdentityLayout*(L: AmeSuiteLayout, i: AmeIdentityKey) {.
@@ -250,20 +226,6 @@ proc verifyIdentityStack*(L: AmeSuiteLayout, t: AmeMaskTier,
     c: AmeIdentityCertificate): bool {.role: orchestrator.} =
   ## L/t/msg/P/c: all active proofs checked against certified slot keys.
   result = verifyAmeTier(L, t, msg, selectedCertificatePublicKeys(L, t, c), P)
-
-proc certificateSubject*(c: AmeIdentityCertificate): ByteSeq {.
-    role: truthBuilder.} =
-  ## c: exactly the certificate fields the authority's proofs cover.
-  ## Every variable-length field carries its length in front, so no two
-  ## different certificates can produce the same bytes to sign.
-  appendAmeLabel(result, "AME-CERTIFICATE-v3")
-  result.add(ameCertificateVersion)
-  appendAmeU64(result, c.serial)
-  appendHandshakeString(result, c.authority)
-  appendHandshakeString(result, c.subject)
-  appendIdentitySigningKeys(result, c.signingKeys)
-  appendHandshakeI64(result, c.validFromUnix)
-  appendHandshakeI64(result, c.validUntilUnix)
 
 ## ╭⟢ building identities
 
@@ -410,6 +372,20 @@ proc initAmeAuthorityRoot*(a: AmeAuthorityKey): AmeAuthorityRoot {.
   ## a: signing authority reduced to its public pinning material.
   result = initAmeAuthorityRoot(a.name, a.signingKeys)
 
+proc certificateSubject*(c: AmeIdentityCertificate): ByteSeq {.
+    role: truthBuilder.} =
+  ## c: exactly the certificate fields the authority's proofs cover.
+  ## Every variable-length field carries its length in front, so no two
+  ## different certificates can produce the same bytes to sign.
+  appendAmeLabel(result, "AME-CERTIFICATE-v3")
+  result.add(ameCertificateVersion)
+  appendAmeU64(result, c.serial)
+  appendHandshakeString(result, c.authority)
+  appendHandshakeString(result, c.subject)
+  appendIdentitySigningKeys(result, c.signingKeys)
+  appendHandshakeI64(result, c.validFromUnix)
+  appendHandshakeI64(result, c.validUntilUnix)
+
 proc issueAmeIdentityCertificate*(a: AmeAuthorityKey, i: AmeIdentityKey,
     serial: uint64, validFromUnix, validUntilUnix: int64):
     AmeIdentityCertificate {.role: orchestrator.} =
@@ -450,6 +426,30 @@ proc clockIsUsable(nowUnix, validFromUnix, validUntilUnix: int64): bool {.
   if nowUnix > validUntilUnix + ameMaxCertificateSkewSeconds:
     return false
   result = true
+
+proc identityKeysEqual*(A, B: openArray[AmeIdentitySigningKey]): bool {.
+    role: parser.} =
+  ## A/B: ordered algorithms and public keys compared without short-circuiting
+  ## on the key bytes, so a near-miss key does not leak how near it was.
+  var
+    i: int = 0
+  if A.len != B.len:
+    return false
+  result = true
+  while i < A.len:
+    if A[i].algorithm != B[i].algorithm or
+        not constantTimeEqualAme(A[i].publicKey, B[i].publicKey):
+      result = false
+    i = i + 1
+
+proc identityAlgorithms(K: openArray[AmeIdentitySigningKey]):
+    seq[AmeSignatureAlgorithm] {.role: parser.} =
+  ## K: the algorithms a key stack covers, in slot order.
+  var
+    i: int = 0
+  while i < K.len:
+    result.add(K[i].algorithm)
+    i = i + 1
 
 proc validityError(c: AmeIdentityCertificate, nowUnix: int64): string {.
     role: parser.} =

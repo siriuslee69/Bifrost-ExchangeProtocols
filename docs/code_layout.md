@@ -65,8 +65,11 @@ src/protocols
 ├── fomke/
 │   ├── types.nim
 │   ├── level0/  <- XHKDF and protocol descriptor
-│   ├── level1/  <- directional chains, the epoch split [LK1|LK2|NS], and
-│   │                exact AME upgrade commits (NS + new KEM -> next epoch)
+│   ├── level1/  <- chain_send.nim  the epoch split [LK1|LK2|NS], the two
+│   │                                 chains, sealing
+│   │                chain.nim       opening, the reorder window, and exact
+│   │                                 AME upgrade commits (NS + new KEM ->
+│   │                                 next epoch); passes chain_send on
 │   │                (the ratchet is the ONLY payload protection)
 │   ├── level2/  <- envelope/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface

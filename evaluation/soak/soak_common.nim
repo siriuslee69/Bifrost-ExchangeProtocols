@@ -118,34 +118,6 @@ var
     ## answer standing for everybody. Each worker owns an index; the report
     ## adds them up.
 
-proc soakCounterName*(c: SoakCounter): string {.role: parser.} =
-  ## c: counter turned into the short word a report column uses.
-  case c
-  of scHandshakeOk: result = "handshakes"
-  of scHandshakeFail: result = "hs-failed"
-  of scPackagesSent: result = "pkg-sent"
-  of scPackagesDone: result = "pkg-done"
-  of scPackagesFailed: result = "pkg-failed"
-  of scPackagesTimedOut: result = "pkg-timeout"
-  of scBytesSent: result = "bytes-sent"
-  of scBytesDone: result = "bytes-done"
-  of scMismatched: result = "MISMATCH"
-  of scDatagramsSent: result = "dg-sent"
-  of scDatagramsRecv: result = "dg-recv"
-  of scDatagramsDropped: result = "dg-dropped"
-  of scSendFailures: result = "send-fail"
-  of scRelayDropped: result = "relay-drop"
-  of scSlotsSwept: result = "swept"
-  of scAdmitFailed: result = "admit-fail"
-  of scExceptions: result = "EXCEPTION"
-  of scPeersLive: result = "peers-live"
-  of scEchoDone: result = "echo-done"
-  of scEchoMismatched: result = "ECHO-MISMATCH"
-  of scPeerOpened: result = "peer-open"
-  of scPeerClosed: result = "peer-close"
-  of scSendRefused: result = "send-refused"
-  of scPackagesAcked: result = "pkg-acked"
-
 proc bumpSoak*(c: SoakCounter, n: uint64 = 1'u64): uint64 {.role: actor,
     discardable, inline.} =
   ## c/n: counter and how much to add to it. Returns what it held BEFORE the
@@ -159,32 +131,16 @@ proc setSoak*(c: SoakCounter, v: uint64) {.role: actor, inline.} =
   ## "peers live" that is a reading, not a running total.
   soakTally[c].store(v)
 
-proc soakValue*(c: SoakCounter): uint64 {.role: parser, inline.} =
-  ## c: counter read back.
-  result = soakTally[c].load()
-
 proc setSoakLevel*(i: int, v: uint64) {.role: actor, inline.} =
   ## i/v: which worker is reporting, and what it currently holds.
   if i >= 0 and i < soakLevels.len:
     soakLevels[i].store(v)
-
-proc soakLevelSum*(): uint64 {.role: parser.} =
-  ## Every worker's latest reading, added together.
-  var
-    i: int = 0
-  while i < soakLevels.len:
-    result = result + soakLevels[i].load()
-    i = i + 1
 
 proc soakElapsedMs*(): uint32 {.role: parser.} =
   ## Milliseconds since this process started, wrapped into the width the DAC
   ## and AME clocks use. Monotonic, so a system clock step cannot make a
   ## repair timer fire in the past.
   result = uint32((getMonoTime() - soakStart).inMilliseconds and 0xFFFFFFFF'i64)
-
-proc soakElapsedSeconds*(): float {.role: parser.} =
-  ## Seconds since start, for the report's rate columns.
-  result = float((getMonoTime() - soakStart).inMilliseconds) / 1000.0
 
 proc initSoakRng*(seed: uint64): SoakRng {.role: configurator.} =
   ## seed: anything non-zero; zero is replaced, because the generator below
@@ -328,25 +284,6 @@ proc soakInitiatorPolicy*(): AmeInitiatorPolicy {.
   result = initAmeInitiatorPolicy(layout, soakTier(layout),
     initAmePskAuthentication(soakPskId, soakPskSecret(0'u32)))
 
-proc soakRssKib*(): int {.role: dataFetcher.} =
-  ## How many kibibytes of real memory this process is holding, straight from
-  ## the operating system. A soak that leaks shows up here long before it
-  ## shows up anywhere else. Returns -1 where the file does not exist.
-  var
-    text: string = ""
-    fields: seq[string] = @[]
-  try:
-    text = readFile("/proc/self/statm")
-  except CatchableError:
-    return -1
-  fields = text.strip().split(' ')
-  if fields.len < 2:
-    return -1
-  try:
-    result = parseInt(fields[1]) * 4
-  except ValueError:
-    result = -1
-
 proc soakArg*(name: string, fallback: string = ""): string {.role: parser.} =
   ## name/fallback: read `--name=value` off the command line, or the fallback.
   var
@@ -370,6 +307,69 @@ proc soakArgInt*(name: string, fallback: int): int {.role: parser.} =
     result = parseInt(text)
   except ValueError:
     result = fallback
+
+proc soakCounterName*(c: SoakCounter): string {.role: parser.} =
+  ## c: counter turned into the short word a report column uses.
+  case c
+  of scHandshakeOk: result = "handshakes"
+  of scHandshakeFail: result = "hs-failed"
+  of scPackagesSent: result = "pkg-sent"
+  of scPackagesDone: result = "pkg-done"
+  of scPackagesFailed: result = "pkg-failed"
+  of scPackagesTimedOut: result = "pkg-timeout"
+  of scBytesSent: result = "bytes-sent"
+  of scBytesDone: result = "bytes-done"
+  of scMismatched: result = "MISMATCH"
+  of scDatagramsSent: result = "dg-sent"
+  of scDatagramsRecv: result = "dg-recv"
+  of scDatagramsDropped: result = "dg-dropped"
+  of scSendFailures: result = "send-fail"
+  of scRelayDropped: result = "relay-drop"
+  of scSlotsSwept: result = "swept"
+  of scAdmitFailed: result = "admit-fail"
+  of scExceptions: result = "EXCEPTION"
+  of scPeersLive: result = "peers-live"
+  of scEchoDone: result = "echo-done"
+  of scEchoMismatched: result = "ECHO-MISMATCH"
+  of scPeerOpened: result = "peer-open"
+  of scPeerClosed: result = "peer-close"
+  of scSendRefused: result = "send-refused"
+  of scPackagesAcked: result = "pkg-acked"
+
+proc soakValue*(c: SoakCounter): uint64 {.role: parser, inline.} =
+  ## c: counter read back.
+  result = soakTally[c].load()
+
+proc soakLevelSum*(): uint64 {.role: parser.} =
+  ## Every worker's latest reading, added together.
+  var
+    i: int = 0
+  while i < soakLevels.len:
+    result = result + soakLevels[i].load()
+    i = i + 1
+
+proc soakElapsedSeconds*(): float {.role: parser.} =
+  ## Seconds since start, for the report's rate columns.
+  result = float((getMonoTime() - soakStart).inMilliseconds) / 1000.0
+
+proc soakRssKib*(): int {.role: dataFetcher.} =
+  ## How many kibibytes of real memory this process is holding, straight from
+  ## the operating system. A soak that leaks shows up here long before it
+  ## shows up anywhere else. Returns -1 where the file does not exist.
+  var
+    text: string = ""
+    fields: seq[string] = @[]
+  try:
+    text = readFile("/proc/self/statm")
+  except CatchableError:
+    return -1
+  fields = text.strip().split(' ')
+  if fields.len < 2:
+    return -1
+  try:
+    result = parseInt(fields[1]) * 4
+  except ValueError:
+    result = -1
 
 proc soakReportLine*(label: string, final: bool = false): string {.
     role: parser.} =

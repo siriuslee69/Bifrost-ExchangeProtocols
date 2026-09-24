@@ -44,21 +44,6 @@ type
     path: AmeTierPath
     lastTrigger: AmeTierStep
 
-proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
-    fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)): ByteSeq {.
-    role: dataWriter.} =
-  ## requestId/epochId/targetTier/fomkeCommit: complete candidate identity.
-  var
-    encoded: ByteSeq = @[]
-    tierBytes: ByteSeq = encodeAmeMaskTier(targetTier)
-  appendAmeU32(result, requestId)
-  appendAmeU32(result, epochId)
-  appendAmeBytes(result, tierBytes)
-  if fomkeCommit.confirmationTag.len != 0:
-    encoded = encodeFomkeUpgradeCommit(fomkeCommit)
-  appendAmeU32(result, uint32(encoded.len))
-  appendAmeBytes(result, encoded)
-
 proc decodeEpochReady(L: AmeSuiteLayout,
     A: openArray[uint8]): tuple[requestId, epochId: uint32,
     targetTier: AmeMaskTier, fomkeCommit: FomkeUpgradeCommit] {.role: parser.} =
@@ -129,12 +114,6 @@ proc decodeExchangeDeny(A: openArray[uint8]): tuple[requestId,
   for b in A[10 ..< 10 + n]:
     result.reason.add(char(b))
 
-proc controlFrameKind(S: AmeSession, frame: openArray[uint8]): AmePacketKind {.
-    role: parser.} =
-  ## S/frame: the packet kind in a frame's header, read without opening its
-  ## body (and without changing S), so an answer can be told apart.
-  result = decodeProtectedFrame(S, frame).header.packetKind
-
 proc beginAmeExchangeFrameVia(S: var AmeSession, r: AmeExchangeRequest,
     carrier: AmeCarrier): ByteSeq {.role: orchestrator.} =
   ## S/r/carrier: requester seals its request under the current epoch. From
@@ -167,6 +146,27 @@ proc answerAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
   result = sealControlFrame(S, ampkExchangeEnvelopes, carrier,
     encodeAmeExchangeReply(reply))
   stageAmeSessionFomkeUpgrade(S)
+
+proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
+    fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)): ByteSeq {.
+    role: dataWriter.} =
+  ## requestId/epochId/targetTier/fomkeCommit: complete candidate identity.
+  var
+    encoded: ByteSeq = @[]
+    tierBytes: ByteSeq = encodeAmeMaskTier(targetTier)
+  appendAmeU32(result, requestId)
+  appendAmeU32(result, epochId)
+  appendAmeBytes(result, tierBytes)
+  if fomkeCommit.confirmationTag.len != 0:
+    encoded = encodeFomkeUpgradeCommit(fomkeCommit)
+  appendAmeU32(result, uint32(encoded.len))
+  appendAmeBytes(result, encoded)
+
+proc controlFrameKind(S: AmeSession, frame: openArray[uint8]): AmePacketKind {.
+    role: parser.} =
+  ## S/frame: the packet kind in a frame's header, read without opening its
+  ## body (and without changing S), so an answer can be told apart.
+  result = decodeProtectedFrame(S, frame).header.packetKind
 
 proc finishDeniedExchange(S: var AmeSession, frame: openArray[uint8],
     carrier: AmeCarrier) {.role: orchestrator.} =

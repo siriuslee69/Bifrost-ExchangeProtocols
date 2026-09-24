@@ -51,47 +51,11 @@ type
     hello*: Tls13ServerHello
     err*: string
 
-proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter,
-    tag: "tls|write".} =
-  A.add(byte(v shr 8))
-  A.add(byte(v))
-
 proc readU16(A: openArray[byte], o: int, v: var uint16): bool {.role: parser,
     tag: "tls|read".} =
   if o < 0 or o > A.len - 2:
     return false
   v = (uint16(A[o]) shl 8) or uint16(A[o + 1])
-  result = true
-
-proc addVector16(A: var ByteSeq, B: openArray[byte]) {.
-    role: dataWriter, tag: "tls|write".} =
-  if B.len > 65535:
-    raise newException(ValueError, "TLS vector exceeds uint16 length")
-  addU16(A, uint16(B.len))
-  A.add(B)
-
-proc addExtension(A: var ByteSeq, kind: uint16, B: openArray[byte]) {.
-    role: dataWriter, tag: "tls|write".} =
-  addU16(A, kind)
-  addVector16(A, B)
-
-proc addAscii(A: var ByteSeq, s: string) {.role: dataWriter,
-    tag: "tls|write".} =
-  var i: int = 0
-  while i < s.len:
-    A.add(byte(ord(s[i])))
-    i = i + 1
-
-proc validHelloHost(s: string): bool {.role: parser,
-    tag: "tls|validation".} =
-  var i: int = 0
-  if s.len == 0 or s.len > 253:
-    return false
-  while i < s.len:
-    if not ((s[i] >= 'a' and s[i] <= 'z') or (s[i] >= 'A' and s[i] <= 'Z') or
-        (s[i] >= '0' and s[i] <= '9') or s[i] in {'.', '-'}):
-      return false
-    i = i + 1
   result = true
 
 proc collectVectorU16(A: openArray[byte], start, n: int): seq[uint16] {.
@@ -117,20 +81,6 @@ proc anySupportedScheme(offered: openArray[uint16]): bool {.role: parser,
   for s in offered:
     if s in tls13SupportedSignatureSchemes:
       return true
-
-proc vectorContainsU16(A: openArray[byte], start, n: int,
-    wanted: uint16): bool {.role: parser, tag: "tls|read".} =
-  var
-    o: int = start
-    v: uint16 = 0
-  if n < 0 or (n mod 2) != 0 or start < 0 or start > A.len or n > A.len - start:
-    return false
-  while o < start + n:
-    if not readU16(A, o, v):
-      return false
-    if v == wanted:
-      return true
-    o = o + 2
 
 proc x25519ShareError(have: int, n: uint16): string {.role: parser,
     tag: "tls|validation".} =
@@ -159,18 +109,29 @@ proc parseClientKeyShares(A: openArray[byte], start, finish: int,
     return "TLS ClientHello has no usable X25519 key_share"
   result = ""
 
-proc addSniExtension(E: var ByteSeq, host: string) {.role: dataWriter,
+proc addAscii(A: var ByteSeq, s: string) {.role: dataWriter,
     tag: "tls|write".} =
-  ## E/host: `server_name`: one host_name entry, lowercased.
-  var
-    N: ByteSeq = @[byte 0]
-    V: ByteSeq = @[]
-  if not validHelloHost(host):
-    raise newException(ValueError, "TLS SNI hostname is invalid")
-  addU16(N, uint16(host.len))
-  addAscii(N, host.toLowerAscii())
-  addVector16(V, N)
-  addExtension(E, extServerName, V)
+  var i: int = 0
+  while i < s.len:
+    A.add(byte(ord(s[i])))
+    i = i + 1
+
+proc addU16(A: var ByteSeq, v: uint16) {.role: dataWriter,
+    tag: "tls|write".} =
+  A.add(byte(v shr 8))
+  A.add(byte(v))
+
+proc addVector16(A: var ByteSeq, B: openArray[byte]) {.
+    role: dataWriter, tag: "tls|write".} =
+  if B.len > 65535:
+    raise newException(ValueError, "TLS vector exceeds uint16 length")
+  addU16(A, uint16(B.len))
+  A.add(B)
+
+proc addExtension(A: var ByteSeq, kind: uint16, B: openArray[byte]) {.
+    role: dataWriter, tag: "tls|write".} =
+  addU16(A, kind)
+  addVector16(A, B)
 
 proc addAlpnExtension(E: var ByteSeq, P: openArray[string]) {.
     role: dataWriter, tag: "tls|write".} =
@@ -186,6 +147,31 @@ proc addAlpnExtension(E: var ByteSeq, P: openArray[string]) {.
     addAscii(N, p)
   addVector16(V, N)
   addExtension(E, extAlpn, V)
+
+proc validHelloHost(s: string): bool {.role: parser,
+    tag: "tls|validation".} =
+  var i: int = 0
+  if s.len == 0 or s.len > 253:
+    return false
+  while i < s.len:
+    if not ((s[i] >= 'a' and s[i] <= 'z') or (s[i] >= 'A' and s[i] <= 'Z') or
+        (s[i] >= '0' and s[i] <= '9') or s[i] in {'.', '-'}):
+      return false
+    i = i + 1
+  result = true
+
+proc addSniExtension(E: var ByteSeq, host: string) {.role: dataWriter,
+    tag: "tls|write".} =
+  ## E/host: `server_name`: one host_name entry, lowercased.
+  var
+    N: ByteSeq = @[byte 0]
+    V: ByteSeq = @[]
+  if not validHelloHost(host):
+    raise newException(ValueError, "TLS SNI hostname is invalid")
+  addU16(N, uint16(host.len))
+  addAscii(N, host.toLowerAscii())
+  addVector16(V, N)
+  addExtension(E, extServerName, V)
 
 proc buildClientExtensions(H: Tls13ClientHello): ByteSeq {.
     role: truthBuilder, tag: "tls|write".} =
@@ -286,44 +272,19 @@ proc readHelloText(A: openArray[byte], at, n: int): string {.inline,
     result[i] = char(A[at + i])
     i = i + 1
 
-proc parseVersionsExt(A: openArray[byte], dataStart: int, n: uint16,
-    server: bool, versionOk: var bool): string {.inline, role: parser,
-    tag: "tls|read|validation".} =
-  ## A/dataStart/n/server/versionOk: the one extension that says TLS 1.3.
+proc vectorContainsU16(A: openArray[byte], start, n: int,
+    wanted: uint16): bool {.role: parser, tag: "tls|read".} =
   var
-    x: uint16 = 0
-    vectorLen: int = 0
-  if server:
-    versionOk = n == 2 and readU16(A, dataStart, x) and x == tls13Version
-    return
-  vectorLen = if n > 0: int(A[dataStart]) else: -1
-  versionOk = vectorLen >= 2 and vectorLen + 1 == int(n) and
-    vectorContainsU16(A, dataStart + 1, vectorLen, tls13Version)
-
-proc parseKeyShareExt(A: openArray[byte], dataStart, dataEnd: int,
-    server: bool, key: var ByteSeq): string {.inline, role: parser,
-    tag: "tls|read|validation".} =
-  ## A/dataStart/dataEnd/server/key: the peer's X25519 share.
-  var
-    x, n: uint16 = 0
-  if not server:
-    if not readU16(A, dataStart, x) or dataStart + 2 + int(x) != dataEnd:
-      return "TLS client key_share vector is invalid"
-    return parseClientKeyShares(A, dataStart + 2, dataEnd, key)
-  if not readU16(A, dataStart, x) or x != tls13GroupX25519 or
-      not readU16(A, dataStart + 2, n) or n != 32 or dataStart + 4 + 32 != dataEnd:
-    return "TLS X25519 key_share is invalid"
-  key = @A[dataStart + 4 ..< dataEnd]
-
-proc parseGroupsExt(A: openArray[byte], dataStart: int,
-    n: uint16): string {.inline, role: parser,
-    tag: "tls|read|validation".} =
-  ## A/dataStart/n: the group list must name the one group this profile has.
-  var
-    x: uint16 = 0
-  if not readU16(A, dataStart, x) or int(x) != int(n) - 2 or
-      not vectorContainsU16(A, dataStart + 2, int(x), tls13GroupX25519):
-    return "TLS supported_groups does not contain the controlled X25519 profile"
+    o: int = start
+    v: uint16 = 0
+  if n < 0 or (n mod 2) != 0 or start < 0 or start > A.len or n > A.len - start:
+    return false
+  while o < start + n:
+    if not readU16(A, o, v):
+      return false
+    if v == wanted:
+      return true
+    o = o + 2
 
 proc parseSignaturesExt(A: openArray[byte], dataStart: int, n: uint16,
     sigSchemes: var seq[uint16]): string {.inline, role: parser,
@@ -393,6 +354,45 @@ proc clientOnlyExtensionError(kind: uint16): string {.role: parser,
   of extServerName: "TLS server_name extension is invalid or duplicated"
   of extAlpn: "TLS ALPN extension is invalid or duplicated"
   else: ""
+
+proc parseVersionsExt(A: openArray[byte], dataStart: int, n: uint16,
+    server: bool, versionOk: var bool): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/n/server/versionOk: the one extension that says TLS 1.3.
+  var
+    x: uint16 = 0
+    vectorLen: int = 0
+  if server:
+    versionOk = n == 2 and readU16(A, dataStart, x) and x == tls13Version
+    return
+  vectorLen = if n > 0: int(A[dataStart]) else: -1
+  versionOk = vectorLen >= 2 and vectorLen + 1 == int(n) and
+    vectorContainsU16(A, dataStart + 1, vectorLen, tls13Version)
+
+proc parseKeyShareExt(A: openArray[byte], dataStart, dataEnd: int,
+    server: bool, key: var ByteSeq): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/dataEnd/server/key: the peer's X25519 share.
+  var
+    x, n: uint16 = 0
+  if not server:
+    if not readU16(A, dataStart, x) or dataStart + 2 + int(x) != dataEnd:
+      return "TLS client key_share vector is invalid"
+    return parseClientKeyShares(A, dataStart + 2, dataEnd, key)
+  if not readU16(A, dataStart, x) or x != tls13GroupX25519 or
+      not readU16(A, dataStart + 2, n) or n != 32 or dataStart + 4 + 32 != dataEnd:
+    return "TLS X25519 key_share is invalid"
+  key = @A[dataStart + 4 ..< dataEnd]
+
+proc parseGroupsExt(A: openArray[byte], dataStart: int,
+    n: uint16): string {.inline, role: parser,
+    tag: "tls|read|validation".} =
+  ## A/dataStart/n: the group list must name the one group this profile has.
+  var
+    x: uint16 = 0
+  if not readU16(A, dataStart, x) or int(x) != int(n) - 2 or
+      not vectorContainsU16(A, dataStart + 2, int(x), tls13GroupX25519):
+    return "TLS supported_groups does not contain the controlled X25519 profile"
 
 proc parseExtensions(A: openArray[byte], start, finish: int,
     server: bool, key: var ByteSeq, versionOk: var bool,

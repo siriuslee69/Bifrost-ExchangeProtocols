@@ -43,22 +43,11 @@ proc initTls13SocketSession*(): Tls13SocketSession {.role: truthBuilder,
   result.active = false
   result.closed = false
 
-proc tls13SocketActive*(S: Tls13SocketSession): bool {.role: helper,
-    tag: "tls".} =
-  ## S: socket session to test.
-  result = S.active and not S.closed
-
 proc toStr(b: openArray[byte]): string {.role: helper, tag: "tls".} =
   ## b: bytes to view as a string.
   result = newString(b.len)
   for i, v in b:
     result[i] = char(v)
-
-proc toBytes(s: string): ByteSeq {.role: helper, tag: "tls".} =
-  ## s: string to view as bytes.
-  result = newSeq[byte](s.len)
-  for i, c in s:
-    result[i] = byte(c)
 
 proc sendAll(sock: var Socket, data: openArray[byte]): bool {.role: dataWriter,
     tag: "tls|transport|write".} =
@@ -93,6 +82,12 @@ proc readChunk(sock: var Socket, timeoutMs: int): tuple[ok: bool, data: string] 
     result = (ok: r.ok, data: r.data)
   except CatchableError:
     result = (ok: false, data: "")
+
+proc toBytes(s: string): ByteSeq {.role: helper, tag: "tls".} =
+  ## s: string to view as bytes.
+  result = newSeq[byte](s.len)
+  for i, c in s:
+    result[i] = byte(c)
 
 proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
     cfg: Tls13ServerConfig,
@@ -143,6 +138,18 @@ proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
       result.ok = true
       return
 
+proc takeLine(S: var Tls13SocketSession): Option[string] {.role: parser,
+    tag: "tls|read".} =
+  ## S: session whose buffered plaintext is scanned for one complete line.
+  var idx: int = S.plaintext.find('\l')
+  if idx < 0:
+    return none(string)
+  var line: string = S.plaintext[0 ..< idx]
+  S.plaintext = S.plaintext[idx + 1 .. ^1]
+  if line.len > 0 and line[^1] == '\r':
+    line.setLen(line.len - 1)
+  result = some(line)
+
 proc pumpPlaintext(sock: var Socket, S: var Tls13SocketSession,
     timeoutMs: int): bool {.role: dataFetcher,
     tag: "tls|transport|read".} =
@@ -165,17 +172,10 @@ proc pumpPlaintext(sock: var Socket, S: var Tls13SocketSession,
     S.closed = true
   result = true
 
-proc takeLine(S: var Tls13SocketSession): Option[string] {.role: parser,
-    tag: "tls|read".} =
-  ## S: session whose buffered plaintext is scanned for one complete line.
-  var idx: int = S.plaintext.find('\l')
-  if idx < 0:
-    return none(string)
-  var line: string = S.plaintext[0 ..< idx]
-  S.plaintext = S.plaintext[idx + 1 .. ^1]
-  if line.len > 0 and line[^1] == '\r':
-    line.setLen(line.len - 1)
-  result = some(line)
+proc tls13SocketActive*(S: Tls13SocketSession): bool {.role: helper,
+    tag: "tls".} =
+  ## S: socket session to test.
+  result = S.active and not S.closed
 
 proc tls13SocketReadLine*(sock: var Socket, S: var Tls13SocketSession,
     timeoutMs: int = 0; maxLineLength: int = 0): Option[string] {.

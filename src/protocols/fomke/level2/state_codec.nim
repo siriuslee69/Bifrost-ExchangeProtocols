@@ -51,14 +51,6 @@ proc readStateU64(A: openArray[uint8], cursor: var int): uint64 {.role: parser,
     i = i + 1
   cursor = cursor + 8
 
-proc appendStateField(A: var ByteSeq, B: openArray[uint8]) {.
-    role: dataWriter, tag: "fomke|write".} =
-  ## A/B: append one bounded length-prefixed byte field.
-  if uint64(B.len) > uint64(fomkeMaxStateBytes):
-    raise newException(ValueError, "FOMKE state field exceeds its limit")
-  appendAmeU32(A, uint32(B.len))
-  appendAmeBytes(A, B)
-
 proc readStateField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = fomkeMaxStateBytes): ByteSeq {.role: parser,
     tag: "fomke|parsing".} =
@@ -111,12 +103,6 @@ proc decodeStateTagLen(v: uint8): AmeAuthTagLen {.role: parser,
   ## v: stable agreed authentication-tag length.
   result = ameAuthTagLenFromId(v)
 
-proc appendStateChain(A: var ByteSeq, C: FomkeChainState) {.
-    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
-  ## A/C: append one directional chain key and next index.
-  appendStateField(A, C.chainKey)
-  appendAmeU64(A, C.nextIndex)
-
 proc readStateChain(A: openArray[uint8], cursor: var int): FomkeChainState {.
     role: parser, tag: "cryptoBoundary|fomke|parsing".} =
   ## A/cursor: consume one directional chain.
@@ -124,14 +110,6 @@ proc readStateChain(A: openArray[uint8], cursor: var int): FomkeChainState {.
   result.nextIndex = readStateU64(A, cursor)
   if result.chainKey.len != fomkeChainKeyBytes:
     raise newException(ValueError, "FOMKE state chain key length is invalid")
-
-proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
-    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
-  ## A/K: append one skipped message key record.
-  appendAmeU32(A, K.epoch)
-  appendAmeU64(A, K.index)
-  A.add(uint8(ord(K.lane)))
-  appendStateField(A, K.keyMaterial)
 
 proc readStateSkipped(A: openArray[uint8], cursor: var int,
     epoch: uint32): FomkeSkippedKey {.
@@ -147,6 +125,22 @@ proc readStateSkipped(A: openArray[uint8], cursor: var int,
       result.keyMaterial.len != fomkeMessageKeyBytes:
     raise newException(ValueError, "FOMKE skipped state is invalid")
 
+proc appendStateField(A: var ByteSeq, B: openArray[uint8]) {.
+    role: dataWriter, tag: "fomke|write".} =
+  ## A/B: append one bounded length-prefixed byte field.
+  if uint64(B.len) > uint64(fomkeMaxStateBytes):
+    raise newException(ValueError, "FOMKE state field exceeds its limit")
+  appendAmeU32(A, uint32(B.len))
+  appendAmeBytes(A, B)
+
+proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
+  ## A/K: append one skipped message key record.
+  appendAmeU32(A, K.epoch)
+  appendAmeU64(A, K.index)
+  A.add(uint8(ord(K.lane)))
+  appendStateField(A, K.keyMaterial)
+
 proc validateDecodedPending(S: FomkeState) {.role: parser,
     tag: "exchange|fomke|validation".} =
   ## S: decoded pending transition checked against current state.
@@ -159,6 +153,12 @@ proc validateDecodedPending(S: FomkeState) {.role: parser,
       S.pending.candidateLane2.chainKey.len != fomkeChainKeyBytes or
       S.pending.candidateNextSecret.len != fomkeNextSecretBytes:
     raise newException(ValueError, "FOMKE pending chain is invalid")
+
+proc appendStateChain(A: var ByteSeq, C: FomkeChainState) {.
+    role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
+  ## A/C: append one directional chain key and next index.
+  appendStateField(A, C.chainKey)
+  appendAmeU64(A, C.nextIndex)
 
 proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
     tag: "appApi|codecBoundary|cryptoBoundary|fomke|write".} =

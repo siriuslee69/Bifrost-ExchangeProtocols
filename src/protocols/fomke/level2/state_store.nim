@@ -27,23 +27,6 @@ const
   fomkeCheckpointEnvelopeMaxBytes = int(fomkeMaxStateBytes) +
     fomkeCheckpointHeaderLen + fomkeCheckpointMaxOverheadBytes
 
-proc checkpointSlotPath(basePath: string, slot: int): string {.role: helper,
-    tag: "fomke|write".} =
-  ## basePath/slot: stable alternating checkpoint file name.
-  result = basePath & "." & $slot
-
-proc requireCheckpointInputs(basePath: string, storageKey,
-    context: openArray[uint8]) {.role: parser,
-    tag: "cryptoBoundary|fomke|validation".} =
-  ## basePath/storageKey/context: persistence boundary inputs.
-  if basePath.len == 0:
-    raise newException(ValueError, "FOMKE checkpoint path is empty")
-  if storageKey.len < fomkeCheckpointKeyMinBytes:
-    raise newException(ValueError,
-      "FOMKE checkpoint storage key must contain at least 32 bytes")
-  if context.len == 0:
-    raise newException(ValueError, "FOMKE checkpoint context is empty")
-
 proc appendCheckpointField(A: var ByteSeq, B: openArray[uint8]) {.
     role: dataWriter, tag: "fomke|write".} =
   ## A/B: append one bounded checkpoint field.
@@ -193,6 +176,23 @@ proc decodeCheckpointEnvelope(A: openArray[uint8], nonceLen,
   result.sealed.authTag = @A[offset ..< offset + tagLen]
   offset = offset + tagLen
   result.sealed.payload = @A[offset ..< offset + cipherLen]
+
+proc checkpointSlotPath(basePath: string, slot: int): string {.role: helper,
+    tag: "fomke|write".} =
+  ## basePath/slot: stable alternating checkpoint file name.
+  result = basePath & "." & $slot
+
+proc requireCheckpointInputs(basePath: string, storageKey,
+    context: openArray[uint8]) {.role: parser,
+    tag: "cryptoBoundary|fomke|validation".} =
+  ## basePath/storageKey/context: persistence boundary inputs.
+  if basePath.len == 0:
+    raise newException(ValueError, "FOMKE checkpoint path is empty")
+  if storageKey.len < fomkeCheckpointKeyMinBytes:
+    raise newException(ValueError,
+      "FOMKE checkpoint storage key must contain at least 32 bytes")
+  if context.len == 0:
+    raise newException(ValueError, "FOMKE checkpoint context is empty")
 
 proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     storageKey: openArray[uint8], counter: uint64,

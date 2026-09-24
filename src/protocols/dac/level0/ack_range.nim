@@ -41,44 +41,6 @@ Bitmap mode is flat under scattered loss and wins past roughly five gaps.
 The encoder measures both and sends the shorter one.
 """
 
-proc initDacAckRangeEntry*(startSeq: uint32,
-    count: uint16): DacAckRangeEntry {.role: configurator.} =
-  ## startSeq/count: contiguous received sequence range.
-  if count == 0'u16:
-    raise newException(ValueError, "DAC ACK range count must be positive")
-  result.startSeq = startSeq
-  result.count = count
-
-proc initDacAckRange*(ackBase: uint32,
-    commitCount: uint8): DacAckRange {.role: configurator.} =
-  ## ackBase: sequence base for the ACK frame.
-  ## commitCount: committed package count reported alongside the receipt.
-  ## The result starts in run mode with no runs recorded yet.
-  result.ackBase = ackBase
-  result.commitCount = commitCount
-  result.ranges = @[]
-  result.gapMap = @[]
-
-proc initDacAckGapMap*(ackBase: uint32, commitCount: uint8,
-    gapMap: ByteSeq): DacAckRange {.role: configurator.} =
-  ## ackBase: first sequence covered by bit 0 of the bitmap.
-  ## commitCount: committed package count reported alongside the receipt.
-  ## gapMap: one bit per sequence, set where a sequence is missing.
-  if gapMap.len == 0 or gapMap.len > dacAckMaxGapBytes:
-    raise newException(ValueError,
-      "DAC ACK gap bitmap must be 1 to " & $dacAckMaxGapBytes & " bytes")
-  result.ackBase = ackBase
-  result.commitCount = commitCount
-  result.ranges = @[]
-  result.gapMap = gapMap
-
-proc addDacAckRange*(S: var DacAckRange, e: DacAckRangeEntry) {.role: dataWriter.} =
-  ## S: ACK range state to mutate.
-  ## e: range entry to append.
-  if S.gapMap.len > 0:
-    raise newException(ValueError, "DAC ACK bitmap mode carries no runs")
-  S.ranges.add(e)
-
 proc dacAckSpan*(a: DacAckRange): uint32 {.role: parser.} =
   ## a: ACK body whose covered sequence count is returned.
   ## Run mode has no fixed span, so it reports zero.
@@ -112,13 +74,6 @@ proc dacAckIncludesSeq*(a: DacAckRange, seq: uint32): bool {.role: parser.} =
       return true
     i = i + 1
 
-proc dacBitSet*(A: openArray[uint8], i: int): bool {.role: parser.} =
-  ## A: bitmap, most significant bit of each byte first.
-  ## i: bit index; anything past the bitmap reads as clear.
-  if i < 0 or (i div 8) >= A.len:
-    return false
-  result = (A[i div 8] and (1'u8 shl (7 - (i mod 8)))) != 0'u8
-
 proc dacSetBit*(A: var ByteSeq, i: int) {.role: actor.} =
   ## A: bitmap mutated in place, grown as needed.
   ## i: bit index to set.
@@ -127,6 +82,13 @@ proc dacSetBit*(A: var ByteSeq, i: int) {.role: actor.} =
   if (i div 8) >= A.len:
     A.setLen((i div 8) + 1)
   A[i div 8] = A[i div 8] or (1'u8 shl (7 - (i mod 8)))
+
+proc dacBitSet*(A: openArray[uint8], i: int): bool {.role: parser.} =
+  ## A: bitmap, most significant bit of each byte first.
+  ## i: bit index; anything past the bitmap reads as clear.
+  if i < 0 or (i div 8) >= A.len:
+    return false
+  result = (A[i div 8] and (1'u8 shl (7 - (i mod 8)))) != 0'u8
 
 proc dacAckRunBytes*(A: openArray[uint8], n: int): int {.role: math.} =
   ## A: arrival bitmap, one set bit per sequence that arrived.
@@ -153,6 +115,21 @@ proc dacAckGapBytes*(n: int): int {.role: math.} =
   if bytes > dacAckMaxGapBytes:
     return -1
   result = dacAckRangeHeaderLen + bytes
+
+proc addDacAckRange*(S: var DacAckRange, e: DacAckRangeEntry) {.role: dataWriter.} =
+  ## S: ACK range state to mutate.
+  ## e: range entry to append.
+  if S.gapMap.len > 0:
+    raise newException(ValueError, "DAC ACK bitmap mode carries no runs")
+  S.ranges.add(e)
+
+proc initDacAckRangeEntry*(startSeq: uint32,
+    count: uint16): DacAckRangeEntry {.role: configurator.} =
+  ## startSeq/count: contiguous received sequence range.
+  if count == 0'u16:
+    raise newException(ValueError, "DAC ACK range count must be positive")
+  result.startSeq = startSeq
+  result.count = count
 
 proc buildDacAckRuns(S: var DacAckRange, A: openArray[uint8], n: int,
     ackBase: uint32) {.role: truthBuilder.} =
@@ -184,6 +161,29 @@ proc invertDacArrivals(A: openArray[uint8], n: int): ByteSeq {.
     if not dacBitSet(A, i):
       result[i div 8] = result[i div 8] or (1'u8 shl (7 - (i mod 8)))
     i = i + 1
+
+proc initDacAckRange*(ackBase: uint32,
+    commitCount: uint8): DacAckRange {.role: configurator.} =
+  ## ackBase: sequence base for the ACK frame.
+  ## commitCount: committed package count reported alongside the receipt.
+  ## The result starts in run mode with no runs recorded yet.
+  result.ackBase = ackBase
+  result.commitCount = commitCount
+  result.ranges = @[]
+  result.gapMap = @[]
+
+proc initDacAckGapMap*(ackBase: uint32, commitCount: uint8,
+    gapMap: ByteSeq): DacAckRange {.role: configurator.} =
+  ## ackBase: first sequence covered by bit 0 of the bitmap.
+  ## commitCount: committed package count reported alongside the receipt.
+  ## gapMap: one bit per sequence, set where a sequence is missing.
+  if gapMap.len == 0 or gapMap.len > dacAckMaxGapBytes:
+    raise newException(ValueError,
+      "DAC ACK gap bitmap must be 1 to " & $dacAckMaxGapBytes & " bytes")
+  result.ackBase = ackBase
+  result.commitCount = commitCount
+  result.ranges = @[]
+  result.gapMap = gapMap
 
 proc buildDacAckRange*(ackBase: uint32, A: openArray[uint8], n: int,
     commitCount: uint8): DacAckRange {.role: truthBuilder.} =

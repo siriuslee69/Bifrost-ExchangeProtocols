@@ -106,20 +106,6 @@ proc shouldRun(cfg: BenchConfig, name: string): bool {.role: parser.} =
       return true
   result = false
 
-proc buildPayload(n: int): ByteSeq {.role: helper.} =
-  result = newSeq[uint8](n)
-  for i in 0 ..< n:
-    result[i] = uint8((i * 37 + 11) and 0xff)
-
-proc mixSinkBytes(A: openArray[uint8]) {.role: helper.} =
-  benchSink = benchSink xor uint64(A.len)
-  if A.len > 0:
-    benchSink = (benchSink shl 7) xor uint64(A[0])
-    benchSink = benchSink xor (uint64(A[^1]) shl 17)
-
-proc mixSinkUint(v: SomeInteger) {.role: helper.} =
-  benchSink = (benchSink shl 9) xor uint64(v)
-
 proc hexByte(b: uint8): string {.role: helper.} =
   const digits = "0123456789abcdef"
   result = newString(2)
@@ -134,6 +120,18 @@ proc sampleWireHex(A: openArray[uint8], maxBytes: int = 8): string {.role: helpe
     result.add(hexByte(A[i]))
   if A.len > limit:
     result.add(" ...")
+
+proc buildAmeBenchAad(): ByteSeq {.role: configurator.} =
+  var h: AmeFrameHeader
+  h = initAmeFrameHeader(ampkLaneData, amcUserdata, 0'u8,
+    7'u64, 1'u32, 5'u32, 3'u32)
+  result = encodeAmeFrameHeader(h)
+
+proc mixSinkBytes(A: openArray[uint8]) {.role: helper.} =
+  benchSink = benchSink xor uint64(A.len)
+  if A.len > 0:
+    benchSink = (benchSink shl 7) xor uint64(A[0])
+    benchSink = benchSink xor (uint64(A[^1]) shl 17)
 
 proc initResult(name: string, cfg: BenchConfig, wireBytes: int,
     sampleBytes: openArray[uint8],
@@ -151,22 +149,6 @@ proc initResult(name: string, cfg: BenchConfig, wireBytes: int,
   result.sampleWireHex = sampleWireHex(sampleBytes)
   result.sink = benchSink
 
-proc nsPerOp(r: BenchResult): float {.role: math.} =
-  result = float(r.totalNs) / float(r.iterations)
-
-proc opsPerSec(r: BenchResult): float {.role: math.} =
-  result = (float(r.iterations) * 1_000_000_000.0) / float(r.totalNs)
-
-proc mibPerSec(r: BenchResult): float {.role: math.} =
-  let totalPayloadBytes = float(r.payloadBytes) * float(r.iterations)
-  result = totalPayloadBytes / (1024.0 * 1024.0) / (float(r.totalNs) / 1_000_000_000.0)
-
-proc buildAmeBenchAad(): ByteSeq {.role: configurator.} =
-  var h: AmeFrameHeader
-  h = initAmeFrameHeader(ampkLaneData, amcUserdata, 0'u8,
-    7'u64, 1'u32, 5'u32, 3'u32)
-  result = encodeAmeFrameHeader(h)
-
 proc exactBenchAuth(seed: openArray[uint8],
     role: AmeEndpointRole = aerInitiator): AmeAuthPackage {.role: configurator.} =
   const K: AmeKemAlgorithms = [akaFireSaber, akaX25519]
@@ -180,14 +162,10 @@ proc exactBenchAuth(seed: openArray[uint8],
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk {.role: configurator.} =
-  ## payload: the bytes one package chunk carries.
-  ##
-  ## The benchmark used to time a DAC frame envelope. There is no envelope
-  ## now -- DAC frames nothing itself -- so what is worth timing is the codec
-  ## that is still on the hot path: one package chunk in and out of its body
-  ## bytes, which is what AME then seals.
-  result = initDacPackageChunk(9'u64, 5'u32, 1'u16, 0'u32, payload)
+proc buildPayload(n: int): ByteSeq {.role: helper.} =
+  result = newSeq[uint8](n)
+  for i in 0 ..< n:
+    result[i] = uint8((i * 37 + 11) and 0xff)
 
 proc benchAmeProtect(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   var
@@ -250,6 +228,15 @@ proc benchAmeOpen(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
     sealed.message.payload.len + sealed.message.authTag.len,
     sealed.message.payload, startedAt, endedAt)
 
+proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk {.role: configurator.} =
+  ## payload: the bytes one package chunk carries.
+  ##
+  ## The benchmark used to time a DAC frame envelope. There is no envelope
+  ## now -- DAC frames nothing itself -- so what is worth timing is the codec
+  ## that is still on the hot path: one package chunk in and out of its body
+  ## bytes, which is what AME then seals.
+  result = initDacPackageChunk(9'u64, 5'u32, 1'u16, 0'u32, payload)
+
 proc benchDacEncode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let
     payload = buildPayload(cfg.payloadBytes)
@@ -267,6 +254,9 @@ proc benchDacEncode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
     mixSinkBytes(frame)
   endedAt = getMonoTime()
   result = initResult("dac_encode", cfg, frame.len, frame, startedAt, endedAt)
+
+proc mixSinkUint(v: SomeInteger) {.role: helper.} =
+  benchSink = (benchSink shl 9) xor uint64(v)
 
 proc benchDacDecode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let
@@ -503,6 +493,13 @@ proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
   clearFomkeSendCache(cache)
   clearFomkeState(state)
 
+proc nsPerOp(r: BenchResult): float {.role: math.} =
+  result = float(r.totalNs) / float(r.iterations)
+
+proc mibPerSec(r: BenchResult): float {.role: math.} =
+  let totalPayloadBytes = float(r.payloadBytes) * float(r.iterations)
+  result = totalPayloadBytes / (1024.0 * 1024.0) / (float(r.totalNs) / 1_000_000_000.0)
+
 proc printResults(results: openArray[BenchResult]) {.role: dataWriter.} =
   const
     nameWidth = 26
@@ -536,6 +533,9 @@ proc ensureDir(path: string) {.role: helper.} =
   if parent.len > 0 and parent != path and not dirExists(parent):
     ensureDir(parent)
   createDir(path)
+
+proc opsPerSec(r: BenchResult): float {.role: math.} =
+  result = (float(r.iterations) * 1_000_000_000.0) / float(r.totalNs)
 
 proc writeJsonResults(path: string, cfg: BenchConfig,
     results: openArray[BenchResult]) {.role: dataWriter.} =

@@ -87,35 +87,6 @@ proc defaultDacPackageLimits*(): DacPackageLimits {.role: configurator.} =
   result.maxChunks = high(uint16)
   result.maxRepairRounds = 4'u8
 
-proc packageDigest(A: openArray[uint8]): array[32, uint8] {.
-    role: truthBuilder.} =
-  ## A: complete encoded package bytes hashed for manifest and commit.
-  var
-    d: ByteSeq = tyr_blake3.blake3Hash(A, 32)
-    i: int = 0
-  while i < result.len:
-    result[i] = d[i]
-    i = i + 1
-
-proc xorChunkInto(A: var ByteSeq, B: openArray[uint8]) {.
-    role: dataWriter.} =
-  ## A/B: fixed-width XOR accumulator and one chunk.
-  var
-    i: int = 0
-  while i < B.len:
-    A[i] = A[i] xor B[i]
-    i = i + 1
-
-proc paddedChunk(A: openArray[uint8], n: int): ByteSeq {.role: helper.} =
-  ## A: chunk payload, at most n bytes long.
-  ## n: coding width every shard in a group is padded out to.
-  var
-    i: int = 0
-  result = newSeq[uint8](n)
-  while i < A.len:
-    result[i] = A[i]
-    i = i + 1
-
 proc dacGroupDataWidth*(m: DacPackageManifest): uint16 {.role: parser.} =
   ## m: manifest whose data-chunk count per repair group is derived.
   if m.groupSize <= m.parityCount:
@@ -142,11 +113,14 @@ proc dacGroupChunkCount*(m: DacPackageManifest,
     width: uint32 = uint32(dacGroupDataWidth(m))
   result = uint16(min(width, uint32(m.dataCount) - first))
 
-proc groupDataCount(d: DacScenarioDefaults): uint16 {.role: helper.} =
-  ## d: scenario defaults whose data-shard count forms one repair group.
-  if d.dataShards == 0'u16:
-    raise newException(ValueError, "DAC package data-shard count must be positive")
-  result = d.dataShards
+proc xorChunkInto(A: var ByteSeq, B: openArray[uint8]) {.
+    role: dataWriter.} =
+  ## A/B: fixed-width XOR accumulator and one chunk.
+  var
+    i: int = 0
+  while i < B.len:
+    A[i] = A[i] xor B[i]
+    i = i + 1
 
 proc buildXorShard(D: seq[ByteSeq], n: int): ByteSeq {.role: truthBuilder.} =
   ## D: padded data chunks of one repair group.
@@ -178,6 +152,16 @@ proc buildRepairShards(D: seq[ByteSeq], mode: DacRepairMode,
         "DAC Reed-Solomon repair needs at least one parity shard")
     result = encodeRsShards(initRsCodec(D.len, parityCount, n), D)
 
+proc paddedChunk(A: openArray[uint8], n: int): ByteSeq {.role: helper.} =
+  ## A: chunk payload, at most n bytes long.
+  ## n: coding width every shard in a group is padded out to.
+  var
+    i: int = 0
+  result = newSeq[uint8](n)
+  while i < A.len:
+    result[i] = A[i]
+    i = i + 1
+
 proc buildGroupRepair(P: DacPackagePlan, first, count: int,
     groupId: uint32): DacPackageGroupRepair {.role: truthBuilder.} =
   ## P: package plan whose chunks back this group.
@@ -196,6 +180,22 @@ proc buildGroupRepair(P: DacPackagePlan, first, count: int,
     i = i + 1
   result.shards = buildRepairShards(D, result.repairMode,
     int(P.manifest.parityCount), n)
+
+proc packageDigest(A: openArray[uint8]): array[32, uint8] {.
+    role: truthBuilder.} =
+  ## A: complete encoded package bytes hashed for manifest and commit.
+  var
+    d: ByteSeq = tyr_blake3.blake3Hash(A, 32)
+    i: int = 0
+  while i < result.len:
+    result[i] = d[i]
+    i = i + 1
+
+proc groupDataCount(d: DacScenarioDefaults): uint16 {.role: helper.} =
+  ## d: scenario defaults whose data-shard count forms one repair group.
+  if d.dataShards == 0'u16:
+    raise newException(ValueError, "DAC package data-shard count must be positive")
+  result = d.dataShards
 
 proc planDacPackage*(packageId: uint64, A: openArray[uint8],
     d: DacScenarioDefaults, c: DacTransferClass = dtcUserData,

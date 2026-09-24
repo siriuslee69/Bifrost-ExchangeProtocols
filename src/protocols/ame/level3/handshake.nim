@@ -145,15 +145,6 @@ proc openServerIdentity(S: AmeClientHandshake, h: AmeServerHello,
   result.err = ""
   result.ok = true
 
-proc ameAuthenticationModeOf*(m: AmeTrustMode): AmeAuthenticationMode {.
-    role: parser.} =
-  ## m: the trust mode this side ran, named the way the statistics name it.
-  case m
-  of atmAuthorityCertificate: result = am1a
-  of atmPinnedPeerKey: result = am1s
-  of atmPreSharedKey: result = am1p
-  of atmPreSharedPinned: result = am1ps
-
 proc exchangeBinderKey(a: AmeAuthentication,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|kdf".} =
@@ -188,29 +179,14 @@ proc exchangeBinderKey(a: AmeAuthentication,
   secureClearAmeBytes(subject)
   secureClearAmeBytes(key)
 
-proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
-    request: AmeExchangeRequest,
-    sharedSecrets: openArray[ByteSeq], transcript: openArray[uint8],
-    sessionId: uint64, endpointRole: AmeEndpointRole,
-    params: AmeRuntimeParams,
-    a: AmeAuthentication): AmeAuthPackage {.role: truthBuilder,
-    tag: "cryptoBoundary".} =
-  ## L/tier/request/secrets/transcript/session/role/params/a: the first epoch.
-  ## The transcript hash becomes the salt every later key hangs off, so two
-  ## handshakes that agreed different things can never share a key.
-  var
-    exchange: AmeExchangeState = initAmeExchangeState(L.kems)
-    binder: ByteSeq = exchangeBinderKey(a, transcript)
-  ## The binder is built BEFORE the exchange is absorbed, because the very
-  ## first stack has to contain it. A provisioned secret that only joined from
-  ## the second rotation onward would leave the opening epoch resting on the
-  ## KEM alone.
-  applyAmeExchange(exchange, L, request, sharedSecrets, binder)
-  result = initAmeAuthPackage(L, initialTier, exchange,
-    hashAmeTier(L, initialTier, transcript, 32), 1'u32, sessionId,
-    endpointRole, params)
-  result.authenticationMode = ameAuthenticationModeOf(a.mode)
-  result.exchangeBinder = binder
+proc ameAuthenticationModeOf*(m: AmeTrustMode): AmeAuthenticationMode {.
+    role: parser.} =
+  ## m: the trust mode this side ran, named the way the statistics name it.
+  case m
+  of atmAuthorityCertificate: result = am1a
+  of atmPinnedPeerKey: result = am1s
+  of atmPreSharedKey: result = am1p
+  of atmPreSharedPinned: result = am1ps
 
 proc serverHelloPolicyError(S: AmeClientHandshake,
     h: AmeServerHello): string {.role: parser.} =
@@ -313,19 +289,6 @@ proc sealClientIdentity(S: AmeClientHandshake, h: AmeServerHello,
 ## the bytes the proofs are taken over differ (the clear server hello for the
 ## responder, the transcript hash for the initiator).
 
-proc pskHalfVerdict(a: AmeAuthentication, pskId: string,
-    P: openArray[ByteSeq], d: AmePskProofDirection,
-    subject: openArray[uint8]): AmePeerTrustResult {.inline, role: parser,
-    tag: "cryptoBoundary|validation".} =
-  ## a/pskId/P/d/subject: the shared-secret half. Exactly one proof, over
-  ## exactly the bytes this side rebuilt for itself.
-  result = pskPeerTrust(a, pskId)
-  if not result.ok:
-    return
-  if P.len != 1 or not verifyAmePskTranscript(a, d, subject, P[0]):
-    result = default(AmePeerTrustResult)
-    result.err = "peer shared-secret proof is invalid"
-
 proc certificateHalfVerdict(L: AmeSuiteLayout, t: AmeMaskTier,
     a: AmeAuthentication, C: AmeIdentityCertificate,
     P: openArray[ByteSeq], subject: openArray[uint8], nowUnix: int64,
@@ -355,6 +318,19 @@ proc certificateHalfVerdict(L: AmeSuiteLayout, t: AmeMaskTier,
     result = default(AmePeerTrustResult)
     result.err = "peer identity proof failed: " & e.msg
 
+proc pskHalfVerdict(a: AmeAuthentication, pskId: string,
+    P: openArray[ByteSeq], d: AmePskProofDirection,
+    subject: openArray[uint8]): AmePeerTrustResult {.inline, role: parser,
+    tag: "cryptoBoundary|validation".} =
+  ## a/pskId/P/d/subject: the shared-secret half. Exactly one proof, over
+  ## exactly the bytes this side rebuilt for itself.
+  result = pskPeerTrust(a, pskId)
+  if not result.ok:
+    return
+  if P.len != 1 or not verifyAmePskTranscript(a, d, subject, P[0]):
+    result = default(AmePeerTrustResult)
+    result.err = "peer shared-secret proof is invalid"
+
 proc peerVerdict(L: AmeSuiteLayout, t: AmeMaskTier, a: AmeAuthentication,
     pskId: string, pskProofs: openArray[ByteSeq], d: AmePskProofDirection,
     C: AmeIdentityCertificate, P: openArray[ByteSeq],
@@ -380,6 +356,30 @@ proc judgeServerBlock(S: AmeClientHandshake, a: AmeAuthentication,
   result = peerVerdict(S.hello.layout, S.hello.initialTier, a, B.pskId,
     B.pskProofs, apdResponder, B.certificate, B.proofs, clear, nowUnix,
     revokedSerials)
+
+proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
+    request: AmeExchangeRequest,
+    sharedSecrets: openArray[ByteSeq], transcript: openArray[uint8],
+    sessionId: uint64, endpointRole: AmeEndpointRole,
+    params: AmeRuntimeParams,
+    a: AmeAuthentication): AmeAuthPackage {.role: truthBuilder,
+    tag: "cryptoBoundary".} =
+  ## L/tier/request/secrets/transcript/session/role/params/a: the first epoch.
+  ## The transcript hash becomes the salt every later key hangs off, so two
+  ## handshakes that agreed different things can never share a key.
+  var
+    exchange: AmeExchangeState = initAmeExchangeState(L.kems)
+    binder: ByteSeq = exchangeBinderKey(a, transcript)
+  ## The binder is built BEFORE the exchange is absorbed, because the very
+  ## first stack has to contain it. A provisioned secret that only joined from
+  ## the second rotation onward would leave the opening epoch resting on the
+  ## KEM alone.
+  applyAmeExchange(exchange, L, request, sharedSecrets, binder)
+  result = initAmeAuthPackage(L, initialTier, exchange,
+    hashAmeTier(L, initialTier, transcript, 32), 1'u32, sessionId,
+    endpointRole, params)
+  result.authenticationMode = ameAuthenticationModeOf(a.mode)
+  result.exchangeBinder = binder
 
 proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
     a: AmeAuthentication, descriptor: AmeIdentityCertificate,
@@ -442,6 +442,17 @@ proc finishAmeHandshakeCore(S: AmeClientHandshake, h: AmeServerHello,
 
 ## ╭⟢ step 4: the server opens the finish
 
+proc judgeClientBlock(S: AmeServerHandshake, a: AmeAuthentication,
+    B: AmeClientIdentityBlock, nowUnix: int64,
+    revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
+    role: orchestrator, tag: "cryptoBoundary|validation".} =
+  ## S/a/B/nowUnix/revoked: the initiator's block, proved over the
+  ## transcript hash. The caller has already compared that hash with its
+  ## own, so proving it also proves the whole exchange.
+  result = peerVerdict(S.clientHello.layout, S.clientHello.initialTier, a,
+    B.pskId, B.pskProofs, apdInitiator, B.certificate, B.proofs,
+    B.transcriptHash, nowUnix, revokedSerials)
+
 proc readClientBlockFields(A: openArray[uint8], a: AmeAuthentication,
     cursor: var int): AmeClientIdentityBlock {.inline, role: parser,
     tag: "validation".} =
@@ -456,17 +467,6 @@ proc readClientBlockFields(A: openArray[uint8], a: AmeAuthentication,
   result.transcriptHash = readCertField(A, cursor, 1024'u32)
   if ameModeUsesSignatures(a.mode):
     result.proofs = readBlockProofs(A, cursor)
-
-proc judgeClientBlock(S: AmeServerHandshake, a: AmeAuthentication,
-    B: AmeClientIdentityBlock, nowUnix: int64,
-    revokedSerials: openArray[uint64]): AmePeerTrustResult {.inline,
-    role: orchestrator, tag: "cryptoBoundary|validation".} =
-  ## S/a/B/nowUnix/revoked: the initiator's block, proved over the
-  ## transcript hash. The caller has already compared that hash with its
-  ## own, so proving it also proves the whole exchange.
-  result = peerVerdict(S.clientHello.layout, S.clientHello.initialTier, a,
-    B.pskId, B.pskProofs, apdInitiator, B.certificate, B.proofs,
-    B.transcriptHash, nowUnix, revokedSerials)
 
 proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     nowUnix: int64,

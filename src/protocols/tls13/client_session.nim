@@ -89,24 +89,6 @@ proc offeredAlpn(S: Tls13ClientSession, selected: string): bool {.role: parser,
       return true
     i = i + 1
 
-proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
-    e: string) {.role: actor,
-    tag: "tls|validation|cryptoBoundary".} =
-  S.state = tcsFailed
-  O.err = e
-  try:
-    if not S.connection.tls13WriteKeysInstalled():
-      O.outbound.add(encodeTls13PlainAlert(talFatal, tls13AlertForError(e)))
-    else:
-      O.outbound.add(S.connection.encodeTls13Protected(tctAlert,
-        [byte 2, byte(ord(tls13AlertForError(e)))]))
-  except CatchableError:
-    discard
-  secureClearBytes(S.x25519SecretKey)
-  clearTls13HandshakeSecrets(S.handshakeSecrets)
-  clearTls13ApplicationSecrets(S.applicationSecrets)
-  S.connection.clearTls13ConnectionSecrets()
-
 proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
     role: truthBuilder, tag: "tls|transport".} =
   ## C: pinned root or trust anchors, expected identity, ALPN list, time, and
@@ -170,6 +152,24 @@ proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
   S.transcript.appendTls13Transcript(message)
   S.state = tcsAwaitServerHello
   result = encodeTls13PlainHandshakeRecord(message)
+
+proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
+    e: string) {.role: actor,
+    tag: "tls|validation|cryptoBoundary".} =
+  S.state = tcsFailed
+  O.err = e
+  try:
+    if not S.connection.tls13WriteKeysInstalled():
+      O.outbound.add(encodeTls13PlainAlert(talFatal, tls13AlertForError(e)))
+    else:
+      O.outbound.add(S.connection.encodeTls13Protected(tctAlert,
+        [byte 2, byte(ord(tls13AlertForError(e)))]))
+  except CatchableError:
+    discard
+  secureClearBytes(S.x25519SecretKey)
+  clearTls13HandshakeSecrets(S.handshakeSecrets)
+  clearTls13ApplicationSecrets(S.applicationSecrets)
+  S.connection.clearTls13ConnectionSecrets()
 
 proc acceptServerHello(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,

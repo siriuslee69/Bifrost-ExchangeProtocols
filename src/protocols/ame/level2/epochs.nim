@@ -115,10 +115,6 @@ type
 
     lastErr*: string
 
-proc copyBytes(A: openArray[uint8]): ByteSeq {.role: helper.} =
-  ## A: source bytes copied into owned storage.
-  result = @A
-
 proc requireEpoch(E: AmeEpochKeySet) {.role: parser.} =
   ## E: exact epoch state required for data protection.
   if E.epochId == 0'u32:
@@ -140,31 +136,9 @@ proc clearExchangeState(E: var AmeExchangeState) {.role: actor.} =
     i = i + 1
   E = default(AmeExchangeState)
 
-proc clearEpoch(E: var AmeEpochKeySet) {.role: actor.} =
-  ## E: epoch whose exchange secrets and transcript salt are cleared.
-  clearExchangeState(E.exchange)
-  secureClearAmeBytes(E.transcriptSalt)
-  E = default(AmeEpochKeySet)
-
-proc clearSignatureSecretKeys(K: var seq[ByteSeq]) {.
-    role: actor.} =
-  ## K: complete identity signature private-key stack to erase.
-  var
-    i: int = 0
-  while i < K.len:
-    secureClearAmeBytes(K[i])
-    i = i + 1
-  K.setLen(0)
-
-proc clearPendingExchange(P: var AmePendingExchange) {.
-    role: actor.} =
-  ## P: outgoing exchange whose private keys are cleared.
-  var
-    i: int = 0
-  while i < P.secretKeys.len:
-    secureClearAmeBytes(P.secretKeys[i])
-    i = i + 1
-  P = default(AmePendingExchange)
+proc copyBytes(A: openArray[uint8]): ByteSeq {.role: helper.} =
+  ## A: source bytes copied into owned storage.
+  result = @A
 
 proc cloneExchangeState(E: AmeExchangeState): AmeExchangeState {.
     role: helper.} =
@@ -177,23 +151,6 @@ proc cloneExchangeState(E: AmeExchangeState): AmeExchangeState {.
   while i < ameMaxAlgorithmSlots:
     result.stackedSecrets[i] = copyBytes(E.stackedSecrets[i])
     i = i + 1
-
-proc cloneEpoch(E: AmeEpochKeySet): AmeEpochKeySet {.role: helper.} =
-  ## E: epoch copied without sharing secret or transcript byte storage.
-  ##
-  ## `params` is copied like everything else, and that is load-bearing rather
-  ## than tidy. A retiring epoch is asked for its OWN tag length and padding
-  ## policy when it opens a sealed package that was stored under it
-  ## (`openAmeSecurePackage`). Leaving the field at its default made that read
-  ## answer `apadNone` no matter what the epoch actually used, so with
-  ## `apadBlock64` switched on the package was refused for disagreeing with a
-  ## policy it had never been sealed under.
-  result.epochId = E.epochId
-  result.layout = E.layout
-  result.tier = E.tier
-  result.exchange = cloneExchangeState(E.exchange)
-  result.transcriptSalt = copyBytes(E.transcriptSalt)
-  result.params = E.params
 
 proc requireAmeAuth*(a: AmeAuthPackage) {.role: parser.} =
   ## a: exact current and optional retiring epoch state.
@@ -257,29 +214,6 @@ proc exchangeProofError*(S: AmeSession, p: AmeExchangeProof): string {.
     result = "AME signed exchange needs signature keys on both sides " &
       "(this session has none)"
 
-proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
-    p: AmeExchangeProof, subject: openArray[uint8]): seq[ByteSeq] {.
-    role: truthBuilder, tag: "cryptoBoundary|exchange".} =
-  ## S/t/p/subject: this endpoint's proof of kind `p` over one offer or
-  ## reply; empty for aepFrame (the frame tag proves it).
-  if p == aepFrame:
-    return @[]
-  result = signAmeTier(S.auth.current.layout, t, subject,
-    activeAmeSignatureKeys(S.auth.current.layout, t,
-      S.auth.localSignatureSecretKeys))
-
-proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
-    p: AmeExchangeProof, subject: openArray[uint8],
-    P: openArray[ByteSeq]): bool {.role: parser,
-    tag: "cryptoBoundary|exchange|validation".} =
-  ## S/t/p/subject/P: the peer's proof of kind `p` over one offer or reply.
-  ## aepFrame carries none: anything in P is refused.
-  if p == aepFrame:
-    return P.len == 0
-  result = verifyAmeTier(S.auth.current.layout, t, subject,
-    activeAmeSignatureKeys(S.auth.current.layout, t,
-      S.auth.peerSignaturePublicKeys), P)
-
 proc outboundAmeDirection*(r: AmeEndpointRole): AmeTrafficDirection {.
     role: parser.} =
   ## r: local endpoint role mapped to its global send direction.
@@ -305,63 +239,6 @@ proc ameEpochKeyContext*(E: AmeEpochKeySet, sessionId: uint64,
   result.add(uint8(ord(direction)))
   appendAmeU32(result, uint32(E.transcriptSalt.len))
   appendAmeBytes(result, E.transcriptSalt)
-
-proc refreshAmeHeaderKeys*(S: var AmeSession) {.role: actor,
-    tag: "ame|cryptoBoundary|kdf".} =
-  ## S: header-protection keys rebuilt for whatever epoch is now current.
-  ##
-  ## Must be called wherever `auth.current` changes. The keys are bound to the
-  ## epoch id, so a stale pair produces a mask the peer cannot reproduce and
-  ## every frame fails to open -- loudly, which is the right way for this to
-  ## go wrong if a future rotation path forgets to call it.
-  secureClearAmeBytes(S.headerKeySend)
-  secureClearAmeBytes(S.headerKeyRecv)
-  S.headerKeySend = deriveAmeHeaderKey(S.auth.current.exchange,
-    S.auth.current.layout, S.auth.current.tier,
-    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
-      outboundAmeDirection(S.auth.endpointRole)))
-  S.headerKeyRecv = deriveAmeHeaderKey(S.auth.current.exchange,
-    S.auth.current.layout, S.auth.current.tier,
-    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
-      inboundAmeDirection(S.auth.endpointRole)))
-
-proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
-    sharedSecrets: openArray[ByteSeq], transcriptSalt: openArray[uint8]) {.
-    role: actor.} =
-  ## S/r/sharedSecrets/transcriptSalt: atomic authenticated epoch rotation.
-  var
-    next: AmeEpochKeySet = cloneEpoch(S.auth.current)
-  clearFomkeSendCache(S.fomkeSendCache)
-  if S.auth.current.epochId == high(uint32):
-    raise newException(ValueError, "AME epoch id is exhausted")
-  validateAmeTierTransition(next.layout, next.tier, r.targetTier,
-    r.exchangeMask, next.exchange.activeMask)
-  applyAmeExchange(next.exchange, next.layout, r, sharedSecrets,
-    S.auth.exchangeBinder)
-  next.tier = r.targetTier
-  next.params = r.params
-  next.epochId = S.auth.current.epochId + 1'u32
-  secureClearAmeBytes(next.transcriptSalt)
-  next.transcriptSalt = copyBytes(transcriptSalt)
-  clearEpoch(S.auth.retiring)
-  S.auth.retiring = cloneEpoch(S.auth.current)
-  S.auth.current = next
-  requireAmeAuth(S.auth)
-  refreshAmeHeaderKeys(S)
-
-proc transitionTranscriptSalt(E: AmeEpochKeySet, o: AmeExchangeOffer,
-    r: AmeExchangeReply): ByteSeq {.role: truthBuilder.} =
-  ## E/o/r: previous channel binding and complete signed KEM transaction.
-  var
-    transcript: ByteSeq = @[]
-  appendAmeLabel(transcript, "AME-EPOCH-TRANSITION-v1")
-  appendAmeU32(transcript, uint32(E.transcriptSalt.len))
-  appendAmeBytes(transcript, E.transcriptSalt)
-  appendAmeU32(transcript, uint32(encodeAmeExchangeOffer(o).len))
-  appendAmeBytes(transcript, encodeAmeExchangeOffer(o))
-  appendAmeU32(transcript, uint32(encodeAmeExchangeReply(r).len))
-  appendAmeBytes(transcript, encodeAmeExchangeReply(r))
-  result = hashAmeTier(E.layout, r.request.targetTier, transcript, 32)
 
 ## ╭⟢ the message ratchet
 ##
@@ -453,14 +330,31 @@ proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
   result = S.fomkePregenerationEnabled and
     not S.fomke.pending.active and remaining <= threshold
 
-proc restoreConfiguredAmeFomkeCache*(S: var AmeSession) {.
-    role: actor,
-    tag: "cryptoBoundary|fomke|protocol".} =
-  ## S: quiescent configured connection whose cache is rebuilt off data paths.
-  clearFomkeSendCache(S.fomkeSendCache)
-  if S.fomkePregenerationEnabled and not S.fomke.pending.active:
-    S.fomkeSendCache = prepareFomkeSendCache(S.fomke,
-      S.fomkePregenerationMessages)
+proc clearSignatureSecretKeys(K: var seq[ByteSeq]) {.
+    role: actor.} =
+  ## K: complete identity signature private-key stack to erase.
+  var
+    i: int = 0
+  while i < K.len:
+    secureClearAmeBytes(K[i])
+    i = i + 1
+  K.setLen(0)
+
+proc clearPendingExchange(P: var AmePendingExchange) {.
+    role: actor.} =
+  ## P: outgoing exchange whose private keys are cleared.
+  var
+    i: int = 0
+  while i < P.secretKeys.len:
+    secureClearAmeBytes(P.secretKeys[i])
+    i = i + 1
+  P = default(AmePendingExchange)
+
+proc clearEpoch(E: var AmeEpochKeySet) {.role: actor.} =
+  ## E: epoch whose exchange secrets and transcript salt are cleared.
+  clearExchangeState(E.exchange)
+  secureClearAmeBytes(E.transcriptSalt)
+  E = default(AmeEpochKeySet)
 
 proc clearAmeSession*(S: var AmeSession) {.role: actor,
     tag: "appApi|cryptoBoundary|protocol".} =
@@ -495,6 +389,17 @@ proc ameRequestPolicyError*(S: AmeSession, r: AmeExchangeRequest): string {.
     result = "AME this side accepts only signed exchange requests " &
       "(ameSignedExchanges)"
 
+proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
+    p: AmeExchangeProof, subject: openArray[uint8]): seq[ByteSeq] {.
+    role: truthBuilder, tag: "cryptoBoundary|exchange".} =
+  ## S/t/p/subject: this endpoint's proof of kind `p` over one offer or
+  ## reply; empty for aepFrame (the frame tag proves it).
+  if p == aepFrame:
+    return @[]
+  result = signAmeTier(S.auth.current.layout, t, subject,
+    activeAmeSignatureKeys(S.auth.current.layout, t,
+      S.auth.localSignatureSecretKeys))
+
 proc requireAmeRequestPolicy(S: AmeSession, r: AmeExchangeRequest) {.
     role: parser.} =
   ## S/r: refuses to SEND (or answer) a request this side would deny.
@@ -502,16 +407,6 @@ proc requireAmeRequestPolicy(S: AmeSession, r: AmeExchangeRequest) {.
     reason: string = ameRequestPolicyError(S, r)
   if reason.len > 0:
     raise newException(ValueError, reason)
-
-proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
-  ## S: outgoing exchange cancelled and trigger returned to the due queue.
-  if S.path.inFlightTierId != 0'u32:
-    releaseAmeTier(S.path)
-  clearPendingExchange(S.pendingExchange)
-  clearFomkeState(S.fomkeCandidate)
-  S.fomkeCandidateActive = false
-  cancelFomkeUpgrade(S.fomke)
-  restoreConfiguredAmeFomkeCache(S)
 
 proc beginAmeSessionExchange*(S: var AmeSession,
     r: AmeExchangeRequest): AmeExchangeOffer {.role: orchestrator.} =
@@ -577,6 +472,68 @@ proc beginAmeSessionExchange*(S: var AmeSession,
       claimAmeTier(S.path, step)
       break
     targetIndex = targetIndex + 1
+
+proc restoreConfiguredAmeFomkeCache*(S: var AmeSession) {.
+    role: actor,
+    tag: "cryptoBoundary|fomke|protocol".} =
+  ## S: quiescent configured connection whose cache is rebuilt off data paths.
+  clearFomkeSendCache(S.fomkeSendCache)
+  if S.fomkePregenerationEnabled and not S.fomke.pending.active:
+    S.fomkeSendCache = prepareFomkeSendCache(S.fomke,
+      S.fomkePregenerationMessages)
+
+proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
+  ## S: outgoing exchange cancelled and trigger returned to the due queue.
+  if S.path.inFlightTierId != 0'u32:
+    releaseAmeTier(S.path)
+  clearPendingExchange(S.pendingExchange)
+  clearFomkeState(S.fomkeCandidate)
+  S.fomkeCandidateActive = false
+  cancelFomkeUpgrade(S.fomke)
+  restoreConfiguredAmeFomkeCache(S)
+
+proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
+    p: AmeExchangeProof, subject: openArray[uint8],
+    P: openArray[ByteSeq]): bool {.role: parser,
+    tag: "cryptoBoundary|exchange|validation".} =
+  ## S/t/p/subject/P: the peer's proof of kind `p` over one offer or reply.
+  ## aepFrame carries none: anything in P is refused.
+  if p == aepFrame:
+    return P.len == 0
+  result = verifyAmeTier(S.auth.current.layout, t, subject,
+    activeAmeSignatureKeys(S.auth.current.layout, t,
+      S.auth.peerSignaturePublicKeys), P)
+
+proc transitionTranscriptSalt(E: AmeEpochKeySet, o: AmeExchangeOffer,
+    r: AmeExchangeReply): ByteSeq {.role: truthBuilder.} =
+  ## E/o/r: previous channel binding and complete signed KEM transaction.
+  var
+    transcript: ByteSeq = @[]
+  appendAmeLabel(transcript, "AME-EPOCH-TRANSITION-v1")
+  appendAmeU32(transcript, uint32(E.transcriptSalt.len))
+  appendAmeBytes(transcript, E.transcriptSalt)
+  appendAmeU32(transcript, uint32(encodeAmeExchangeOffer(o).len))
+  appendAmeBytes(transcript, encodeAmeExchangeOffer(o))
+  appendAmeU32(transcript, uint32(encodeAmeExchangeReply(r).len))
+  appendAmeBytes(transcript, encodeAmeExchangeReply(r))
+  result = hashAmeTier(E.layout, r.request.targetTier, transcript, 32)
+
+proc cloneEpoch(E: AmeEpochKeySet): AmeEpochKeySet {.role: helper.} =
+  ## E: epoch copied without sharing secret or transcript byte storage.
+  ##
+  ## `params` is copied like everything else, and that is load-bearing rather
+  ## than tidy. A retiring epoch is asked for its OWN tag length and padding
+  ## policy when it opens a sealed package that was stored under it
+  ## (`openAmeSecurePackage`). Leaving the field at its default made that read
+  ## answer `apadNone` no matter what the epoch actually used, so with
+  ## `apadBlock64` switched on the package was refused for disagreeing with a
+  ## policy it had never been sealed under.
+  result.epochId = E.epochId
+  result.layout = E.layout
+  result.tier = E.tier
+  result.exchange = cloneExchangeState(E.exchange)
+  result.transcriptSalt = copyBytes(E.transcriptSalt)
+  result.params = E.params
 
 proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
     AmeExchangeReply {.role: orchestrator.} =
@@ -654,6 +611,49 @@ proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: actor,
   discard prepareFomkeUpgrade(S.fomke, S.pendingIncoming.requestId,
     S.pendingIncoming.candidate.epochId, S.pendingIncoming.request,
     S.pendingIncoming.candidate.exchange)
+
+proc refreshAmeHeaderKeys*(S: var AmeSession) {.role: actor,
+    tag: "ame|cryptoBoundary|kdf".} =
+  ## S: header-protection keys rebuilt for whatever epoch is now current.
+  ##
+  ## Must be called wherever `auth.current` changes. The keys are bound to the
+  ## epoch id, so a stale pair produces a mask the peer cannot reproduce and
+  ## every frame fails to open -- loudly, which is the right way for this to
+  ## go wrong if a future rotation path forgets to call it.
+  secureClearAmeBytes(S.headerKeySend)
+  secureClearAmeBytes(S.headerKeyRecv)
+  S.headerKeySend = deriveAmeHeaderKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier,
+    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      outboundAmeDirection(S.auth.endpointRole)))
+  S.headerKeyRecv = deriveAmeHeaderKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier,
+    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      inboundAmeDirection(S.auth.endpointRole)))
+
+proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
+    sharedSecrets: openArray[ByteSeq], transcriptSalt: openArray[uint8]) {.
+    role: actor.} =
+  ## S/r/sharedSecrets/transcriptSalt: atomic authenticated epoch rotation.
+  var
+    next: AmeEpochKeySet = cloneEpoch(S.auth.current)
+  clearFomkeSendCache(S.fomkeSendCache)
+  if S.auth.current.epochId == high(uint32):
+    raise newException(ValueError, "AME epoch id is exhausted")
+  validateAmeTierTransition(next.layout, next.tier, r.targetTier,
+    r.exchangeMask, next.exchange.activeMask)
+  applyAmeExchange(next.exchange, next.layout, r, sharedSecrets,
+    S.auth.exchangeBinder)
+  next.tier = r.targetTier
+  next.params = r.params
+  next.epochId = S.auth.current.epochId + 1'u32
+  secureClearAmeBytes(next.transcriptSalt)
+  next.transcriptSalt = copyBytes(transcriptSalt)
+  clearEpoch(S.auth.retiring)
+  S.auth.retiring = cloneEpoch(S.auth.current)
+  S.auth.current = next
+  requireAmeAuth(S.auth)
+  refreshAmeHeaderKeys(S)
 
 proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     role: orchestrator.} =

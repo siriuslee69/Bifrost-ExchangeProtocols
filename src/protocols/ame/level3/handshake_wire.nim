@@ -82,13 +82,6 @@ proc requireHandshakeBytes(A: openArray[uint8], cursor, count: int) {.
   if cursor < 0 or count < 0 or cursor > A.len - count:
     raise newException(ValueError, "AME handshake wire value is truncated")
 
-proc readHandshakeU8(A: openArray[uint8], cursor: var int): uint8 {.
-    role: parser, tag: "parsing".} =
-  ## A/cursor: consume one byte.
-  requireHandshakeBytes(A, cursor, 1)
-  result = A[cursor]
-  cursor = cursor + 1
-
 proc readHandshakeU16(A: openArray[uint8], cursor: var int): uint16 {.
     role: parser, tag: "parsing".} =
   ## A/cursor: consume one little-endian u16.
@@ -115,14 +108,6 @@ proc readHandshakeU64(A: openArray[uint8], cursor: var int): uint64 {.
     i = i + 1
   cursor = cursor + 8
 
-proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
-    role: parser, tag: "parsing".} =
-  ## A/cursor/n: consume a field whose size the format already fixes.
-  requireHandshakeBytes(A, cursor, n)
-  if n > 0:
-    result = @A[cursor ..< cursor + n]
-  cursor = cursor + n
-
 proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
     role: dataWriter, tag: "codecBoundary|write".} =
   ## A/B: append one field whose length fits a u16 by construction.
@@ -130,6 +115,14 @@ proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
     raise newException(ValueError, "AME handshake field exceeds its limit")
   appendAmeU16(A, uint16(B.len))
   appendAmeBytes(A, B)
+
+proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
+    role: parser, tag: "parsing".} =
+  ## A/cursor/n: consume a field whose size the format already fixes.
+  requireHandshakeBytes(A, cursor, n)
+  if n > 0:
+    result = @A[cursor ..< cursor + n]
+  cursor = cursor + n
 
 proc readSmallField(A: openArray[uint8], cursor: var int,
     maximum: uint32 = ameHandshakeSmallMax): ByteSeq {.role: parser,
@@ -148,16 +141,6 @@ proc appendLargeField(A: var ByteSeq, B: openArray[uint8]) {.
     raise newException(ValueError, "AME handshake field exceeds its limit")
   appendAmeU32(A, uint32(B.len))
   appendAmeBytes(A, B)
-
-proc readLargeField(A: openArray[uint8], cursor: var int,
-    maximum: uint32 = ameHandshakeFieldMax): ByteSeq {.role: parser,
-    tag: "codecBoundary|parsing".} =
-  ## A/cursor/maximum: consume one bounded u32-framed field.
-  var
-    count: int = 0
-  count = checkedAmeWireLen(readHandshakeU32(A, cursor), maximum,
-    "AME handshake field")
-  result = readFixed(A, cursor, count)
 
 proc requireHandshakeHeader(A: openArray[uint8], magic: array[3, uint8],
     cursor: var int) {.role: parser,
@@ -199,6 +182,23 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: dataWriter,
   appendAmeBytes(result, h.offerSalt)
   appendAmeBytes(result, h.offerTag)
   appendLargeField(result, h.sealedOffer)
+
+proc readLargeField(A: openArray[uint8], cursor: var int,
+    maximum: uint32 = ameHandshakeFieldMax): ByteSeq {.role: parser,
+    tag: "codecBoundary|parsing".} =
+  ## A/cursor/maximum: consume one bounded u32-framed field.
+  var
+    count: int = 0
+  count = checkedAmeWireLen(readHandshakeU32(A, cursor), maximum,
+    "AME handshake field")
+  result = readFixed(A, cursor, count)
+
+proc readHandshakeU8(A: openArray[uint8], cursor: var int): uint8 {.
+    role: parser, tag: "parsing".} =
+  ## A/cursor: consume one byte.
+  requireHandshakeBytes(A, cursor, 1)
+  result = A[cursor]
+  cursor = cursor + 1
 
 proc readSealedHelloTail(A: openArray[uint8], cursor: var int,
     h: var AmeClientHello) {.role: parser, inline,

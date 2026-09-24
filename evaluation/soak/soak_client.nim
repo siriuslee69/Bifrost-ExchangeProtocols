@@ -118,11 +118,6 @@ var
   clientDeadline: Atomic[int64]
   clientStop: Atomic[bool]
 
-proc clientPastDeadline(): bool {.role: parser, inline.} =
-  ## True once the run has used up the seconds it was given.
-  result = clientStop.load() or
-    int64(soakElapsedSeconds()) >= clientDeadline.load()
-
 proc sendOneDatagram(P: var SoakPeer, A: ByteSeq) {.role: dataWriter.} =
   ## P/A: one datagram put on the wire, with a failed send counted rather than
   ## raised. One unreachable peer must not end the run for every other peer.
@@ -223,16 +218,6 @@ proc giveUpPackage(P: var SoakPeer) {.role: actor.} =
   if abandonDacPackage(P.relay.table.slots[slot].link):
     bumpSoak(scPackagesTimedOut)
 
-proc closePeer(P: var SoakPeer) {.role: actor.} =
-  ## P: drop the session and the socket together.
-  if not P.open:
-    return
-  discard releaseAmeDacPeer(P.relay, P.key)
-  closeDac(P.sock)
-  P.relay = default(AmeDacRelay)
-  P.open = false
-  bumpSoak(scPeerClosed)
-
 proc openPeer(P: var SoakPeer, a: SoakClientArgs): bool {.
     role: orchestrator.} =
   ## P/a: bind a fresh socket, run a real handshake against the worker this
@@ -297,6 +282,11 @@ proc sendOnePackage(P: var SoakPeer, a: SoakClientArgs): bool {.
   flushLossy(P, step)
   result = true
 
+proc clientPastDeadline(): bool {.role: parser, inline.} =
+  ## True once the run has used up the seconds it was given.
+  result = clientStop.load() or
+    int64(soakElapsedSeconds()) >= clientDeadline.load()
+
 proc awaitPackage(P: var SoakPeer, a: SoakClientArgs) {.role: orchestrator.} =
   ## P/a: drive the loop until the package this side sent is acknowledged, the
   ## deadline passes, or the run ends. Nothing sleeps: the receive wait IS the
@@ -322,16 +312,6 @@ proc awaitPackage(P: var SoakPeer, a: SoakClientArgs) {.role: orchestrator.} =
     return
   P.strikes = P.strikes + 1
 
-proc runOnePackage(P: var SoakPeer, a: SoakClientArgs) {.role: orchestrator.} =
-  ## P/a: one package, sent and then waited on. A relay that refuses the send
-  ## is not an error and not a strike -- it means the link is still holding the
-  ## last one, which the wait below is about to resolve either way.
-  if not sendOnePackage(P, a):
-    return
-  awaitPackage(P, a)
-  P.nextId = P.nextId + 1'u64
-  P.sinceChurn = P.sinceChurn + 1
-
 proc reconnectPeer(P: var SoakPeer, a: SoakClientArgs): bool {.
     role: orchestrator.} =
   ## P/a: knock again, backing off first when the server had no room. Hammering
@@ -342,6 +322,26 @@ proc reconnectPeer(P: var SoakPeer, a: SoakClientArgs): bool {.
     return
   sleep(soakClientBackoffMs + int(nextSoakRng(P.rng) mod
     uint64(soakClientBackoffMs * 3)))
+
+proc closePeer(P: var SoakPeer) {.role: actor.} =
+  ## P: drop the session and the socket together.
+  if not P.open:
+    return
+  discard releaseAmeDacPeer(P.relay, P.key)
+  closeDac(P.sock)
+  P.relay = default(AmeDacRelay)
+  P.open = false
+  bumpSoak(scPeerClosed)
+
+proc runOnePackage(P: var SoakPeer, a: SoakClientArgs) {.role: orchestrator.} =
+  ## P/a: one package, sent and then waited on. A relay that refuses the send
+  ## is not an error and not a strike -- it means the link is still holding the
+  ## last one, which the wait below is about to resolve either way.
+  if not sendOnePackage(P, a):
+    return
+  awaitPackage(P, a)
+  P.nextId = P.nextId + 1'u64
+  P.sinceChurn = P.sinceChurn + 1
 
 proc soakClientThread(a: SoakClientArgs) {.role: orchestrator, thread.} =
   ## a: one peer, from its first handshake to the end of the run.

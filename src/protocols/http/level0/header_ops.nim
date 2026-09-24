@@ -50,17 +50,6 @@ proc getHeader*(H: HttpHeaders; n: string; d: string = ""): string {.
     i = i + 1
   result = d
 
-proc getHeaderAll*(H: HttpHeaders; n: string): seq[string] {.role: parser,
-    tag: "protocol|read".} =
-  ## H/n: header list and field name to collect every value for.
-  var
-    i: int = 0
-  result = @[]
-  while i < H.len:
-    if httpNamesEqual(H[i].name, n):
-      result.add(H[i].value)
-    i = i + 1
-
 proc hasHeader*(H: HttpHeaders; n: string): bool {.role: parser,
     tag: "protocol|read".} =
   ## H/n: header list and field name to test for presence.
@@ -166,6 +155,17 @@ proc isValidHeaderValue*(v: string): bool {.role: sanitizer,
       return false
     i = i + 1
   result = true
+
+proc getHeaderAll*(H: HttpHeaders; n: string): seq[string] {.role: parser,
+    tag: "protocol|read".} =
+  ## H/n: header list and field name to collect every value for.
+  var
+    i: int = 0
+  result = @[]
+  while i < H.len:
+    if httpNamesEqual(H[i].name, n):
+      result.add(H[i].value)
+    i = i + 1
 
 proc trimFieldValue*(v: string): string {.role: sanitizer,
     tag: "protocol|formatting".} =

@@ -151,16 +151,6 @@ proc defaultAmeLayout*(kems: AmeKemAlgorithms): AmeSuiteLayout {.
     initAmeSignatureAlgorithms(defaultAmeSigSlots()),
     initAmeKdfAlgorithms(defaultAmeKdfSlots()))
 
-proc initAmeTierMasks*(kem, cipher, mac, hash, signature,
-    kdf: uint8): AmeTierMasks {.role: configurator.} =
-  ## Parameters are independent MSB-first selections over one suite layout.
-  result.kem = kem
-  result.cipher = cipher
-  result.mac = mac
-  result.hash = hash
-  result.signature = signature
-  result.kdf = kdf
-
 proc validateAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier) {.role: parser.} =
   ## L/t: immutable layout and complete mask tier selected over it.
   discard initAmeSuiteLayout(L.kems, L.ciphers, L.macs, L.hashes,
@@ -175,13 +165,6 @@ proc validateAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier) {.role: parser.} =
   requireSelection(L.kdfs.length, t.masks.kdf, "KDF")
   requireUniqueActive(L.hashes, t.masks.hash, "hash")
   requireUniqueActive(L.kdfs, t.masks.kdf, "KDF")
-
-proc initAmeMaskTier*(L: AmeSuiteLayout, tierId: uint32,
-    masks: AmeTierMasks): AmeMaskTier {.role: configurator.} =
-  ## L/tierId/masks: stable tier identity and complete selections to validate.
-  result.tierId = tierId
-  result.masks = masks
-  validateAmeTier(L, result)
 
 proc validateAmeTierTransition*(L: AmeSuiteLayout, current,
     target: AmeMaskTier, exchangeMask, availableKemMask: uint8) {.
@@ -266,6 +249,23 @@ proc ameTierPolicyError*(L: AmeSuiteLayout, t: AmeMaskTier,
     result = "AME selection keeps " & $ameTierPqKemCount(L, t) &
       " post-quantum KEM(s) switched on; this side requires " & $minPqKems
 
+proc initAmeTierMasks*(kem, cipher, mac, hash, signature,
+    kdf: uint8): AmeTierMasks {.role: configurator.} =
+  ## Parameters are independent MSB-first selections over one suite layout.
+  result.kem = kem
+  result.cipher = cipher
+  result.mac = mac
+  result.hash = hash
+  result.signature = signature
+  result.kdf = kdf
+
+proc initAmeMaskTier*(L: AmeSuiteLayout, tierId: uint32,
+    masks: AmeTierMasks): AmeMaskTier {.role: configurator.} =
+  ## L/tierId/masks: stable tier identity and complete selections to validate.
+  result.tierId = tierId
+  result.masks = masks
+  validateAmeTier(L, result)
+
 proc fullAmeMaskTier*(L: AmeSuiteLayout,
     tierId: uint32 = 1'u32): AmeMaskTier {.role: truthBuilder.} =
   ## L/tierId: tier selecting every occupied slot in each algorithm family.
@@ -287,19 +287,6 @@ proc encodeNibbleLayout[P](B: var ByteSeq, L: P) {.role: dataWriter.} =
       packed = packed or uint8(ord(L.algorithms[i + 1]))
     B.add(packed)
     i = i + 2
-
-proc encodeAmeSuiteLayout*(L: AmeSuiteLayout): ByteSeq {.
-    role: dataWriter.} =
-  ## L: canonical immutable layout bytes; no tier masks are embedded.
-  discard initAmeSuiteLayout(L.kems, L.ciphers, L.macs, L.hashes,
-    L.signatures, L.kdfs)
-  result.add(2'u8)
-  result.add(encodeAmeKemAlgorithms(L.kems))
-  encodeNibbleLayout(result, L.ciphers)
-  encodeNibbleLayout(result, L.macs)
-  encodeNibbleLayout(result, L.hashes)
-  encodeNibbleLayout(result, L.signatures)
-  encodeNibbleLayout(result, L.kdfs)
 
 proc requireSuiteBytes(A: openArray[uint8], cursor, n: int) {.role: parser.} =
   ## A/cursor/n: bounds check for exact layout parsing.
@@ -369,6 +356,33 @@ proc decodeAmeSuiteLayout*(A: openArray[uint8]): AmeSuiteLayout {.
   result = initAmeSuiteLayout(result.kems, result.ciphers, result.macs,
     result.hashes, result.signatures, result.kdfs)
 
+proc decodeAmeMaskTier*(L: AmeSuiteLayout,
+    A: openArray[uint8]): AmeMaskTier {.role: parser.} =
+  ## L/A: layout and canonical eleven-byte tier value.
+  if A.len != 11 or A[0] != 1'u8:
+    raise newException(ValueError, "AME mask tier encoding is invalid")
+  result.tierId = uint32(A[1]) or (uint32(A[2]) shl 8) or
+    (uint32(A[3]) shl 16) or (uint32(A[4]) shl 24)
+  result.masks = initAmeTierMasks(A[5], A[6], A[7], A[8], A[9], A[10])
+  validateAmeTier(L, result)
+
+proc encodeAmeSuiteLayout*(L: AmeSuiteLayout): ByteSeq {.
+    role: dataWriter.} =
+  ## L: canonical immutable layout bytes; no tier masks are embedded.
+  discard initAmeSuiteLayout(L.kems, L.ciphers, L.macs, L.hashes,
+    L.signatures, L.kdfs)
+  result.add(2'u8)
+  result.add(encodeAmeKemAlgorithms(L.kems))
+  encodeNibbleLayout(result, L.ciphers)
+  encodeNibbleLayout(result, L.macs)
+  encodeNibbleLayout(result, L.hashes)
+  encodeNibbleLayout(result, L.signatures)
+  encodeNibbleLayout(result, L.kdfs)
+
+proc layoutsEquivalent*(A, B: AmeSuiteLayout): bool {.role: parser.} =
+  ## A/B: canonical immutable layouts compared byte-for-byte.
+  result = encodeAmeSuiteLayout(A) == encodeAmeSuiteLayout(B)
+
 proc encodeAmeMaskTier*(t: AmeMaskTier): ByteSeq {.role: dataWriter.} =
   ## t: stable tier id followed by six MSB-first family masks.
   if t.tierId == 0'u32:
@@ -381,20 +395,6 @@ proc encodeAmeMaskTier*(t: AmeMaskTier): ByteSeq {.role: dataWriter.} =
   result.add(t.masks.hash)
   result.add(t.masks.signature)
   result.add(t.masks.kdf)
-
-proc decodeAmeMaskTier*(L: AmeSuiteLayout,
-    A: openArray[uint8]): AmeMaskTier {.role: parser.} =
-  ## L/A: layout and canonical eleven-byte tier value.
-  if A.len != 11 or A[0] != 1'u8:
-    raise newException(ValueError, "AME mask tier encoding is invalid")
-  result.tierId = uint32(A[1]) or (uint32(A[2]) shl 8) or
-    (uint32(A[3]) shl 16) or (uint32(A[4]) shl 24)
-  result.masks = initAmeTierMasks(A[5], A[6], A[7], A[8], A[9], A[10])
-  validateAmeTier(L, result)
-
-proc layoutsEquivalent*(A, B: AmeSuiteLayout): bool {.role: parser.} =
-  ## A/B: canonical immutable layouts compared byte-for-byte.
-  result = encodeAmeSuiteLayout(A) == encodeAmeSuiteLayout(B)
 
 proc tiersEquivalent*(A, B: AmeMaskTier): bool {.role: parser.} =
   ## A/B: stable tier ids and all family masks compared byte-for-byte.

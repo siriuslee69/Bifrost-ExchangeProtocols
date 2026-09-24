@@ -23,12 +23,6 @@ proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
   else:
     result = host & ":" & $a.port
 
-proc normalizeUdpHost(h: string): string {.role: parser.} =
-  ## normalizeUdpHost: normalize UDP host.
-  result = h.strip()
-  if result.len >= 2 and result[0] == '[' and result[^1] == ']':
-    result = result[1 .. ^2]
-
 type
   ResolvedUdpTarget = object
     host: string
@@ -45,6 +39,12 @@ proc addResolvedUdpTarget(order: var seq[ResolvedUdpTarget], host: string,
       return
     i = i + 1
   order.add(ResolvedUdpTarget(host: host, domain: d))
+
+proc normalizeUdpHost(h: string): string {.role: parser.} =
+  ## normalizeUdpHost: normalize UDP host.
+  result = h.strip()
+  if result.len >= 2 and result[0] == '[' and result[^1] == ']':
+    result = result[1 .. ^2]
 
 proc collectUdpTargets(R: var seq[ResolvedUdpTarget], aiList: ptr AddrInfo) {.
     role: truthBuilder.} =
@@ -149,6 +149,17 @@ proc wildcardUdpBindHost*(h: string): string {.role: helper.} =
   else:
     result = "0.0.0.0"
 
+proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.} =
+  ## parseUdpAddress: parse UDP address.
+  var
+    p: tuple[ok: bool, host: string, port: uint16]
+  p = parseUdpHostPort(s)
+  if not p.ok:
+    return
+  result.a.host = p.host
+  result.a.port = p.port
+  result.ok = true
+
 proc maybeEnableDualStackWildcard(sock: Socket, host: string) {.role: helper.} =
   ## sock: IPv6 listener candidate whose wildcard bind may need dual-stack mode.
   ## host: normalized bind host literal.
@@ -160,17 +171,6 @@ proc maybeEnableDualStackWildcard(sock: Socket, host: string) {.role: helper.} =
         0)
     except CatchableError:
       discard
-
-proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.} =
-  ## parseUdpAddress: parse UDP address.
-  var
-    p: tuple[ok: bool, host: string, port: uint16]
-  p = parseUdpHostPort(s)
-  if not p.ok:
-    return
-  result.a.host = p.host
-  result.a.port = p.port
-  result.ok = true
 
 proc setUdpReceiveBuffer*(sock: Socket, bytes: int): bool {.role: actor.} =
   ## sock: an already-bound UDP socket.
