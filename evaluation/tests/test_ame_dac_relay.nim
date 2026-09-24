@@ -565,3 +565,24 @@ suite "AME DAC relay reclaims what has gone":
     discard tickAmeDacRelay(relay, nowMs)
     check sweepAmeDacRelay(relay, nowMs) == 1
     check ameDacRelayLive(relay) == 0
+
+suite "AME DAC relay pacing":
+  # {.testKind: tkUnit, covers: "ameDacSendDelayMs".}
+  test "a peer's send delay stays inside its policy; a stranger's is zero":
+    var
+      P = peerSessions()
+      R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
+        capacity = 4)
+      slot: int = 0
+      delay: uint16 = 0'u16
+      i: int = 0
+    check ameDacSendDelayMs(R, keyA()) == 0'u16
+    discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
+    slot = ameDacPeerSlot(R, keyA())
+    while i < 50:
+      delay = ameDacSendDelayMs(R, keyA())
+      check delay <= R.table.slots[slot].link.policy.maxDelayMs
+      check delay >= R.table.slots[slot].link.policy.minDelayMs or
+        R.table.slots[slot].link.policy.maxDelayMs == 0'u16
+      i = i + 1
+    check ameDacSendDelayMs(R, keyB()) == 0'u16

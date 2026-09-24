@@ -32,7 +32,7 @@ description   = projectValue("description")
 license       = projectValue("license")
 srcDir        = "src"
 bin           = @[]
-requires "nim >= 1.6.0"
+requires "nim >= 1.6.0", "nimsimd >= 1.3.2"   # SIMD-Nexus and Tyr-Crypto need it
 
 ## `webui` is NOT required here. Only `src/clients/desktop/app.nim` imports it,
 ## and Bifrost is a protocol library first: a service that links the wire
@@ -451,15 +451,21 @@ proc runGradle(args: openArray[string]) =
     runCommand(joinPath(androidRoot, "gradlew"),
       @["--project-dir", androidRoot] & @args)
 
-proc requireWebui(taskName: string) =
+proc requireWebui(taskName: string): string =
   ## taskName: the task asking for webui, named back in the error message.
   ## Only the desktop client needs webui, so it is not a package requirement.
-  ## Checked here instead, where the answer is actionable.
-  var home: string = getHomeDir()
-  if findDirWithPrefix(joinPath(home, ".nimble", "pkgs2"), "webui-").len > 0:
-    return
-  if findDirWithPrefix(joinPath(home, ".nimble", "pkgs"), "webui-").len > 0:
-    return
+  ## Checked here instead, where the answer is actionable. Returns the
+  ## `--path:` the compiler needs: runNim passes no nimble paths, so finding
+  ## the package without handing its folder on still failed with
+  ## "cannot open file: webui".
+  var
+    home: string = getHomeDir()
+    found: string = findDirWithPrefix(joinPath(home, ".nimble", "pkgs2"),
+      "webui-")
+  if found.len == 0:
+    found = findDirWithPrefix(joinPath(home, ".nimble", "pkgs"), "webui-")
+  if found.len > 0:
+    return "--path:" & found.replace('\\', '/')
   quit(
     taskName & " needs the webui package, which Bifrost does not require as a\n" &
     "library dependency. Install it once with:\n\n" &
@@ -508,6 +514,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_ame_session.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_change_requests.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_send_failures.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_ame_dac_client.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_header_protection.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_handshake_package.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_psk_modes.nim", @["-r"])
@@ -539,6 +546,8 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_bfx2_external_bridge.nim", @["-r"])
     runNim("c", "evaluation/tests/test_lan_message.nim", @["-r"])
     runNim("c", "evaluation/tests/test_tls13_foundation.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_tls13_socket_server.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_socket_read.nim", @["-r"])
     runNim("c", "evaluation/tests/test_tls13_webpki.nim", @["-r"])
 
 task testTls, "Run TLS-enabled transport tests (host OpenSSL or Nix fallback)":
@@ -788,13 +797,12 @@ task buildAndroid, "Build the Android LAN client debug APK":
   runGradle(@[":androidApp:assembleDebug"])
 
 task runWebui, "Build and run the themed direct-LAN desktop client":
-  requireWebui("nimble runWebui")
-  runNim("c", "src/clients/desktop/app.nim", @["--threads:on", "-r"])
+  runNim("c", "src/clients/desktop/app.nim",
+    @[requireWebui("nimble runWebui"), "--threads:on", "-r"])
 
 task buildWebui, "Build the themed direct-LAN desktop client for release":
-  requireWebui("nimble buildWebui")
   runNim("c", "src/clients/desktop/app.nim", @[
-    "--threads:on", "-d:release", "--out:build/clients/bifrost-lan-desktop"
+    requireWebui("nimble buildWebui"), "--threads:on", "-d:release", "--out:build/clients/bifrost-lan-desktop"
   ])
 
 task androidTest, "Run Android client JVM tests and assemble the instrumented test APK":

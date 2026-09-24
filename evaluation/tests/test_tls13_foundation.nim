@@ -445,6 +445,21 @@ suite "TLS 1.3 foundation":
     wire = server.encodeTls13ServerApplication(@[byte 9, 10])
     clientOutput = client.feedTls13Client(wire)
     check clientOutput.applicationData == @[@[byte 9, 10]]
+    ## The server may start a key update too; asked to, the client answers
+    ## with its own, and both directions keep working on the new keys.
+    wire = server.encodeTls13ServerKeyUpdate(requestPeerUpdate = true)
+    clientOutput = client.feedTls13Client(wire)
+    check clientOutput.err.len == 0
+    check clientOutput.outbound.len == 1
+    serverOutput = server.feedTls13Server(clientOutput.outbound[0])
+    check serverOutput.err.len == 0
+    check serverOutput.outbound.len == 0
+    wire = server.encodeTls13ServerApplication(@[byte 11])
+    clientOutput = client.feedTls13Client(wire)
+    check clientOutput.applicationData == @[@[byte 11]]
+    wire = client.encodeTls13ClientApplication(@[byte 12])
+    serverOutput = server.feedTls13Server(wire)
+    check serverOutput.applicationData == @[@[byte 12]]
     wire = client.closeTls13Client()
     serverOutput = server.feedTls13Server(wire)
     check serverOutput.closed

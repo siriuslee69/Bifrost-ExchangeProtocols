@@ -20,71 +20,54 @@ template requirePathLength(n: int, what: string) {.role: parser.} =
   if n <= 0 or n > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME " & what & " layout must contain 1..8 slots")
 
-proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
-    AmeCipherAlgorithms {.role: configurator.} =
-  ## A: immutable ordered symmetric-cipher slots. A slot whose primitive
-  ## this build left out is refused here, before any session uses it.
+proc fillAmeSlots[T; R](A: openArray[T], what: string,
+    requireBuilt: proc (a: T) {.nimcall, gcsafe.}): R {.role: configurator.} =
+  ## A: slots of one family   what: its name for an error message
+  ## requireBuilt: refuses a slot whose primitive this build left out.
+  ## The five `initAme...Algorithms` below are this, one per family:
+  ##
+  ##   A (any order)  ->  refused if too many, too few, or not compiled
+  ##                  ->  stored in wire-id order, with its length
   var
     i: int = 0
-    S: seq[AmeCipherAlgorithm] = sortedByWireId(A)
-  requirePathLength(A.len, "cipher")
+    S: seq[T] = sortedByWireId(A)
+  requirePathLength(A.len, what)
   result.length = uint8(A.len)
   while i < A.len:
-    requireAmeCipherBuilt(A[i])
+    requireBuilt(A[i])
     result.algorithms[i] = S[i]
     i = i + 1
+
+proc initAmeCipherAlgorithms*(A: openArray[AmeCipherAlgorithm]):
+    AmeCipherAlgorithms {.role: configurator.} =
+  ## A: symmetric-cipher slots. A slot whose primitive this build left out
+  ## is refused here, before any session uses it.
+  result = fillAmeSlots[AmeCipherAlgorithm, AmeCipherAlgorithms](A, "cipher",
+    requireAmeCipherBuilt)
 
 proc initAmeMacAlgorithms*(A: openArray[AmeMacAlgorithm]):
     AmeMacAlgorithms {.role: configurator.} =
-  ## A: ordered keyed-authentication slots, refused if not compiled.
-  var
-    i: int = 0
-    S: seq[AmeMacAlgorithm] = sortedByWireId(A)
-  requirePathLength(A.len, "MAC")
-  result.length = uint8(A.len)
-  while i < A.len:
-    requireAmeMacBuilt(A[i])
-    result.algorithms[i] = S[i]
-    i = i + 1
+  ## A: keyed-authentication slots, refused if not compiled.
+  result = fillAmeSlots[AmeMacAlgorithm, AmeMacAlgorithms](A, "MAC",
+    requireAmeMacBuilt)
 
 proc initAmeHashAlgorithms*(A: openArray[AmeHashAlgorithm]):
     AmeHashAlgorithms {.role: configurator.} =
-  ## A: ordered transcript-hash slots, refused if not compiled.
-  var
-    i: int = 0
-    S: seq[AmeHashAlgorithm] = sortedByWireId(A)
-  requirePathLength(A.len, "hash")
-  result.length = uint8(A.len)
-  while i < A.len:
-    requireAmeHashBuilt(A[i])
-    result.algorithms[i] = S[i]
-    i = i + 1
+  ## A: transcript-hash slots, refused if not compiled.
+  result = fillAmeSlots[AmeHashAlgorithm, AmeHashAlgorithms](A, "hash",
+    requireAmeHashBuilt)
 
 proc initAmeSignatureAlgorithms*(A: openArray[AmeSignatureAlgorithm]):
     AmeSignatureAlgorithms {.role: configurator.} =
-  ## A: ordered signature slots, refused if not compiled.
-  var
-    i: int = 0
-    S: seq[AmeSignatureAlgorithm] = sortedByWireId(A)
-  requirePathLength(A.len, "signature")
-  result.length = uint8(A.len)
-  while i < A.len:
-    requireAmeSigBuilt(A[i])
-    result.algorithms[i] = S[i]
-    i = i + 1
+  ## A: signature slots, refused if not compiled.
+  result = fillAmeSlots[AmeSignatureAlgorithm, AmeSignatureAlgorithms](A,
+    "signature", requireAmeSigBuilt)
 
 proc initAmeKdfAlgorithms*(A: openArray[AmeKdfAlgorithm]):
     AmeKdfAlgorithms {.role: configurator.} =
-  ## A: ordered KDF slots, refused if not compiled.
-  var
-    i: int = 0
-    S: seq[AmeKdfAlgorithm] = sortedByWireId(A)
-  requirePathLength(A.len, "KDF")
-  result.length = uint8(A.len)
-  while i < A.len:
-    requireAmeKdfBuilt(A[i])
-    result.algorithms[i] = S[i]
-    i = i + 1
+  ## A: KDF slots, refused if not compiled.
+  result = fillAmeSlots[AmeKdfAlgorithm, AmeKdfAlgorithms](A, "KDF",
+    requireAmeKdfBuilt)
 
 converter toAmeCipherAlgorithms*[N: static[int]](
     A: array[N, AmeCipherAlgorithm]): AmeCipherAlgorithms {.role: helper.} =

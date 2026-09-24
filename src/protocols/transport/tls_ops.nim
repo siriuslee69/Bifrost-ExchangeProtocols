@@ -20,7 +20,8 @@ when defined(ssl):
     of tvmPeerUseEnv:
       result = CVerifyPeerUseEnvVars
 
-  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: truthBuilder.} =
+  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.
+      role: truthBuilder, stage: stDone.} =
     ## t: TLS runtime settings.
     ## r: TLS role for session policy.
     result = newContext(verifyMode = toSslVerifyMode(t.verifyMode),
@@ -73,8 +74,9 @@ when defined(ssl):
       ctx = buildTlsContext(t, r)
       wrapConnectedSocket(ctx, sock, handshakeAsServer)
 else:
-  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.role: truthBuilder.} =
-    ## t/r: unused without `-d:ssl`.
+  proc buildTlsContext*(t: TlsConfig, r: TlsRole): SslContext {.
+      role: truthBuilder, stage: stDone.} =
+    ## t/r: unused without `-d:ssl`; refusing is the whole job here.
     raise newException(IOError, "TLS support requires compiling with -d:ssl")
 
   proc wrapSocketTls*(sock: Socket, t: TlsConfig, r: TlsRole,

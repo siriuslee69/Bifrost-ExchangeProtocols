@@ -12,6 +12,9 @@ src/protocols
 │   ├── stream_framing.nim
 │   ├── tcp_ops.nim
 │   ├── udp_ops.nim
+│   ├── socket_write.nim   <- every byte out, or an error (std send loops on EPIPE)
+│   ├── socket_read.nim    <- what has arrived (std recv waits for all n bytes)
+│   ├── async_stream_ops.nim
 │   └── tls_ops.nim
 ├── bfx2/
 ├── ame.nim      <- the one public AME surface, and the two build flags
@@ -25,10 +28,15 @@ src/protocols
 │   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
 │   │   └── symmetric/  <- one file per symmetric primitive
 │   │       (each folder has a flag-gated dispatcher beside it)
-│   ├── level2/  <- session.nim  WHAT a connection knows: epoch, keys,
-│   │                              the exchange that replaces them, settings
-│   │                framing.nim  WHAT one message looks like: seal, open,
-│   │                              and the AME/DAC seam
+│   ├── level2/  <- epochs.nim     the AmeSession type, epoch, keys, and the
+│   │                               exchange steps that change them
+│   │                session.nim    starting a session, reading it, settings;
+│   │                               passes epochs.nim on
+│   │                seal_open.nim  one frame: seal, open, the AME/DAC seam
+│   │                framing.nim    conversations of frames: exchange steps,
+│   │                               sending one frame safely, id rotation;
+│   │                               passes seal_open and requests on
+│   │                requests.nim   building a request by name
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
 │   └── level3/  <- handshake.nim   steps 3 and 4 (finish, accept), and the

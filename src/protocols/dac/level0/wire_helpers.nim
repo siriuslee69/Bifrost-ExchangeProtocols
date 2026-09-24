@@ -63,24 +63,6 @@ proc dacMessageKindFromId*(id: uint8): DacMessageKind {.role: parser.} =
     return dmkUnknown
   result = DacMessageKind(id)
 
-proc dacPathLaneName*(p: DacPathLane): string {.role: truthBuilder.} =
-  ## p: path lane to render.
-  case p
-  of dplCleanPath:
-    result = "CleanPath"
-  of dplMobilePath:
-    result = "MobilePath"
-  of dplThinPath:
-    result = "ThinPath"
-  of dplLossyPath:
-    result = "LossyPath"
-  of dplBlockedUdpPath:
-    result = "BlockedUdpPath"
-  of dplRecoveryPath:
-    result = "RecoveryPath"
-  of dplSuperCleanPath:
-    result = "SuperCleanPath"
-
 proc dacTransferClassName*(c: DacTransferClass): string {.role: truthBuilder.} =
   ## c: transfer class to render.
   case c

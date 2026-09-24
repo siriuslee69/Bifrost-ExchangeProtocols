@@ -147,3 +147,37 @@ suite "DAC link refuses rubbish":
 ## test_attack_surface.nim, "a frame from another session is refused by this
 ## one". The check did not disappear, it moved to the layer that owns it.
 
+
+suite "DAC link: rebuilding on request":
+  # {.testKind: tkIntegration, covers: "sweepDacRepair".}
+  test "parity that arrived before its chunks rebuilds the hole on a sweep":
+    var
+      d: DacScenarioDefaults = dacDefaultsFor(dscBadSignal)
+      sender: DacLink = initDacLink(d, 0xABCDEF'u64)
+      receiver: DacLink = initDacLink(d, 0x123456'u64)
+      F: seq[DacTaggedMessage] = @[]
+      start: seq[DacTaggedMessage] = @[]
+      parity: seq[DacTaggedMessage] = @[]
+      chunks: seq[DacTaggedMessage] = @[]
+      skipped: bool = false
+    check not sweepDacRepair(receiver)       # nothing incoming: nothing to do
+    F = beginDacPackage(sender, 77'u64, rampBytes(20_000), 0'u32)
+    for m in F:
+      if m.kind == dmkParityShard:
+        parity.add(m)
+      elif m.kind == dmkPackageChunk:
+        chunks.add(m)
+      else:
+        start.add(m)
+    ## The package start, then its parity, then every chunk but the first.
+    for m in start & parity & chunks:
+      if m.kind == dmkPackageChunk and not skipped:
+        skipped = true
+        continue
+      discard feedDacMessage(receiver, m.kind, m.body, 0'u32)
+    check skipped
+    ## A chunk arriving does not look at parity; only a tick or a sweep does.
+    check dacLinkMissingCount(receiver) == 1
+    check sweepDacRepair(receiver)
+    check dacLinkMissingCount(receiver) == 0
+    check not sweepDacRepair(receiver)       # nothing left to rebuild

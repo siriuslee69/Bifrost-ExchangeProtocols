@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Split session.nim (epochs.nim) and framing.nim (seal_open.nim); every routine declares a role
+Commit Message: Production pass: std recv/send traps fixed (TLS socket driver, async relay), every public routine tested, dead helpers removed, licences and deps declared
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -8,9 +8,6 @@ Features (Planned):
   Tls13ControlledResult.clientState/serverState/err). Each is a result for
   the caller and is read only inside `test "..."` blocks, which Otter does
   not see as routines. Not dead; left as they are.
-- async stream path (async_stream_ops.nim, asyncnet `send`) still uses the
-  std send: with SafeDisconn a broken connection is swallowed silently.
-  Route it through a write that raises, like writeAllSocket.
 - PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
   the pins move, a fresh clone (and the nix build, which uses submodules/)
   lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the
@@ -292,6 +289,21 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last big change (2026-09-25): production pass. Found by writing tests for
+  public routines nobody had called:
+    TLS socket driver   std `recv(n, timeout)` waits for ALL n bytes, so every
+                        handshake stalled 15 s and failed -> socket_read.nim
+    async relay         asyncnet `recv(n)` does the same on a buffered socket
+                        (nothing forwarded until 8192 bytes), and the relay
+                        only ended when one particular side left -> fixed
+    async write         SafeDisconn reported a lost write as sent -> flags {}
+    TLS socket driver   wrote with std send (loops forever on EPIPE) ->
+                        writeAllSocket
+    buildWebui          found webui, then compiled without its path
+  How: new tests first (test_tls13_socket_server, test_socket_read,
+  test_ame_dac_client, async relay, sweepDacRepair, ameDacSendDelayMs,
+  server key update); each failed, then the fix. Worked: 647 tests pass.
+- Still unchecked for release: `nimble buildAndroid` (needs the SDK).
 - Last big change: tiny-device builds (above). Problem met: the request
   "compile Gimli once although XHKDF, AM1P and the tags all use it" needed
   no change -- Nim compiles each module once per program; verified with nm

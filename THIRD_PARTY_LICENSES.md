@@ -15,6 +15,9 @@ history, and license files stay separate from Bifrost source.
 | submodules/Tyr-Crypto   | crypto primitives and wrappers| nimble file: Unlicense     |
 | submodules/SIMD-Nexus   | SIMD helper layer             | LICENSE: Unlicense         |
 | submodules/Eir-CompressionAndECC | compression/ECC helpers | nimble file: UNLICENSED |
+| submodules/Rune-Pragmas  | role/tag pragma definitions   | UNLICENSE: Unlicense       |
+| submodules/Nimble-Tasks  | shared nimble tasks (build)   | UNLICENSE: Unlicense       |
+| submodules/Otter-RepoEvaluation | evaluation tooling (dev) | LICENSE.txt: Unlicense |
 +-------------------------+-------------------------------+----------------------------+
 ```
 
@@ -27,6 +30,22 @@ Release rule:
   pinned checkout;
 - for any private/unlicensed submodule, either exclude it from public release
   artifacts or obtain and record explicit redistribution permission first.
+
+## Package Dependencies
+
+```text
++----------+-----------------------------------+----------------------------------+
+| Package  | Why                               | License evidence                 |
++----------+-----------------------------------+----------------------------------+
+| nimsimd  | SIMD intrinsics for SIMD-Nexus and| nimsimd.nimble: MIT. `nimble`    |
+|          | Tyr-Crypto (>= 1.3.2)             | installs it; nix/package.nix     |
+|          |                                   | fetches a pinned copy            |
++----------+-----------------------------------+----------------------------------+
+```
+
+MIT asks that its copyright and permission notice travel with copies. A
+release bundle that ships nimsimd code (it is compiled into any SIMD build)
+includes the nimsimd license text next to this file.
 
 ## Optional Nested Submodules
 

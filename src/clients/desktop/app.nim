@@ -43,7 +43,7 @@ proc addEvent(direction, peer, body: string, isAck: bool = false,
   if gEvents.len > 240:
     gEvents.delete(0)
 
-proc nextSequence(): uint64 {.role: actor, tag: "interop".} =
+proc nextSequence(): uint64 {.role: actor, stage: stDone, tag: "interop".} =
   ## Returns and advances the desktop BMSG sequence number.
   result = gSequence
   gSequence = gSequence + 1'u64

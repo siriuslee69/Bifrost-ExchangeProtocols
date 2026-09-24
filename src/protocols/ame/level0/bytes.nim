@@ -42,18 +42,6 @@ proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: dataWriter.} =
   for ch in label:
     dst.add(uint8(ord(ch)))
 
-proc xorAmeOverlay*(a, b: openArray[byte]): ByteSeq {.role: helper.} =
-  ## a: first byte sequence.
-  ## b: second byte sequence with the same length.
-  var
-    i: int = 0
-  if a.len != b.len:
-    raise newException(ValueError, "AME xor overlay length mismatch")
-  result = newSeq[byte](a.len)
-  while i < a.len:
-    result[i] = a[i] xor b[i]
-    i = i + 1
-
 proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## src: source bytes with the same length.

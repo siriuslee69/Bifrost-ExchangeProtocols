@@ -83,8 +83,9 @@ AME authentication modes (AM1A / AM1S / AM1P / AM1P+S)
      the binder went into the key schedule and not just into a proof
   -> the right secret under the wrong name is refused
   -> a responder refuses a hello naming a mode it does not run
-  -> AM1P rotates an epoch with a tag, having no signature keys to sign with
-  -> a tampered rotation proof is refused rather than ignored
+  -> AM1P rotates an epoch proved by the frame tag alone, having no
+     signature keys to sign with
+  -> proof bytes a frame-proved rotation should not carry are refused
   -> the same, over a real TCP socket, through the driver
 
 AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
@@ -260,6 +261,26 @@ Transport
   -> `::` TCP/UDP wildcard listeners accept IPv4 loopback peers
   -> raw-close stale localhost DAC peer state cannot poison a later reused socket fd
   -> pure stream-frame decode for complete, oversized, and partial buffers
+  -> a read hands back what has arrived, not "all n bytes or time out",
+     and bytes a line read left buffered come first   (test_socket_read)
+  -> the async relay carries both directions and ends when either side
+     leaves; a write to a vanished peer fails           (test_async_stream_ops)
+  -> the TLS 1.3 socket driver: a handshake, one line each way, a clean
+     close, over a real socket                     (test_tls13_socket_server)
+  -> the server can start a key update, and both directions keep working
+
+AME sending and the one-socket client
+  -> a refused seal leaves the ratchet where it was
+  -> a failed TCP write keeps the step used, closes, raises AmeConnectionLost
+  -> a failed DAC write keeps the sealed bytes and repeats them, unchanged
+  -> a given-up DAC frame is a lost message the receiver steps past
+  -> in-session requests carry KEM ids on the wire, proved by the frame tag
+     or, when asked, by signatures              (test_ame_change_requests)
+  -> connectAmeDacClient sends, receives the answer, and closes
+  -> a localhost DAC socket is pinned to the address that answered
+                                                  (test_ame_dac_client)
+  -> a DAC link rebuilds a hole from parity already held when swept
+  -> a relay peer's send delay stays inside its policy
 
 AME
   -> TCP carrier open/seal

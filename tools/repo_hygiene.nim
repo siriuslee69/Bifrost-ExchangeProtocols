@@ -94,10 +94,6 @@ proc hasGeneratedExt(path: string): bool {.role: parser.} =
       return true
     i.inc
 
-proc siblingNimPath(path: string): string {.role: helper.} =
-  var parts: tuple[dir, name, ext: string] = splitFile(path)
-  result = joinPath(parts.dir, parts.name & ".nim")
-
 proc isSourceArtifact(path: string): bool {.role: parser.} =
   var parts: tuple[dir, name, ext: string] = splitFile(path)
   if hasGeneratedExt(path):

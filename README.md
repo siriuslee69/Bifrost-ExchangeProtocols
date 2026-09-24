@@ -2803,9 +2803,18 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   Nim 2.2). With its default `SafeDisconn` flag a broken connection is
   swallowed and the call loops forever at full CPU; after a partial write it
   sends again from byte 0. `transport/socket_write.nim` (`writeAllSocket`)
-  replaces it for TCP frames and connected UDP. Patched around, not fixed
-  upstream: new socket writes must go through `writeAllSocket` too. The
-  async stream path (`async_stream_ops.nim`, asyncnet) is not covered yet.
+  replaces it for TCP frames, connected UDP and the TLS socket driver.
+  Patched around, not fixed upstream: new socket writes must go through
+  `writeAllSocket` too. The async path (`writeAsync`) sends with no
+  `SafeDisconn` flag, so a vanished peer is reported as a failed write.
+- **Nim's `recv(n, timeout)` waits for ALL `n` bytes**, on buffered and
+  unbuffered sockets alike, and asyncnet's `recv(n)` does the same on a
+  buffered AsyncSocket. A reader wanting "the next chunk" stalls until the
+  timeout: the TLS socket driver asked for 4096 bytes and every handshake
+  timed out; the async relay forwarded nothing until 8192 bytes piled up.
+  `transport/socket_read.nim` (`readAvailableSocket`) and the async
+  `readAsyncChunk` hand back what has arrived. Patched around: new
+  "read a chunk" code must use them, not `recv(n, timeout)`.
 - **`AmeConnectionLost` after a TCP send**: the write failed after the frame
   was sealed, so the connection was closed on purpose (a failed write never
   rewinds the ratchet, see FOMKE "A failed write never reuses a step").

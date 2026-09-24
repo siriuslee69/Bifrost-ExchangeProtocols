@@ -63,12 +63,7 @@ if dirExists(nimblePkgs2):
       switch("path", path)
       break
 # begin Nimble config (version 2)
-proc useLocalNimblePaths(): bool =
-  const path: string = "nimble.paths"
-  if not withDir(thisDir(), system.fileExists(path)):
-    return false
-  result = true
-when useLocalNimblePaths():
+when withDir(thisDir(), system.fileExists("nimble.paths")):
   include "nimble.paths"
 # end Nimble config
 

@@ -120,22 +120,6 @@ proc mixSinkBytes(A: openArray[uint8]) {.role: helper.} =
 proc mixSinkUint(v: SomeInteger) {.role: helper.} =
   benchSink = (benchSink shl 9) xor uint64(v)
 
-proc clearBenchBytes(A: var ByteSeq) {.role: helper.} =
-  var
-    i: int = 0
-  while i < A.len:
-    A[i] = 0'u8
-    i = i + 1
-  A.setLen(0)
-
-proc clearBenchRows(S: var seq[ByteSeq]) {.role: helper.} =
-  var
-    i: int = 0
-  while i < S.len:
-    clearBenchBytes(S[i])
-    i = i + 1
-  S.setLen(0)
-
 proc hexByte(b: uint8): string {.role: helper.} =
   const digits = "0123456789abcdef"
   result = newString(2)
@@ -518,15 +502,6 @@ proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
   result = initResult(name, cfg, cacheBytes, sample, startedAt, endedAt)
   clearFomkeSendCache(cache)
   clearFomkeState(state)
-
-proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] {.role: helper.} =
-  ## seed/outLen: eight independent key or nonce rows of `outLen` bytes.
-  var
-    i: int = 0
-  while i < 8:
-    result.add(deriveXhkdf(@[byte seed + uint8(i)], @[], @[seed],
-      int(outLen)))
-    i = i + 1
 
 proc printResults(results: openArray[BenchResult]) {.role: dataWriter.} =
   const

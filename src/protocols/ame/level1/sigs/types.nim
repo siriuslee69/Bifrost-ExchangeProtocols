@@ -80,14 +80,6 @@ proc ameSigFamilyName*(f: AmeSigFamily): string {.role: parser.} =
   of asfFalcon: result = "falcon"
   of asfSphincs: result = "sphincs"
 
-proc ameSigFamilySetName*(F: set[AmeSigFamily]): string {.role: parser.} =
-  ## F: families rendered as a comma list for an error message.
-  for f in F:
-    if result.len > 0:
-      result.add(",")
-    result.add(ameSigFamilyName(f))
-
-
 proc ameSigToken*(a: AmeSignatureAlgorithm): string {.role: parser.} =
   ## a: slot -> the word `-d:bifrostSigs=` accepts for this ONE slot.
   case a

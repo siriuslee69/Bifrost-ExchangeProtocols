@@ -15,6 +15,8 @@ import std/[net, options, times]
 
 import ../types
 
+import ../transport/socket_write
+import ../transport/socket_read
 import ./server_session
 import runePragmas
 
@@ -64,7 +66,7 @@ proc sendAll(sock: var Socket, data: openArray[byte]): bool {.role: dataWriter,
   if data.len == 0:
     return true
   try:
-    sock.send(toStr(data))
+    writeAllSocket(sock, toStr(data))   # std send loops forever on EPIPE
     result = true
   except CatchableError:
     result = false
@@ -82,17 +84,13 @@ proc flushOutbound(sock: var Socket, O: Tls13ServerOutput): bool {.
 proc readChunk(sock: var Socket, timeoutMs: int): tuple[ok: bool, data: string] {.
     role: dataFetcher, tag: "tls|transport|read".} =
   ## sock/timeoutMs: socket and per-read timeout; zero blocks indefinitely.
-  var buf: string = newString(tls13SocketReadChunk)
+  ## Hands back whatever has arrived: std `recv(n, timeout)` would wait for
+  ## all `n` bytes (see transport/socket_read.nim).
+  var
+    r: SocketReadResult = SocketReadResult()
   try:
-    var n: int = 0
-    if timeoutMs > 0:
-      n = sock.recv(buf, tls13SocketReadChunk, timeoutMs)
-    else:
-      n = sock.recv(buf, tls13SocketReadChunk)
-    if n <= 0:
-      return (ok: false, data: "")
-    buf.setLen(n)
-    result = (ok: true, data: buf)
+    r = readAvailableSocket(sock, tls13SocketReadChunk, timeoutMs)
+    result = (ok: r.ok, data: r.data)
   except CatchableError:
     result = (ok: false, data: "")
 

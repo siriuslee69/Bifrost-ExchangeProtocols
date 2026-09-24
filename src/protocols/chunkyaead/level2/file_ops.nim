@@ -511,20 +511,10 @@ proc runHashTasks(ts: var seq[ChunkHashTask], tc: int) {.role: orchestrator,
     hashChunkTask(ts[i])
     i = i + 1
 
-proc ensureTasksOk(ts: seq[ChunkEncryptTask]) {.role: parser,
+proc ensureTasksOk[T](ts: seq[T]) {.role: parser,
     tag: "chunkyAead|validation".} =
-  for t in ts:
-    if not t.ok:
-      raise newException(IOError, t.err)
-
-proc ensureTasksOk(ts: seq[ChunkDecryptTask]) {.role: parser,
-    tag: "chunkyAead|validation".} =
-  for t in ts:
-    if not t.ok:
-      raise newException(IOError, t.err)
-
-proc ensureTasksOk(ts: seq[ChunkHashTask]) {.role: parser,
-    tag: "chunkyAead|validation".} =
+  ## ts: finished tasks of one kind (encrypt, decrypt, hash); the first
+  ## failure is raised with its own message.
   for t in ts:
     if not t.ok:
       raise newException(IOError, t.err)

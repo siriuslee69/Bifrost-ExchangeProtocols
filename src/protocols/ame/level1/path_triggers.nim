@@ -25,16 +25,6 @@ proc ameTierPathContains*(S: AmeTierPath, t: AmeMaskTier): bool {.
   var i: int = tierIndex(S, t.tierId)
   result = i >= 0 and tiersEquivalent(S.tiers[i], t)
 
-proc ameTierPathAllowsTransition*(S: AmeTierPath, current,
-    target: AmeMaskTier): bool {.role: parser.} =
-  ## S/current/target: exact configured transition that never moves backward.
-  var
-    currentIndex: int = tierIndex(S, current.tierId)
-    targetIndex: int = tierIndex(S, target.tierId)
-  result = currentIndex >= 0 and targetIndex >= currentIndex and
-    tiersEquivalent(S.tiers[currentIndex], current) and
-    tiersEquivalent(S.tiers[targetIndex], target)
-
 proc validateAmeTierIndex(S: AmeTierPath, i: int) {.role: parser.} =
   ## S/i: ordered path and zero-based tier index.
   if i < 0 or i >= int(S.tierCount):

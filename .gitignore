@@ -71,9 +71,7 @@ tmp/
 temp/
 tmp_bifrost*
 
-.iron/.local*
-!.iron/.local*.template
 nimble.develop
 nimble.paths
-.iron/conventions/
 evaluation/tests/.otter/results/
+.otter/
