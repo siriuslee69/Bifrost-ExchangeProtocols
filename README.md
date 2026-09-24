@@ -1839,6 +1839,38 @@ lane, the AAD (the whole AME header), and the ciphertext.
 
 The at-rest package sealer uses the same code (`ame/level1/tier_aead.nim`).
 
+### A failed write never reuses a step ⚠️
+
+"Each MK is used exactly once" must survive a failed send too. Sending is two
+steps, and only the first may be undone:
+
+```text
+  1. seal    step n -> MK(n) -> key block n -> sealed frame
+             nothing has left the machine          -> may be undone
+  2. write   frame -> socket
+             from the first byte on, an observer may hold it -> never undone
+```
+
+Undoing a write would seal the NEXT message with the same key block, and two
+messages under one key and nonce leak their XOR:
+
+```text
+  C1 = "PAY 100€" XOR stream(n)     (partly written, then an error)
+  C2 = "hello"    XOR stream(n)     (if step n were handed out again)
+  C1 XOR C2 = "PAY 100€" XOR "hello"
+```
+
+So:
+
+| failure | what happens |
+|---|---|
+| while sealing, before the first byte | undone; the ratchet is where it was |
+| TCP write | step n stays used; the socket is closed; `AmeConnectionLost` is raised. A half-written stream cannot be read past, and TCP refuses a sequence gap. Reconnect with a new handshake. |
+| DAC write | the sealed bytes are kept (`ameHasUnsentFrame(S)`); the next `sendAmeDac` writes **those exact bytes** first, then the new message. The same bytes again leak nothing. `discardAmeUnsentFrame(S)` gives them up: the receiver sees one lost message and steps past it (Step 5). |
+
+The receiver never needs to guess: every message carries its index (the
+FOMKE envelope), and the tag covers it.
+
 ### Step 5: open, all or nothing
 
 The receiver never changes its live state for a message that fails. It copies
@@ -2760,6 +2792,20 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 
 **Builds and transports**
 
+- **Nim's `send(Socket, string)` is not used for our writes** (std/net,
+  Nim 2.2). With its default `SafeDisconn` flag a broken connection is
+  swallowed and the call loops forever at full CPU; after a partial write it
+  sends again from byte 0. `transport/socket_write.nim` (`writeAllSocket`)
+  replaces it for TCP frames and connected UDP. Patched around, not fixed
+  upstream: new socket writes must go through `writeAllSocket` too. The
+  async stream path (`async_stream_ops.nim`, asyncnet) is not covered yet.
+- **`AmeConnectionLost` after a TCP send**: the write failed after the frame
+  was sealed, so the connection was closed on purpose (a failed write never
+  rewinds the ratchet, see FOMKE "A failed write never reuses a step").
+  Reconnect with a new handshake.
+- **`ameHasUnsentFrame(S)` stays true** (DAC): the kept frame still fails to
+  write. Every `sendAmeDac` tries it first and stops there. Fix the route, or
+  `discardAmeUnsentFrame(S)` and accept one lost message.
 - AVX2 tasks produce binaries for one CPU family. Use the ordinary tasks for
   x86 machines that may lack AVX2.
 - Package repair uses XOR recovery for one lost chunk and exact-chunk requests

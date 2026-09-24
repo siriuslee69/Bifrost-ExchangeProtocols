@@ -10,6 +10,7 @@ import std/net
 
 import ../../../transport/types as transport_types
 import ../../../transport/tcp_ops
+import ../../../types
 import ../../types
 import ../framing
 import runePragmas
@@ -22,11 +23,33 @@ type
     remote*: transport_types.TcpAddress
     tls*: transport_types.TlsConfig
 
+proc loseAmeTcpConnection(sock: Socket, S: var AmeSession, err: string) {.
+    role: actor.} =
+  ## sock/S/err: a write failed after sealing. The ratchet step stays used
+  ## (never sealed twice), the half-written stream is closed, and the caller
+  ## learns it has to reconnect.
+  S.lastErr = "AME TCP write failed after sealing; connection closed: " & err
+  try:
+    sock.close()
+  except CatchableError:
+    discard
+  raise newException(AmeConnectionLost, S.lastErr)
+
 proc sendAmeTcp*(sock: Socket, S: var AmeSession,
     payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/S/payload: transactional TCP send and successful-byte accounting.
-  ameSendTransaction(S, payload):
-    sendTcpFrame(sock, sealAmeTcpFrame(S, payload))
+  ## sock/S/payload: seal (undone if it fails), then write (never undone;
+  ## a failed write closes the connection -- see framing.nim, "sending one
+  ## frame").
+  var
+    frame: ByteSeq = @[]
+  ameSealTransaction(S):
+    frame = sealAmeTcpFrame(S, payload)
+    requireTcpFrameSendable(frame.len)
+  try:
+    sendTcpFrame(sock, frame)
+  except CatchableError as e:
+    loseAmeTcpConnection(sock, S, e.msg)
+  discard recordTransferredBytes(S, uint64(payload.len))
 
 proc recvAmeTcp*(sock: Socket, S: var AmeSession, timeoutMs: int = 4000,
     maxFrameBytes: uint32 = uint32(defaultAmeMaxFrameBytes)):

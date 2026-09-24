@@ -89,6 +89,12 @@ type
     tcpRecvSequence*: uint32
     dacAmeReplay*: AmeReplayWindow
     pendingParams*: AmeRuntimeParams
+    unsentFrame*: ByteSeq
+      ## A sealed DAC datagram whose write failed. The next send writes these
+      ## exact bytes first; sealing again at the same ratchet step would
+      ## reuse its key and nonce (see framing.nim, "sending one frame").
+    unsentPayloadLen*: int
+      ## Payload bytes behind `unsentFrame`, accounted once it goes out.
     previousSessionId*: uint64
       ## The id this session answered to before the last rotation. Accepted on
       ## RECEIVE only -- nothing is ever sealed under it again.
@@ -496,6 +502,7 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   S.auth.peerSignaturePublicKeys.setLen(0)
   clearPendingExchange(S.pendingExchange)
   clearEpoch(S.pendingIncoming.candidate)
+  secureClearAmeBytes(S.unsentFrame)
   clearFomkeSendCache(S.fomkeSendCache)
   clearFomkeState(S.fomke)
   clearFomkeState(S.fomkeCandidate)

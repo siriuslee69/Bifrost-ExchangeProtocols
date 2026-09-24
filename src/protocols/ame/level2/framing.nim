@@ -106,9 +106,9 @@ export requests
 type
   ## AmeSendRollback: what a send has to be able to put back.
   ## Sealing a frame advances three things at once -- the sequence, the tier
-  ## path and its last trigger -- and a send that fails halfway must leave
-  ## none of them moved. Private to this file, because sealing is the only
-  ## thing that ever needs to undo itself.
+  ## path and its last trigger -- and a SEAL that fails halfway must leave
+  ## none of them moved. Never used after a write has started (see
+  ## "sending one frame"). Private to this file.
   AmeSendRollback {.role: memory.} = object
     nextAmeSequence: uint32
     path: AmeTierPath
@@ -873,7 +873,7 @@ proc confirmAmeDacExchangeFrame*(S: var AmeSession,
   confirmAmeExchangeFrameVia(S, frame, acrDac)
 
 proc captureAmeSendRollback(S: AmeSession): AmeSendRollback {.role: helper.} =
-  ## S: connection whose send-mutable counters are snapshotted before a write.
+  ## S: connection whose send-mutable counters are snapshotted before a seal.
   ## Only these fields change while sealing and accounting for one frame, so a
   ## failed send is undone without copying epoch secrets or the inbox.
   result.nextAmeSequence = S.nextAmeSequence
@@ -883,8 +883,8 @@ proc captureAmeSendRollback(S: AmeSession): AmeSendRollback {.role: helper.} =
 proc restoreAmeSend(S: var AmeSession, r: AmeSendRollback,
     fomke: var FomkeState, cache: var FomkeSendCache) {.
     role: actor.} =
-  ## S/r/fomke/cache: failed send rewound to its pre-send counters and to its
-  ## pre-send ratchet. The advanced ratchet is erased
+  ## S/r/fomke/cache: failed seal rewound to its pre-seal counters and to its
+  ## pre-seal ratchet. The advanced ratchet is erased
   ## before the saved one replaces it.
   S.nextAmeSequence = r.nextAmeSequence
   S.path = r.path
@@ -896,32 +896,90 @@ proc restoreAmeSend(S: var AmeSession, r: AmeSendRollback,
 
 proc discardAmeSendRollback(S: AmeSession, fomke: var FomkeState,
     cache: var FomkeSendCache) {.role: actor.} =
-  ## S/fomke/cache: successful send erases the superseded FOMKE ratchet copy
+  ## S/fomke/cache: successful seal erases the superseded FOMKE ratchet copy
   ## instead of releasing its storage unwiped.
   clearFomkeSendCache(cache)
   clearFomkeState(fomke)
 
-template ameSendTransaction*(S: var AmeSession, payload: openArray[uint8],
-    body: untyped) {.role: orchestrator.} =
-  ## S/payload/body: `body` seals and writes one frame. If it raises, every
-  ## send-mutable counter, the tier path, and the FOMKE ratchet are rewound to
-  ## their pre-send values, so a failed write leaves no half-advanced state.
-  ## On success the transferred bytes are accounted and the superseded ratchet
-  ## copy is erased rather than released unwiped.
-  ##
-  ## The carrier modules share this one transaction instead of each repeating
-  ## the capture/restore dance around their own socket write.
+## ╭⟢ sending one frame: what may be undone, and what never
+##
+## A send is two steps, and only the first may ever be taken back:
+##
+##   1. seal    ratchet step n -> key n + nonce n -> sealed frame
+##              nothing has left the machine yet
+##   2. write   the frame goes to the socket
+##              from the first byte on, an observer may hold it
+##
+## Undoing step 1 is safe: nobody saw key n in use. Undoing step 2 is not.
+## The next message would be sealed with key n and nonce n AGAIN, and two
+## different messages under one key + nonce give an observer their XOR:
+##
+##   C1 = "PAY 100€" XOR stream(n)      (half on the wire, then an error)
+##   C2 = "hello"    XOR stream(n)      (after a rewind)
+##   C1 XOR C2 = "PAY 100€" XOR "hello" -- the key cancels out
+##
+## So a failed WRITE never rewinds. What happens instead depends on the
+## carrier:
+##
+##   failure                         what happens
+##   ------------------------------  -----------------------------------------
+##   while sealing / before 1st byte rewind (`ameSealTransaction`)
+##   TCP write                       step n is given up, the connection is
+##                                   closed, `AmeConnectionLost` is raised:
+##                                   a half-written stream cannot be read
+##                                   past, and TCP refuses a sequence gap
+##   DAC write                       the sealed bytes are kept; the next send
+##                                   writes THOSE EXACT BYTES first (the same
+##                                   bytes again leak nothing). Give them up
+##                                   with `discardAmeUnsentFrame`.
+
+type
+  AmeConnectionLost* = object of IOError
+    ## A write failed after the frame was sealed. The stream is closed; the
+    ## session cannot go on over it. Reconnect with a new handshake.
+
+template ameSealTransaction*(S: var AmeSession, body: untyped) {.
+    role: orchestrator.} =
+  ## S/body: `body` SEALS one frame and checks it can be written -- it must
+  ## never write to the network. If it raises, the sequence, the tier path
+  ## and the FOMKE ratchet are rewound, so a failed seal leaves no
+  ## half-advanced state. On success the superseded ratchet copy is erased.
   var
     rollback: AmeSendRollback = captureAmeSendRollback(S)
     fomke: FomkeState = cloneFomkeState(S.fomke)
     cache: FomkeSendCache = cloneFomkeSendCache(S.fomkeSendCache)
   try:
     body
-    discard recordTransferredBytes(S, uint64(payload.len))
   except:
     restoreAmeSend(S, rollback, fomke, cache)
     raise
   discardAmeSendRollback(S, fomke, cache)
+
+proc keepAmeUnsentFrame*(S: var AmeSession, frame: openArray[uint8],
+    payloadLen: int) {.role: actor.} =
+  ## S/frame/payloadLen: a sealed datagram whose write failed. Kept so the
+  ## next send writes these exact bytes instead of sealing at step n again.
+  secureClearAmeBytes(S.unsentFrame)
+  S.unsentFrame = @frame
+  S.unsentPayloadLen = payloadLen
+
+proc sentAmeUnsentFrame*(S: var AmeSession) {.role: actor.} =
+  ## S: the kept frame went out; account for it and forget it.
+  discard recordTransferredBytes(S, uint64(S.unsentPayloadLen))
+  secureClearAmeBytes(S.unsentFrame)
+  S.unsentFrame = @[]
+  S.unsentPayloadLen = 0
+
+proc ameHasUnsentFrame*(S: AmeSession): bool {.role: parser.} =
+  ## S: true while a sealed datagram waits to be written again.
+  result = S.unsentFrame.len > 0
+
+proc discardAmeUnsentFrame*(S: var AmeSession) {.role: actor.} =
+  ## S: give the kept frame up. Its ratchet step stays used -- the receiver
+  ## sees a lost message and steps past it.
+  secureClearAmeBytes(S.unsentFrame)
+  S.unsentFrame = @[]
+  S.unsentPayloadLen = 0
 
 ## ╭⟢ rotating the session id 🌊
 ##

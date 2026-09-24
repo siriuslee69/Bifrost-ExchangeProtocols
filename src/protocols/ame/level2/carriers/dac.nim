@@ -6,6 +6,7 @@
 ## session core: a build that speaks only TCP never imports this file and so
 ## never compiles the DAC datagram transport or its peer registry.
 
+import ../../../types
 import ../../types
 import ../../../dac/level0/transport as dac_transport
 import ../framing
@@ -18,18 +19,46 @@ type
     socket*: dac_transport.DacSocket
     remote*: dac_transport.DacAddress
 
+template writeKeepingUnsent(S: var AmeSession, frame: ByteSeq, n: int,
+    write: untyped) =
+  ## S/frame/n/write: `write` sends `frame`. If it fails the frame is kept,
+  ## so the next send repeats these exact bytes instead of sealing again.
+  try:
+    write
+  except CatchableError:
+    keepAmeUnsentFrame(S, frame, n)
+    raise
+  discard recordTransferredBytes(S, uint64(n))
+
+template sendAmeDacVia(S: var AmeSession, payload: openArray[uint8],
+    send: untyped) =
+  ## S/payload/send: `send(frame)` writes one datagram. The kept frame goes
+  ## first (a failure keeps it and stops here), then the new one is sealed
+  ## (undone if sealing fails) and written (kept if writing fails).
+  var
+    frame {.inject.}: ByteSeq = @[]
+  if ameHasUnsentFrame(S):
+    frame = S.unsentFrame
+    send
+    sentAmeUnsentFrame(S)
+  ameSealTransaction(S):
+    frame = sealAmeDacFrame(S, payload)
+  writeKeepingUnsent(S, frame, payload.len):
+    send
+
 proc sendAmeDac*(sock: dac_transport.DacSocket, S: var AmeSession,
     payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/S/payload: transactional connected-DAC send and accounting.
-  ameSendTransaction(S, payload):
-    sendDacFrameBytes(sock, sealAmeDacFrame(S, payload))
+  ## sock/S/payload: connected-DAC send -- see framing.nim, "sending one
+  ## frame", for what a failure leaves behind.
+  sendAmeDacVia(S, payload):
+    sendDacFrameBytes(sock, frame)
 
 proc sendAmeDac*(sock: dac_transport.DacSocket,
     remote: dac_transport.DacAddress, S: var AmeSession,
     payload: openArray[uint8]) {.role: orchestrator.} =
-  ## sock/remote/S/payload: transactional unconnected-DAC send and accounting.
-  ameSendTransaction(S, payload):
-    sendDacFrameBytes(sock, remote, sealAmeDacFrame(S, payload))
+  ## sock/remote/S/payload: unconnected-DAC send, same rules.
+  sendAmeDacVia(S, payload):
+    sendDacFrameBytes(sock, remote, frame)
 
 proc recvAmeDac*(sock: dac_transport.DacSocket, S: var AmeSession,
     timeoutMs: int = 4000, maxFrameBytes: int = defaultAmeMaxFrameBytes):

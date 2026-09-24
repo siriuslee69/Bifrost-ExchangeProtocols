@@ -8,6 +8,7 @@ when not defined(windows):
 
 import ../types
 import ./types
+import ./socket_write
 import runePragmas
 
 proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
@@ -248,7 +249,7 @@ proc sendUdpDatagram*(sock: Socket, bs: ByteSeq) {.role: orchestrator.} =
   body = bytesToString(bs)
   if body.len == 0:
     return
-  sock.send(body)
+  writeAllSocket(sock, body)
 
 proc sendUdpDatagram*(sock: Socket, a: UdpAddress, bs: ByteSeq) {.role: orchestrator.} =
   ## sendUdpDatagram: send UDP datagram.

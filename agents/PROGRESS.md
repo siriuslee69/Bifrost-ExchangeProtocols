@@ -1,12 +1,11 @@
 # Progress
 
-Commit Message: In-session requests: KEM ids on the wire, session-tag proof by default, ameAddExchangeRequest
+Commit Message: A failed write never rewinds the ratchet; own socket write loop replaces std send
 
 Features (Planned):
-- DECIDE: `ameSendTransaction` rewinds the FOMKE ratchet when a socket write
-  raises. If part of the frame already left, the next message reuses that
-  message key + nonce (two-time pad on the XOR stream). Proposed: never
-  rewind; a failed send burns its index. Asked the user.
+- async stream path (async_stream_ops.nim, asyncnet `send`) still uses the
+  std send: with SafeDisconn a broken connection is swallowed silently.
+  Route it through a write that raises, like writeAllSocket.
 - DECIDE: the session-tag proof of in-session requests mostly repeats the
   FOMKE frame tag (both prove "holds the current epoch"). Keep, or drop it
   and let the frame tag be the proof. Asked the user.

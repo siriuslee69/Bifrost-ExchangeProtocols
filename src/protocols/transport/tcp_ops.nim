@@ -9,6 +9,7 @@ when not defined(windows):
 import ../types
 import ./types
 import ./tls_ops
+import ./socket_write
 import runePragmas
 
 const
@@ -193,23 +194,30 @@ proc parseTcpAddress*(s: string): tuple[ok: bool, a: TcpAddress] {.role: parser.
   result.a.port = p.port
   result.ok = true
 
+proc requireTcpFrameSendable*(n: int,
+    maxFrameBytes: uint32 = maxTcpFrameBytes) {.role: parser.} =
+  ## n/maxFrameBytes: payload length and limit. The checks `sendTcpFrame`
+  ## makes before its first byte, callable on their own so a caller can
+  ## still undo work when they fail.
+  if uint64(n) > uint64(high(uint32)):
+    raise newException(ValueError, "TCP frame payload exceeds uint32 length")
+  if uint64(n) > uint64(maxFrameBytes):
+    raise newException(ValueError, "TCP frame payload exceeds maximum")
+
 proc sendTcpFrame*(sock: Socket, bs: ByteSeq,
     maxFrameBytes: uint32 = maxTcpFrameBytes) {.role: orchestrator.} =
   ## sock: connected TCP socket.
   ## bs: payload bytes to send as one length-prefixed frame.
   ## maxFrameBytes: maximum accepted payload length before writing.
   var
-    body: string
-    head: string
-  if uint64(bs.len) > uint64(high(uint32)):
-    raise newException(ValueError, "TCP frame payload exceeds uint32 length")
-  if uint64(bs.len) > uint64(maxFrameBytes):
-    raise newException(ValueError, "TCP frame payload exceeds maximum")
+    body: string = ""
+    head: string = ""
+  requireTcpFrameSendable(bs.len, maxFrameBytes)
   body = bytesToString(bs)
   head = encodeLen32(uint32(bs.len))
-  sock.send(head)
+  writeAllSocket(sock, head)
   if body.len > 0:
-    sock.send(body)
+    writeAllSocket(sock, body)
 
 proc recvExact(sock: Socket, n, timeoutMs: int):
     tuple[ok: bool, data: string, err: string] {.role: helper.} =
