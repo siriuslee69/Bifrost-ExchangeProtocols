@@ -330,7 +330,7 @@ arrives and is ignored.
   2. the relay finds this endpoint's session     ame/level3/dac_relay.nim
        one address -> one slot -> one session
                     |
-  3. the DAC kind goes in FRONT of the body,     ame/level2/framing.nim
+  3. the DAC kind goes in FRONT of the body,     ame/level2/seal_open.nim
      and the pair is sealed                        sealAmeDacControl()
        [ kind u8 | body ]  ->  AME frame
                     |
@@ -344,7 +344,7 @@ arrives and is ignored.
   2. no session for that address: discard        ame/level3/dac_relay.nim
        nothing is parsed, nothing is allocated
                     |
-  3. the frame is opened, and ONLY THEN is the   ame/level2/framing.nim
+  3. the frame is opened, and ONLY THEN is the   ame/level2/seal_open.nim
      DAC kind read                                 openAmeDacControl()
        AME frame -> [ kind u8 | body ]
                     |
@@ -2299,7 +2299,7 @@ read forward.
 
 ```text
   src/protocols/dac/level3/link.nim        the DAC loop -- every decision
-  src/protocols/ame/level2/framing.nim     every seal and open of a frame
+  src/protocols/ame/level2/seal_open.nim   every seal and open of a frame
 ```
 
 Each protocol folder has its own `README.md` with one line per file.

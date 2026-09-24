@@ -51,13 +51,13 @@ type
     publicKey*: ByteSeq
     secretKey*: ByteSeq
 
-template assignAmeKeypair*(call: untyped) =
+template assignAmeKeypair*(call: untyped) {.role: helper.} =
   ## call: a Tyr keypair call whose public/secret pair fills `result`.
   var k = call
   result.publicKey = k.publicKey
   result.secretKey = k.secretKey
 
-template assignAmeCipher*(call: untyped) =
+template assignAmeCipher*(call: untyped) {.role: helper.} =
   ## call: a Tyr encapsulation call whose ciphertext and secret fill `result`.
   var e = call
   result.envelope.ciphertext = e.ciphertext

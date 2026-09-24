@@ -27,7 +27,7 @@ type
 var
   benchSink: uint64 = 0'u64
 
-proc printHelp() =
+proc printHelp() {.role: dataWriter.} =
   echo "Bifrost protocol benchmark harness"
   echo ""
   echo "Flags:"
@@ -46,7 +46,7 @@ proc printHelp() =
   echo "  fomke_prepare8_1slot, fomke_prepare8_2slot,"
   echo "  gimli_stream_prepare8, xchacha_stream_prepare8"
 
-proc parsePositiveInt(flag, raw: string): int =
+proc parsePositiveInt(flag, raw: string): int {.role: parser.} =
   try:
     result = parseInt(raw)
   except ValueError:
@@ -54,7 +54,7 @@ proc parsePositiveInt(flag, raw: string): int =
   if result < 1:
     raise newException(ValueError, flag & " must be >= 1")
 
-proc parseNonNegativeInt(flag, raw: string): int =
+proc parseNonNegativeInt(flag, raw: string): int {.role: parser.} =
   try:
     result = parseInt(raw)
   except ValueError:
@@ -62,16 +62,16 @@ proc parseNonNegativeInt(flag, raw: string): int =
   if result < 0:
     raise newException(ValueError, flag & " must be >= 0")
 
-proc normalizeBenchName(name: string): string =
+proc normalizeBenchName(name: string): string {.role: sanitizer.} =
   result = name.strip().toLowerAscii()
 
-proc parseOnlyList(raw: string): seq[string] =
+proc parseOnlyList(raw: string): seq[string] {.role: parser.} =
   for part in raw.split(','):
     let name = normalizeBenchName(part)
     if name.len > 0:
       result.add(name)
 
-proc parseArgs(): BenchConfig =
+proc parseArgs(): BenchConfig {.role: dataFetcher.} =
   result.iterations = 2000
   result.warmup = 128
   result.payloadBytes = 1024
@@ -97,7 +97,7 @@ proc parseArgs(): BenchConfig =
     else:
       raise newException(ValueError, "unsupported benchmark flag: " & arg)
 
-proc shouldRun(cfg: BenchConfig, name: string): bool =
+proc shouldRun(cfg: BenchConfig, name: string): bool {.role: parser.} =
   let normalized = normalizeBenchName(name)
   if cfg.only.len == 0:
     return true
@@ -106,21 +106,21 @@ proc shouldRun(cfg: BenchConfig, name: string): bool =
       return true
   result = false
 
-proc buildPayload(n: int): ByteSeq =
+proc buildPayload(n: int): ByteSeq {.role: helper.} =
   result = newSeq[uint8](n)
   for i in 0 ..< n:
     result[i] = uint8((i * 37 + 11) and 0xff)
 
-proc mixSinkBytes(A: openArray[uint8]) =
+proc mixSinkBytes(A: openArray[uint8]) {.role: helper.} =
   benchSink = benchSink xor uint64(A.len)
   if A.len > 0:
     benchSink = (benchSink shl 7) xor uint64(A[0])
     benchSink = benchSink xor (uint64(A[^1]) shl 17)
 
-proc mixSinkUint(v: SomeInteger) =
+proc mixSinkUint(v: SomeInteger) {.role: helper.} =
   benchSink = (benchSink shl 9) xor uint64(v)
 
-proc clearBenchBytes(A: var ByteSeq) =
+proc clearBenchBytes(A: var ByteSeq) {.role: helper.} =
   var
     i: int = 0
   while i < A.len:
@@ -128,7 +128,7 @@ proc clearBenchBytes(A: var ByteSeq) =
     i = i + 1
   A.setLen(0)
 
-proc clearBenchRows(S: var seq[ByteSeq]) =
+proc clearBenchRows(S: var seq[ByteSeq]) {.role: helper.} =
   var
     i: int = 0
   while i < S.len:
@@ -136,13 +136,13 @@ proc clearBenchRows(S: var seq[ByteSeq]) =
     i = i + 1
   S.setLen(0)
 
-proc hexByte(b: uint8): string =
+proc hexByte(b: uint8): string {.role: helper.} =
   const digits = "0123456789abcdef"
   result = newString(2)
   result[0] = digits[int((b shr 4) and 0x0f'u8)]
   result[1] = digits[int(b and 0x0f'u8)]
 
-proc sampleWireHex(A: openArray[uint8], maxBytes: int = 8): string =
+proc sampleWireHex(A: openArray[uint8], maxBytes: int = 8): string {.role: helper.} =
   let limit = min(A.len, maxBytes)
   for i in 0 ..< limit:
     if i > 0:
@@ -167,24 +167,24 @@ proc initResult(name: string, cfg: BenchConfig, wireBytes: int,
   result.sampleWireHex = sampleWireHex(sampleBytes)
   result.sink = benchSink
 
-proc nsPerOp(r: BenchResult): float =
+proc nsPerOp(r: BenchResult): float {.role: math.} =
   result = float(r.totalNs) / float(r.iterations)
 
-proc opsPerSec(r: BenchResult): float =
+proc opsPerSec(r: BenchResult): float {.role: math.} =
   result = (float(r.iterations) * 1_000_000_000.0) / float(r.totalNs)
 
-proc mibPerSec(r: BenchResult): float =
+proc mibPerSec(r: BenchResult): float {.role: math.} =
   let totalPayloadBytes = float(r.payloadBytes) * float(r.iterations)
   result = totalPayloadBytes / (1024.0 * 1024.0) / (float(r.totalNs) / 1_000_000_000.0)
 
-proc buildAmeBenchAad(): ByteSeq =
+proc buildAmeBenchAad(): ByteSeq {.role: configurator.} =
   var h: AmeFrameHeader
   h = initAmeFrameHeader(ampkLaneData, amcUserdata, 0'u8,
     7'u64, 1'u32, 5'u32, 3'u32)
   result = encodeAmeFrameHeader(h)
 
 proc exactBenchAuth(seed: openArray[uint8],
-    role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
+    role: AmeEndpointRole = aerInitiator): AmeAuthPackage {.role: configurator.} =
   const K: AmeKemAlgorithms = [akaFireSaber, akaX25519]
   var
     layout: AmeSuiteLayout = defaultAmeLayout(K)
@@ -196,7 +196,7 @@ proc exactBenchAuth(seed: openArray[uint8],
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk =
+proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk {.role: configurator.} =
   ## payload: the bytes one package chunk carries.
   ##
   ## The benchmark used to time a DAC frame envelope. There is no envelope
@@ -205,7 +205,7 @@ proc buildDacBenchChunk(payload: ByteSeq): DacPackageChunk =
   ## bytes, which is what AME then seals.
   result = initDacPackageChunk(9'u64, 5'u32, 1'u16, 0'u32, payload)
 
-proc benchAmeProtect(cfg: BenchConfig): BenchResult =
+proc benchAmeProtect(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   var
     auth: AmeAuthPackage = exactBenchAuth(@[byte 1, 2, 3, 4, 5, 6, 7, 8])
     payload: ByteSeq = buildPayload(cfg.payloadBytes)
@@ -233,7 +233,7 @@ proc benchAmeProtect(cfg: BenchConfig): BenchResult =
   result = initResult("ame_protect", cfg, env.payload.len + env.authTag.len,
     env.payload, startedAt, endedAt)
 
-proc benchAmeOpen(cfg: BenchConfig): BenchResult =
+proc benchAmeOpen(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   var
     auth: AmeAuthPackage = exactBenchAuth(
       @[byte 11, 12, 13, 14, 15, 16, 17, 18])
@@ -266,7 +266,7 @@ proc benchAmeOpen(cfg: BenchConfig): BenchResult =
     sealed.message.payload.len + sealed.message.authTag.len,
     sealed.message.payload, startedAt, endedAt)
 
-proc benchDacEncode(cfg: BenchConfig): BenchResult =
+proc benchDacEncode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let
     payload = buildPayload(cfg.payloadBytes)
     c = buildDacBenchChunk(payload)
@@ -284,7 +284,7 @@ proc benchDacEncode(cfg: BenchConfig): BenchResult =
   endedAt = getMonoTime()
   result = initResult("dac_encode", cfg, frame.len, frame, startedAt, endedAt)
 
-proc benchDacDecode(cfg: BenchConfig): BenchResult =
+proc benchDacDecode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let
     payload = buildPayload(cfg.payloadBytes)
     frame = encodeDacPackageChunk(buildDacBenchChunk(payload))
@@ -304,7 +304,7 @@ proc benchDacDecode(cfg: BenchConfig): BenchResult =
   endedAt = getMonoTime()
   result = initResult("dac_decode", cfg, frame.len, frame, startedAt, endedAt)
 
-proc benchBfx2Encode(cfg: BenchConfig): BenchResult =
+proc benchBfx2Encode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let payload = buildPayload(cfg.payloadBytes)
   var
     envelope: ByteSeq
@@ -320,7 +320,7 @@ proc benchBfx2Encode(cfg: BenchConfig): BenchResult =
   endedAt = getMonoTime()
   result = initResult("bfx2_encode", cfg, envelope.len, envelope, startedAt, endedAt)
 
-proc benchBfx2Decode(cfg: BenchConfig): BenchResult =
+proc benchBfx2Decode(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   let
     payload = buildPayload(cfg.payloadBytes)
     envelope = encodeBfxEnvelope(0x1201'u16, 1'u16, payload)
@@ -346,12 +346,13 @@ proc benchBfx2Decode(cfg: BenchConfig): BenchResult =
   endedAt = getMonoTime()
   result = initResult("bfx2_decode", cfg, envelope.len, envelope, startedAt, endedAt)
 
-proc initBenchAmeSession(auth: AmeAuthPackage, inboxCapacity: int): AmeSession =
+proc initBenchAmeSession(auth: AmeAuthPackage, inboxCapacity: int): AmeSession {.
+    role: configurator.} =
   result = initAmeSession(auth, sessionId = 41'u64, rootLaneId = 1'u32,
     laneId = 5'u32, messageClass = amcUserdata, inboxCapacity = inboxCapacity,
     peerTrustRequired = false)
 
-proc benchAmeDacSeal(cfg: BenchConfig): BenchResult =
+proc benchAmeDacSeal(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   var
     auth: AmeAuthPackage = exactBenchAuth(
       @[byte 21, 22, 23, 24, 25, 26, 27, 28])
@@ -372,7 +373,7 @@ proc benchAmeDacSeal(cfg: BenchConfig): BenchResult =
   endedAt = getMonoTime()
   result = initResult("ame_dac_seal", cfg, frame.len, frame, startedAt, endedAt)
 
-proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
+proc benchAmeDacOpen(cfg: BenchConfig): BenchResult {.role: orchestrator.} =
   var
     auth: AmeAuthPackage = exactBenchAuth(
       @[byte 31, 32, 33, 34, 35, 36, 37, 38], aerInitiator)
@@ -415,7 +416,7 @@ proc benchAmeDacOpen(cfg: BenchConfig): BenchResult =
     startedAt, endedAt)
 
 proc layeredBenchAuth(seed: openArray[uint8],
-    role: AmeEndpointRole = aerInitiator): AmeAuthPackage =
+    role: AmeEndpointRole = aerInitiator): AmeAuthPackage {.role: configurator.} =
   ## seed: one stable secret for a layout that switches TWO cipher and TWO
   ## authenticator slots on. Comparing this against the single-slot layout is
   ## what the numbers below are for: it prices the cost of stacking.
@@ -435,7 +436,7 @@ proc layeredBenchAuth(seed: openArray[uint8],
     0b10000000'u8), [secret])
   result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
 
-proc initBenchFomke(a: AmeAuthPackage): FomkeState =
+proc initBenchFomke(a: AmeAuthPackage): FomkeState {.role: configurator.} =
   ## a: stable AME exchange turned into one ratchet.
   result = initFomkeFromAme(a.current.exchange, a.current.layout,
     a.current.tier, frInitiator)
@@ -518,7 +519,7 @@ proc benchFomkePrepare8(cfg: BenchConfig, layered: bool,
   clearFomkeSendCache(cache)
   clearFomkeState(state)
 
-proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] =
+proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] {.role: helper.} =
   ## seed/outLen: eight independent key or nonce rows of `outLen` bytes.
   var
     i: int = 0
@@ -527,7 +528,7 @@ proc benchStreamKeys(seed, outLen: uint8): seq[ByteSeq] =
       int(outLen)))
     i = i + 1
 
-proc printResults(results: openArray[BenchResult]) =
+proc printResults(results: openArray[BenchResult]) {.role: dataWriter.} =
   const
     nameWidth = 26
   echo "Bifrost protocol benchmarks"
@@ -553,7 +554,7 @@ proc printResults(results: openArray[BenchResult]) =
   echo ""
   echo "sink=" & $benchSink
 
-proc ensureDir(path: string) =
+proc ensureDir(path: string) {.role: helper.} =
   if path.len == 0 or dirExists(path):
     return
   let parent = parentDir(path)
@@ -591,7 +592,7 @@ proc writeJsonResults(path: string, cfg: BenchConfig,
     ensureDir(dir)
   writeFile(path, pretty(root))
 
-proc main() =
+proc main() {.role: metaOrchestrator.} =
   let cfg = parseArgs()
   var results: seq[BenchResult] = @[]
   if shouldRun(cfg, "ame_protect"):

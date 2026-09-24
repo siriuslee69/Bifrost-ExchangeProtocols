@@ -20,7 +20,7 @@ type
     remote*: dac_transport.DacAddress
 
 template writeKeepingUnsent(S: var AmeSession, frame: ByteSeq, n: int,
-    write: untyped) =
+    write: untyped) {.role: dataWriter.} =
   ## S/frame/n/write: `write` sends `frame`. If it fails the frame is kept,
   ## so the next send repeats these exact bytes instead of sealing again.
   try:
@@ -31,7 +31,7 @@ template writeKeepingUnsent(S: var AmeSession, frame: ByteSeq, n: int,
   discard recordTransferredBytes(S, uint64(n))
 
 template sendAmeDacVia(S: var AmeSession, payload: openArray[uint8],
-    send: untyped) =
+    send: untyped) {.role: orchestrator.} =
   ## S/payload/send: `send(frame)` writes one datagram. The kept frame goes
   ## first (a failure keeps it and stops here), then the new one is sealed
   ## (undone if sealing fails) and written (kept if writing fails).

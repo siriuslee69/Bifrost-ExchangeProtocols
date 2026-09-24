@@ -140,7 +140,7 @@ proc soakPastDeadline(): bool {.role: parser, inline.} =
   result = serverStop.load() or
     int64(soakElapsedSeconds()) >= serverDeadline.load()
 
-proc soakAcceptThread(a: SoakServerArgs) {.thread.} =
+proc soakAcceptThread(a: SoakServerArgs) {.role: orchestrator, thread.} =
   ## a: the worker whose accept socket this thread owns for the whole run.
   ## One handshake at a time, on its own port, so nothing it reads could have
   ## been live traffic for somebody else.
@@ -327,7 +327,7 @@ proc describeSlots(E: AmeDacEndpoint, nowMs: uint32, worker: int) {.
     i = i + 1
   if parts.len > 0:
     echo "w", worker, " slots  ", parts.join("  ")
-proc soakServeThread(a: SoakServerArgs) {.thread.} =
+proc soakServeThread(a: SoakServerArgs) {.role: orchestrator, thread.} =
   ## a: the worker whose data socket, relay and clock this thread owns.
   var
     host: string = unpackSoakHost(a.host)

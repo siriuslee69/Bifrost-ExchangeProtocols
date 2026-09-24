@@ -11,12 +11,12 @@ them, and the folder it sits in tells you which:
 ```text
   WHICH ALGORITHMS?     level1/   one file per primitive, plus the tables
                                   that say which are switched on
-  WHAT DO I KNOW?       level2/session.nim
+  WHAT DO I KNOW?       level2/session.nim  (+ epochs.nim below it)
                                   the epoch, its keys, the exchange that
                                   replaces them, the ratchet, the settings
-  WHAT DO I SEND?       level2/framing.nim
+  WHAT DO I SEND?       level2/framing.nim  (+ seal_open.nim below it)
                                   sealing a payload into a frame, opening one
-                                  again, and the AME/DAC seam
+                                  again, the exchange steps, the AME/DAC seam
   HOW DO I START?       level3/handshake.nim  and its seven neighbours
                                   one question each -- who someone is, whom
                                   to believe (AM1A/AM1S/AM1P/AM1P+S), the
@@ -35,8 +35,10 @@ them, and the folder it sits in tells you which:
 | `level1/header_protection.nim` | masking the frame counter so a watcher cannot count frames |
 | `level1/padding.nim` | making every frame an uninteresting size |
 | `level1/path_triggers.nim` | when to move to a stronger tier, by bytes or by clock |
-| **`level2/session.nim`** | **what a connection IS** — keys, epoch, exchange, settings |
-| **`level2/framing.nim`** | **what a message LOOKS LIKE** — seal, open, and the DAC seam |
+| `level2/epochs.nim` | the `AmeSession` type, its epoch and keys, and the exchange steps that change them |
+| **`level2/session.nim`** | **what a connection IS** — starting one, reading its state, its settings. Passes on `epochs.nim` |
+| `level2/seal_open.nim` | one frame: seal it, open it, and the DAC seam |
+| **`level2/framing.nim`** | **conversations of frames** — the exchange steps, sending one frame safely, session-id rotation. Passes on `seal_open.nim` and `requests.nim` |
 | `level2/requests.nim` | building a request by name: one more KEM exchange, or a change of algorithms |
 | `level2/carriers/` | the two things that own a socket: `tcp.nim`, `dac.nim` |
 | `level3/handshake.nim` | steps 3 and 4, and the one import that brings in the rest |

@@ -5,18 +5,19 @@
 import std/[json, os, strutils]
 
 import bifrost_exchange_protocols
+import runePragmas
 
-proc bytesToHex(bs: ByteSeq): string =
+proc bytesToHex(bs: ByteSeq): string {.role: helper.} =
   var i = 0
   while i < bs.len:
     result.add(toHex(int(bs[i]), 2))
     i.inc
 
-proc writeVector(path: string; content: string) =
+proc writeVector(path: string; content: string) {.role: dataWriter.} =
   createDir(parentDir(path))
   writeFile(path, content)
 
-proc main() =
+proc main() {.role: metaOrchestrator.} =
   let repoRoot = getCurrentDir()
   let vectorsRoot = joinPath(repoRoot, "evaluation", "tests", "vectors")
 

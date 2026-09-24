@@ -343,7 +343,7 @@ proc reconnectPeer(P: var SoakPeer, a: SoakClientArgs): bool {.
   sleep(soakClientBackoffMs + int(nextSoakRng(P.rng) mod
     uint64(soakClientBackoffMs * 3)))
 
-proc soakClientThread(a: SoakClientArgs) {.thread.} =
+proc soakClientThread(a: SoakClientArgs) {.role: orchestrator, thread.} =
   ## a: one peer, from its first handshake to the end of the run.
   var
     P: SoakPeer = default(SoakPeer)

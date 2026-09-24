@@ -55,9 +55,9 @@ const
 when defined(lowmemMeter):
   {.compile: "memory_meter.c".}
   {.passL: "-Wl,--wrap=malloc,--wrap=free,--wrap=calloc,--wrap=realloc".}
-  proc meterHeapPeak(): csize_t {.importc, cdecl.}
-  proc meterStackPaint() {.importc, cdecl.}
-  proc meterStackUsed(): csize_t {.importc, cdecl.}
+  proc meterHeapPeak(): csize_t {.role: dataFetcher, importc, cdecl.}
+  proc meterStackPaint() {.role: dataWriter, importc, cdecl.}
+  proc meterStackUsed(): csize_t {.role: dataFetcher, importc, cdecl.}
 else:
   proc meterHeapPeak(): csize_t {.role: helper.} = 0
   proc meterStackPaint() {.role: helper.} = discard

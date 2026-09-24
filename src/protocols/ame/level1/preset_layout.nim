@@ -123,7 +123,7 @@ proc presetLayoutIds(hex: string): PresetLayoutIds {.role: parser.} =
   result.sigs = presetNibbleIds(A, cursor)
   result.kdfs = presetNibbleIds(A, cursor)
 
-template presetEnum(T: typedesc, id: uint8): untyped =
+template presetEnum(T: typedesc, id: uint8): untyped {.role: parser.} =
   ## T/id: one id -> its enum value; an unknown id stops the build.
   if id < uint8(ord(low(T))) or id > uint8(ord(high(T))):
     raise newException(ValueError, "preset ameLayoutHex names unknown " &

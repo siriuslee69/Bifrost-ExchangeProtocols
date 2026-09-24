@@ -1,8 +1,13 @@
 # Progress
 
-Commit Message: Drop the session-tag proof: in-session requests are proved by the frame tag, signatures optional
+Commit Message: Split session.nim (epochs.nim) and framing.nim (seal_open.nim); every routine declares a role
 
 Features (Planned):
+- Otter still lists 6 fields as written and never read (AmeSession.
+  lastExchangeDenial, DacGroupRepairReport.err, Tls13ClientOutput.closed,
+  Tls13ControlledResult.clientState/serverState/err). Each is a result for
+  the caller and is read only inside `test "..."` blocks, which Otter does
+  not see as routines. Not dead; left as they are.
 - async stream path (async_stream_ops.nim, asyncnet `send`) still uses the
   std send: with SafeDisconn a broken connection is swallowed silently.
   Route it through a write that raises, like writeAllSocket.

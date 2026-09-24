@@ -78,7 +78,7 @@ when aspArgon2 in ameSymBuilt:
   import ./symmetric/argon2 as ame_argon2
   export ame_argon2
 
-template excludedSymMessage(p, what, name: untyped): string =
+template excludedSymMessage(p, what, name: untyped): string {.role: helper.} =
   ## p/what/name: missing primitive, family label, and the slot's own name.
   "AME " & what & " " & name & " needs primitive '" & ameSymPrimitiveName(p) &
     "', which is not in this build; add it to -d:bifrostSymmetric= or omit " &

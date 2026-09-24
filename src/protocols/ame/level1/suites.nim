@@ -16,7 +16,7 @@ import ./exchange_paths
 import ./algorithms
 import runePragmas
 
-template requirePathLength(n: int, what: string) =
+template requirePathLength(n: int, what: string) {.role: parser.} =
   if n <= 0 or n > ameMaxAlgorithmSlots:
     raise newException(ValueError, "AME " & what & " layout must contain 1..8 slots")
 
@@ -305,7 +305,8 @@ proc fullAmeMaskTier*(L: AmeSuiteLayout,
     occupiedAmeMask(L.macs.length), occupiedAmeMask(L.hashes.length),
     occupiedAmeMask(L.signatures.length), occupiedAmeMask(L.kdfs.length)))
 
-template encodeNibbleLayout(result: var ByteSeq, P: untyped) =
+template encodeNibbleLayout(result: var ByteSeq, P: untyped) {.
+    role: dataWriter.} =
   result.add(P.length)
   block:
     var

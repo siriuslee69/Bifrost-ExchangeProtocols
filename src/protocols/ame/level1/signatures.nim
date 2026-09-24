@@ -77,7 +77,7 @@ when {asfEd25519, asfFalcon} <= ameSigsBuilt:
   import ./sigs/hybrid as ame_hybrid
   export ame_hybrid
 
-template excludedSigMessage(a: untyped): string =
+template excludedSigMessage(a: untyped): string {.role: helper.} =
   ## a: the slot this build cannot execute.
   "AME signature " & ameSigName(a) & " is not in this build; add '" &
     ameSigToken(a) & "' to -d:bifrostSigs= or omit the flag to build " &

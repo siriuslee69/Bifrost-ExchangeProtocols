@@ -1,6 +1,7 @@
 ## Bifrost Repo Hygiene Tool <- generated artifact check + cleanup
 
 import std/[os, parseopt, strutils]
+import runePragmas
 
 type
   HygieneFindingKind* = enum
@@ -71,20 +72,20 @@ const
     "tmp_bifrost"
   ]
 
-proc normalizedRoot*(root: string): string =
+proc normalizedRoot*(root: string): string {.role: sanitizer.} =
   var
     t: string = absolutePath(root)
   t = t.replace('\\', '/')
   result = t
 
-proc relPathFrom*(root, path: string): string =
+proc relPathFrom*(root, path: string): string {.role: helper.} =
   var
     absRoot: string = normalizedRoot(root)
     absPath: string = absolutePath(path)
   absPath = absPath.replace('\\', '/')
   result = relativePath(absPath, absRoot).replace('\\', '/')
 
-proc hasGeneratedExt(path: string): bool =
+proc hasGeneratedExt(path: string): bool {.role: parser.} =
   var
     lower: string = path.toLowerAscii()
     i: int = 0
@@ -93,18 +94,18 @@ proc hasGeneratedExt(path: string): bool =
       return true
     i.inc
 
-proc siblingNimPath(path: string): string =
+proc siblingNimPath(path: string): string {.role: helper.} =
   var parts: tuple[dir, name, ext: string] = splitFile(path)
   result = joinPath(parts.dir, parts.name & ".nim")
 
-proc isSourceArtifact(path: string): bool =
+proc isSourceArtifact(path: string): bool {.role: parser.} =
   var parts: tuple[dir, name, ext: string] = splitFile(path)
   if hasGeneratedExt(path):
     return true
   if parts.ext.len == 0:
     return fileExists(path & ".nim")
 
-proc isNestedGeneratedDirName(name: string): bool =
+proc isNestedGeneratedDirName(name: string): bool {.role: parser.} =
   var
     lower: string = name.toLowerAscii()
     i: int = 0
@@ -114,9 +115,10 @@ proc isNestedGeneratedDirName(name: string): bool =
     i = i + 1
 
 proc addFinding(S: var seq[HygieneFinding]; relPath: string; isDir: bool;
-    kind: HygieneFindingKind; cleanable: bool)
+    kind: HygieneFindingKind; cleanable: bool) {.role: helper.}
 
-proc addSourceRootFindings(root, dir: string, S: var seq[HygieneFinding]) =
+proc addSourceRootFindings(root, dir: string,
+    S: var seq[HygieneFinding]) {.role: truthBuilder.} =
   var
     relPath: string = ""
     name: string = ""
@@ -132,7 +134,7 @@ proc addSourceRootFindings(root, dir: string, S: var seq[HygieneFinding]) =
       S.addFinding(relPath, false, hfkGenerated, true)
 
 proc addFinding(S: var seq[HygieneFinding]; relPath: string; isDir: bool;
-    kind: HygieneFindingKind; cleanable: bool) =
+    kind: HygieneFindingKind; cleanable: bool) {.role: helper.} =
   S.add(HygieneFinding(
     relPath: relPath,
     isDir: isDir,
@@ -140,7 +142,8 @@ proc addFinding(S: var seq[HygieneFinding]; relPath: string; isDir: bool;
     cleanable: cleanable
   ))
 
-proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
+proc repoHygieneFindings*(root: string): seq[HygieneFinding] {.
+    role: truthBuilder.} =
   var
     absPath: string = ""
     relPath: string = ""
@@ -187,7 +190,7 @@ proc repoHygieneFindings*(root: string): seq[HygieneFinding] =
     if relPath == "result" or relPath.startsWith("result-"):
       result.addFinding(relPath, kind == pcDir, hfkGenerated, true)
 
-proc removeFinding*(root: string; finding: HygieneFinding) =
+proc removeFinding*(root: string; finding: HygieneFinding) {.role: actor.} =
   var absPath: string = joinPath(root, finding.relPath)
   if finding.isDir:
     if dirExists(absPath):
@@ -195,7 +198,8 @@ proc removeFinding*(root: string; finding: HygieneFinding) =
   elif fileExists(absPath):
     removeFile(absPath)
 
-proc renderFindings*(root: string; findings: openArray[HygieneFinding]): string =
+proc renderFindings*(root: string;
+    findings: openArray[HygieneFinding]): string {.role: dataWriter.} =
   result.add("repo root: " & normalizedRoot(root) & "\n")
   if findings.len == 0:
     result.add("status: clean\n")
@@ -208,7 +212,7 @@ proc renderFindings*(root: string; findings: openArray[HygieneFinding]): string 
     of hfkLocal:
       result.add("local: " & finding.relPath & "\n")
 
-proc main() =
+proc main() {.role: metaOrchestrator.} =
   var
     parser = initOptParser(commandLineParams())
     root: string = getCurrentDir()

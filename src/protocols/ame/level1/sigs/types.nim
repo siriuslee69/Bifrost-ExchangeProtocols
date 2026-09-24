@@ -41,7 +41,7 @@ type
     publicKey*: ByteSeq
     secretKey*: ByteSeq
 
-template assignAmeSigKeypair*(call: untyped) =
+template assignAmeSigKeypair*(call: untyped) {.role: helper.} =
   ## call: a Tyr keypair call whose public/secret pair fills `result`.
   var k = call
   result.publicKey = k.publicKey

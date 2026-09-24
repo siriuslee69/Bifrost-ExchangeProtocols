@@ -16,7 +16,7 @@ when defined(windows):
     dwLength, dwMemoryLoad: DWORD
     ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile: uint64
     ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual: uint64
-  proc GlobalMemoryStatusEx(s: ptr MemoryStatusEx): WINBOOL {.importc: "GlobalMemoryStatusEx", stdcall, dynlib: "Kernel32.dll".}
+  proc GlobalMemoryStatusEx(s: ptr MemoryStatusEx): WINBOOL {.role: dataFetcher, importc: "GlobalMemoryStatusEx", stdcall, dynlib: "Kernel32.dll".}
 
 proc readMemInfo(): MemInfo {.role: dataFetcher.} =
   when defined(windows):
