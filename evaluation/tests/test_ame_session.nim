@@ -510,7 +510,8 @@ suite "AME mask-tier sessions":
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
-        target, 0b01000000'u8)
+        target, 0b01000000'u8, AmeRuntimeParams(authTagLen: aatl32),
+        aepSignatures)
       offer: AmeExchangeOffer = default(AmeExchangeOffer)
       before: ByteSeq = server.auth.current.exchange.stackedSecrets[0] & @[]
     installSignaturePeers(client, server)
@@ -531,7 +532,8 @@ suite "AME mask-tier sessions":
       target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
         0b11000000'u8)
       request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
-        target, 0b01000000'u8)
+        target, 0b01000000'u8, AmeRuntimeParams(authTagLen: aatl32),
+        aepSignatures)
       offer: AmeExchangeOffer = default(AmeExchangeOffer)
       reply: AmeExchangeReply = default(AmeExchangeReply)
     installSignaturePeers(client, server)
@@ -543,6 +545,26 @@ suite "AME mask-tier sessions":
       finishAmeSessionExchange(client, reply)
     check client.auth.current.epochId == 1'u32
     check client.pendingExchange.active
+
+  # {.testKind: tkEdgeCase, covers: "exchangeSubjectProved".}
+  test "a tampered session tag is rejected before candidate mutation":
+    ## The default proof: one tag under a key from the current epoch.
+    var
+      client: AmeSession = exactUpgradeSession(aerInitiator)
+      server: AmeSession = exactUpgradeSession(aerResponder)
+      target: AmeMaskTier = exactTier(client.auth.current.layout, 2'u32,
+        0b11000000'u8)
+      request: AmeExchangeRequest = initAmeExchangeRequest(exactKems,
+        target, 0b01000000'u8)
+      offer: AmeExchangeOffer = default(AmeExchangeOffer)
+    offer = beginAmeSessionExchange(client, request)
+    check offer.signatures.len == 1
+    check offer.signatures[0].len == 32
+    offer.signatures[0][0] = offer.signatures[0][0] xor 1'u8
+    expect ValueError:
+      discard answerAmeSessionExchange(server, offer)
+    check not server.pendingIncoming.active
+    check server.auth.current.epochId == 1'u32
 
   # {.testKind: tkEdgeCase.}
   test "tier paths reject backward transitions":
@@ -979,14 +1001,14 @@ suite "AME payload padding":
         padding: apadBlock64))
       encoded: ByteSeq = encodeAmeExchangeRequest(request)
       decoded: AmeExchangeRequest = default(AmeExchangeRequest)
-    check encoded.len == ameExchangeRequestLen
-    decoded = decodeAmeExchangeRequest(exactKems, encoded)
+    check encoded.len == ameExchangeRequestFixedLen + 1
+    decoded = decodeAmeExchangeRequest(exactKems, 0b10000000'u8, encoded)
     check decoded.params.padding == apadBlock64
     check decoded.params.authTagLen == aatl16
     ## A byte that names no policy is refused rather than read as "off".
-    encoded[12] = 7'u8
+    encoded[^1] = 7'u8
     expect ValueError:
-      discard decodeAmeExchangeRequest(exactKems, encoded)
+      discard decodeAmeExchangeRequest(exactKems, 0b10000000'u8, encoded)
 
   # {.testKind: tkIntegration.}
   test "padding can be switched on at a rotation and both sides follow":

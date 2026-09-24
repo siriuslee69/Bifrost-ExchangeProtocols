@@ -37,6 +37,7 @@ them, and the folder it sits in tells you which:
 | `level1/path_triggers.nim` | when to move to a stronger tier, by bytes or by clock |
 | **`level2/session.nim`** | **what a connection IS** — keys, epoch, exchange, settings |
 | **`level2/framing.nim`** | **what a message LOOKS LIKE** — seal, open, and the DAC seam |
+| `level2/requests.nim` | building a request by name: one more KEM exchange, or a change of algorithms |
 | `level2/carriers/` | the two things that own a socket: `tcp.nim`, `dac.nim` |
 | `level3/handshake.nim` | steps 3 and 4, and the one import that brings in the rest |
 | `level3/handshake_hello.nim` | steps 1 and 2: the hello (sealed in AM1P, AM1P+S) and the answer |

@@ -154,31 +154,6 @@ proc ameAuthenticationModeOf*(m: AmeTrustMode): AmeAuthenticationMode {.
   of atmPreSharedKey: result = am1p
   of atmPreSharedPinned: result = am1ps
 
-proc exchangeAuthenticationKey(a: AmeAuthentication,
-    transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
-    tag: "cryptoBoundary|kdf".} =
-  ## a/transcript: the key later epoch changes are proved with in AM1P.
-  ##
-  ## AM1P sessions hold no signature keys, so the offers and replies that
-  ## rotate an epoch cannot be signed. They are tagged with this key instead.
-  ## It is derived from the finished transcript, so it is different in every
-  ## session and says nothing about the provisioned secret behind it.
-  ##
-  ## Empty in AM1P+S: that mode holds signature keys, so its rotations are
-  ## signed exactly like AM1S ones.
-  var
-    subject: ByteSeq = @[]
-    key: ByteSeq = @[]
-  if a.mode != atmPreSharedKey:
-    return
-  key = amePskKeyInput(a)
-  appendAmeLabel(subject, "AME-AM1P-EXCHANGE-AUTH-v2")
-  appendHandshakeString(subject, a.pskId)
-  appendHandshakeBytes(subject, transcript)
-  result = ameMacTag(amaBlake3, key, subject, 32)
-  secureClearAmeBytes(subject)
-  secureClearAmeBytes(key)
-
 proc exchangeBinderKey(a: AmeAuthentication,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|kdf".} =
@@ -193,7 +168,8 @@ proc exchangeBinderKey(a: AmeAuthentication,
   ##
   ## Bound to the transcript, so it is different in every session and says
   ## nothing about the secret behind it. Derived under its own label, so it is
-  ## not the same bytes as `exchangeAuthenticationKey` -- one secret doing two
+  ## not the same bytes as the key in-session requests are proved with (one
+  ## derived from the current epoch, see session.nim) -- one secret doing two
   ## jobs is how a proof about one of them quietly stops being a proof about
   ## the other.
   ##
@@ -234,7 +210,6 @@ proc buildInitialAuth(L: AmeSuiteLayout, initialTier: AmeMaskTier,
     hashAmeTier(L, initialTier, transcript, 32), 1'u32, sessionId,
     endpointRole, params)
   result.authenticationMode = ameAuthenticationModeOf(a.mode)
-  result.exchangeAuthenticationKey = exchangeAuthenticationKey(a, transcript)
   result.exchangeBinder = binder
 
 proc serverHelloPolicyError(S: AmeClientHandshake,

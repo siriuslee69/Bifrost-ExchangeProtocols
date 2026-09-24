@@ -100,6 +100,8 @@ import runePragmas
 ## Everything a caller reached for through `session` still reaches through
 ## here, so a module that seals frames imports this one and gets both halves.
 export session
+import ./requests
+export requests
 
 type
   ## AmeSendRollback: what a send has to be able to put back.
@@ -754,7 +756,8 @@ proc answerAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
     reason: string = ""
   if not opened.ok:
     raise newException(ValueError, opened.err)
-  offer = decodeAmeExchangeOffer(S.auth.current.layout.kems, opened.payload)
+  offer = decodeAmeExchangeOffer(S.auth.current.layout.kems,
+    S.auth.current.tier.masks.kem, opened.payload)
   reason = ameExchangeDenyReason(S, offer)
   if reason.len > 0:
     return sealControlFrame(S, ampkExchangeDeny, carrier,
@@ -795,7 +798,8 @@ proc finishAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
     raise newException(ValueError, opened.err)
   requestId = S.pendingExchange.offer.requestId
   finishAmeSessionExchange(S,
-    decodeAmeExchangeReply(S.auth.current.layout.kems, opened.payload))
+    decodeAmeExchangeReply(S.auth.current.layout.kems,
+      S.auth.current.tier.masks.kem, opened.payload))
   ## The ratchet turns BEFORE this frame is sealed, so epoch-ready is the
   ## first message of the new epoch. That is what lets the responder tell a
   ## genuine rotation from a replayed one: it can only open this frame with a

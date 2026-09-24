@@ -243,7 +243,7 @@ proc decodeAmeClientHello*(A: openArray[uint8]): AmeClientHello {.
     readSealedHelloTail(A, cursor, result)
   else:
     B = readLargeField(A, cursor)
-    result.offer = decodeAmeExchangeOffer(result.layout.kems, B)
+    result.offer = decodeAmeExchangeOffer(result.layout.kems, 0'u8, B)
   if cursor != A.len or result.sessionId == 0'u64:
     raise newException(ValueError, "AME client hello wire value is invalid")
 
@@ -299,7 +299,7 @@ proc decodeAmeServerHello*(L: AmeSuiteLayout,
     raise newException(ValueError, ameModeBuiltError(result.mode))
   result.nonce = readFixed(A, cursor, ameHandshakeNonceLen)
   B = readLargeField(A, cursor)
-  result.reply = decodeAmeExchangeReply(L.kems, B)
+  result.reply = decodeAmeExchangeReply(L.kems, 0'u8, B)
   result.params.authTagLen = ameAuthTagLenFromId(readHandshakeU8(A, cursor))
   result.params.padding = amePaddingPolicyFromId(readHandshakeU8(A, cursor))
   result.authTag = readFixed(A, cursor, int(ord(result.params.authTagLen)))

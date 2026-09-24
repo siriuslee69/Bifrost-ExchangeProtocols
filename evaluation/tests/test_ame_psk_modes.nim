@@ -227,9 +227,9 @@ suite "AM1P+S: shared secret AND pinned signature":
     check r.client.peerTrust.mode == am1ps
     check r.server.peerTrust.mode == am1ps
     check r.client.auth.authenticationMode == am1ps
-    ## Signature keys exist, so rotations are signed, not MAC'd.
+    ## Signature keys exist, so a request MAY be signed (by default it is
+    ## tagged under the current epoch, like every mode).
     check r.client.auth.peerSignaturePublicKeys.len > 0
-    check r.client.auth.exchangeAuthenticationKey.len == 0
     ## The shared secret still joins the key schedule.
     check r.client.auth.exchangeBinder.len == 32
     check r.client.auth.exchangeBinder == r.server.auth.exchangeBinder

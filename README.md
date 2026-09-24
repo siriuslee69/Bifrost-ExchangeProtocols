@@ -116,6 +116,9 @@ ameLayoutHex                 ""        "" = derived from the build; a value
 ameInitialTierHex            ""        only together with every endpoint
 ameMinPqKems                 0         yes: fewest post-quantum KEMs any
                                        selection keeps on (hello, requests)
+ameSignedExchanges           false     false = requests tagged under the
+                                       session secret; true = signed, and
+                                       unsigned ones denied (not AM1P)
 ```
 
 ## Definitions ✦
@@ -993,19 +996,40 @@ endpoints back to PSK only by breaking one handshake on purpose. Set it to
 `false` only while an endpoint may have lost its CS, for example after a
 restore from backup.
 
-#### Rotating an epoch without signature keys
+#### Proving an in-session request
 
-A rotation needs an offer and a reply, and each is proved by the endpoint that
-sent it. AM1P has no signing key. It uses a tag instead, under a key derived
-from the finished handshake:
+Every request after the handshake (one more KEM exchange, a change of
+algorithms) is an offer and a reply, and each is proved by the endpoint that
+sent it. The request itself names how, in its proof byte:
 
 ```text
-AM1A / AM1S / AM1P+S  ->  one signature per switched-on signature slot
-AM1P                  ->  one tag under the session's own exchange key
+proof byte  name            what proves it                          modes
+----------  --------------  --------------------------------------  -----------
+0           session (AM1P)  one 32-byte tag under a key derived     all
+            DEFAULT         from the CURRENT epoch's secrets
+1           signatures      one signature per switched-on           AM1A, AM1S,
+                            signature slot                          AM1P+S
 ```
 
-Both forms travel in the same field and cover the same bytes. The exchange key
-is derived per session and is never the PSK.
+The session tag is the default because the two ends already share a secret:
+only they hold the current epoch, so only they can make the tag, and it costs
+one hash instead of a (post-quantum) signature. The key changes with every
+epoch, so an old tag never proves a new request.
+
+```text
+current epoch secrets --[ "AME-EXCHANGE-PROOF-v1" ]--> proof key
+proof key + offer bytes                              --> 32-byte tag
+```
+
+Signatures are used when a request asks for them
+(`ameAddExchangeRequest(S, [..], signed = true)`) or when
+`ameSignedExchanges = true` in `[runtime.ame]`. That side then signs every
+request it sends and denies every unsigned one. An AM1P session has no
+signature keys, so a signed request there is refused before it is sent.
+
+Either way the request travels **encrypted**: offers and replies are control
+frames, sealed by the session's ratchet like any message. The KEM public keys
+and ciphertexts inside are never readable on the wire.
 
 #### A mode mismatch
 
@@ -1167,8 +1191,9 @@ state is deterministic and testable without a network.
 **Definitions**
 
 - `exchange mask` := the KEM mask of one rotation: which KEM slots run a new
-  KEM exchange.
-- `rekeyMask` := the caller's name for the exchange mask of one rotation.
+  KEM exchange. On the wire it travels as the list of those slots' KEM ids.
+- `rekeyMask` := in the tier-path API, the already-on KEM slots that run one
+  more exchange at an automatic step.
 - `offer` := rotation record 1: the requester's KEM public keys and target
   tier.
 - `reply` := rotation record 2: the KEM answer.
@@ -1218,7 +1243,8 @@ client's layout. Anything else is refused; there is no substitution.
 
 ### Asking for a change -- either side, any time 🌿
 
-Either endpoint may ask to rekey KEMs or to switch any algorithm on or off
+Either endpoint may ask for one more KEM exchange (new key material) or to
+switch any algorithm on or off
 (KEMs, ciphers, MACs, hashes, signatures, KDFs -- and with the KDFs,
 XHKDF's branches). The other endpoint answers with a reply or a deny. The
 switch happens for both at the same point: the epoch-ready frame.
@@ -1247,9 +1273,9 @@ epoch-ready has arrived.
 post-quantum KEMs a selection must keep on. It applies to a client's hello,
 to a request this side sends, and to a request it receives -- which is then
 answered with a deny, not dropped, so the requester never waits forever.
-Rekeying fewer KEMs never weakens the keys: every old secret stays in the
-stacks and in FOMKE's next secret. It only weakens how well a rotation
-heals after a compromise.
+Running fewer exchanges never weakens the keys: every old secret stays in the
+stacks and in FOMKE's next secret. It only weakens how well a rotation heals
+after a compromise.
 
 **Asking by name.**
 
@@ -1259,8 +1285,12 @@ var t = ameSelection(S, ciphers = [acaXChaCha20, acaGimli],
                         kdfs = [akfaBlake3, akfaGimliXof])
 frame = beginAmeTcpExchangeFrame(S, ameChangeRequest(S, t))
 
-# fresh secret for one KEM only; nothing else changes
-frame = beginAmeTcpExchangeFrame(S, ameRekeyRequest(S, [akaLightSaber]))
+# one more LightSaber exchange: new key material, nothing else changes
+frame = beginAmeTcpExchangeFrame(S, ameAddExchangeRequest(S, [akaLightSaber]))
+
+# the same, proved with signatures instead of the session tag
+frame = beginAmeTcpExchangeFrame(S,
+  ameAddExchangeRequest(S, [akaLightSaber], signed = true))
 
 # on the requester, when the answer arrives:
 ready = finishAmeTcpExchangeFrame(S, answer)   # empty = denied
@@ -1269,7 +1299,37 @@ if ready.len == 0: echo S.lastExchangeDenial   # why
 
 A family left out of `ameSelection` keeps its current selection. Naming an
 algorithm twice selects two instances of it. A KEM the change newly
-switches on always gets a fresh secret.
+switches on always runs an exchange; `exchanges = [..]` adds more.
+
+**Adding, not replacing.** One more exchange never throws old key material
+away. Its secret is ADDED to that KEM's stack, which already holds a one-way
+image of every secret the KEM produced before, and the new epoch's FOMKE keys
+come from FOMKE's carried secret plus all stacks. Only old MESSAGE keys are
+erased (forward secrecy). A fresh start with none of the old secrets is a new
+handshake.
+
+```text
+  stack(LightSaber)   = image of every LightSaber secret so far
+  one more exchange   -> stack' = image of (stack, fresh secret)
+  carried secret + all stacks -> XHKDF -> new FOMKE keys
+```
+
+**The request on the wire.** The KEMs that run an exchange travel as their
+one-byte ids, not as bit positions:
+
+```text
+  tier id (u32 LE) | 6 masks | n | id 1 .. id n | proof | tag len | padding
+  4                  6         1   n              1       1         1
+
+  "one more LightSaber"        n = 1   0B
+  "both X25519 instances"      n = 2   0F 0F
+```
+
+Both ends turn the ids back into slots with one rule, so both always feed
+the same stacks: each id takes an instance of that KEM that the target
+switches on -- one being switched on NOW first (it has no secret yet), then
+the lowest one already on. Naming a KEM more often than the target has it on
+is refused.
 
 The session's tier path (see triggers) still schedules AUTOMATIC steps, but
 it no longer limits what either side may ask for.
@@ -1393,8 +1453,9 @@ check clientDone.auth.exchangeBinder != secret
 ```
 
 The binder is derived from the PSK, the CS if present, and the finished
-transcript, under its own label. It is NOT the same bytes as
-`exchangeAuthenticationKey`, the MAC key that tags offers and replies in AM1P.
+transcript, under its own label. It is NOT the key that proves in-session
+requests (that one comes from the current epoch, see "Proving an in-session
+request").
 One secret with two jobs is how a proof about one job silently stops holding
 for the other.
 

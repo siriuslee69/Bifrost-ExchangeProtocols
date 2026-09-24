@@ -8,6 +8,10 @@
 ##              was written in; bytes out of order are refused
 ##   repeats    two X25519 in one layout are two instances with own keys
 ##   by name    a request names algorithms; the bits follow from the layout
+##   ids        the KEMs that run an exchange travel as their ids; each id
+##              feeds an instance being switched on first, then the lowest
+##   proof      default: a tag under the current epoch (the AM1P way);
+##              signed on request or when `ameSignedExchanges` says so
 ##   change     ciphers, MACs, KDFs (and XHKDF's branches) switch together,
 ##              at the confirmation, on both sides
 ##   deny       a request below the responder's minimum gets a deny; the
@@ -130,12 +134,12 @@ suite "AME layouts: one order":
     check keys.publicKeys[0] != keys.publicKeys[1]
 
 suite "AME change requests":
-  # {.testKind: tkIntegration, covers: "ameRekeyRequest".}
-  test "one KEM is rekeyed by name":
+  # {.testKind: tkIntegration, covers: "ameAddExchangeRequest".}
+  test "one more exchange for one KEM, by name, adds to its stack":
     var
       p: tuple[a, b: AmeSession] = pairSessions()
       before: uint32 = p.a.auth.current.exchange.generation[0]
-    switchVia(p.a, p.b, ameRekeyRequest(p.a, [akaFireSaber]))
+    switchVia(p.a, p.b, ameAddExchangeRequest(p.a, [akaFireSaber]))
     check p.a.auth.current.epochId == 2'u32
     check p.b.auth.current.epochId == 2'u32
     check p.a.auth.current.exchange.generation[0] == before + 1'u32
@@ -203,7 +207,7 @@ suite "AME change requests: deny and wait":
     var
       p: tuple[a, b: AmeSession] = pairSessions()
       offer: ByteSeq = beginAmeTcpExchangeFrame(p.a,
-        ameRekeyRequest(p.a, [akaFireSaber]))
+        ameAddExchangeRequest(p.a, [akaFireSaber]))
       reply: ByteSeq = @[]
       ready: ByteSeq = @[]
     expect ValueError:
@@ -217,3 +221,96 @@ suite "AME change requests: deny and wait":
     check sealAmeTcpFrame(p.a, [byte 3]).len > 0
     confirmAmeTcpExchangeFrame(p.b, ready)
     check sealAmeTcpFrame(p.b, [byte 4]).len > 0
+
+suite "AME exchange requests: ids on the wire":
+  # {.testKind: tkUnit, covers: "encodeAmeExchangeRequest".}
+  test "the KEMs that run an exchange travel as their ids":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+      r: AmeExchangeRequest = default(AmeExchangeRequest)
+      bytes: ByteSeq = @[]
+    ## Switch the second FireSaber on (it must run an exchange) and ask for
+    ## one more on the first: two exchanges, both FireSaber.
+    r = ameChangeRequest(p.a, ameSelection(p.a,
+      kems = [akaFireSaber, akaFireSaber]), exchanges = [akaFireSaber])
+    bytes = encodeAmeExchangeRequest(r)
+    ## tier (10) | n | ids | proof | tag length | padding
+    check bytes.len == ameExchangeRequestFixedLen + 2
+    check bytes[10] == 2'u8
+    check bytes[11] == 0x01'u8
+    check bytes[12] == 0x01'u8
+    check bytes[13] == uint8(ord(aepSession))
+
+  # {.testKind: tkEdgeCase, covers: "exchangeMaskFromIds".}
+  test "an id feeds the instance being switched on before one already on":
+    var
+      L: AmeKemAlgorithms = initAmeKemAlgorithms([akaX25519, akaX25519])
+    ## Only the first X25519 is on; the target switches the second on too.
+    check exchangeMaskFromIds(L, 0b11000000'u8, 0b10000000'u8,
+      [akaX25519]) == 0b01000000'u8
+    check exchangeMaskFromIds(L, 0b11000000'u8, 0b10000000'u8,
+      [akaX25519, akaX25519]) == 0b11000000'u8
+    ## Both on already: the lowest one.
+    check exchangeMaskFromIds(L, 0b11000000'u8, 0b11000000'u8,
+      [akaX25519]) == 0b10000000'u8
+    expect ValueError:
+      discard exchangeMaskFromIds(L, 0b10000000'u8, 0b10000000'u8,
+        [akaX25519, akaX25519])
+
+  # {.testKind: tkEdgeCase, covers: "decodeAmeExchangeRequest".}
+  test "a request naming a KEM the target does not switch on is refused":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+      bytes: ByteSeq = encodeAmeExchangeRequest(
+        ameAddExchangeRequest(p.a, [akaFireSaber]))
+    bytes[11] = uint8(ord(akaX25519))   # X25519 is in the layout, but off
+    expect ValueError:
+      discard decodeAmeExchangeRequest(p.a.auth.current.layout.kems,
+        p.a.auth.current.tier.masks.kem, bytes)
+
+suite "AME exchange requests: proof":
+  # {.testKind: tkIntegration, covers: "proveExchangeSubject|exchangeProofKey".}
+  test "by default a request is proved with the session tag":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+      r: AmeExchangeRequest = ameAddExchangeRequest(p.a, [akaFireSaber])
+    check r.proof == aepSession
+    switchVia(p.a, p.b, r)
+    check p.b.auth.current.epochId == 2'u32
+    check talks(p.a, p.b)
+
+  # {.testKind: tkIntegration, covers: "proveExchangeSubject".}
+  test "signed = true proves it with signatures instead":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+    switchVia(p.a, p.b, ameAddExchangeRequest(p.a, [akaFireSaber],
+      signed = true))
+    check p.b.auth.current.epochId == 2'u32
+    check talks(p.a, p.b)
+
+  # {.testKind: tkEdgeCase, covers: "exchangeProofError".}
+  test "a signed request needs signature keys":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+    p.a.auth.localSignatureSecretKeys = @[]
+    expect ValueError:
+      discard beginAmeTcpExchangeFrame(p.a, ameAddExchangeRequest(p.a,
+        [akaFireSaber], signed = true))
+
+  # {.testKind: tkIntegration, covers: "ameRequestPolicyError".}
+  test "ameSignedExchanges = true denies an unsigned request":
+    var
+      p: tuple[a, b: AmeSession] = pairSessions()
+      saved: BifrostConfig = currentBifrostConfig()
+      strict: BifrostConfig = currentBifrostConfig()
+      offer: ByteSeq = beginAmeTcpExchangeFrame(p.a,
+        ameAddExchangeRequest(p.a, [akaFireSaber]))
+      answer: ByteSeq = @[]
+    strict.ameSignedExchanges = true
+    applyBifrostConfig(strict)
+    answer = answerAmeTcpExchangeFrame(p.b, offer)
+    applyBifrostConfig(saved)
+    check finishAmeTcpExchangeFrame(p.a, answer).len == 0
+    check p.a.lastExchangeDenial.len > 0
+    check p.b.auth.current.epochId == 1'u32
+    check talks(p.a, p.b)

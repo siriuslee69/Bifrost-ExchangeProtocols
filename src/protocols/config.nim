@@ -32,6 +32,11 @@ type
       ## keep switched on -- in a client's hello and in every later change
       ## request, whichever side sends it. 0 (the default) asks for none.
       ## A request below it is answered with a deny, not a switch.
+    ameSignedExchanges*: bool
+      ## false (default): in-session exchanges are proved with a tag under
+      ## the session's own secret (the AM1P way). true: this side signs
+      ## every request it sends and denies unsigned ones -- only for
+      ## sessions that hold signature keys (AM1A, AM1S, AM1P+S).
 
 var
   bifrostRuntimeConfig*: BifrostConfig
@@ -176,6 +181,7 @@ proc applyConfigKey(c: var BifrostConfig, key, value: string) {.
     c.ameInitialTier = decodeAmeMaskTier(c.ameLayout,
       decodeConfigHex(value))
   of "ameminpqkems": c.ameMinPqKems = parseInt(value)
+  of "amesignedexchanges": c.ameSignedExchanges = parseBool(value)
   else: raise newException(ValueError, "unknown Bifrost config key: " & key)
 
 proc parseBifrostConfigText*(text: string,

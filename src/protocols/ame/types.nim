@@ -223,9 +223,29 @@ type
     selectionHash*: ByteSeq
     reason*: string
 
+  ## How the two ends prove an in-session exchange request and its reply.
+  ##
+  ##   aepSession     a tag under a key derived from the CURRENT epoch's
+  ##                  secrets (the AM1P way). Works in every mode, costs one
+  ##                  hash, and is the default: a session that already shares
+  ##                  a secret has no need to sign with it.
+  ##   aepSignatures  one signature per switched-on signature slot (the AM1S
+  ##                  way). Only for sessions that hold signature keys.
+  ##
+  ## Either way the frame carrying it is sealed by the session's ratchet, so
+  ## the public keys and ciphertexts inside are never readable on the wire.
+  AmeExchangeProof* = enum
+    aepSession = 0'u8,
+    aepSignatures = 1'u8
+
   AmeExchangeRequest* {.role: truthState.} = object
     targetTier*: AmeMaskTier
     exchangeMask*: uint8
+      ## Which KEM slots run an exchange now.
+    exchangeIds*: seq[AmeKemAlgorithm]
+      ## The same slots as their algorithms -- what travels on the wire
+      ## (`encodeAmeExchangeRequest`). Filled by `initAmeExchangeRequest`.
+    proof*: AmeExchangeProof
     params*: AmeRuntimeParams
       ## Tunables the initiator wants the next epoch to use. The responder
       ## adopts them, so both sides rotate onto the same values instead of
@@ -460,9 +480,6 @@ type
     sessionId*: uint64
     endpointRole*: AmeEndpointRole
     authenticationMode*: AmeAuthenticationMode
-    exchangeAuthenticationKey*: ByteSeq
-      ## Session-derived AM1P proof key; never the provisioned PSK. Empty in
-      ## AM1P+S, whose rotations are signed instead.
     exchangeBinder*: ByteSeq
       ## What the PROVISIONED secret contributes to every key this session
       ## will ever derive. Derived once from the AM1P shared secret (and the
@@ -476,11 +493,10 @@ type
       ## machine -- still cannot follow the session forward without the secret
       ## that was handed over out of band.
       ##
-      ## Separate from `exchangeAuthenticationKey` on purpose. That one is a
-      ## MAC key for offers and replies; this one is key-schedule input. One
+      ## Key-schedule input only. In-session exchange requests are proved with
+      ## a key derived from the current epoch (session.nim), not with this. One
       ## secret doing two jobs is how a proof about one of them stops being a
-      ## proof about the other, so they are derived under different labels and
-      ## never substituted for each other.
+      ## proof about the other.
     localSignatureSecretKeys*: seq[ByteSeq]
     peerSignaturePublicKeys*: seq[ByteSeq]
 

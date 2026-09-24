@@ -233,49 +233,75 @@ proc initAmeAuthPackage*(L: AmeSuiteLayout, t: AmeMaskTier,
   result.current.params = params
   requireAmeAuth(result)
 
-## ╭⟢ proving an epoch change
+## ╭⟢ proving an in-session exchange
 ##
-## Rotating an epoch means sending an offer and a reply, and each has to be
-## proved by the endpoint that sent it. HOW it is proved depends on what the
-## handshake established:
+## Every exchange request after the handshake (more key material, a change
+## of algorithms) is an offer and a reply, and each is proved by the side
+## that sent it. The REQUEST says how (`AmeExchangeProof`):
 ##
-##   AM1A / AM1S / AM1P+S  ->  one signature per active signature slot
-##   AM1P                  ->  one tag under the session's own exchange key
+##   aepSession (default)  one tag under a key derived from the CURRENT
+##                         epoch's secrets -- the AM1P way. Every mode can
+##                         do it; it costs one hash instead of a signature.
+##   aepSignatures         one signature per switched-on signature slot --
+##                         the AM1S way. Needs signature keys, so never AM1P.
 ##
-## AM1P sessions hold no signature keys at all, so there is nothing there to
-## sign with. Both shapes travel in the same `signatures` field, and both are
-## taken over the same subject bytes, so nothing below this point has to know
-## which one it is looking at.
+## Why the session tag is enough: only the two ends hold the current
+## epoch's secrets, so only they can make it. It is the same thing the
+## handshake proved, carried forward. And the whole request rides inside a
+## frame the ratchet already encrypts, so the public keys and ciphertexts
+## are never readable on the wire in either case.
+##
+##   current epoch secrets --[ label "AME-EXCHANGE-PROOF-v1" ]--> proof key
+##   proof key + offer bytes  --> 32-byte tag  (in the `signatures` field)
+##
+## The key changes with every epoch, so a tag from an old epoch never
+## proves a new request.
 
-proc exchangeProofKey(A: AmeAuthPackage): ByteSeq {.role: parser,
-    tag: "cryptoBoundary".} =
-  ## A: the AM1P exchange key, checked before it is used.
-  if A.exchangeAuthenticationKey.len < 32:
-    raise newException(ValueError, "AME session has no exchange proof key")
-  result = A.exchangeAuthenticationKey
+proc exchangeProofKey(S: AmeSession): ByteSeq {.role: truthBuilder,
+    tag: "cryptoBoundary|kdf".} =
+  ## S: session whose current epoch the proof key is derived from.
+  result = deriveAmeLayerKey(S.auth.current.exchange, S.auth.current.layout,
+    S.auth.current.tier, "AME-EXCHANGE-PROOF-v1", 32,
+    S.auth.current.transcriptSalt)
+
+proc exchangeProofError*(S: AmeSession, p: AmeExchangeProof): string {.
+    role: parser.} =
+  ## S/p: "" when this session can make and check proof `p`, else why not.
+  if p == aepSignatures and (S.auth.localSignatureSecretKeys.len == 0 or
+      S.auth.peerSignaturePublicKeys.len == 0):
+    result = "AME signed exchange needs signature keys on both sides " &
+      "(this session has none)"
+
+proc sessionTag(S: AmeSession, subject: openArray[uint8]): ByteSeq {.
+    role: truthBuilder, tag: "cryptoBoundary".} =
+  ## S/subject: the session-proof tag over one offer or reply.
+  var key: ByteSeq = exchangeProofKey(S)
+  result = ameMacTag(amaBlake3, key, subject, 32)
+  secureClearAmeBytes(key)
 
 proc proveExchangeSubject(S: AmeSession, t: AmeMaskTier,
-    subject: openArray[uint8]): seq[ByteSeq] {.role: truthBuilder,
-    tag: "cryptoBoundary|exchange".} =
-  ## S/t/subject: this endpoint's proof over one offer or reply.
-  if S.auth.authenticationMode == am1p:
-    return @[ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)]
+    p: AmeExchangeProof, subject: openArray[uint8]): seq[ByteSeq] {.
+    role: truthBuilder, tag: "cryptoBoundary|exchange".} =
+  ## S/t/p/subject: this endpoint's proof of kind `p` over one offer or reply.
+  if p == aepSession:
+    return @[sessionTag(S, subject)]
   result = signAmeTier(S.auth.current.layout, t, subject,
     activeAmeSignatureKeys(S.auth.current.layout, t,
       S.auth.localSignatureSecretKeys))
 
 proc exchangeSubjectProved(S: AmeSession, t: AmeMaskTier,
-    subject: openArray[uint8], P: openArray[ByteSeq]): bool {.role: parser,
+    p: AmeExchangeProof, subject: openArray[uint8],
+    P: openArray[ByteSeq]): bool {.role: parser,
     tag: "cryptoBoundary|exchange|validation".} =
-  ## S/t/subject/P: the peer's proof over one offer or reply.
+  ## S/t/p/subject/P: the peer's proof of kind `p` over one offer or reply.
   var expected: ByteSeq = @[]
-  if S.auth.authenticationMode != am1p:
+  if p == aepSignatures:
     return verifyAmeTier(S.auth.current.layout, t, subject,
       activeAmeSignatureKeys(S.auth.current.layout, t,
         S.auth.peerSignaturePublicKeys), P)
   if P.len != 1:
     return
-  expected = ameMacTag(amaBlake3, exchangeProofKey(S.auth), subject, 32)
+  expected = sessionTag(S, subject)
   result = constantTimeEqualAme(expected, P[0])
   secureClearAmeBytes(expected)
 
@@ -468,7 +494,6 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   clearEpoch(S.auth.retiring)
   clearSignatureSecretKeys(S.auth.localSignatureSecretKeys)
   S.auth.peerSignaturePublicKeys.setLen(0)
-  secureClearAmeBytes(S.auth.exchangeAuthenticationKey)
   clearPendingExchange(S.pendingExchange)
   clearEpoch(S.pendingIncoming.candidate)
   clearFomkeSendCache(S.fomkeSendCache)
@@ -476,19 +501,29 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   clearFomkeState(S.fomkeCandidate)
   S = default(AmeSession)
 
-proc ameRequestPolicyError*(S: AmeSession, target: AmeMaskTier): string {.
+proc ameRequestPolicyError*(S: AmeSession, r: AmeExchangeRequest): string {.
     role: parser.} =
-  ## S/target: a selection either side asks for -> "" when this side
-  ## accepts it, else the reason. One rule for both directions: at least
-  ## `ameMinPqKems` post-quantum KEMs stay switched on.
-  result = ameTierPolicyError(S.auth.current.layout, target,
+  ## S/r: a request either side makes -> "" when this side accepts it, else
+  ## the reason. One rule for both directions:
+  ##
+  ##   at least `ameMinPqKems` post-quantum KEMs stay switched on
+  ##   the proof is one this session can check (signatures need keys)
+  ##   `ameSignedExchanges = true` -> only signed requests
+  result = ameTierPolicyError(S.auth.current.layout, r.targetTier,
     currentBifrostConfig().ameMinPqKems)
+  if result.len > 0:
+    return
+  result = exchangeProofError(S, r.proof)
+  if result.len == 0 and r.proof == aepSession and
+      currentBifrostConfig().ameSignedExchanges:
+    result = "AME this side accepts only signed exchange requests " &
+      "(ameSignedExchanges)"
 
-proc requireAmeRequestPolicy(S: AmeSession, target: AmeMaskTier) {.
+proc requireAmeRequestPolicy(S: AmeSession, r: AmeExchangeRequest) {.
     role: parser.} =
-  ## S/target: refuses to SEND a request this side would itself deny.
+  ## S/r: refuses to SEND (or answer) a request this side would deny.
   var
-    reason: string = ameRequestPolicyError(S, target)
+    reason: string = ameRequestPolicyError(S, r)
   if reason.len > 0:
     raise newException(ValueError, reason)
 
@@ -504,7 +539,7 @@ proc cancelAmeSessionExchange*(S: var AmeSession) {.role: actor.} =
 
 proc beginAmeSessionExchange*(S: var AmeSession,
     r: AmeExchangeRequest): AmeExchangeOffer {.role: orchestrator.} =
-  ## S/r: connection, target tier, and exact fresh/rekey KEM slots.
+  ## S/r: connection, target tier, and the KEM slots that run an exchange.
   ## Only one epoch transition may be in flight in either direction. Starting
   ## an outgoing exchange while a peer candidate epoch is waiting would rotate
   ## both endpoints to the same epoch id from different key material, so a
@@ -521,6 +556,14 @@ proc beginAmeSessionExchange*(S: var AmeSession,
     signatureTier: AmeMaskTier = default(AmeMaskTier)
     targetIndex: int = 0
   r.params = S.pendingParams
+  if currentBifrostConfig().ameSignedExchanges:
+    r.proof = aepSignatures
+  ## The peer reads the KEMs back from their ids (see exchange_paths.nim,
+  ## "ids on the wire"); take the same slots here, so both feed the same
+  ## stacks even when a KEM sits in the layout twice.
+  r = initAmeExchangeRequest(S.auth.current.layout.kems, r.targetTier,
+    canonicalExchangeMask(S.auth.current.layout.kems, r.targetTier.masks.kem,
+    S.auth.current.tier.masks.kem, r.exchangeMask), r.params, r.proof)
   if S.pendingExchange.active:
     raise newException(ValueError, "AME already has a pending exchange")
   if S.pendingIncoming.active:
@@ -530,7 +573,7 @@ proc beginAmeSessionExchange*(S: var AmeSession,
   ## algorithms, fewer, different ones -- as long as it meets this side's own
   ## minimum. The session's tier path only schedules AUTOMATIC steps; it no
   ## longer limits what either side may request.
-  requireAmeRequestPolicy(S, r.targetTier)
+  requireAmeRequestPolicy(S, r)
   validateAmeTierTransition(S.auth.current.layout, S.auth.current.tier,
     r.targetTier, r.exchangeMask, S.auth.current.exchange.activeMask)
   if S.path.inFlightTierId != 0'u32:
@@ -543,7 +586,7 @@ proc beginAmeSessionExchange*(S: var AmeSession,
     S.auth.current.epochId, r, keys.publicKeys)
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, r.targetTier)
-  result.signatures = proveExchangeSubject(S, signatureTier,
+  result.signatures = proveExchangeSubject(S, signatureTier, r.proof,
     encodeAmeExchangeOfferSubject(result))
   S.pendingExchange.active = true
   S.pendingExchange.offer = result
@@ -586,17 +629,17 @@ proc answerAmeSessionExchange*(S: var AmeSession, o: AmeExchangeOffer):
   ## The frame layer answers a refusable request with a deny before it gets
   ## here (`ameExchangeDenyReason`); a direct caller gets the same rule as an
   ## error.
-  requireAmeRequestPolicy(S, o.request.targetTier)
+  requireAmeRequestPolicy(S, o.request)
   validateAmeTierTransition(S.auth.current.layout, S.auth.current.tier,
     o.request.targetTier, o.request.exchangeMask,
     S.auth.current.exchange.activeMask)
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, o.request.targetTier)
-  if not exchangeSubjectProved(S, signatureTier,
+  if not exchangeSubjectProved(S, signatureTier, o.request.proof,
       encodeAmeExchangeOfferSubject(o), o.signatures):
     raise newException(ValueError, "AME exchange offer proof is invalid")
   answer = answerAmeExchangeOffer(S.auth.current.layout.kems, o)
-  answer.reply.signatures = proveExchangeSubject(S, signatureTier,
+  answer.reply.signatures = proveExchangeSubject(S, signatureTier, o.request.proof,
     encodeAmeExchangeReplySubject(o, answer.reply))
   S.pendingIncoming.active = true
   S.pendingIncoming.requestId = o.requestId
@@ -650,7 +693,7 @@ proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     raise newException(ValueError, "AME pending exchange base epoch changed")
   signatureTier = transitionAmeSignatureTier(S.auth.current.layout,
     S.auth.current.tier, r.request.targetTier)
-  if not exchangeSubjectProved(S, signatureTier,
+  if not exchangeSubjectProved(S, signatureTier, r.request.proof,
       encodeAmeExchangeReplySubject(S.pendingExchange.offer, r),
       r.signatures):
     raise newException(ValueError, "AME exchange reply proof is invalid")
@@ -740,7 +783,7 @@ proc ameExchangeDenyReason*(S: AmeSession, o: AmeExchangeOffer): string {.
     role: parser.} =
   ## S/o: an incoming request -> "" when this side will switch to it, else
   ## the reason it answers with a deny instead.
-  result = ameRequestPolicyError(S, o.request.targetTier)
+  result = ameRequestPolicyError(S, o.request)
   if result.len > 0:
     return
   try:
@@ -759,79 +802,6 @@ proc denyAmeSessionExchange*(S: var AmeSession, requestId: uint32,
     raise newException(ValueError, "AME deny does not match the pending request")
   cancelAmeSessionExchange(S)
   S.lastExchangeDenial = reason
-
-## ╭⟢ asking for a change, by algorithm name
-##
-## A request is built from the algorithms themselves; which bit each one
-## sits on is worked out against the session's layout (always in wire-id
-## order, so both ends agree on it):
-##
-##   var t = ameSelection(S, ciphers = [acaXChaCha20, acaGimli],
-##                           kdfs = [akfaBlake3, akfaGimliXof])
-##   frame = beginAmeTcpExchangeFrame(S, ameChangeRequest(S, t))
-##
-##   frame = beginAmeTcpExchangeFrame(S, ameRekeyRequest(S, [akaLightSaber]))
-##
-## A family left out keeps its current selection. Naming an algorithm twice
-## selects two instances of it (a layout may hold X25519 twice; each has
-## its own keys). A KEM the change newly switches on always gets a fresh
-## secret; `rekey` asks for fresh secrets for ones that are already on.
-
-proc ameManualTierId(S: AmeSession): uint32 {.role: helper.} =
-  ## S: a tier id for a selection asked for by name. Kept apart from the
-  ## small ids a tier path uses, so the two can never be mistaken.
-  result = 0x8000_0000'u32 or (S.auth.current.epochId + 1'u32)
-
-proc keepOrSelect[P, E](family: P, current: uint8,
-    want: openArray[E]): uint8 {.role: helper.} =
-  ## family/current/want: the new bits for one family -- the current ones
-  ## when nothing is named.
-  if want.len == 0:
-    return current
-  result = ameSelectionMask(family, want)
-
-proc ameSelection*(S: AmeSession,
-    kems: openArray[AmeKemAlgorithm] = [],
-    ciphers: openArray[AmeCipherAlgorithm] = [],
-    macs: openArray[AmeMacAlgorithm] = [],
-    hashes: openArray[AmeHashAlgorithm] = [],
-    signatures: openArray[AmeSignatureAlgorithm] = [],
-    kdfs: openArray[AmeKdfAlgorithm] = []): AmeMaskTier {.
-    role: configurator, tag: "appApi".} =
-  ## S/kems/.../kdfs: the algorithms to have switched on after the change,
-  ## family by family -> the selection to ask for. Every named algorithm
-  ## must be in the session's layout.
-  var
-    L: AmeSuiteLayout = S.auth.current.layout
-    now: AmeTierMasks = S.auth.current.tier.masks
-  result = initAmeMaskTier(L, ameManualTierId(S), initAmeTierMasks(
-    keepOrSelect(L.kems, now.kem, kems),
-    keepOrSelect(L.ciphers, now.cipher, ciphers),
-    keepOrSelect(L.macs, now.mac, macs),
-    keepOrSelect(L.hashes, now.hash, hashes),
-    keepOrSelect(L.signatures, now.signature, signatures),
-    keepOrSelect(L.kdfs, now.kdf, kdfs)))
-
-proc ameChangeRequest*(S: AmeSession, target: AmeMaskTier,
-    rekey: openArray[AmeKemAlgorithm] = []): AmeExchangeRequest {.
-    role: configurator, tag: "appApi".} =
-  ## S/target/rekey: a request to switch to `target`, with fresh secrets for
-  ## every KEM it newly switches on plus the ones named in `rekey`.
-  var
-    L: AmeSuiteLayout = S.auth.current.layout
-    fresh: uint8 = target.masks.kem and not S.auth.current.tier.masks.kem
-  if rekey.len > 0:
-    fresh = fresh or ameSelectionMask(L.kems, rekey)
-  result = initAmeExchangeRequest(L.kems, target, fresh, S.pendingParams)
-
-proc ameRekeyRequest*(S: AmeSession,
-    rekey: openArray[AmeKemAlgorithm]): AmeExchangeRequest {.
-    role: configurator, tag: "appApi".} =
-  ## S/rekey: fresh secrets for the named KEMs, nothing else changes.
-  ##
-  ##   ameRekeyRequest(S, [akaLightSaber])          one KEM
-  ##   ameRekeyRequest(S, [akaX25519, akaX25519])   both X25519 instances
-  result = ameChangeRequest(S, S.auth.current.tier, rekey)
 
 ## ╭⟢ what the path profile says this session should send with
 ##

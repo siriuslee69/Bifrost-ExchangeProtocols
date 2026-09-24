@@ -11,7 +11,9 @@ import runePragmas
 
 const
   ameMaxExchangeComponentLen* = 16_777_216'u32
-  ameExchangeRequestLen* = 13
+  ameExchangeRequestFixedLen* = 14
+    ## tier (4 + 6) | id count (1) | proof | tag length | padding (3);
+    ## the ids themselves follow the count.
 
 proc slotMask*(i: int): uint8 {.role: helper.} =
   ## i: zero-based path slot. Slot 0 is the most-significant bit.
@@ -121,13 +123,25 @@ proc ameAuthTagLenFromId*(id: uint8): AmeAuthTagLen {.role: parser.} =
   else:
     raise newException(ValueError, "AME auth tag length is not 16, 24 or 32")
 
+proc exchangeIds*(A: AmeKemAlgorithms, m: uint8): seq[AmeKemAlgorithm] {.
+    role: parser.} =
+  ## A/m: an exchange mask -> the algorithm of every slot in it, in slot
+  ## (and so wire-id) order.
+  var i: int = 0
+  while i < int(A.length):
+    if algorithmSlotSelected(m, i):
+      result.add(A.algorithms[i])
+    i = i + 1
+
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
     exchangeMask: uint8,
-    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32)):
+    params: AmeRuntimeParams = AmeRuntimeParams(authTagLen: aatl32),
+    proof: AmeExchangeProof = aepSession):
     AmeExchangeRequest {.role: configurator.} =
   ## A/targetTier: immutable KEM layout and complete next-epoch selection.
   ## exchangeMask: target KEM slots receiving fresh secrets; zero is permitted.
   ## params: tunables the next epoch should adopt on both sides.
+  ## proof: how the request and its reply are proved (AmeExchangeProof).
   var occupied: uint8 = validAmeKemMask(A)
   requireExchangeTierShape(targetTier)
   if (targetTier.masks.kem and not occupied) != 0'u8:
@@ -137,7 +151,9 @@ proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
       "AME exchange mask must be contained in the target KEM mask")
   result.targetTier = targetTier
   result.exchangeMask = exchangeMask
+  result.exchangeIds = exchangeIds(A, exchangeMask)
   result.params = params
+  result.proof = proof
 
 proc initAmeExchangeRequest*(A: AmeKemAlgorithms, targetTier: AmeMaskTier,
     I: openArray[int]): AmeExchangeRequest {.role: configurator.} =
@@ -215,21 +231,95 @@ proc appendExchangeTier(A: var ByteSeq, t: AmeMaskTier) {.
   A.add(t.masks.signature)
   A.add(t.masks.kdf)
 
+## ╭⟢ which KEMs run an exchange: ids on the wire
+##
+## A request names the KEMs that run an exchange now by their one-byte ids,
+## not by bit position:
+##
+##   tier id (u32 LE) | 6 masks | n | id 1 .. id n | proof | tag len | padding
+##
+##   "one more LightSaber exchange"      n = 1   0B
+##   "both X25519 instances"             n = 2   0F 0F
+##
+## Both ends turn the ids back into slots the same way. Each id takes one
+## instance of that KEM that the target selection switches on:
+##
+##   1. an instance being switched on NOW first (it has no secret yet and
+##      must get one),
+##   2. then the lowest instance that is already on.
+##
+## Naming a KEM more often than the target switches it on is refused. The
+## requester runs the same rule on its own request before sending it
+## (`canonicalExchangeMask`), so both ends always feed the same stacks.
+
+proc firstSlotOf(A: AmeKemAlgorithms, a: AmeKemAlgorithm,
+    allowed: uint8): int {.role: parser.} =
+  ## A/a/allowed: the lowest slot holding `a` inside `allowed`, or -1.
+  var i: int = 0
+  result = -1
+  while i < int(A.length):
+    if A.algorithms[i] == a and algorithmSlotSelected(allowed, i):
+      return i
+    i = i + 1
+
+proc exchangeSlotFor(A: AmeKemAlgorithms, a: AmeKemAlgorithm,
+    target, current, taken: uint8): int {.role: parser.} =
+  ## A/a/target/current/taken: the slot one named id feeds (rule above).
+  result = firstSlotOf(A, a, target and not current and not taken)
+  if result < 0:
+    result = firstSlotOf(A, a, target and not taken)
+  if result < 0:
+    raise newException(ValueError, "AME exchange names " & $a &
+      " more often than the target selection switches it on")
+
+proc exchangeMaskFromIds*(A: AmeKemAlgorithms, target, current: uint8,
+    ids: openArray[AmeKemAlgorithm]): uint8 {.role: parser.} =
+  ## A/target/current: layout, target and current KEM masks.
+  ## ids: the KEMs that run an exchange now -> the slots they feed.
+  for a in ids:
+    result = result or slotMask(exchangeSlotFor(A, a, target, current, result))
+
+proc canonicalExchangeMask*(A: AmeKemAlgorithms, target, current,
+    m: uint8): uint8 {.role: parser.} =
+  ## A/target/current/m: the mask the PEER will read back from `m`'s ids.
+  ## Differs from `m` only between instances of the same KEM.
+  result = exchangeMaskFromIds(A, target, current, exchangeIds(A, m))
+
+proc exchangeProofFromId(id: uint8): AmeExchangeProof {.role: parser.} =
+  ## id: the proof byte of a request.
+  case id
+  of 0'u8: result = aepSession
+  of 1'u8: result = aepSignatures
+  else:
+    raise newException(ValueError, "AME exchange proof kind is not 0 or 1")
+
 proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
     role: dataWriter.} =
-  ## r: target tier and independent fresh-KEM mask.
-  if (r.exchangeMask and not r.targetTier.masks.kem) != 0'u8:
+  ## r: request -> the bytes in the box above.
+  if (r.exchangeMask and not r.targetTier.masks.kem) != 0'u8 or
+      r.exchangeIds.len != selectedAlgorithmCount(r):
     raise newException(ValueError, "AME exchange request mask is invalid")
   appendExchangeTier(result, r.targetTier)
-  result.add(r.exchangeMask)
+  result.add(uint8(r.exchangeIds.len))
+  for a in r.exchangeIds:
+    result.add(uint8(ord(a)))
+  result.add(uint8(ord(r.proof)))
   result.add(uint8(ord(r.params.authTagLen)))
   result.add(uint8(ord(r.params.padding)))
 
-proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
+proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms, current: uint8,
     B: openArray[uint8]): AmeExchangeRequest {.role: parser.} =
-  ## A/B: immutable KEM layout and complete target-tier request bytes.
-  var t: AmeMaskTier
-  if B.len != ameExchangeRequestLen:
+  ## A/current/B: layout, the KEM mask switched on right now (0 in a
+  ## handshake), and request bytes.
+  var
+    t: AmeMaskTier = default(AmeMaskTier)
+    n: int = 0
+    ids: seq[AmeKemAlgorithm] = @[]
+    o: int = 0
+  if B.len < ameExchangeRequestFixedLen:
+    raise newException(ValueError, "AME exchange request is truncated")
+  n = int(B[10])
+  if n > ameMaxAlgorithmSlots or B.len != ameExchangeRequestFixedLen + n:
     raise newException(ValueError, "AME exchange request length mismatch")
   t.tierId = uint32(B[0]) or (uint32(B[1]) shl 8) or
     (uint32(B[2]) shl 16) or (uint32(B[3]) shl 24)
@@ -239,9 +329,14 @@ proc decodeAmeExchangeRequest*(A: AmeKemAlgorithms,
   t.masks.hash = B[7]
   t.masks.signature = B[8]
   t.masks.kdf = B[9]
-  result = initAmeExchangeRequest(A, t, B[10],
-    AmeRuntimeParams(authTagLen: ameAuthTagLenFromId(B[11]),
-    padding: amePaddingPolicyFromId(B[12])))
+  while ids.len < n:
+    ids.add(algorithmFromId(B[11 + ids.len]))
+  o = 11 + n
+  result = initAmeExchangeRequest(A, t,
+    exchangeMaskFromIds(A, t.masks.kem, current, ids),
+    AmeRuntimeParams(authTagLen: ameAuthTagLenFromId(B[o + 1]),
+    padding: amePaddingPolicyFromId(B[o + 2])),
+    exchangeProofFromId(B[o]))
 
 proc generateAmeExchangeKeys*(A: AmeKemAlgorithms,
     r: AmeExchangeRequest): AmeExchangeKeys {.role: orchestrator.} =
@@ -409,9 +504,9 @@ proc encodeAmeExchangeOffer*(o: AmeExchangeOffer): ByteSeq {.
   for signature in o.signatures:
     appendPathBytes(result, signature)
 
-proc decodeAmeExchangeOffer*(A: AmeKemAlgorithms,
+proc decodeAmeExchangeOffer*(A: AmeKemAlgorithms, current: uint8,
     B: openArray[uint8]): AmeExchangeOffer {.role: parser.} =
-  ## A/B: immutable layout and canonical exchange offer bytes.
+  ## A/current/B: layout, KEM mask switched on now (0 in a handshake), bytes.
   var
     cursor: int = 0
     count: int = 0
@@ -420,7 +515,7 @@ proc decodeAmeExchangeOffer*(A: AmeKemAlgorithms,
   result.requestId = readPathU32(B, cursor, "exchange request id")
   result.baseEpochId = readPathU32(B, cursor, "exchange base epoch")
   requestBytes = readPathBytes(B, cursor, "exchange request")
-  result.request = decodeAmeExchangeRequest(A, requestBytes)
+  result.request = decodeAmeExchangeRequest(A, current, requestBytes)
   count = checkedAmeWireLen(readPathU32(B, cursor,
     "exchange public-key count"), uint32(ameMaxAlgorithmSlots),
     "exchange public-key count")
@@ -457,9 +552,9 @@ proc encodeAmeExchangeReply*(r: AmeExchangeReply): ByteSeq {.
   for signature in r.signatures:
     appendPathBytes(result, signature)
 
-proc decodeAmeExchangeReply*(A: AmeKemAlgorithms,
+proc decodeAmeExchangeReply*(A: AmeKemAlgorithms, current: uint8,
     B: openArray[uint8]): AmeExchangeReply {.role: parser.} =
-  ## A/B: immutable layout and canonical exchange reply bytes.
+  ## A/current/B: layout, KEM mask switched on now (0 in a handshake), bytes.
   var
     cursor: int = 0
     count: int = 0
@@ -468,7 +563,7 @@ proc decodeAmeExchangeReply*(A: AmeKemAlgorithms,
   result.requestId = readPathU32(B, cursor, "exchange reply id")
   result.baseEpochId = readPathU32(B, cursor, "exchange reply base epoch")
   requestBytes = readPathBytes(B, cursor, "exchange reply request")
-  result.request = decodeAmeExchangeRequest(A, requestBytes)
+  result.request = decodeAmeExchangeRequest(A, current, requestBytes)
   count = checkedAmeWireLen(readPathU32(B, cursor,
     "exchange envelope count"), uint32(ameMaxAlgorithmSlots),
     "exchange envelope count")

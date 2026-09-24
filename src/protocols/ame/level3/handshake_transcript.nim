@@ -255,7 +255,7 @@ proc openAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication): string {.
     secureClearAmeBytes(material)
     if not opened.ok:
       return "client hello did not open under the shared secret"
-    h.offer = decodeAmeExchangeOffer(h.layout.kems, opened.payload)
+    h.offer = decodeAmeExchangeOffer(h.layout.kems, 0'u8, opened.payload)
   except ValueError as e:
     secureClearAmeBytes(material)
     return "client hello sealed offer is malformed: " & e.msg

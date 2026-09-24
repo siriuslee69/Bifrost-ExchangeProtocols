@@ -533,7 +533,8 @@ suite "AME private handshake":
     var
       p: Pair = newPair("zero")
       client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
-      server: tuple[ok: bool, state: AmeServerHandshake, err: string]
+      server: tuple[ok: bool, state: AmeServerHandshake, err: string] =
+        default(tuple[ok: bool, state: AmeServerHandshake, err: string])
     client.hello.sessionId = 0'u64
     server = answerAmeHandshake(client.hello, [handshakePath(p.layout,
       p.tier)], p.auth, p.serverCert, p.serverKey)
@@ -656,21 +657,12 @@ suite "AME handshake transport":
     ## No signature key was involved anywhere.
     check clientDone.auth.peerSignaturePublicKeys.len == 0
     check serverDone.auth.peerSignaturePublicKeys.len == 0
-    ## The exchange proof key is derived, shared, and is not the secret.
-    check clientDone.auth.exchangeAuthenticationKey.len == 32
-    check clientDone.auth.exchangeAuthenticationKey ==
-      serverDone.auth.exchangeAuthenticationKey
-    check clientDone.auth.exchangeAuthenticationKey != secret
-    ## And so is the binder, which is the OTHER thing the provisioned secret
-    ## now does: it goes into every key rather than only into the proof. Both
-    ## sides must reach the same one or nothing they seal will open.
+    ## The binder is derived, shared, and is not the secret. It is what the
+    ## provisioned secret does after the handshake: it goes into every key.
+    ## Both sides must reach the same one or nothing they seal will open.
     check clientDone.auth.exchangeBinder.len == 32
     check clientDone.auth.exchangeBinder == serverDone.auth.exchangeBinder
     check clientDone.auth.exchangeBinder != secret
-    ## Two jobs, two values. One secret doing both is how a proof about one of
-    ## them quietly stops being a proof about the other.
-    check clientDone.auth.exchangeBinder !=
-      clientDone.auth.exchangeAuthenticationKey
 
 
   # {.testKind: tkRegression, covers: "exchangeBinderKey", pins: "a certificate handshake must not invent a provisioned secret it was never given".}
@@ -720,7 +712,8 @@ suite "AME handshake transport":
       certified: Pair = newPair("am1p-mismatch")
       certClient: AmeClientHandshake = beginAmeHandshake(73'u64,
         certified.layout, certified.tier)
-      certServer: tuple[ok: bool, state: AmeServerHandshake, err: string]
+      certServer: tuple[ok: bool, state: AmeServerHandshake, err: string] =
+        default(tuple[ok: bool, state: AmeServerHandshake, err: string])
     check server.ok
     ## A peer holding a different secret cannot open the block at all -- the
     ## binder went into the key schedule, so this fails before any proof.

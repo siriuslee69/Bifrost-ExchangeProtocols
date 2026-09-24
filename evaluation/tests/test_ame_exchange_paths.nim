@@ -85,8 +85,9 @@ suite "AME immutable layouts and mask tiers":
       request: AmeExchangeRequest = initAmeExchangeRequest(L.kems, t,
         0b10100000'u8)
       encoded: ByteSeq = encodeAmeExchangeRequest(request)
-      decoded: AmeExchangeRequest = decodeAmeExchangeRequest(L.kems, encoded)
-    check encoded.len == ameExchangeRequestLen
+      decoded: AmeExchangeRequest = decodeAmeExchangeRequest(L.kems, 0'u8,
+        encoded)
+    check encoded.len == ameExchangeRequestFixedLen + 2
     check tiersEquivalent(decoded.targetTier, t)
     check decoded.exchangeMask == 0b10100000'u8
     check selectedAlgorithmCount(decoded) == 2

@@ -1,8 +1,15 @@
 # Progress
 
-Commit Message: Change requests from either side with deny and wait; layouts in wire-id order; hello accepts fitting layouts
+Commit Message: In-session requests: KEM ids on the wire, session-tag proof by default, ameAddExchangeRequest
 
 Features (Planned):
+- DECIDE: `ameSendTransaction` rewinds the FOMKE ratchet when a socket write
+  raises. If part of the frame already left, the next message reuses that
+  message key + nonce (two-time pad on the XOR stream). Proposed: never
+  rewind; a failed send burns its index. Asked the user.
+- DECIDE: the session-tag proof of in-session requests mostly repeats the
+  FOMKE frame tag (both prove "holds the current epoch"). Keep, or drop it
+  and let the frame tag be the proof. Asked the user.
 - PUSH Nimble-Tasks and Tyr-Crypto, then `nimble updateSubmodules`. Until
   the pins move, a fresh clone (and the nix build, which uses submodules/)
   lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the

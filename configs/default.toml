@@ -181,3 +181,9 @@ ameInitialTierHex = ""
 # switched on: a client's hello, and every later change request from either
 # side. A request below it is answered with a deny. 0 = no minimum.
 ameMinPqKems = 0
+# How in-session exchange requests (more key material, algorithm changes)
+# are proved. false: a tag under a key from the session's own secret -- the
+# AM1P way, one hash, works in every mode. true: signatures from this side's
+# signature keys, and unsigned requests from the peer are denied (AM1A,
+# AM1S and AM1P+S only). Either way the request travels encrypted.
+ameSignedExchanges = false
