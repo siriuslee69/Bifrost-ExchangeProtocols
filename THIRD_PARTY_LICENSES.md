@@ -14,7 +14,7 @@ history, and license files stay separate from Bifrost source.
 | submodules/Fylgia-Utils | shared Nim utility helpers    | LICENSE.txt: Unlicense     |
 | submodules/Tyr-Crypto   | crypto primitives and wrappers| nimble file: Unlicense     |
 | submodules/SIMD-Nexus   | SIMD helper layer             | LICENSE: Unlicense         |
-| submodules/Eir-CompressionAndECC | compression/ECC helpers | nimble file: UNLICENSED |
+| submodules/Eir-CompressionAndECC | compression/ECC helpers | LICENSE: Unlicense (from ed3ba8a) |
 | submodules/Rune-Pragmas  | role/tag pragma definitions   | UNLICENSE: Unlicense       |
 | submodules/Nimble-Tasks  | shared nimble tasks (build)   | UNLICENSE: Unlicense       |
 | submodules/Otter-RepoEvaluation | evaluation tooling (dev) | LICENSE.txt: Unlicense |
@@ -24,10 +24,9 @@ history, and license files stay separate from Bifrost source.
 Release rule:
 - keep these dependencies as submodules, not copied source;
 - keep their upstream license files with the submodule checkout;
-- do not redistribute copied source or binaries containing
-  `submodules/Eir-CompressionAndECC` by default because its package metadata
-  marks it as `UNLICENSED` and no root license file is present in the currently
-  pinned checkout;
+- `submodules/Eir-CompressionAndECC` is Unlicense from commit ed3ba8a on; a
+  pin older than that is the earlier proprietary license, so release from a
+  pin at or after it. Its vendored LZ4 and Zstandard keep their BSD licenses;
 - for any private/unlicensed submodule, either exclude it from public release
   artifacts or obtain and record explicit redistribution permission first.
 

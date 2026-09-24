@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Duplicate DAC LE helpers removed; buildAndroid finds the repo SDK; nesting, layout and coverage passes done
+Commit Message: Pins moved to the pushed Nimble-Tasks and Tyr-Crypto; fresh clone and nix-build verified; Eir is Unlicense
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -8,11 +8,8 @@ Features (Planned):
   Tls13ControlledResult.clientState/serverState/err). Each is a result for
   the caller and is read only inside `test "..."` blocks, which Otter does
   not see as routines. Not dead; left as they are.
-- PUSH Nimble-Tasks and Tyr-Crypto (tested; blocked on permission), then
-  `nimble updateSubmodules`. Until
-  the pins move, a fresh clone (and the nix build, which uses submodules/)
-  lacks Nimble-Tasks/src/preset.nims and Tyr-Crypto/tyr_simd.nims: the
-  .nimble file stops with "preset.nims not found". Sibling checkouts work.
+- PUSH Eir-CompressionAndECC (ed3ba8a, the Unlicense) to main, then
+  `nimble updateSubmodules` here.
 - Pinned layouts are hex (`ameLayoutHex`). Readable lists of slot names in
   the preset ([runtime.ame] kems = ["lightsaber", "x25519"] ...) would
   spare the decoding comments; needs the runtime parser to read lists.
@@ -313,9 +310,12 @@ Notes:
   first), or -d:ssl only (`nimble testTls` passes). buildAndroid and
   androidTest pass: runGradle now uses `.android-sdk/` when ANDROID_HOME
   names no SDK that exists.
-- BLOCKED on a push (needs the owner): Nimble-Tasks is 1 and Tyr-Crypto 6
-  commits ahead of origin; until they reach main and the submodule pins
-  move, a fresh clone lacks preset.nims / tyr_simd.nims.
+- Pushed by the owner; pins moved (02adb52). A fresh clone from GitHub with
+  one-level submodules and NO sibling repos passes all 647 tests, and
+  `nix-build nix/package.nix` builds the library.
+- Eir-CompressionAndECC relicensed to the Unlicense (ed3ba8a, local nightly).
+  Bifrost still pins 2554ba8 (proprietary) until that commit reaches Eir's
+  main and `nimble updateSubmodules` runs again.
 - Last big change: tiny-device builds (above). Problem met: the request
   "compile Gimli once although XHKDF, AM1P and the tags all use it" needed
   no change -- Nim compiles each module once per program; verified with nm

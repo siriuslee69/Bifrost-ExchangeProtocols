@@ -20,6 +20,15 @@ nix-shell            # brings nim, gcc, libsodium, openssl
 nimble test
 ```
 
+The library as a nix package, from the same one-level checkout:
+
+```text
+nix-build nix/package.nix        # -> result/lib/libbifrost_exchange_protocols.so
+```
+
+The flake form, `nix build '.?submodules=1'`, walks nested submodules too,
+so it needs `git submodule update --init --recursive` first.
+
 **Windows 11**
 
 ```text
