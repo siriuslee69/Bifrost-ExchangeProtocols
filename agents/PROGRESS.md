@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Pins moved to the pushed Nimble-Tasks and Tyr-Crypto; fresh clone and nix-build verified; Eir is Unlicense
+Commit Message: Eir pinned at ed3ba8a (Unlicense)
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -8,8 +8,6 @@ Features (Planned):
   Tls13ControlledResult.clientState/serverState/err). Each is a result for
   the caller and is read only inside `test "..."` blocks, which Otter does
   not see as routines. Not dead; left as they are.
-- PUSH Eir-CompressionAndECC (ed3ba8a, the Unlicense) to main, then
-  `nimble updateSubmodules` here.
 - Pinned layouts are hex (`ameLayoutHex`). Readable lists of slot names in
   the preset ([runtime.ame] kems = ["lightsaber", "x25519"] ...) would
   spare the decoding comments; needs the runtime parser to read lists.
@@ -314,8 +312,7 @@ Notes:
   one-level submodules and NO sibling repos passes all 647 tests, and
   `nix-build nix/package.nix` builds the library.
 - Eir-CompressionAndECC relicensed to the Unlicense (ed3ba8a, local nightly).
-  Bifrost still pins 2554ba8 (proprietary) until that commit reaches Eir's
-  main and `nimble updateSubmodules` runs again.
+  Pushed to Eir's main; Bifrost pins it (45155df).
 - Last big change: tiny-device builds (above). Problem met: the request
   "compile Gimli once although XHKDF, AM1P and the tags all use it" needed
   no change -- Nim compiles each module once per program; verified with nm
