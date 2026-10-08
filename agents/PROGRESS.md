@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Eir pinned at ed3ba8a (Unlicense)
+Commit Message: Refuse a chunked body on a verb that carries none (GET, HEAD, DELETE, OPTIONS)
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -78,6 +78,10 @@ Features (Planned):
        wanting a socket or a built-up link to exercise.
 
 Features (Done):
+- HTTP smuggling hole closed (2026-10-08): `resolveBodyFraming` refused a
+  Content-Length on GET but still read a chunked body there. Now
+  Transfer-Encoding follows the same rule (httpMethodAllowsBody); found by
+  Torii's hostile-request tests. Regression test in test_http_protocol.nim.
 - Change requests (2026-09-24). Wire format changed; old and new builds do
   not talk to each other.
   * Every layout list is kept in wire-id order (sortedByWireId in the
@@ -285,6 +289,10 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last problem: a GET with `Transfer-Encoding: chunked` was parsed with
+  its chunks as body; a proxy ignoring GET bodies would read them as a
+  second request. Fix: the body-allowed check now runs for chunked framing
+  too. Worked: test_http_protocol and test_public_surface pass.
 - Last big change (2026-09-25): production pass. Found by writing tests for
   public routines nobody had called:
     TLS socket driver   std `recv(n, timeout)` waits for ALL n bytes, so every

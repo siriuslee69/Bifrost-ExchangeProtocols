@@ -223,6 +223,11 @@ proc resolveBodyFraming(P: var HttpRequestParser): HttpParseError {.
     # verify, so it is refused rather than guessed at.
     if not httpNamesEqual(trimFieldValue(te), "chunked"):
       return hpeConflictingFraming
+    # The same rule as for Content-Length below: a verb that carries no
+    # body gets none. A proxy in front that ignores bodies on GET would
+    # read these chunks as a SECOND request - smuggling.
+    if not httpMethodAllowsBody(P.request.verb):
+      return hpeConflictingFraming
     P.bodyMode = hbmChunked
     return hpeNone
   if hasCl == 1:

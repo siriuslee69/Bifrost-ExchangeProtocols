@@ -227,6 +227,23 @@ suite "http request smuggling defences":
     check not r.ok
     check P.err == hpeConflictingFraming
 
+  # {.testKind: tkRegression.}
+  test "a chunked body on a verb that should not carry one is refused":
+    # Content-Length was refused on GET, Transfer-Encoding was not, so the
+    # chunks after a GET head were read as its body. A front proxy that
+    # ignores GET bodies sees them as a second request.
+    for verb in ["GET", "HEAD", "DELETE", "OPTIONS"]:
+      var
+        P: HttpRequestParser = initHttpRequestParser()
+        r: HttpFeedResult = parseInto(verb & " / HTTP/1.1\r\nHost: a\r\n" &
+          "Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n", P)
+      check not r.ok
+      check P.err == hpeConflictingFraming
+    var
+      Q: HttpRequestParser = initHttpRequestParser()
+    check parseInto("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: " &
+      "chunked\r\n\r\n0\r\n\r\n", Q).ok
+
   # {.testKind: tkEdgeCase.}
   test "a malformed chunk size is refused":
     var
