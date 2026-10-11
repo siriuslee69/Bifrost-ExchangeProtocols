@@ -75,3 +75,4 @@ nimble.develop
 nimble.paths
 evaluation/tests/.otter/results/
 .otter/
+/animation/
