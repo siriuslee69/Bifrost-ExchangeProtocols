@@ -34,7 +34,7 @@
 ## state per peer -- which is what lets it survive being shouted at.
 ##
 ## One record, one datagram. A handshake record can be megabytes when the
-## layout carries Classic-McEliece keys, and this file will not silently hand
+## layout carries several FrodoKEM-1344 keys, and this file will not silently hand
 ## that to a socket that cannot carry it. `maxDatagramBytes` bounds what it
 ## will send, and a record that does not fit is an error at the sender rather
 ## than a black hole at the receiver.

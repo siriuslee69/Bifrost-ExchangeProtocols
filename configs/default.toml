@@ -81,9 +81,11 @@ description = "Full library, portable scalar code, every mode and family."
 #    frodo     frodo640       FrodoKEM-640-AES            0x0D     1
 #              frodo976       FrodoKEM-976-AES            0x09     3
 #              frodo1344      FrodoKEM-1344-AES           0x04     5
-#    mceliece  mceliece6688   Classic-McEliece-6688128f   0x0E     5
-#              mceliece6960   Classic-McEliece-6960119f   0x0A     5
-#              mceliece8192   Classic-McEliece-8192128f   0x05     5
+#    hqc       hqc1           HQC-1                       0x0E     1
+#              hqc3           HQC-3                       0x0A     3
+#              hqc5           HQC-5                       0x05     5
+#    (0x0E / 0x0A / 0x05 carried Classic McEliece until 2026-10-16; see
+#     src/protocols/ame/level1/kems/hqc.nim for why it was replaced)
 bifrostKems = ""
 #
 #    Signatures (bifrostSigs). Family words take every slot whose families

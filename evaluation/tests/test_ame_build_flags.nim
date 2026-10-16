@@ -53,18 +53,18 @@ suite "AME build flags":
   test "the build set answers for every KEM slot":
     check ameKemBuilt(akaMlKem768) == (akfMlKem in ameKemsBuilt)
     check ameKemBuilt(akaX25519) == (akfX25519 in ameKemsBuilt)
-    check ameKemBuilt(akaMcEliece6688) == (akfMcEliece in ameKemsBuilt)
+    check ameKemBuilt(akaHqc1) == (akfHqc in ameKemsBuilt)
     check ameKemFamily(akaMlKem1024) == akfMlKem
     check ameKemFamily(akaLightSaber) == akfSaber
-    check ameKemFamilyName(akfMcEliece) == "mceliece"
+    check ameKemFamilyName(akfHqc) == "hqc"
 
   # {.testKind: tkIntegration.}
   test "the wire meaning of every slot survives a slim build":
     ## Slot numbers are protocol, not build configuration: a node that lacks
-    ## McEliece must still agree with a full node on what byte 0x0E means.
+    ## HQC must still agree with a full node on what byte 0x0E means.
     check ord(akaMlKem768) == 0x08
-    check ord(akaMcEliece6688) == 0x0E
-    check ameKemName(akaMcEliece6688) == "Classic-McEliece-6688128f"
+    check ord(akaHqc1) == 0x0E
+    check ameKemName(akaHqc1) == "HQC-1"
 
   # {.testKind: tkUnit.}
   test "a constant and a value reach the same code":
@@ -95,19 +95,19 @@ suite "AME build flags":
     check L.kems.length == 2'u8
     check decodeAmeKemAlgorithms(encodeAmeKemAlgorithms(L.kems)) == L.kems
 
-  when akfMcEliece notin ameKemsBuilt:
+  when akfHqc notin ameKemsBuilt:
     # {.testKind: tkEdgeCase.}
     test "an excluded family is refused before any key material":
       ## Three gates, all closed: naming it locally, decoding a peer naming
       ## it, and calling it outright. The call below goes through a variable
-      ## on purpose: written as the constant `ameKemKeypair(akaMcEliece6688)`
+      ## on purpose: written as the constant `ameKemKeypair(akaHqc1)`
       ## it would not compile at all, which is the stricter of the two gates
       ## and cannot be caught by a running test.
-      var excluded: AmeKemAlgorithm = akaMcEliece6688
+      var excluded: AmeKemAlgorithm = akaHqc1
       expect ValueError:
-        discard initAmeKemAlgorithms([akaMcEliece6688])
+        discard initAmeKemAlgorithms([akaHqc1])
       expect ValueError:
-        discard decodeAmeKemAlgorithms(@[1'u8, uint8(ord(akaMcEliece6688))])
+        discard decodeAmeKemAlgorithms(@[1'u8, uint8(ord(akaHqc1))])
       expect ValueError:
         discard ameKemKeypair(excluded)
 
@@ -125,7 +125,7 @@ suite "AME build flags":
   # {.testKind: tkUnit.}
   test "a full build keeps the defaults it has always had":
     when ameKemsBuilt == {akfX25519, akfMlKem, akfSaber, akfNtru, akfFrodo,
-        akfMcEliece}:
+        akfHqc}:
       check defaultAmeKemSlots() == @[akaFireSaber, akaX25519]
 
   # {.testKind: tkUnit.}
@@ -300,10 +300,10 @@ suite "AME build flags: one slot at a time":
     check parseAmeKemSlots("saber") == {akaFireSaber, akaSaber, akaLightSaber}
     check parseAmeKemSlots("lightsaber,x25519") == {akaLightSaber, akaX25519}
     check parseAmeKemSlots("saber3") == {akaSaber}
-    check parseAmeKemSlots("mceliece6688") == {akaMcEliece6688}
+    check parseAmeKemSlots("hqc1") == {akaHqc1}
     check parseAmeKemSlots("").len == 15
     expect ValueError:
-      discard parseAmeKemSlots("mceliece9999")
+      discard parseAmeKemSlots("hqc9")
 
   # {.testKind: tkUnit, covers: "parseAmeSigSlots".}
   test "signature family words bring the hybrids only when both are named":

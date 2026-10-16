@@ -25,7 +25,7 @@
 ##   saber                      Saber                 ameKemKeypair(akaSaber)
 ##   ntru                       NTRU                  ameKemKeypair(akaNtruHps2048509)
 ##   frodo                      FrodoKEM              ameKemKeypair(akaFrodo640Aes)
-##   mceliece                   Classic McEliece      ameKemKeypair(akaMcEliece6688)
+##   hqc                        HQC                   ameKemKeypair(akaHqc1)
 ##   mlkem,x25519               both of those         either of the two above
 ##
 ## Two call shapes, one name
@@ -100,9 +100,9 @@ when akfNtru in ameKemsBuilt:
 when akfFrodo in ameKemsBuilt:
   import ./kems/frodo as ame_frodo
   export ame_frodo
-when akfMcEliece in ameKemsBuilt:
-  import ./kems/mceliece as ame_mceliece
-  export ame_mceliece
+when akfHqc in ameKemsBuilt:
+  import ./kems/hqc as ame_hqc
+  export ame_hqc
 
 proc raiseExcludedKem(a: AmeKemAlgorithm) {.role: helper, noreturn.} =
   ## a: slot this build cannot run -- left out of -d:bifrostKems, or (Saber
@@ -138,7 +138,7 @@ proc builtDefaultSlot(f: AmeKemFamily): AmeKemAlgorithm {.role: configurator.} =
 
 const
   ameKemPqPreference: array[5, AmeKemFamily] = [
-    akfSaber, akfMlKem, akfNtru, akfFrodo, akfMcEliece]
+    akfSaber, akfMlKem, akfNtru, akfFrodo, akfHqc]
     ## Order AME walks when it has to pick a post-quantum family unaided.
 
 proc defaultAmeKemSlots*(): seq[AmeKemAlgorithm] {.role: configurator.} =
@@ -180,8 +180,8 @@ proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   of akfFrodo:
     when akfFrodo in ameKemsBuilt: result = frodoAmeKeypair(a)
     else: raiseExcludedKem(a)
-  of akfMcEliece:
-    when akfMcEliece in ameKemsBuilt: result = mcelieceAmeKeypair(a)
+  of akfHqc:
+    when akfHqc in ameKemsBuilt: result = hqcAmeKeypair(a)
     else: raiseExcludedKem(a)
 
 proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
@@ -194,7 +194,7 @@ proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: truthBuild
   elif ameKemFamily(a) == akfSaber: result = saberAmeKeypair(a)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeKeypair(a)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeKeypair(a)
-  else: result = mcelieceAmeKeypair(a)
+  else: result = hqcAmeKeypair(a)
 
 ## ╭⟢ seal (encapsulate)
 
@@ -218,8 +218,8 @@ proc sealAmeKem*(a: AmeKemAlgorithm,
   of akfFrodo:
     when akfFrodo in ameKemsBuilt: result = frodoAmeSeal(a, publicKey)
     else: raiseExcludedKem(a)
-  of akfMcEliece:
-    when akfMcEliece in ameKemsBuilt: result = mcelieceAmeSeal(a, publicKey)
+  of akfHqc:
+    when akfHqc in ameKemsBuilt: result = hqcAmeSeal(a, publicKey)
     else: raiseExcludedKem(a)
 
 proc sealAmeKem*(a: static AmeKemAlgorithm,
@@ -232,7 +232,7 @@ proc sealAmeKem*(a: static AmeKemAlgorithm,
   elif ameKemFamily(a) == akfSaber: result = saberAmeSeal(a, publicKey)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeSeal(a, publicKey)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeSeal(a, publicKey)
-  else: result = mcelieceAmeSeal(a, publicKey)
+  else: result = hqcAmeSeal(a, publicKey)
 
 ## ╭⟢ open (decapsulate)
 
@@ -256,8 +256,8 @@ proc openAmeKem*(a: AmeKemAlgorithm, env: AmeKemCipher,
   of akfFrodo:
     when akfFrodo in ameKemsBuilt: result = frodoAmeOpen(a, env, secretKey)
     else: raiseExcludedKem(a)
-  of akfMcEliece:
-    when akfMcEliece in ameKemsBuilt: result = mcelieceAmeOpen(a, env, secretKey)
+  of akfHqc:
+    when akfHqc in ameKemsBuilt: result = hqcAmeOpen(a, env, secretKey)
     else: raiseExcludedKem(a)
 
 proc openAmeKem*(a: static AmeKemAlgorithm, env: AmeKemCipher,
@@ -270,4 +270,4 @@ proc openAmeKem*(a: static AmeKemAlgorithm, env: AmeKemCipher,
   elif ameKemFamily(a) == akfSaber: result = saberAmeOpen(a, env, secretKey)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeOpen(a, env, secretKey)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeOpen(a, env, secretKey)
-  else: result = mcelieceAmeOpen(a, env, secretKey)
+  else: result = hqcAmeOpen(a, env, secretKey)

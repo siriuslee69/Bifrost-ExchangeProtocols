@@ -6,7 +6,7 @@ import bifrost_exchange_protocols
 
 const
   myAlgos: AmeKemAlgorithms = [
-    akaMcEliece6688,
+    akaHqc1,
     akaFireSaber,
     akaFireSaber,
     akaX25519

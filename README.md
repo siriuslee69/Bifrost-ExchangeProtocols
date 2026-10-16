@@ -455,9 +455,9 @@ nim c -d:bifrostKems=mlkem,x25519 -d:bifrostCarriers=dac firmware.nim
 | flag                      | accepted values         | default (no flag)   |
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostKems=<list>     | x25519 mlkem saber      | every slot          |
-|                           | ntru frodo mceliece     |                     |
+|                           | ntru frodo hqc     |                     |
 |                           | or one slot: lightsaber |                     |
-|                           | mlkem768 mceliece6688 . |                     |
+|                           | mlkem768 hqc1 . |                     |
 |                           | (configs/default.toml)  |                     |
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostSigs=<list>     | ed25519 dilithium       | every slot          |
@@ -549,7 +549,7 @@ global, so Tyr sees them without Bifrost doing anything:
 | flag                         | what it does on a tiny device             |
 +------------------------------+-------------------------------------------+
 | -d:bifrostKems / Sigs /      | keep only the named families or single    |
-|   Symmetric / Carriers       | slots (lightsaber, mceliece6688, ...);    |
+|   Symmetric / Carriers       | slots (lightsaber, hqc1, ...);    |
 |                              | every word: configs/default.toml          |
 | -d:bifrostDac=off            | leave out DAC's adaptive layer; the DAC   |
 |                              | wire format itself stays                  |
@@ -665,8 +665,8 @@ Code per module, profile "AM1P+S, LightSaber + X25519, Ed25519":
 ```
 <!-- lowmem:end -->
 
-McEliece, Frodo and the large signatures (Falcon, Dilithium, SPHINCS+) do not
-fit: their keys alone are several KB to 1 MB. For AM1S and AM1P+S under
+HQC, Frodo and the large signatures (Falcon, Dilithium, SPHINCS+) do not
+fit: their keys alone are several KB to tens of KB. For AM1S and AM1P+S under
 100 KB, use Ed25519.
 
 ## Native TLS 1.3
@@ -1418,8 +1418,8 @@ or elapsed time runs a new KEM exchange for every switched-on slot too.
 
 > 💸 **Cost.** A KEM exchange carries one public key and one ciphertext per
 > slot. For X25519, Saber, ML-KEM and NTRU that is one or two kilobytes per
-> slot. Classic McEliece public keys are **hundreds of kilobytes**, and the
-> default sends them again on every rotation. On a metered or thin link, pass a
+> slot. HQC-5 needs about **21 KB** per slot and FrodoKEM-1344 about **43 KB**,
+> and the default sends them again on every rotation. On a metered or thin link, pass a
 > smaller `rekeyMask`, or `0`, and accept that those stacks stop growing. The
 > choice is per rotation.
 

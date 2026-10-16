@@ -19,7 +19,7 @@
 ##   -d:bifrostSymmetric=<list>  which primitives exist      all seven
 ##   -d:bifrostCarriers=<list>   which transports exist      both
 ##
-##   KEM families:  x25519 mlkem saber ntru frodo mceliece
+##   KEM families:  x25519 mlkem saber ntru frodo hqc
 ##   Signatures:    ed25519 dilithium falcon sphincs
 ##   Primitives:    blake3 sha3 gimli chacha20 aes poly1305 argon2
 ##                  (blake3 is always compiled; AME needs it internally)
@@ -29,7 +29,7 @@
 ## ----------------------
 ##
 ##   +-----------------------------+--------------------------------------+
-##   | -d:bifrostKems=mlkem        | the Saber, NTRU, Frodo, McEliece and |
+##   | -d:bifrostKems=mlkem        | the Saber, NTRU, Frodo, HQC and      |
 ##   |                             | X25519 implementations               |
 ##   +-----------------------------+--------------------------------------+
 ##   | -d:bifrostCarriers=dac      | Nim's stream sockets and TLS setup   |

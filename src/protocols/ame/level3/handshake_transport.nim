@@ -47,7 +47,9 @@ const
   ameHandshakeStepServerHello* = 3'u32
   ameHandshakeStepFinish* = 4'u32
   ameHandshakeMaxRecordBytes* = 8_388_608
-    ## A hello carrying eight Classic-McEliece public keys is genuinely large.
+    ## A hello carrying eight of the largest public keys (FrodoKEM-1344,
+    ## 21 KB each) is genuinely large; Classic McEliece, removed 2026-10-16,
+    ## needed 1.3 MB per key.
     ## This bounds it well above that and far below anything that could be
     ## used to make a peer allocate without limit.
 

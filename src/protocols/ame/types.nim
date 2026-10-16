@@ -116,16 +116,16 @@ type
     akaNtruHps4096821 = 0x02'u8,
     akaMlKem1024 = 0x03'u8,
     akaFrodo1344Aes = 0x04'u8,
-    akaMcEliece8192 = 0x05'u8,
+    akaHqc5 = 0x05'u8,
     akaSaber = 0x06'u8,
     akaNtruHps2048677 = 0x07'u8,
     akaMlKem768 = 0x08'u8,
     akaFrodo976Aes = 0x09'u8,
-    akaMcEliece6960 = 0x0A'u8,
+    akaHqc3 = 0x0A'u8,
     akaLightSaber = 0x0B'u8,
     akaNtruHps2048509 = 0x0C'u8,
     akaFrodo640Aes = 0x0D'u8,
-    akaMcEliece6688 = 0x0E'u8,
+    akaHqc1 = 0x0E'u8,
     akaX25519 = 0x0F'u8
 
   AmeCipherAlgorithm* = enum

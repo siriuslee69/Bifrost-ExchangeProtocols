@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: KEM slots: Kyber -> FIPS 203 ML-KEM (Tyr rename); fix X25519 wipe import
+Commit Message: KEM slots: HQC replaces Classic McEliece on wire ids 0x05/0x0A/0x0E
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -289,6 +289,11 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last change (2026-10-16, later): Classic McEliece left AME. Its wire ids
+  now carry HQC (0x05 HQC-5, 0x0A HQC-3, 0x0E HQC-1; family word `hqc`).
+  Reason: 2026 Goppa-code key-recovery papers + BSI note. KEM ids are
+  4-bit (15 used), so HQC could not be added beside it. A peer on an older
+  build reads those ids as McEliece and cannot talk to this one.
 - Last change (2026-10-16): Tyr replaced round-3 Kyber with FIPS 203 ML-KEM.
   Slots renamed (akaMlKem768/1024, family word `mlkem`, config and Android
   names). Wire ids 0x08 / 0x03 kept, but the secrets differ: a peer on an
