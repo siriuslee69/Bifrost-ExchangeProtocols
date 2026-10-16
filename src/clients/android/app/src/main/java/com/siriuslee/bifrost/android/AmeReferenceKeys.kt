@@ -13,9 +13,9 @@ object AmeReferenceKeys {
       AmeTier.LIGHTWEIGHT -> listOf("LightSaber")
       AmeTier.LIGHTWEIGHT_PLUS -> listOf("LightSaber", "NTRU-HPS-2048-509")
       AmeTier.MEDIUM -> listOf("Saber", "NTRU-HPS-2048-677")
-      AmeTier.MEDIUM_PLUS -> listOf("Saber", "NTRU-HPS-2048-677", "Kyber768", "FrodoKEM-976-AES")
+      AmeTier.MEDIUM_PLUS -> listOf("Saber", "NTRU-HPS-2048-677", "ML-KEM-768", "FrodoKEM-976-AES")
       AmeTier.HIGH -> listOf("FireSaber", "NTRU-HPS-4096-821")
-      AmeTier.HIGH_PLUS -> listOf("FireSaber", "NTRU-HPS-4096-821", "Kyber1024", "FrodoKEM-1344-AES", "Classic-McEliece-8192128f")
+      AmeTier.HIGH_PLUS -> listOf("FireSaber", "NTRU-HPS-4096-821", "ML-KEM-1024", "FrodoKEM-1344-AES", "Classic-McEliece-8192128f")
     }
     val out = StringBuilder()
     out.append("tier=").append(tier.label).append('\n')

@@ -486,7 +486,7 @@ suite "AME private handshake":
     var
       p: Pair = newPair("fits")
       offered: AmeSuiteLayout = defaultAmeLayout(
-        [akaX25519, akaKyber768, akaFireSaber])
+        [akaX25519, akaMlKem768, akaFireSaber])
       client: AmeClientHandshake = beginAmeHandshake(5'u64, p.layout, p.tier)
       server = answerAmeHandshake(client.hello,
         [handshakePath(offered, fullAmeMaskTier(offered))], p.auth,

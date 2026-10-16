@@ -27,7 +27,7 @@ class AmeIdentityTest {
       public.len=992
       public=c2hhcmVhYmxl
 
-      kem=Kyber768
+      kem=ML-KEM-768
       public.len=1184
       public=bWF0ZXJpYWw=
     """.trimIndent()
@@ -37,7 +37,7 @@ class AmeIdentityTest {
     assertEquals(2, descriptor.kems.size)
     assertEquals("Saber", descriptor.kems[0].name)
     assertEquals(992, descriptor.kems[0].publicLen)
-    assertTrue(descriptor.displayText.contains("kems=Saber:992,Kyber768:1184"))
+    assertTrue(descriptor.displayText.contains("kems=Saber:992,ML-KEM-768:1184"))
     assertFalse(descriptor.displayText.contains("shareable"))
   }
 

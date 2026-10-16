@@ -35,7 +35,7 @@ import ../../src/protocols/fomke/level2/wire
 import runePragmas
 
 const
-  fsKems: AmeKemAlgorithms = [akaX25519, akaKyber768]
+  fsKems: AmeKemAlgorithms = [akaX25519, akaMlKem768]
 
 proc fsLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(fsKems)

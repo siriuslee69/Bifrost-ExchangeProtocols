@@ -28,7 +28,7 @@ import ../../src/protocols/fomke/level2/state_store
 import runePragmas
 
 const
-  fomkeKems: AmeKemAlgorithms = [akaX25519, akaKyber768, akaFireSaber]
+  fomkeKems: AmeKemAlgorithms = [akaX25519, akaMlKem768, akaFireSaber]
 
 proc fomkeLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(fomkeKems)

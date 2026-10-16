@@ -62,7 +62,7 @@ description = "Full library, portable scalar code, every mode and family."
 #                       it is accepted and the session runs the client's.
 #                       Compile what the server offers.
 #
-#    So a server offering [LightSaber, Kyber768, X25519] talks to a device
+#    So a server offering [LightSaber, ML-KEM-768, X25519] talks to a device
 #    that only has [LightSaber, X25519], and the device compiles only its
 #    two. Order never matters: every layout is kept in wire-id order.
 #
@@ -70,8 +70,8 @@ description = "Full library, portable scalar code, every mode and family."
 #    family    slot word      parameter set               wire id  level
 #    --------  -------------  --------------------------  -------  -----
 #    x25519    x25519         X25519                      0x0F     classic
-#    kyber     kyber768       Kyber768   (round 3)        0x08     3
-#              kyber1024      Kyber1024  (round 3)        0x03     5
+#    mlkem     mlkem768       ML-KEM-768   (FIPS 203)     0x08     3
+#              mlkem1024      ML-KEM-1024  (FIPS 203)     0x03     5
 #    saber     lightsaber     LightSaber (rank 2)         0x0B     1
 #              saber3         Saber      (rank 3)         0x06     3
 #              firesaber      FireSaber  (rank 4)         0x01     5

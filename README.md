@@ -447,17 +447,17 @@ code for the others. Six build flags decide what enters the binary. The
 source code stays the same between a full build and a slim build.
 
 ```text
-nim c -d:bifrostKems=kyber,x25519 -d:bifrostCarriers=dac firmware.nim
+nim c -d:bifrostKems=mlkem,x25519 -d:bifrostCarriers=dac firmware.nim
 ```
 
 ```text
 +---------------------------+-------------------------+---------------------+
 | flag                      | accepted values         | default (no flag)   |
 +---------------------------+-------------------------+---------------------+
-| -d:bifrostKems=<list>     | x25519 kyber saber      | every slot          |
+| -d:bifrostKems=<list>     | x25519 mlkem saber      | every slot          |
 |                           | ntru frodo mceliece     |                     |
 |                           | or one slot: lightsaber |                     |
-|                           | kyber768 mceliece6688 . |                     |
+|                           | mlkem768 mceliece6688 . |                     |
 |                           | (configs/default.toml)  |                     |
 +---------------------------+-------------------------+---------------------+
 | -d:bifrostSigs=<list>     | ed25519 dilithium       | every slot          |
@@ -496,7 +496,7 @@ signing keys, `-d:release`, x86-64:
 
 ```text
   everything ...................................... 747 336 bytes
-  + kems=kyber,x25519  carriers=dac ............... 506 432 bytes   (-32%)
+  + kems=mlkem,x25519  carriers=dac ............... 506 432 bytes   (-32%)
   + sigs=ed25519  symmetric=blake3,chacha20 ....... 249 272 bytes   (-67%)
 ```
 
@@ -600,7 +600,7 @@ cannot run its own layout:
 ```text
 layout names ...           flags compile ...      the build
 -------------------------  ---------------------  ---------------------------
-Kyber768                   saber, x25519          compiles kyber too, and
+ML-KEM-768                   saber, x25519          compiles mlkem too, and
                                                   prints a warning naming it
 (same)  + -d:bifrostStrictConfig                  stops with an error instead
 FireSaber                  lightsaber, x25519     compiles FireSaber too, and
@@ -627,7 +627,7 @@ stack are an upper bound: a device holds one end.
 | AM1P, whole library, -d:release        | 1021.2 KB |  261.3 KB |   26.6 KB |   43.4 KB |  191.3 KB |
 | AM1P, whole library, iot compiler      |  384.1 KB |   76.3 KB |   26.6 KB |   41.9 KB |    7.7 KB |
 | AM1P, X25519            [iot-min]      |  166.8 KB |   34.2 KB |    9.0 KB |   21.9 KB |    3.3 KB |
-| AM1P, Kyber768 + X25519                |  186.3 KB |   87.6 KB |   38.8 KB |   45.1 KB |    3.8 KB |
+| AM1P, ML-KEM-768 + X25519                |  186.3 KB |   87.6 KB |   38.8 KB |   45.1 KB |    3.8 KB |
 | AM1P, LightSaber + X25519              |  179.9 KB |   57.8 KB |   26.7 KB |   27.3 KB |    3.8 KB |
 | AM1P or AM1P+S, LightSaber   [iot]     |  205.7 KB |   66.0 KB |   34.3 KB |   27.7 KB |    4.0 KB |
 | AM1P+S, LightSaber + X25519, Ed25519   |  206.2 KB |   66.0 KB |   34.3 KB |   27.7 KB |    4.0 KB |
@@ -1252,7 +1252,7 @@ every algorithm it lists is offered too, as often. The session then runs the
 client's layout. Anything else is refused; there is no substitution.
 
 ```text
-  server offers  [LightSaber, Kyber768, X25519]
+  server offers  [LightSaber, ML-KEM-768, X25519]
   client sends   [LightSaber, X25519]    accepted, the session runs this
   client sends   [FireSaber, X25519]     refused: FireSaber is not offered
 ```
@@ -1417,7 +1417,7 @@ grow the stacks without changing anything else.
 or elapsed time runs a new KEM exchange for every switched-on slot too.
 
 > 💸 **Cost.** A KEM exchange carries one public key and one ciphertext per
-> slot. For X25519, Saber, Kyber and NTRU that is one or two kilobytes per
+> slot. For X25519, Saber, ML-KEM and NTRU that is one or two kilobytes per
 > slot. Classic McEliece public keys are **hundreds of kilobytes**, and the
 > default sends them again on every rotation. On a metered or thin link, pass a
 > smaller `rekeyMask`, or `0`, and accept that those stacks stop growing. The
@@ -1783,7 +1783,7 @@ is erased. There is no root key. A root key, derived first and then split
 again, added one more secret and no separation: the one call already
 separates the pieces by position.
 
-Every switched-on KEM slot enters the call. A tier that names Kyber AND X25519
+Every switched-on KEM slot enters the call. A tier that names ML-KEM AND X25519
 but derived from one of them would be a hybrid in name only.
 
 NS (next secret) has exactly two jobs:

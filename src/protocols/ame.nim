@@ -9,7 +9,7 @@
 ## With no flags that is the full library, unchanged. Four flags cut it down
 ## for a small target, and NOTHING in your source has to change:
 ##
-##     nim c -d:bifrostKems=kyber,x25519 -d:bifrostSigs=ed25519 \
+##     nim c -d:bifrostKems=mlkem,x25519 -d:bifrostSigs=ed25519 \
 ##          -d:bifrostSymmetric=blake3,chacha20 -d:bifrostCarriers=dac fw.nim
 ##
 ##   flag                        decides                     default
@@ -19,7 +19,7 @@
 ##   -d:bifrostSymmetric=<list>  which primitives exist      all seven
 ##   -d:bifrostCarriers=<list>   which transports exist      both
 ##
-##   KEM families:  x25519 kyber saber ntru frodo mceliece
+##   KEM families:  x25519 mlkem saber ntru frodo mceliece
 ##   Signatures:    ed25519 dilithium falcon sphincs
 ##   Primitives:    blake3 sha3 gimli chacha20 aes poly1305 argon2
 ##                  (blake3 is always compiled; AME needs it internally)
@@ -29,7 +29,7 @@
 ## ----------------------
 ##
 ##   +-----------------------------+--------------------------------------+
-##   | -d:bifrostKems=kyber        | the Saber, NTRU, Frodo, McEliece and |
+##   | -d:bifrostKems=mlkem        | the Saber, NTRU, Frodo, McEliece and |
 ##   |                             | X25519 implementations               |
 ##   +-----------------------------+--------------------------------------+
 ##   | -d:bifrostCarriers=dac      | Nim's stream sockets and TLS setup   |
@@ -47,13 +47,13 @@
 ## Choosing an algorithm or a carrier: three shapes
 ## ------------------------------------------------
 ##
-##   by CONSTANT   ameKemKeypair(akaKyber768)     settled while compiling,
+##   by CONSTANT   ameKemKeypair(akaMlKem768)     settled while compiling,
 ##                 client.send(payload)           no branch in the binary
 ##
 ##   by VALUE      ameKemKeypair(a)               one `case` while running,
 ##                 sealAmeFrame(S, c, payload)    for choices off the wire
 ##
-##   by BUILD      -d:bifrostKems=kyber           decides what exists at all
+##   by BUILD      -d:bifrostKems=mlkem           decides what exists at all
 ##                 -d:bifrostCarriers=dac
 ##
 ## The first two share one name each. The compiler prefers the constant form

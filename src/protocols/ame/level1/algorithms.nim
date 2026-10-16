@@ -7,35 +7,35 @@
 ##
 ##     import protocols/ame
 ##
-##     var kp = ameKemKeypair(akaKyber768)
+##     var kp = ameKemKeypair(akaMlKem768)
 ##
 ## With no flag every family is compiled, exactly as before. Then, for a
 ## small target, add one flag and change nothing in your source:
 ##
-##     nim c -d:bifrostKems=kyber,x25519 firmware.nim
+##     nim c -d:bifrostKems=mlkem,x25519 firmware.nim
 ##
-## Now only Kyber and X25519 exist. The same call keeps working; asking for
+## Now only ML-KEM and X25519 exist. The same call keeps working; asking for
 ## a family this build left out fails, and says which flag to change.
 ##
 ##   -d:bifrostKems=<list>      compiles              example call
 ##   -----------------------    -------------------   ---------------------
 ##   (omitted)                  every family          any slot
 ##   x25519                     X25519                ameKemKeypair(akaX25519)
-##   kyber                      Kyber                 ameKemKeypair(akaKyber768)
+##   mlkem                      ML-KEM                 ameKemKeypair(akaMlKem768)
 ##   saber                      Saber                 ameKemKeypair(akaSaber)
 ##   ntru                       NTRU                  ameKemKeypair(akaNtruHps2048509)
 ##   frodo                      FrodoKEM              ameKemKeypair(akaFrodo640Aes)
 ##   mceliece                   Classic McEliece      ameKemKeypair(akaMcEliece6688)
-##   kyber,x25519               both of those         either of the two above
+##   mlkem,x25519               both of those         either of the two above
 ##
 ## Two call shapes, one name
 ## -------------------------
 ## The same three procs answer to a constant and to a value:
 ##
-##   ameKemKeypair(akaKyber768)  <- constant. The compiler picks the family
+##   ameKemKeypair(akaMlKem768)  <- constant. The compiler picks the family
 ##                                  while compiling, emits no branch at all,
 ##                                  and refuses to compile if this build
-##                                  left Kyber out.
+##                                  left ML-KEM out.
 ##
 ##   ameKemKeypair(a)            <- a value read from the wire. One `case`
 ##                                  decides at run time, and an excluded
@@ -62,7 +62,7 @@ export kem_types
 
 proc kemSlotListName(S: set[AmeKemAlgorithm]): string {.compileTime,
     role: helper.} =
-  ## S: slots -> "kyber768, x25519" for the build message.
+  ## S: slots -> "mlkem768, x25519" for the build message.
   for a in S:
     result.add((if result.len > 0: ", " else: "") & ameKemToken(a))
 
@@ -88,9 +88,9 @@ elif kemsAddedByPreset != {}:
 when akfX25519 in ameKemsBuilt:
   import ./kems/x25519 as ame_x25519
   export ame_x25519
-when akfKyber in ameKemsBuilt:
-  import ./kems/kyber as ame_kyber
-  export ame_kyber
+when akfMlKem in ameKemsBuilt:
+  import ./kems/mlkem as ame_mlkem
+  export ame_mlkem
 when akfSaber in ameKemsBuilt:
   import ./kems/saber as ame_saber
   export ame_saber
@@ -138,7 +138,7 @@ proc builtDefaultSlot(f: AmeKemFamily): AmeKemAlgorithm {.role: configurator.} =
 
 const
   ameKemPqPreference: array[5, AmeKemFamily] = [
-    akfSaber, akfKyber, akfNtru, akfFrodo, akfMcEliece]
+    akfSaber, akfMlKem, akfNtru, akfFrodo, akfMcEliece]
     ## Order AME walks when it has to pick a post-quantum family unaided.
 
 proc defaultAmeKemSlots*(): seq[AmeKemAlgorithm] {.role: configurator.} =
@@ -168,8 +168,8 @@ proc ameKemKeypair*(a: AmeKemAlgorithm): AmeKemKeypair {.role: truthBuilder.} =
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeKeypair(a)
     else: raiseExcludedKem(a)
-  of akfKyber:
-    when akfKyber in ameKemsBuilt: result = kyberAmeKeypair(a)
+  of akfMlKem:
+    when akfMlKem in ameKemsBuilt: result = mlkemAmeKeypair(a)
     else: raiseExcludedKem(a)
   of akfSaber:
     when akfSaber in ameKemsBuilt: result = saberAmeKeypair(a)
@@ -190,7 +190,7 @@ proc ameKemKeypair*(a: static AmeKemAlgorithm): AmeKemKeypair {.role: truthBuild
   when not ameKemBuilt(a):
     {.error: excludedKemMessage(a).}
   elif ameKemFamily(a) == akfX25519: result = x25519AmeKeypair(a)
-  elif ameKemFamily(a) == akfKyber: result = kyberAmeKeypair(a)
+  elif ameKemFamily(a) == akfMlKem: result = mlkemAmeKeypair(a)
   elif ameKemFamily(a) == akfSaber: result = saberAmeKeypair(a)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeKeypair(a)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeKeypair(a)
@@ -206,8 +206,8 @@ proc sealAmeKem*(a: AmeKemAlgorithm,
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeSeal(a, publicKey)
     else: raiseExcludedKem(a)
-  of akfKyber:
-    when akfKyber in ameKemsBuilt: result = kyberAmeSeal(a, publicKey)
+  of akfMlKem:
+    when akfMlKem in ameKemsBuilt: result = mlkemAmeSeal(a, publicKey)
     else: raiseExcludedKem(a)
   of akfSaber:
     when akfSaber in ameKemsBuilt: result = saberAmeSeal(a, publicKey)
@@ -228,7 +228,7 @@ proc sealAmeKem*(a: static AmeKemAlgorithm,
   when not ameKemBuilt(a):
     {.error: excludedKemMessage(a).}
   elif ameKemFamily(a) == akfX25519: result = x25519AmeSeal(a, publicKey)
-  elif ameKemFamily(a) == akfKyber: result = kyberAmeSeal(a, publicKey)
+  elif ameKemFamily(a) == akfMlKem: result = mlkemAmeSeal(a, publicKey)
   elif ameKemFamily(a) == akfSaber: result = saberAmeSeal(a, publicKey)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeSeal(a, publicKey)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeSeal(a, publicKey)
@@ -244,8 +244,8 @@ proc openAmeKem*(a: AmeKemAlgorithm, env: AmeKemCipher,
   of akfX25519:
     when akfX25519 in ameKemsBuilt: result = x25519AmeOpen(a, env, secretKey)
     else: raiseExcludedKem(a)
-  of akfKyber:
-    when akfKyber in ameKemsBuilt: result = kyberAmeOpen(a, env, secretKey)
+  of akfMlKem:
+    when akfMlKem in ameKemsBuilt: result = mlkemAmeOpen(a, env, secretKey)
     else: raiseExcludedKem(a)
   of akfSaber:
     when akfSaber in ameKemsBuilt: result = saberAmeOpen(a, env, secretKey)
@@ -266,7 +266,7 @@ proc openAmeKem*(a: static AmeKemAlgorithm, env: AmeKemCipher,
   when not ameKemBuilt(a):
     {.error: excludedKemMessage(a).}
   elif ameKemFamily(a) == akfX25519: result = x25519AmeOpen(a, env, secretKey)
-  elif ameKemFamily(a) == akfKyber: result = kyberAmeOpen(a, env, secretKey)
+  elif ameKemFamily(a) == akfMlKem: result = mlkemAmeOpen(a, env, secretKey)
   elif ameKemFamily(a) == akfSaber: result = saberAmeOpen(a, env, secretKey)
   elif ameKemFamily(a) == akfNtru: result = ntruAmeOpen(a, env, secretKey)
   elif ameKemFamily(a) == akfFrodo: result = frodoAmeOpen(a, env, secretKey)

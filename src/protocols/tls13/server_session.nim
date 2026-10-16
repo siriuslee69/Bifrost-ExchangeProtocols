@@ -7,6 +7,7 @@ import tyr/signatures/ed25519
 import tyr/helpers/random
 import tyr/hashes/sha256
 import tyr/kems/x25519
+import tyr/helpers/secure_memory
 import tyr/certs/rsa
 import tyr/helpers/bigint
 import tyr/signatures/ecdsa_p256

@@ -122,7 +122,7 @@ suite "AME layouts: one order":
       0b11000000'u8
     check ameSelectionMask(L.kems, [akaX25519]) == 0b00100000'u8
     expect ValueError:
-      discard ameSelectionMask(L.kems, [akaKyber768])
+      discard ameSelectionMask(L.kems, [akaMlKem768])
 
   # {.testKind: tkUnit, covers: "generateAmeExchangeKeys".}
   test "two instances of one algorithm get two different keys":

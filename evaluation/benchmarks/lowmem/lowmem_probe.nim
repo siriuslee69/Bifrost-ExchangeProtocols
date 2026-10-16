@@ -22,7 +22,7 @@
 ##
 ## The KEM slots are whatever this build carries, lightest first:
 ##
-##   LightSaber if Saber is in -d:bifrostKems (else Kyber768 if Kyber is),
+##   LightSaber if Saber is in -d:bifrostKems (else ML-KEM-768 if ML-KEM is),
 ##   then X25519 if it is there.
 ##
 ## At the end it prints one line the benchmark runner reads:
@@ -64,12 +64,12 @@ else:
   proc meterStackUsed(): csize_t {.role: helper.} = 0
 
 proc probeKems(): seq[AmeKemAlgorithm] {.role: configurator.} =
-  ## The lightest KEM slots this build carries: LightSaber (or Kyber768 when
+  ## The lightest KEM slots this build carries: LightSaber (or ML-KEM-768 when
   ## Saber is left out), then X25519.
   when akfSaber in ameKemsBuilt:
     result.add(akaLightSaber)
-  elif akfKyber in ameKemsBuilt:
-    result.add(akaKyber768)
+  elif akfMlKem in ameKemsBuilt:
+    result.add(akaMlKem768)
   when akfX25519 in ameKemsBuilt:
     result.add(akaX25519)
 

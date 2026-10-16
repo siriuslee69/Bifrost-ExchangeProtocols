@@ -217,7 +217,7 @@ proc ameLayoutFitsInside*(small, big: AmeSuiteLayout): bool {.role: parser.} =
   ## family, as often as the client lists it. Order plays no part: both
   ## are kept in wire-id order anyway.
   ##
-  ##   server offers   [LightSaber, Kyber768, X25519]  ciphers [XChaCha20, Gimli]
+  ##   server offers   [LightSaber, ML-KEM-768, X25519]  ciphers [XChaCha20, Gimli]
   ##   client lists    [LightSaber, X25519]            ciphers [XChaCha20]   fits
   ##   client lists    [FireSaber, X25519]             ...                   does not
   result = familyFitsInside(small.kems, big.kems) and
@@ -547,7 +547,7 @@ proc ameSelectionMask*[P, E](layoutFamily: P, want: openArray[E]): uint8 {.
   ##   layout KEMs  [FireSaber, X25519, X25519]
   ##   want         [X25519]            -> 0b01000000  (first X25519)
   ##   want         [X25519, X25519]    -> 0b01100000  (both)
-  ##   want         [Kyber768]          -> refused: not in the layout
+  ##   want         [ML-KEM-768]          -> refused: not in the layout
   var
     ids: seq[int] = @[]
   for a in want:

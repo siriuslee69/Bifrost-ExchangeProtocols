@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Refuse a chunked body on a verb that carries none (GET, HEAD, DELETE, OPTIONS)
+Commit Message: KEM slots: Kyber -> FIPS 203 ML-KEM (Tyr rename); fix X25519 wipe import
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.
@@ -289,6 +289,13 @@ Features (In Progress):
 - Nothing. Everything above is complete and every suite passes.
 
 Notes:
+- Last change (2026-10-16): Tyr replaced round-3 Kyber with FIPS 203 ML-KEM.
+  Slots renamed (akaMlKem768/1024, family word `mlkem`, config and Android
+  names). Wire ids 0x08 / 0x03 kept, but the secrets differ: a peer on an
+  older build derives a different key, so the two cannot talk. Also fixed
+  kems/x25519.nim and tls13/{client,server}_session.nim, broken since Tyr
+  023eb5b moved secureClearBytes into
+  tyr/helpers/secure_memory.
 - Last problem: a GET with `Transfer-Encoding: chunked` was parsed with
   its chunks as body; a proxy ignoring GET bodies would read them as a
   second request. Fix: the body-allowed check now runs for chunked framing

@@ -9,7 +9,7 @@
 ##   family      AME slots it serves
 ##   ---------   -------------------------------------------------
 ##   x25519      X25519
-##   kyber       Kyber1024, Kyber768
+##   mlkem       ML-KEM-1024, ML-KEM-768
 ##   saber       FireSaber, Saber, LightSaber
 ##   ntru        NTRU-HPS-4096-821, -2048-677, -2048-509
 ##   frodo       FrodoKEM-1344-AES, -976-AES, -640-AES
@@ -35,7 +35,7 @@ type
     ## One KEM implementation. Selecting a family compiles its code; the
     ## exact slots above then become usable.
     akfX25519,
-    akfKyber,
+    akfMlKem,
     akfSaber,
     akfNtru,
     akfFrodo,
@@ -68,12 +68,12 @@ proc ameKemName*(a: AmeKemAlgorithm): string {.role: truthBuilder.} =
   case a
   of akaFireSaber: result = "FireSaber"
   of akaNtruHps4096821: result = "NTRU-HPS-4096-821"
-  of akaKyber1024: result = "Kyber1024"
+  of akaMlKem1024: result = "ML-KEM-1024"
   of akaFrodo1344Aes: result = "FrodoKEM-1344-AES"
   of akaMcEliece8192: result = "Classic-McEliece-8192128f"
   of akaSaber: result = "Saber"
   of akaNtruHps2048677: result = "NTRU-HPS-2048-677"
-  of akaKyber768: result = "Kyber768"
+  of akaMlKem768: result = "ML-KEM-768"
   of akaFrodo976Aes: result = "FrodoKEM-976-AES"
   of akaMcEliece6960: result = "Classic-McEliece-6960119f"
   of akaLightSaber: result = "LightSaber"
@@ -86,7 +86,7 @@ proc ameKemFamily*(a: AmeKemAlgorithm): AmeKemFamily {.role: parser.} =
   ## a: exact AME KEM slot mapped onto the implementation that serves it.
   case a
   of akaX25519: result = akfX25519
-  of akaKyber1024, akaKyber768: result = akfKyber
+  of akaMlKem1024, akaMlKem768: result = akfMlKem
   of akaFireSaber, akaSaber, akaLightSaber: result = akfSaber
   of akaNtruHps4096821, akaNtruHps2048677, akaNtruHps2048509: result = akfNtru
   of akaFrodo1344Aes, akaFrodo976Aes, akaFrodo640Aes: result = akfFrodo
@@ -96,7 +96,7 @@ proc ameKemFamilyName*(f: AmeKemFamily): string {.role: parser.} =
   ## f: family rendered as the exact text the build flag accepts.
   case f
   of akfX25519: result = "x25519"
-  of akfKyber: result = "kyber"
+  of akfMlKem: result = "mlkem"
   of akfSaber: result = "saber"
   of akfNtru: result = "ntru"
   of akfFrodo: result = "frodo"
@@ -105,7 +105,7 @@ proc ameKemFamilyName*(f: AmeKemFamily): string {.role: parser.} =
 const
   ameKemSlotsStrongestFirst*: array[15, AmeKemAlgorithm] = [
     akaFireSaber, akaSaber, akaLightSaber,
-    akaKyber1024, akaKyber768,
+    akaMlKem1024, akaMlKem768,
     akaNtruHps4096821, akaNtruHps2048677, akaNtruHps2048509,
     akaFrodo1344Aes, akaFrodo976Aes, akaFrodo640Aes,
     akaMcEliece8192, akaMcEliece6960, akaMcEliece6688,
@@ -121,8 +121,8 @@ proc ameKemToken*(a: AmeKemAlgorithm): string {.role: parser.} =
   of akaFireSaber: result = "firesaber"
   of akaSaber: result = "saber3"
   of akaLightSaber: result = "lightsaber"
-  of akaKyber1024: result = "kyber1024"
-  of akaKyber768: result = "kyber768"
+  of akaMlKem1024: result = "mlkem1024"
+  of akaMlKem768: result = "mlkem768"
   of akaNtruHps4096821: result = "ntru821"
   of akaNtruHps2048677: result = "ntru677"
   of akaNtruHps2048509: result = "ntru509"
@@ -177,8 +177,8 @@ proc parseAmeKemSlots*(s: string): set[AmeKemAlgorithm] {.role: parser.} =
     one = ameKemSlotOfWord(t)
     if one == {}:
       raise newException(ValueError, "unknown -d:bifrostKems entry '" & t &
-        "' (a family: x25519 kyber saber ntru frodo mceliece, or one slot: " &
-        "lightsaber saber3 firesaber kyber768 kyber1024 ntru509 ntru677 " &
+        "' (a family: x25519 mlkem saber ntru frodo mceliece, or one slot: " &
+        "lightsaber saber3 firesaber mlkem768 mlkem1024 ntru509 ntru677 " &
         "ntru821 frodo640 frodo976 frodo1344 mceliece6688 mceliece6960 " &
         "mceliece8192; or omit the flag for all)")
     result = result + one

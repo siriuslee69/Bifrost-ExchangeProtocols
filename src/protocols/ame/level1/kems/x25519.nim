@@ -9,6 +9,7 @@
 ## empty, so one envelope shape serves every family.
 
 import tyr/kems/x25519 as tyr_x25519
+import tyr/helpers/secure_memory
 
 import ../../../types
 import ../../types
@@ -32,7 +33,7 @@ proc x25519AmeSeal*(a: AmeKemAlgorithm,
   requireX25519Slot(a)
   var sender = tyr_x25519.x25519TyrKeypair()
   defer:
-    tyr_x25519.secureClearBytes(sender.secretKey)
+    secureClearBytes(sender.secretKey)
   result.envelope.senderPublicKey = sender.publicKey
   result.sharedSecret = tyr_x25519.x25519TyrShared(sender.secretKey, publicKey)
 

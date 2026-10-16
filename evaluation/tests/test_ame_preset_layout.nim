@@ -8,7 +8,7 @@
 ##
 ##   fixture                 layout pins          flags compile   expected
 ##   ----------------------  -------------------  --------------  ----------
-##   adds_kyber              Kyber768, X25519     saber, x25519   kyber added
+##   adds_mlkem              ML-KEM-768, X25519     saber, x25519   mlkem added
 ##   adds_falcon_gimli       Falcon512, GimliXof  ed25519, blake3 both added
 ##   firesaber_rank2         FireSaber            saberMaxRank=2  build stops
 ##

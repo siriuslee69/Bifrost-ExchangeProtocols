@@ -589,18 +589,18 @@ task testMinimalAme, "Run the AME flag tests under each slim build profile":
   ## a slim build fails here rather than on a device.
   runNim("c", "evaluation/tests/test_ame_build_flags.nim", @["-r"])
   runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
-    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac", "-r"
+    "-d:bifrostKems=mlkem,x25519", "-d:bifrostCarriers=dac", "-r"
   ])
   runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
-    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=tcp", "-r"
+    "-d:bifrostKems=mlkem,x25519", "-d:bifrostCarriers=tcp", "-r"
   ])
   runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
-    "-d:bifrostKems=kyber,x25519", "-d:bifrostCarriers=dac",
+    "-d:bifrostKems=mlkem,x25519", "-d:bifrostCarriers=dac",
     "-d:bifrostSigs=ed25519", "-d:bifrostSymmetric=blake3,chacha20", "-r"
   ])
-  ## Single slots, not families: LightSaber, Kyber768, Falcon512.
+  ## Single slots, not families: LightSaber, ML-KEM-768, Falcon512.
   runNim("c", "evaluation/tests/test_ame_build_flags.nim", @[
-    "-d:bifrostKems=lightsaber,kyber768,x25519",
+    "-d:bifrostKems=lightsaber,mlkem768,x25519",
     "-d:bifrostSigs=ed25519,falcon512",
     "-r"])
   ## XHKDF with and without Gimli: the default branch mask must shrink to
@@ -636,11 +636,11 @@ task testPresetLayout, "Check that a preset's pinned layout always gets its algo
   runNim("c", t, @["-d:preset=iot-min", "-r"])
   runNim("c", t, @["-d:preset=" & fx & "adds_falcon_gimli.toml", "-r"])
   probe = gorgeEx(shellCommand("nim", @["c", "-f", "-r", "-d:preset=" & fx &
-    "adds_kyber.toml", "-o:build/preset_probe_kyber", t]))
-  if probe.exitCode != 0 or not probe.output.contains("uses kyber768, which -d:bifrostKems left out"):
-    quit("a pinned Kyber layout did not build with its warning:\n" & probe.output, 1)
+    "adds_mlkem.toml", "-o:build/preset_probe_mlkem", t]))
+  if probe.exitCode != 0 or not probe.output.contains("uses mlkem768, which -d:bifrostKems left out"):
+    quit("a pinned ML-KEM layout did not build with its warning:\n" & probe.output, 1)
   probe = gorgeEx(shellCommand("nim", @["c", "-f", "-d:bifrostStrictConfig",
-    "-d:preset=" & fx & "adds_kyber.toml", "-o:build/preset_probe_strict", t]))
+    "-d:preset=" & fx & "adds_mlkem.toml", "-o:build/preset_probe_strict", t]))
   if probe.exitCode == 0:
     quit("-d:bifrostStrictConfig still added a family the flags left out", 1)
   probe = gorgeEx(shellCommand("nim", @["c", "-f", "-d:preset=" & fx &

@@ -8,7 +8,7 @@
 ##
 ##   nimble testMinimalAme
 ##
-## Kyber and X25519 are the two families the minimal profile keeps, so the
+## ML-KEM and X25519 are the two families the minimal profile keeps, so the
 ## positive checks below use them; the exclusion checks name a family only
 ## when this build actually left it out.
 
@@ -21,7 +21,7 @@ import ../../src/protocols/config
 import runePragmas
 
 const
-  minimalKems: AmeKemAlgorithms = [akaKyber768, akaX25519]
+  minimalKems: AmeKemAlgorithms = [akaMlKem768, akaX25519]
 
 proc tagLenSession(n: AmeAuthTagLen,
     role: AmeEndpointRole = aerInitiator): AmeSession =
@@ -51,10 +51,10 @@ proc minimalLayout(): AmeSuiteLayout {.role: configurator.} =
 suite "AME build flags":
   # {.testKind: tkUnit.}
   test "the build set answers for every KEM slot":
-    check ameKemBuilt(akaKyber768) == (akfKyber in ameKemsBuilt)
+    check ameKemBuilt(akaMlKem768) == (akfMlKem in ameKemsBuilt)
     check ameKemBuilt(akaX25519) == (akfX25519 in ameKemsBuilt)
     check ameKemBuilt(akaMcEliece6688) == (akfMcEliece in ameKemsBuilt)
-    check ameKemFamily(akaKyber1024) == akfKyber
+    check ameKemFamily(akaMlKem1024) == akfMlKem
     check ameKemFamily(akaLightSaber) == akfSaber
     check ameKemFamilyName(akfMcEliece) == "mceliece"
 
@@ -62,7 +62,7 @@ suite "AME build flags":
   test "the wire meaning of every slot survives a slim build":
     ## Slot numbers are protocol, not build configuration: a node that lacks
     ## McEliece must still agree with a full node on what byte 0x0E means.
-    check ord(akaKyber768) == 0x08
+    check ord(akaMlKem768) == 0x08
     check ord(akaMcEliece6688) == 0x0E
     check ameKemName(akaMcEliece6688) == "Classic-McEliece-6688128f"
 
@@ -81,11 +81,11 @@ suite "AME build flags":
     check shared == sealed.sharedSecret
 
   # {.testKind: tkUnit.}
-  test "a Kyber slot encapsulates and decapsulates to one secret":
+  test "a ML-KEM slot encapsulates and decapsulates to one secret":
     var
-      kp: AmeKemKeypair = ameKemKeypair(akaKyber768)
-      sealed: AmeKemCipher = sealAmeKem(akaKyber768, kp.publicKey)
-      shared: ByteSeq = openAmeKem(akaKyber768, sealed, kp.secretKey)
+      kp: AmeKemKeypair = ameKemKeypair(akaMlKem768)
+      sealed: AmeKemCipher = sealAmeKem(akaMlKem768, kp.publicKey)
+      shared: ByteSeq = openAmeKem(akaMlKem768, sealed, kp.secretKey)
     check sealed.envelope.ciphertext.len > 0
     check shared == sealed.sharedSecret
 
@@ -124,7 +124,7 @@ suite "AME build flags":
 
   # {.testKind: tkUnit.}
   test "a full build keeps the defaults it has always had":
-    when ameKemsBuilt == {akfX25519, akfKyber, akfSaber, akfNtru, akfFrodo,
+    when ameKemsBuilt == {akfX25519, akfMlKem, akfSaber, akfNtru, akfFrodo,
         akfMcEliece}:
       check defaultAmeKemSlots() == @[akaFireSaber, akaX25519]
 
@@ -317,7 +317,7 @@ suite "AME build flags: one slot at a time":
   # {.testKind: tkEdgeCase, covers: "requireAmeKemBuilt".}
   test "a slot left out is refused although its family is compiled":
     ## Only meaningful in a build that keeps Saber but not every Saber slot
-    ## (testMinimalAme runs one: -d:bifrostKems=lightsaber,kyber768,x25519).
+    ## (testMinimalAme runs one: -d:bifrostKems=lightsaber,mlkem768,x25519).
     var
       a: AmeKemAlgorithm = akaFireSaber
     check ameKemBuilt(a) == (a in ameKemSlotsBuilt and

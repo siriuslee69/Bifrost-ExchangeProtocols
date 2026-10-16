@@ -17,8 +17,8 @@
 ##   preset layout            flags                      compiled
 ##   -----------------------  -------------------------  -----------------
 ##   LightSaber, X25519       bifrostKems=saber,x25519   saber, x25519
-##   Kyber768, X25519         bifrostKems=saber,x25519   saber, x25519,
-##                                                       kyber  <- WARNING
+##   ML-KEM-768, X25519         bifrostKems=saber,x25519   saber, x25519,
+##                                                       mlkem  <- WARNING
 ##
 ## Added families use the build's own -d:tyrSimd setting like everything
 ## else: SIMD is chosen once, for the whole program.

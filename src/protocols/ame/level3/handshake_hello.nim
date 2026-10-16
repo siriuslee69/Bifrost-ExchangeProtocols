@@ -87,7 +87,7 @@ proc clientHelloLayoutError(c: AmeClientHello,
   ## it -- and its starting selection meets this side's minimum
   ## (`ameMinPqKems`). The session then runs the CLIENT's layout:
   ##
-  ##   this side offers  [LightSaber, Kyber768, X25519]
+  ##   this side offers  [LightSaber, ML-KEM-768, X25519]
   ##   client sends      [LightSaber, X25519]          -> accepted, runs that
   ##   client sends      [FireSaber, X25519]           -> refused
   ##
