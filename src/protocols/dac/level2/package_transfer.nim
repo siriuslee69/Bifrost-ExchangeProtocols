@@ -2,7 +2,7 @@
 ## DAC Package Transfer <- chunk, recover, request repair, verify, commit
 ## -------------------------------------------------------------------------
 
-from eir_compression_and_ecc import RsCodec, RsRecoverReport, initRsCodec,
+from protocols/level1/ecc_reed_solomon import RsCodec, RsRecoverReport, initRsCodec,
   encodeRsShards, recoverRsShards
 
 import ../build
@@ -393,7 +393,7 @@ proc repairRsGroup(S: var DacPackageReceiver, r: DacPackageGroupRepair,
     k: int = int(r.chunkCount)
     T: seq[ByteSeq] = @[]
     present: seq[bool] = @[]
-    outcome: RsRecoverReport
+    outcome: RsRecoverReport = default(RsRecoverReport)
     i: int = 0
   if r.shards.len == 0:
     R.err = "DAC Reed-Solomon repair carries no parity shards"
@@ -466,7 +466,7 @@ proc acceptDacRepairChunk*(S: var DacPackageReceiver,
     c: DacRepairChunk) {.role: actor.} =
   ## S/c: receiver and one exact repair response.
   var
-    original: DacPackageChunk
+    original: DacPackageChunk = default(DacPackageChunk)
   if c.source notin {drsTcpExactChunk, drsTcpFullFallback}:
     raise newException(ValueError, "DAC repair source is not exact data")
   original = initDacPackageChunk(c.packageId, c.groupId, c.chunkId,
@@ -478,7 +478,7 @@ proc finishDacPackage*(S: DacPackageReceiver): DacPackageResult {.
     role: orchestrator.} =
   ## S: complete receiver state assembled and verified against the manifest.
   var
-    d: array[32, uint8]
+    d: array[32, uint8] = default(array[32, uint8])
   if missingChunkIds(S).len != 0:
     result.err = "DAC package is incomplete"
     return

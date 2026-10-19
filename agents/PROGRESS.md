@@ -1,6 +1,21 @@
 # Progress
 
-Commit Message: KEM slots: HQC replaces Classic McEliece on wire ids 0x05/0x0A/0x0E
+Commit Message: Carry large AME handshakes in bounded native DAC packages; pin current Tyr
+
+## 2026-10-19 Large handshakes for Geist device deployment
+
+- Added handshake_package.nim: native DAC manifest/chunk/parity messages in
+  AME kind 0x13, bound to address/session/step. No carrier or authentication
+  fallback. Allocation limits: 16 records, 512 KiB each, 20-second inactivity.
+- The recovery combination with FrodoKEM-1344, HQC-5 and all four Geist
+  signatures exceeded the UDP datagram limit. It now crosses MTU-sized
+  datagrams; tested through Geist's public APIs over real loopback sockets.
+- Narrow Eir imports to RLE and Reed-Solomon. Importing the entire video
+  codec aggregator broke Android ARM64 builds at an unrelated SIMD symbol.
+- Tyr submodule updated to ab76527, matching Tyr main and nightly.
+- Verification: 7 package checks; existing PSK modes (13), handshake/package
+  (33), session (50); Geist's dual-factor recovery integration and 621 checks.
+- New API and exact wire shape: docs/handshake-packages.md.
 
 Features (Planned):
 - Otter still lists 6 fields as written and never read (AmeSession.

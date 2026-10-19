@@ -402,6 +402,10 @@ if that line is ever crossed: link conditions must never lower protection.
 
 ## Quick Start
 
+Large AME handshake records can use native DAC packages with
+`sendAmeHandshakeDac` and `feedAmeHandshakeDatagram`, including repair for
+a lost shard. See [the wire format and limits](docs/handshake-packages.md).
+
 ```nim
 import bifrost_exchange_protocols
 

@@ -123,7 +123,9 @@ when acrDac in ameCarriersBuilt and dacAdaptiveBuilt:
   import ./ame/level3/dac_relay as ame_dac_relay
   import ./ame/level3/dac_endpoint as ame_dac_endpoint
   import ./ame/level3/secure_package as ame_secure_package
+  import ./ame/level3/handshake_package as ame_handshake_package
   export ame_dac_relay, ame_dac_endpoint, ame_secure_package
+  export ame_handshake_package
 
 when acrDac in ameCarriersBuilt:
   ## The datagram handshake driver. Unlike the packages above it needs only

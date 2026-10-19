@@ -57,10 +57,12 @@ type
     ampkClientFinish = 0x0F'u8,
     ampkSessionIdRequest = 0x10'u8,
     ampkSessionIdAssign = 0x11'u8,
-    ampkExchangeDeny = 0x12'u8
+    ampkExchangeDeny = 0x12'u8,
       ## The answer to an exchange request this side refuses (its minimum,
       ## or a selection that cannot be run). The requester stays on its
       ## current algorithms and may send again.
+    ampkHandshakePackage = 0x13'u8
+      ## A DAC package shard carrying a pre-session handshake record.
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,

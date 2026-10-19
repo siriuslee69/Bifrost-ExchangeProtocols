@@ -2,7 +2,7 @@
 ## AME Compression <- bounded Eir compression before AME protection
 ## -------------------------------------------------------------------------
 
-from eir_compression_and_ecc import encodeRle, decodeRle
+from protocols/level1/compression_rle import encodeRle, decodeRle
 
 import ../../types
 import ../types
@@ -116,13 +116,13 @@ proc decodeAmeCompressed*(A: openArray[uint8],
     role: orchestrator.} =
   ## A/p: authenticated compression envelope and negotiated limits.
   var
-    algorithm: AmeCompressionAlgorithm
+    algorithm: AmeCompressionAlgorithm = aczNone
     padding: AmePaddingPolicy = apadNone
     body: ByteSeq = @[]
     plainLen: uint32 = 0'u32
     encodedLen: uint32 = 0'u32
     encoded: ByteSeq = @[]
-    decoded: tuple[ok: bool, payload: ByteSeq, err: string]
+    decoded: tuple[ok: bool, payload: ByteSeq, err: string] = (false, @[], "")
   validateCompressionPolicy(p)
   if A.len < ameCompressionHeaderLen or A[0 .. 3] != ameCompressionMagic:
     raise newException(ValueError, "AME compression envelope identity mismatch")
