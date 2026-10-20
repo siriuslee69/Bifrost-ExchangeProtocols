@@ -88,6 +88,18 @@ AME authentication modes (AM1A / AM1S / AM1P / AM1P+S)
   -> proof bytes a frame-proved rotation should not carry are refused
   -> the same, over a real TCP socket, through the driver
 
+Routing through one or two routers               (test_ame_router.nim)
+  -> the Gimli route block opens only with its key, kind and frame counter
+  -> the five route messages survive the wire; junk is refused, not raised
+  -> a directory lists only what the asker may see, in pages of 24
+  -> forward, deliver, and the answer back through one router
+  -> "unknown" and "not yours" get the same refusal
+  -> a client's own origin claim is overwritten with its proved id
+  -> there and back through two routers, by way of a return note
+  -> a return note answers only the one written to, and expires
+  -> a refusal from the far router finds its way back to the sender
+  -> two routers pointing at each other stop at the first bounce
+
 AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
   -> no KEM public key of an AM1P hello crosses the wire in the clear
   -> two hellos under one secret never share a salt or a ciphertext

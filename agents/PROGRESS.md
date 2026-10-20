@@ -1,6 +1,26 @@
 # Progress
 
-Commit Message: Carry large AME handshakes in bounded native DAC packages; pin current Tyr
+Commit Message: AME routing: kind 0x14, Gimli-sealed target block, multi-hop router
+
+## 2026-10-20 Multi-hop routing for Geist (one handshake, with the router)
+
+- New AME packet kind 0x14 Route. Inside the sealed plaintext, byte 0 picks
+  one of five messages: ask, directory, forward, deliver, refuse
+  (ame/level2/route_frames.nim).
+- Target + origin ids (u64 each) are sealed AGAIN in one Gimli block with an
+  8-byte tag (ame/level1/route_block.nim): bare permutation, nonce = route
+  kind + AME frame counter, key = per-epoch, per-direction route key derived
+  beside the header key (`refreshAmeHeaderKeys` -> `refreshAmeFrameKeys`).
+- `openControlFrame` now returns the named `AmeControlOpened`, which also
+  carries the frame counter (needed as the block's nonce).
+- Socket-free router (ame/level3/router.nim): directory with per-identity
+  visibility, forward/deliver, hop counter (6), return notes (256, 120 s) so
+  answers find a far origin, refusals carried back. "Unknown" and "not
+  yours" are one refusal, so ids cannot be probed.
+- Hop-by-hop, not end-to-end: every router reads the payload. Documented
+  in docs/routing.md, README "Routing through AME routers", playbook.
+- Verification: test_ame_router (19 checks) in `nimble test`;
+  `nimble exampleRouter` with a real KEM exchange.
 
 ## 2026-10-19 Large handshakes for Geist device deployment
 
@@ -18,6 +38,11 @@ Commit Message: Carry large AME handshakes in bounded native DAC packages; pin c
 - New API and exact wire shape: docs/handshake-packages.md.
 
 Features (Planned):
+- Geist: wire `AmeRouter` into geist-routed (or a new daemon): read route
+  targets from router.toml, admit each handshake's session with the pin
+  name as identity, dispatch datagrams of kind 0x14 to `feedAmeRouteFrame`.
+- Routers could fetch each other's directories (an ask between router
+  peers) instead of every remote target being written with `via`.
 - Otter still lists 6 fields as written and never read (AmeSession.
   lastExchangeDenial, DacGroupRepairReport.err, Tls13ClientOutput.closed,
   Tls13ControlledResult.clientState/serverState/err). Each is a result for
@@ -301,7 +326,7 @@ Features (Done):
   submodules alone.
 
 Features (In Progress):
-- Nothing. Everything above is complete and every suite passes.
+- Nothing in Bifrost. Next: the Geist side of routing (Features Planned).
 
 Notes:
 - Last change (2026-10-16, later): Classic McEliece left AME. Its wire ids

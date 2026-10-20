@@ -406,6 +406,11 @@ Large AME handshake records can use native DAC packages with
 `sendAmeHandshakeDac` and `feedAmeHandshakeDatagram`, including repair for
 a lost shard. See [the wire format and limits](docs/handshake-packages.md).
 
+One handshake with a router is enough to reach every target it shows you,
+over one or more routers: `sealAmeRouteAsk`, `sealAmeRouteForward`,
+`AmeRouter`. See [Routing through AME routers](docs/routing.md) and
+`nimble exampleRouter`.
+
 ```nim
 import bifrost_exchange_protocols
 
@@ -2271,6 +2276,46 @@ absorb. Two places count them:
 A soak measured it: 2,787 kernel discards in 72 seconds with the default, 2
 with 4 MB, and one third more work done.
 
+## Routing through AME routers 🐦‍🔥
+
+**Definitions**
+
+- `router` := a process holding one AME session per neighbour, which passes
+  route messages between them. Unlike the VPS relay above, it HOLDS KEYS and
+  reads what it passes on.
+- `route id` := a u64 naming one machine for routing; `0` is reserved.
+- `directory` := the router's list of targets (id + name), each shown only
+  to the identities written beside it.
+
+The relay above moves bytes and knows nothing. A router is the opposite: a
+client makes ONE handshake, with the router, and can then reach every
+target the router shows it -- across several routers if needed.
+
+```text
+  phone ==session A==> router 1 ==session B==> router 2 ==session C==> nas
+          one handshake          made by the routers, not by the phone
+```
+
+```nim
+send(router, phone.sealAmeRouteAsk(acrDac))                # who may I reach?
+var got = phone.openAmeRouteFrame(acrDac, recv(router))  # [0x20 "nas"]
+send(router, phone.sealAmeRouteForward(acrDac, 0x20'u64, payload))
+```
+
+On the wire it is one AME control frame of kind `0x14`. Inside, after the
+session ratchet opens it, the target and origin ids are sealed AGAIN, with
+Gimli, under a per-epoch route key and with the frame counter as nonce:
+
+```text
+  | kind | sealed target u64 + origin u64 (16) | tag (8) | hops | payload |
+          \________ one Gimli block ________/
+```
+
+Every router reads the payload. When one must not, put an end-to-end
+session inside it. The full byte layout, who may send to whom, the hop
+counter and the way answers find their way back are in
+[docs/routing.md](docs/routing.md).
+
 ## Layout
 
 **Definitions**
@@ -2324,6 +2369,7 @@ Each protocol folder has its own `README.md` with one line per file.
 | Build library | `nimble buildLib` |
 | Run tests | `nimble test` |
 | Run examples | `nimble examples` |
+| Run the router example | `nimble exampleRouter` |
 | Run benchmarks | `nimble benchmarks` |
 | Soak AME+DAC over real sockets | `nimble soak` |
 | Run AVX2 server benchmarks | `nimble benchmarksServerSimd` |
@@ -2519,7 +2565,8 @@ open. An unknown flag bit is refused, not ignored.
 
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
-`0x10` SessionIdRequest, `0x11` SessionIdAssign, `0x12` ExchangeDeny.
+`0x10` SessionIdRequest, `0x11` SessionIdAssign, `0x12` ExchangeDeny,
+`0x13` HandshakePackage, `0x14` Route (see [docs/routing.md](docs/routing.md)).
 
 ExchangeDeny body (inside the sealed payload):
 
@@ -2810,6 +2857,24 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   a held key of a lost datagram is erased once it falls further behind than
   the reorder ceiling anyway.
 
+**Routing**
+
+- **Every forward comes back as "no route"**: check, in order: the target
+  line's `visibleTo` names the identity given to `admitAmeRoutePeer` for the
+  sender (not its route id); a target behind another router has `via` set to
+  that router's route id, and that router is admitted with `router = true`;
+  the next router has its own line for the target, visible to THIS router's
+  identity. "No route" is deliberately the same answer for "unknown" and
+  "not yours".
+- **An answer from far away is refused after a while**: the way back exists
+  only as a return note, which lives 120 s after the last forward from that
+  origin. A target that answers later needs a directory line for the origin
+  instead.
+- **`feedAmeRouteFrame` drops a frame with "AME route block did not
+  authenticate"**: the two ends disagree on the route key -- the session was
+  built before both sides ran this version, or an epoch switch has not
+  finished on one side. A new handshake fixes it.
+
 **Builds and transports**
 
 - **Nim's `send(Socket, string)` is not used for our writes** (std/net,
@@ -2889,6 +2954,10 @@ being careful, not the code being wrong.
   encapsulation. The cookie limits this to addresses that can receive.
 - **Preparing key blocks ahead weakens forward secrecy for messages not yet
   sent.** Off by default. See the FOMKE section.
+- **Routers read what they route.** Route messages are sealed per link, not
+  end to end, and a router peer (`router = true`) is believed about who a
+  message comes from. Mark only routers you run as router peers, and carry an
+  end-to-end session inside the payload when a router must not read it.
 
 # Direct LAN Messenger
 

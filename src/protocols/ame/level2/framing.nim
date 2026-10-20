@@ -187,8 +187,7 @@ proc finishAmeExchangeFrameVia(S: var AmeSession, frame: openArray[uint8],
   ## return nothing (empty), stay on the old algorithms; the reason is in
   ## `S.lastExchangeDenial`. Either way this side may send again afterwards.
   var
-    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (ok: false,
-      payload: @[], err: "")
+    opened: AmeControlOpened = default(AmeControlOpened)
     requestId: uint32 = 0'u32
     fomkeCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
   if controlFrameKind(S, frame) == ampkExchangeDeny:
@@ -487,7 +486,7 @@ proc answerAmeSessionIdRotation*(S: var AmeSession, frame: openArray[uint8],
   ## The answer is sealed BEFORE this side switches, so it travels under the
   ## id the requester still knows.
   var
-    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (false, @[], "")
+    opened: AmeControlOpened = default(AmeControlOpened)
     next: uint64 = assigned
     body: ByteSeq = @[]
   opened = openControlFrame(S, frame, ampkSessionIdRequest, carrier)
@@ -505,7 +504,7 @@ proc finishAmeSessionIdRotation*(S: var AmeSession, frame: openArray[uint8],
   ## S/frame/carrier: the assignment, opened and taken up. Returns the id this
   ## side now answers to.
   var
-    opened: tuple[ok: bool, payload: ByteSeq, err: string] = (false, @[], "")
+    opened: AmeControlOpened = default(AmeControlOpened)
     i: int = 0
   opened = openControlFrame(S, frame, ampkSessionIdAssign, carrier)
   if not opened.ok:

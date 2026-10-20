@@ -454,7 +454,7 @@ proc sealControlFrame*(S: var AmeSession, kind: AmePacketKind,
   requireAmePeerTrust(S)
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady,
       ampkExchangeDeny,
-      ampkSessionIdRequest, ampkSessionIdAssign}:
+      ampkSessionIdRequest, ampkSessionIdAssign, ampkRoute}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
@@ -477,8 +477,7 @@ proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
 
 proc openControlFrame*(S: var AmeSession, frame: openArray[uint8],
     expected: AmePacketKind, carrier: AmeCarrier,
-    useCandidate: bool = false): tuple[ok: bool, payload: ByteSeq,
-    err: string] {.role: orchestrator.} =
+    useCandidate: bool = false): AmeControlOpened {.role: orchestrator.} =
   ## S/frame/expected/carrier/useCandidate: authenticated control open inputs.
   ##
   ## `useCandidate` is the epoch-ready case. The peer sealed that frame as the
@@ -555,6 +554,7 @@ proc openControlFrame*(S: var AmeSession, frame: openArray[uint8],
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
   result.ok = true
   result.payload = opened.payload
+  result.sequence = f.header.sequence
 
 proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
     body: openArray[uint8]): ByteSeq {.role: orchestrator.} =

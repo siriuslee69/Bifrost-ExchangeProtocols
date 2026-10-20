@@ -22,7 +22,8 @@ src/protocols
 │   ├── types.nim
 │   ├── level0/  <- bits, bytes, protocol descriptor
 │   ├── level1/  <- algorithms, paths, suites, derivation, the secret stack,
-│   │                triggers, compression, and tier_aead: the one
+│   │                triggers, compression, header protection, the
+│   │                Gimli route block (route_block.nim), and tier_aead: the one
 │   │                cipher-XOR + MAC-XOR construction
 │   │   ├── kems/       <- one file per KEM family
 │   │   ├── sigs/       <- one file per signature family, plus the hybrid pair
@@ -37,6 +38,7 @@ src/protocols
 │   │                               sending one frame safely, id rotation;
 │   │                               passes seal_open and requests on
 │   │                requests.nim   building a request by name
+│   │                route_frames.nim  the five route messages (kind 0x14)
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
 │   └── level3/  <- handshake.nim   steps 3 and 4 (finish, accept), and the
@@ -50,6 +52,8 @@ src/protocols
 │                    _wire.nim      those same four, byte for byte
 │                    _transcript.nim  the record both sides sign
 │                    _tcp/_dac/_transport.nim  running one over a socket
+│                    router.nim     multi-hop routing: directory, forward,
+│                                   return notes (docs/routing.md)
 │                    plus secure package, and the DAC relay that
 │                    assembles loop + peers + crypto
 ├── dac/

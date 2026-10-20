@@ -25,6 +25,7 @@ import ../level1/secret_stack
 import ../level1/suites
 import ../level1/path_triggers
 import ../level1/header_protection
+import ../level1/route_block
 import ../../fomke/types
 import ../../fomke/level1/chain
 import ../../config
@@ -112,6 +113,13 @@ type
       ## Both are derived once per epoch, not once per frame -- deriving one
       ## runs every switched-on KDF slot, and a frame only needs a keyed
       ## BLAKE3 call over 16 bytes.
+    routeKeySend*: ByteSeq
+      ## Seals the target/origin block of route frames leaving this side.
+      ## See level1/route_block.nim.
+    routeKeyRecv*: ByteSeq
+      ## Opens the block on route frames arriving. Split by direction for
+      ## the header keys' reason: a block this side sealed must not open as
+      ## one it received.
 
     lastErr*: string
 
@@ -612,24 +620,38 @@ proc stageAmeSessionFomkeUpgrade*(S: var AmeSession) {.role: actor,
     S.pendingIncoming.candidate.epochId, S.pendingIncoming.request,
     S.pendingIncoming.candidate.exchange)
 
-proc refreshAmeHeaderKeys*(S: var AmeSession) {.role: actor,
+proc refreshAmeFrameKeys*(S: var AmeSession) {.role: actor,
     tag: "ame|cryptoBoundary|kdf".} =
-  ## S: header-protection keys rebuilt for whatever epoch is now current.
+  ## S: the per-frame side keys rebuilt for whatever epoch is now current:
+  ##
+  ##   key pair        used for
+  ##   --------------  ---------------------------------------------
+  ##   headerKey*      masking the frame counter (header_protection)
+  ##   routeKey*       sealing a route frame's ids (route_block)
   ##
   ## Must be called wherever `auth.current` changes. The keys are bound to the
   ## epoch id, so a stale pair produces a mask the peer cannot reproduce and
   ## every frame fails to open -- loudly, which is the right way for this to
   ## go wrong if a future rotation path forgets to call it.
+  var
+    outbound: ByteSeq = ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      outboundAmeDirection(S.auth.endpointRole))
+    inbound: ByteSeq = ameEpochKeyContext(S.auth.current, S.auth.sessionId,
+      inboundAmeDirection(S.auth.endpointRole))
   secureClearAmeBytes(S.headerKeySend)
   secureClearAmeBytes(S.headerKeyRecv)
+  secureClearAmeBytes(S.routeKeySend)
+  secureClearAmeBytes(S.routeKeyRecv)
   S.headerKeySend = deriveAmeHeaderKey(S.auth.current.exchange,
-    S.auth.current.layout, S.auth.current.tier,
-    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
-      outboundAmeDirection(S.auth.endpointRole)))
+    S.auth.current.layout, S.auth.current.tier, outbound)
   S.headerKeyRecv = deriveAmeHeaderKey(S.auth.current.exchange,
-    S.auth.current.layout, S.auth.current.tier,
-    ameEpochKeyContext(S.auth.current, S.auth.sessionId,
-      inboundAmeDirection(S.auth.endpointRole)))
+    S.auth.current.layout, S.auth.current.tier, inbound)
+  S.routeKeySend = deriveAmeRouteKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier, outbound)
+  S.routeKeyRecv = deriveAmeRouteKey(S.auth.current.exchange,
+    S.auth.current.layout, S.auth.current.tier, inbound)
+  secureClearAmeBytes(outbound)
+  secureClearAmeBytes(inbound)
 
 proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
     sharedSecrets: openArray[ByteSeq], transcriptSalt: openArray[uint8]) {.
@@ -653,7 +675,7 @@ proc rotateAmeTier*(S: var AmeSession, r: AmeExchangeRequest,
   S.auth.retiring = cloneEpoch(S.auth.current)
   S.auth.current = next
   requireAmeAuth(S.auth)
-  refreshAmeHeaderKeys(S)
+  refreshAmeFrameKeys(S)
 
 proc finishAmeSessionExchange*(S: var AmeSession, r: AmeExchangeReply) {.
     role: orchestrator.} =
@@ -709,7 +731,7 @@ proc confirmAmeSessionExchange*(S: var AmeSession, requestId,
   clearEpoch(S.auth.retiring)
   S.auth.retiring = cloneEpoch(S.auth.current)
   S.auth.current = S.pendingIncoming.candidate
-  refreshAmeHeaderKeys(S)
+  refreshAmeFrameKeys(S)
   S.pendingIncoming = default(AmePendingIncomingExchange)
   setCurrentAmeTier(S.path, targetTier)
   if S.fomkeCandidateActive:

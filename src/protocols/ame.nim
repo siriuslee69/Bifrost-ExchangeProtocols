@@ -65,6 +65,8 @@
 ##   protocols/ame/level1/signatures  <- the signature flag, in full
 ##   protocols/ame/level1/symmetric   <- the symmetric flag, in full
 ##   protocols/ame/level2/carriers    <- the carrier flag, in full
+##   protocols/ame/level3/router      <- multi-hop routing through one session
+
 
 import ./dac/build
 import ./ame/types as ame_types
@@ -79,6 +81,7 @@ import ./ame/level1/secret_stack as ame_secret_stack
 import ./ame/level1/tier_aead as ame_tier_aead
 import ./ame/level1/padding as ame_padding
 import ./ame/level1/header_protection as ame_header_protection
+import ./ame/level1/route_block as ame_route_block
 import ./ame/level1/presets as ame_presets
 import ./ame/level1/path_triggers as ame_path_triggers
 import ./ame/level1/compression as ame_compression
@@ -87,6 +90,8 @@ import ./ame/level2/agreement as ame_agreement
 import ./ame/level2/trust as ame_trust
 import ./ame/level2/wire as ame_wire
 import ./ame/level2/carriers as ame_carriers
+import ./ame/level2/route_frames as ame_route_frames
+import ./ame/level3/router as ame_router
 import ./ame/level3/handshake as ame_handshake
 import ./ame/level3/handshake_wire as ame_handshake_wire
 import ./ame/level3/handshake_transport as ame_handshake_transport
@@ -102,6 +107,7 @@ export ame_derivation
 export ame_secret_stack
 export ame_tier_aead
 export ame_header_protection
+export ame_route_block
 export ame_padding
 export ame_presets
 export ame_path_triggers
@@ -111,6 +117,8 @@ export ame_agreement
 export ame_trust
 export ame_wire
 export ame_carriers
+export ame_route_frames
+export ame_router
 export ame_handshake
 export ame_handshake_wire
 export ame_handshake_transport

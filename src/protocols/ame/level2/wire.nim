@@ -69,13 +69,6 @@ proc readU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
   result = uint32(A[o]) or (uint32(A[o + 1]) shl 8) or
     (uint32(A[o + 2]) shl 16) or (uint32(A[o + 3]) shl 24)
 
-proc readU64(A: openArray[uint8], o: int): uint64 {.role: parser.} =
-  ## A/o: source bytes and little-endian offset.
-  var i: int = 0
-  while i < 8:
-    result = result or (uint64(A[o + i]) shl (8 * i))
-    i = i + 1
-
 proc packetKindValid(id: uint8): bool {.role: parser.} =
   ## id: AME2 packet kind wire value.
   result = id <= uint8(ord(high(AmePacketKind)))
@@ -153,7 +146,7 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
   ## byte that set a flag bit this build does not know.
   result.messageClass = AmeMessageClass(A[5] and ameFrameClassMask)
   result.flags = A[5] and not ameFrameClassMask
-  result.sessionId = readU64(A, 6)
+  result.sessionId = readAmeU64(A, 6)
   result.rootLaneId = readU32(A, 14)
   result.laneId = readU32(A, 18)
   result.sequence = readU32(A, 22)

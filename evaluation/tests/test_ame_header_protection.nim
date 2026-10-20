@@ -174,7 +174,7 @@ suite "AME header protection":
       i = i + 1
     check matched < 8
 
-  # {.testKind: tkUnit, covers: "refreshAmeHeaderKeys".}
+  # {.testKind: tkUnit, covers: "refreshAmeFrameKeys".}
   test "the two directions do not share a header key":
     ## One key per direction, for the same reason the ratchet has two lanes:
     ## a frame this side sent must not be reflectable back at it looking like

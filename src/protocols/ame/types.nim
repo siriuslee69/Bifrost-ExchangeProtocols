@@ -63,6 +63,11 @@ type
       ## current algorithms and may send again.
     ampkHandshakePackage = 0x13'u8
       ## A DAC package shard carrying a pre-session handshake record.
+    ampkRoute = 0x14'u8
+      ## One router message: a directory question or answer, a forward, a
+      ## delivery or a refusal. Sealed by the session ratchet like every
+      ## control frame; which of the five it is sits encrypted inside.
+      ## See level2/route_frames.nim.
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,
@@ -561,3 +566,73 @@ type
     peerTrustRequired*: bool
     peerTrusted*: bool
     peerAuthority*: string
+
+  ## AmeControlOpened: one control frame, after it authenticated.
+  ## `sequence` is the frame counter the tag committed to, unmasked. Most
+  ## callers ignore it; the route block uses it as its nonce, so a block
+  ## lifted out of one frame does not open inside another.
+  AmeControlOpened* {.role: preparedData,
+      expectedCount: [0, 512], lifeCycle: lcJob.} = tuple
+    ok: bool
+    payload: ByteSeq
+    err: string
+    sequence: uint32
+
+  ## AmeRouteKind: the first byte inside a sealed `ampkRoute` frame.
+  ##
+  ##   byte  name       who sends it          what follows
+  ##   ----  ---------  --------------------  ---------------------------
+  ##   0x01  ask        anyone -> router      start u16
+  ##   0x02  directory  router -> asker       start, total, entries
+  ##   0x03  forward    anyone -> router      route block, hops, payload
+  ##   0x04  deliver    router -> target      route block, hops, payload
+  ##   0x05  refuse     router -> sender      route block, reason
+  AmeRouteKind* = enum
+    arkUnknown = 0x00'u8,
+    arkAsk = 0x01'u8,
+    arkDirectory = 0x02'u8,
+    arkForward = 0x03'u8,
+    arkDeliver = 0x04'u8,
+    arkRefuse = 0x05'u8
+
+  ## AmeRouteRefusal: why a router did not pass a forward on.
+  ##
+  ## `arrNoRoute` covers BOTH "no such target" and "you may not see it".
+  ## A sender that could tell them apart could find hidden targets by
+  ## trying ids one after another.
+  AmeRouteRefusal* = enum
+    arrNone = 0x00'u8,
+    arrNoRoute = 0x01'u8,
+    arrHopsSpent = 0x02'u8,
+    arrUnreachable = 0x03'u8
+      ## The target is known and allowed, but its link is down or could not
+      ## take the frame right now. Worth trying again later.
+
+  ## AmeRouteEntry: one line of a router's directory.
+  AmeRouteEntry* {.role: preparedData.} = object
+    id*: uint64
+    name*: string
+
+  ## AmeRouteMessage: one route frame, sealed or opened.
+  ## Which fields mean something depends on `kind`:
+  ##
+  ##   kind       target origin hopsLeft refusal start total entries payload
+  ##   ---------  ------ ------ -------- ------- ----- ----- ------- -------
+  ##   ask                                       x
+  ##   directory                                 x     x     x
+  ##   forward    x      x      x                                   x
+  ##   deliver    x      x      x                                   x
+  ##   refuse     x      x               x
+  AmeRouteMessage* {.role: preparedData,
+      expectedCount: [0, 512], lifeCycle: lcJob.} = object
+    ok*: bool
+    kind*: AmeRouteKind
+    target*: uint64
+    origin*: uint64
+    hopsLeft*: uint8
+    refusal*: AmeRouteRefusal
+    start*: uint16
+    total*: uint16
+    entries*: seq[AmeRouteEntry]
+    payload*: ByteSeq
+    err*: string

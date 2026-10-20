@@ -42,6 +42,18 @@ proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: dataWriter.} =
   for ch in label:
     dst.add(uint8(ord(ch)))
 
+proc readAmeU16*(A: openArray[uint8], o: int): uint16 {.role: parser.} =
+  ## A/o: source bytes and the offset of a little-endian uint16.
+  result = uint16(A[o]) or (uint16(A[o + 1]) shl 8)
+
+proc readAmeU64*(A: openArray[uint8], o: int): uint64 {.role: parser.} =
+  ## A/o: source bytes and the offset of a little-endian uint64.
+  var
+    i: int = 0
+  while i < 8:
+    result = result or (uint64(A[o + i]) shl (8 * i))
+    i = i + 1
+
 proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## src: source bytes with the same length.

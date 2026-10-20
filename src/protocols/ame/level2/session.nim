@@ -158,7 +158,7 @@ proc initAmeSession*(a: AmeAuthPackage,
     initXhkdfConfig(branches = xhkdfBranchesOf(result.auth.current.layout,
       result.auth.current.tier)), runtime.fomkeReorderCeiling,
     result.auth.current.params.authTagLen)
-  refreshAmeHeaderKeys(result)
+  refreshAmeFrameKeys(result)
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)
   result.fomkePregenerationMessages = runtime.fomkePregenerationMessages
   if result.fomkePregenerationEnabled:
