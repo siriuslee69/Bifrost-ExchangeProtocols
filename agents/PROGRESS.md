@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Rename NK -> EK (epoch key), CS / "next secret" -> SK (session key); say why they stay apart
+Commit Message: README: what an SK is bound to, other machines, copies, several devices
 
 ## 2026-10-20 Names: EK and SK
 
@@ -16,6 +16,10 @@ Commit Message: Rename NK -> EK (epoch key), CS / "next secret" -> SK (session k
   FOMKE, "Why EK and SK are two keys, not one".
 - Generic "session keys" (keys of a live session) now say "traffic keys",
   so "session key" only ever means SK.
+- README, "The session key": SK is bound to the PSK name (not a public key),
+  rotates every session, a copy or an old backup is refused ("client hello
+  did not open under the shared secret"), several devices need one PSK
+  name each.
 
 ## 2026-10-20 FOMKE: tight key, and lanes that recover from a wide gap
 

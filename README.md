@@ -1019,6 +1019,47 @@ endpoints back to PSK only by breaking one handshake on purpose. Set it to
 `false` only while an endpoint may have lost its SK, for example after a
 restore from backup.
 
+**What an SK is bound to.** Think of it as a cookie that both endpoints hold
+and that changes with every session -- closer to a rotating refresh token
+than to a fixed cookie:
+
+```text
+  session 1   PSK            -> hands out SK1
+  session 2   PSK + SK1      -> hands out SK2      (SK1 is now worthless)
+  session 3   PSK + SK2      -> hands out SK3
+```
+
+It is bound to the PSK PAIR -- the PSK name on both endpoints -- not to a
+public key. Bifrost does not store it: the program keeps the latest SK under
+the PSK name, on both endpoints. (AM1P+S adds a pinned public key on top;
+the SK is still kept per PSK name.)
+
+**The same client from another machine.** That machine has the PSK, but not
+the latest SK:
+
+```text
+                            responder: required = false   required = true
+  ------------------------  ----------------------------  -----------------
+  no SK at all              PSK only -- the hello flag    refused
+                            shows it
+  an older SK (a copy, a    refused: "client hello did    refused (same)
+  backup)                   not open under the shared
+                            secret"
+```
+
+That is the point of the SK: a copy of the PSK alone is no longer enough;
+the endpoint that ran the last session is.
+
+**A copy shows itself.** If someone copies a device's storage (PSK + SK) and
+connects first, the SK moves on, and the real device -- now holding the old
+one -- is refused. The reverse is just as true: after the real device's next
+session, the copy is worthless. Either way someone gets refused, and that is
+the moment to look.
+
+**Several devices for one user.** Give each device its OWN PSK name, so each
+has its own SK chain. Two devices sharing one PSK name and one SK would keep
+moving the SK away from each other, and one of them would always be refused.
+
 #### Proving an in-session request
 
 Every request after the handshake (one more KEM exchange, a change of
