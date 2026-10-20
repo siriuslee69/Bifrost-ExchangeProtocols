@@ -32,10 +32,11 @@ nimble exampleRouter
 `ame_router.nim` demonstrates:
 
 ```text
-phone ==A==> router ==B==> nas
-  ask      -> [0x20 "nas"]
-  forward  -> nas receives "hello nas" from 0x30
-  answer   -> phone receives "hi phone" from 0x20
+phone ==link A==> router ==link B==> nas
+  ask        (AME frame, for the router)   -> [0x20 "nas"]
+  AM1P       (inside ART route frames)     -> phone <-> nas, end to end
+  "hello nas" on that session              -> the router only re-seals
+                                              the 16-byte address
 ```
 
 One handshake per neighbour, with the router only. See

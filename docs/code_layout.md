@@ -38,7 +38,9 @@ src/protocols
 │   │                               sending one frame safely, id rotation;
 │   │                               passes seal_open and requests on
 │   │                requests.nim   building a request by name
-│   │                route_frames.nim  the five route messages (kind 0x14)
+│   │                route_wire.nim    the outer "ART" route frame: sealed
+│   │                                  address, replay window, open payload
+│   │                route_directory.nim  "whom may I reach?" (AME kind 0x14)
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
 │   └── level3/  <- handshake.nim   steps 3 and 4 (finish, accept), and the
@@ -53,6 +55,7 @@ src/protocols
 │                    _transcript.nim  the record both sides sign
 │                    _tcp/_dac/_transport.nim  running one over a socket
 │                    router.nim     multi-hop routing: directory, forward,
+│                                   deliver to self,
 │                                   return notes (docs/routing.md)
 │                    plus secure package, and the DAC relay that
 │                    assembles loop + peers + crypto

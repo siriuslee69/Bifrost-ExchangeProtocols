@@ -89,13 +89,21 @@ AME authentication modes (AM1A / AM1S / AM1P / AM1P+S)
   -> the same, over a real TCP socket, through the driver
 
 Routing through one or two routers               (test_ame_router.nim)
-  -> the Gimli route block opens only with its key, kind and frame counter
-  -> the five route messages survive the wire; junk is refused, not raised
+  -> the Gimli address block opens only with its key and nonce
+  -> an ART frame carries the payload untouched; an AME frame is not one
+  -> a route frame seen once is refused the second time; one older than
+     the 64-frame window is refused; a late one inside it is accepted
+  -> an edited counter, hop count or length breaks the tag, and a failed
+     tag does not move the replay window
+  -> the payload's CONTENT is left to the end-to-end session (pinned)
+  -> the directory question survives FOMKE; junk is refused, not raised
   -> a directory lists only what the asker may see, in pages of 24
   -> forward, deliver, and the answer back through one router
   -> "unknown" and "not yours" get the same refusal
   -> a client's own origin claim is overwritten with its proved id
-  -> there and back through two routers, by way of a return note
+  -> a replayed forward stops at the router
+  -> an end-to-end AM1P handshake and session frame through two routers,
+     which only ever re-seal the 16-byte address
   -> a return note answers only the one written to, and expires
   -> a refusal from the far router finds its way back to the sender
   -> two routers pointing at each other stop at the first bounce

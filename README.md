@@ -407,9 +407,9 @@ Large AME handshake records can use native DAC packages with
 a lost shard. See [the wire format and limits](docs/handshake-packages.md).
 
 One handshake with a router is enough to reach every target it shows you,
-over one or more routers: `sealAmeRouteAsk`, `sealAmeRouteForward`,
-`AmeRouter`. See [Routing through AME routers](docs/routing.md) and
-`nimble exampleRouter`.
+over one or more routers, with an end-to-end AM1S/AM1P session the routers
+cannot read: `sealAmeRouteAsk`, `sealAmeRouteForward`, `AmeRouter`. See
+[Routing through AME routers](docs/routing.md) and `nimble exampleRouter`.
 
 ```nim
 import bifrost_exchange_protocols
@@ -2280,41 +2280,52 @@ with 4 MB, and one third more work done.
 
 **Definitions**
 
-- `router` := a process holding one AME session per neighbour, which passes
-  route messages between them. Unlike the VPS relay above, it HOLDS KEYS and
-  reads what it passes on.
-- `route id` := a u64 naming one machine for routing; `0` is reserved.
-- `directory` := the router's list of targets (id + name), each shown only
-  to the identities written beside it.
+- `link` := an ordinary AME session between two neighbours, from an
+  ordinary handshake.
+- `route frame` := a frame starting with `ART` instead of `AME`. Only its
+  16-byte address (target id + origin id) is encrypted, per link; its
+  payload is passed on byte for byte.
+- `route id` := a u64 naming one node; `0` is reserved.
+- `directory` := a router's list of targets (id + name), each shown only to
+  the identities written beside it.
 
-The relay above moves bytes and knows nothing. A router is the opposite: a
-client makes ONE handshake, with the router, and can then reach every
-target the router shows it -- across several routers if needed.
+The relay above moves bytes and knows nothing. A router knows WHERE a frame
+goes, but not WHAT it says. A client makes ONE handshake, with its router.
+On that link it can then send two things:
 
 ```text
-  phone ==session A==> router 1 ==session B==> router 2 ==session C==> nas
-          one handshake          made by the routers, not by the phone
+  "AME" frame   for the router itself, FOMKE-sealed  ("whom may I reach?")
+  "ART" frame   for someone behind the router        (a route frame)
 ```
+
+Inside the route frames it runs its own AM1S or AM1P handshake with the
+target, end to end, and then the session that handshake opens:
+
+```text
+  phone ==link A==> router 1 ==link B==> router 2 ==link C==> nas
+          address sealed      opened with A,       opened with B,
+          with A              sealed with B        sealed with C
+          payload: the phone<->nas handshake / session -- same bytes
+                   on every link, readable by phone and nas only
+```
+
+```text
+  | "ART" 01 | kind | hops | link | counter | target+origin (16) | tag (8) | payload |
+                                             \__ one Gimli block _/
+```
+
+The 8-byte tag covers the ids and the whole clear header (kind, hops,
+counter, payload length). The per-link counter and a 64-frame replay window
+stop a replayed frame at the first router it reaches.
 
 ```nim
-send(router, phone.sealAmeRouteAsk(acrDac))                # who may I reach?
-var got = phone.openAmeRouteFrame(acrDac, recv(router))  # [0x20 "nas"]
-send(router, phone.sealAmeRouteForward(acrDac, 0x20'u64, payload))
+send(router, link.sealAmeRouteAsk(acrDac))               # who may I reach?
+var dir = link.openAmeRouteDirectory(acrDac, recv(router))  # [0x20 "nas"]
+send(router, link.sealAmeRouteForward(0x20'u64, e2eFrame))
 ```
 
-On the wire it is one AME control frame of kind `0x14`. Inside, after the
-session ratchet opens it, the target and origin ids are sealed AGAIN, with
-Gimli, under a per-epoch route key and with the frame counter as nonce:
-
-```text
-  | kind | sealed target u64 + origin u64 (16) | tag (8) | hops | payload |
-          \________ one Gimli block ________/
-```
-
-Every router reads the payload. When one must not, put an end-to-end
-session inside it. The full byte layout, who may send to whom, the hop
-counter and the way answers find their way back are in
-[docs/routing.md](docs/routing.md).
+Byte layout, replay, who may send to whom, the way answers find their way
+back, and what is and is not hidden: [docs/routing.md](docs/routing.md).
 
 ## Layout
 
@@ -2566,7 +2577,8 @@ open. An unknown flag bit is refused, not ignored.
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
 `0x10` SessionIdRequest, `0x11` SessionIdAssign, `0x12` ExchangeDeny,
-`0x13` HandshakePackage, `0x14` Route (see [docs/routing.md](docs/routing.md)).
+`0x13` HandshakePackage, `0x14` Route directory (see [docs/routing.md](docs/routing.md)).
+Route frames themselves are not AME frames: they start with `ART` (same doc).
 
 ExchangeDeny body (inside the sealed payload):
 
@@ -2871,9 +2883,15 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   origin. A target that answers later needs a directory line for the origin
   instead.
 - **`feedAmeRouteFrame` drops a frame with "AME route block did not
-  authenticate"**: the two ends disagree on the route key -- the session was
-  built before both sides ran this version, or an epoch switch has not
-  finished on one side. A new handshake fixes it.
+  authenticate"**: the two ends of that link disagree on the route key --
+  one side is on an older build, or a frame crossed an epoch switch (it was
+  sealed under the old epoch and arrived after the new one). The sender's
+  end-to-end layer re-sends; if it keeps happening, make a new link
+  handshake.
+- **"AME route replay rejected"**: the same route frame arrived twice on
+  one link (a duplicate datagram, or someone replaying it), or arrived more
+  than 64 frames late. Nothing to fix for a few; many mean the path
+  reorders by more than 64 frames.
 
 **Builds and transports**
 
@@ -2954,10 +2972,12 @@ being careful, not the code being wrong.
   encapsulation. The cookie limits this to addresses that can receive.
 - **Preparing key blocks ahead weakens forward secrecy for messages not yet
   sent.** Off by default. See the FOMKE section.
-- **Routers read what they route.** Route messages are sealed per link, not
-  end to end, and a router peer (`router = true`) is believed about who a
-  message comes from. Mark only routers you run as router peers, and carry an
-  end-to-end session inside the payload when a router must not read it.
+- **Routers see addresses, and route payloads look the same on every
+  link.** A route frame encrypts target and origin per link, not the
+  payload; the payload is the sender's end-to-end session, which routers
+  cannot read. Someone watching both sides of a router can still match a
+  frame in to a frame out by its payload. A router peer (`router = true`) is
+  believed about origins: mark only routers you run.
 
 # Direct LAN Messenger
 

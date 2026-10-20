@@ -64,10 +64,10 @@ type
     ampkHandshakePackage = 0x13'u8
       ## A DAC package shard carrying a pre-session handshake record.
     ampkRoute = 0x14'u8
-      ## One router message: a directory question or answer, a forward, a
-      ## delivery or a refusal. Sealed by the session ratchet like every
-      ## control frame; which of the five it is sits encrypted inside.
-      ## See level2/route_frames.nim.
+      ## A client asking the router ITSELF which targets it may reach, and
+      ## the answer. Sealed by the session ratchet like every control frame.
+      ## Routed traffic does NOT use this kind: it travels in outer "ART"
+      ## frames (level2/route_wire.nim).
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,
@@ -567,33 +567,14 @@ type
     peerTrusted*: bool
     peerAuthority*: string
 
-  ## AmeControlOpened: one control frame, after it authenticated.
-  ## `sequence` is the frame counter the tag committed to, unmasked. Most
-  ## callers ignore it; the route block uses it as its nonce, so a block
-  ## lifted out of one frame does not open inside another.
-  AmeControlOpened* {.role: preparedData,
-      expectedCount: [0, 512], lifeCycle: lcJob.} = tuple
-    ok: bool
-    payload: ByteSeq
-    err: string
-    sequence: uint32
-
-  ## AmeRouteKind: the first byte inside a sealed `ampkRoute` frame.
-  ##
-  ##   byte  name       who sends it          what follows
-  ##   ----  ---------  --------------------  ---------------------------
-  ##   0x01  ask        anyone -> router      start u16
-  ##   0x02  directory  router -> asker       start, total, entries
-  ##   0x03  forward    anyone -> router      route block, hops, payload
-  ##   0x04  deliver    router -> target      route block, hops, payload
-  ##   0x05  refuse     router -> sender      route block, reason
+  ## AmeRouteKind: byte 4 of an outer route frame (magic "ART").
+  ## See level2/route_wire.nim.
   AmeRouteKind* = enum
     arkUnknown = 0x00'u8,
-    arkAsk = 0x01'u8,
-    arkDirectory = 0x02'u8,
-    arkForward = 0x03'u8,
-    arkDeliver = 0x04'u8,
-    arkRefuse = 0x05'u8
+    arkForward = 0x01'u8,
+      ## Carry the payload to `target`. Byte 5 is the hops left.
+    arkRefuse = 0x02'u8
+      ## A forward went nowhere. Byte 5 is the reason; no payload.
 
   ## AmeRouteRefusal: why a router did not pass a forward on.
   ##
@@ -608,22 +589,10 @@ type
       ## The target is known and allowed, but its link is down or could not
       ## take the frame right now. Worth trying again later.
 
-  ## AmeRouteEntry: one line of a router's directory.
-  AmeRouteEntry* {.role: preparedData.} = object
-    id*: uint64
-    name*: string
-
-  ## AmeRouteMessage: one route frame, sealed or opened.
-  ## Which fields mean something depends on `kind`:
-  ##
-  ##   kind       target origin hopsLeft refusal start total entries payload
-  ##   ---------  ------ ------ -------- ------- ----- ----- ------- -------
-  ##   ask                                       x
-  ##   directory                                 x     x     x
-  ##   forward    x      x      x                                   x
-  ##   deliver    x      x      x                                   x
-  ##   refuse     x      x               x
-  AmeRouteMessage* {.role: preparedData,
+  ## AmeRouteFrame: one outer route frame, opened.
+  ## payload: forward only, exactly the bytes the sender handed in --
+  ##   usually an end-to-end AME frame no router can open.
+  AmeRouteFrame* {.role: preparedData,
       expectedCount: [0, 512], lifeCycle: lcJob.} = object
     ok*: bool
     kind*: AmeRouteKind
@@ -631,8 +600,29 @@ type
     origin*: uint64
     hopsLeft*: uint8
     refusal*: AmeRouteRefusal
+    payload*: ByteSeq
+    err*: string
+
+  ## AmeRouteAskKind: the first byte inside a sealed `ampkRoute` AME frame,
+  ## the part where a client talks to the router ITSELF.
+  AmeRouteAskKind* = enum
+    araUnknown = 0x00'u8,
+    araAsk = 0x01'u8,
+    araDirectory = 0x02'u8
+
+  ## AmeRouteEntry: one line of a router's directory.
+  AmeRouteEntry* {.role: preparedData.} = object
+    id*: uint64
+    name*: string
+
+  ## AmeRouteDirectory: one directory question or answer, opened.
+  ##   ask        start
+  ##   directory  start, total, entries
+  AmeRouteDirectory* {.role: preparedData,
+      expectedCount: [0, 512], lifeCycle: lcJob.} = object
+    ok*: bool
+    kind*: AmeRouteAskKind
     start*: uint16
     total*: uint16
     entries*: seq[AmeRouteEntry]
-    payload*: ByteSeq
     err*: string

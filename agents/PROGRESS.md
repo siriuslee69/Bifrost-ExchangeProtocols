@@ -1,26 +1,30 @@
 # Progress
 
-Commit Message: AME routing: kind 0x14, Gimli-sealed target block, multi-hop router
+Commit Message: AME routing: outer ART frames seal only the address; end-to-end payload, replay window
 
-## 2026-10-20 Multi-hop routing for Geist (one handshake, with the router)
+## 2026-10-20 Multi-hop routing for Geist: sealed address, end-to-end payload
 
-- New AME packet kind 0x14 Route. Inside the sealed plaintext, byte 0 picks
-  one of five messages: ask, directory, forward, deliver, refuse
-  (ame/level2/route_frames.nim).
-- Target + origin ids (u64 each) are sealed AGAIN in one Gimli block with an
-  8-byte tag (ame/level1/route_block.nim): bare permutation, nonce = route
-  kind + AME frame counter, key = per-epoch, per-direction route key derived
-  beside the header key (`refreshAmeHeaderKeys` -> `refreshAmeFrameKeys`).
-- `openControlFrame` now returns the named `AmeControlOpened`, which also
-  carries the frame counter (needed as the block's nonce).
-- Socket-free router (ame/level3/router.nim): directory with per-identity
-  visibility, forward/deliver, hop counter (6), return notes (256, 120 s) so
-  answers find a far origin, refusals carried back. "Unknown" and "not
-  yours" are one refusal, so ids cannot be probed.
-- Hop-by-hop, not end-to-end: every router reads the payload. Documented
-  in docs/routing.md, README "Routing through AME routers", playbook.
-- Verification: test_ame_router (19 checks) in `nimble test`;
-  `nimble exampleRouter` with a real KEM exchange.
+- First version (629b81d) sealed whole route messages per link inside FOMKE,
+  so every router read the payload. Reworked the same day on request:
+- Outer "ART" route frame (ame/level2/route_wire.nim), NOT a FOMKE frame:
+  18-byte clear header (kind, hops/reason, link session id, link route
+  counter) + target/origin ids sealed in ONE Gimli block with an 8-byte tag
+  + the payload passed byte for byte. Nonce = the clear header (incl.
+  payload length), key = per-epoch per-direction route key on the link
+  session (derived beside the header key in `refreshAmeFrameKeys`).
+- Replay: per-link `nextRouteCounter` + 64-frame `routeReplay` window,
+  moved only after the tag checks. A replay stops at the first router.
+- The payload is the sender's end-to-end AM1S/AM1P handshake with the
+  target, then that session's frames. Routers hold no key for it.
+- Directory question ("whom may I reach?") is an ordinary AME frame, kind
+  0x14, FOMKE-sealed on the link (ame/level2/route_directory.nim).
+- Every node is an AmeRouter with `selfId`: target == selfId -> delivered;
+  else re-seal the address for the next link (ame/level3/router.nim).
+- Magic is "ART", not "AMR": AMR2 is already the hello-retry record.
+- Exported from seal_open: requireAmeMaySend, acceptsSessionId,
+  replayAccept (needed by route_wire).
+- Verification: test_ame_router 29 checks, incl. a real AM1P handshake and
+  session frame through two routers; `nimble exampleRouter`.
 
 ## 2026-10-19 Large handshakes for Geist device deployment
 
@@ -39,10 +43,24 @@ Commit Message: AME routing: kind 0x14, Gimli-sealed target block, multi-hop rou
 
 Features (Planned):
 - Geist: wire `AmeRouter` into geist-routed (or a new daemon): read route
-  targets from router.toml, admit each handshake's session with the pin
-  name as identity, dispatch datagrams of kind 0x14 to `feedAmeRouteFrame`.
+  targets from router.toml, admit each link handshake's session with the
+  pin name as identity; `isAmeRouteFrame` datagrams -> `feedAmeRouteFrame`,
+  AME kind 0x14 -> `feedAmeRouteAsk`; drive the end-to-end handshake with
+  the target through `sealAmeRouteForward`.
 - Routers could fetch each other's directories (an ask between router
   peers) instead of every remote target being written with `via`.
+- FOMKE gap recovery (asked 2026-10-20). The envelope DOES carry epoch,
+  lane and the u64 message index, and a receiver jumps ahead up to the
+  reorder window (16 at start, 4..ceiling 64), holding skipped keys. A
+  loss burst WIDER than the current window is refused, nothing advances,
+  and the lane never recovers: only a new session fixes it. No message
+  exists to resync. Idea: a "jump" control frame carrying (lane, new
+  index) authenticated with a per-epoch side key (one MAC, no chain
+  derivation before the check), after which the receiver derives forward
+  to that index and drops the held keys. Bound the jump by config.
+- Optional per-hop payload masking for ART frames (Gimli keystream over
+  the payload, ~1 permutation per 16 bytes) so a watcher of both sides of
+  a router cannot match frames by content. Off by design for now.
 - Otter still lists 6 fields as written and never read (AmeSession.
   lastExchangeDenial, DacGroupRepairReport.err, Tls13ClientOutput.closed,
   Tls13ControlledResult.clientState/serverState/err). Each is a result for

@@ -1,40 +1,48 @@
 ## -------------------------------------------------------------------------
-## AME Router <- one session per neighbour, and route frames between them
+## AME Router <- one link per neighbour, route frames passed between them
 ## -------------------------------------------------------------------------
 ##
-## The router holds one AME session per neighbour. A client does ONE
-## handshake -- with the router -- and can then reach every target the
-## router lets it see:
+## A router holds one AME session (a LINK) per neighbour. A client makes
+## ONE handshake, with its router, and then:
 ##
-##   phone ==session A==> router 1 ==session B==> router 2 ==session C==> nas
-##     |                     |                       |                    |
-##     forward(0x20, "hi")   opens with A, checks,   opens with B,        deliver
-##                           re-seals with B         re-seals with C      from 0x30
+##   asks it "whom may I reach?"     AME frame kind 0x14, FOMKE-sealed
+##   sends through it                outer "ART" route frames
 ##
-## Each link is sealed by its own session. Every router can read the
-## payload; nothing is sealed end to end (see level2/route_frames.nim).
+## Through the routers it runs an end-to-end AM1S or AM1P handshake with
+## the target, and later the session that handshake opens. Those records
+## are the route frames' PAYLOAD, which no router can open:
+##
+##   phone ==link A==> router 1 ==link B==> router 2 ==link C==> nas
+##     |                  |                    |                  |
+##     ART[A: to 0x20]    open with A,         open with B,       target is
+##     + E2E hello        seal with B          seal with C        me: E2E
+##                        (only the 16-byte address is touched)   hello
 ##
 ## No sockets in here. A frame comes in on a SLOT (one neighbour), and out
 ## come frames for other slots. The caller owns sockets, clocks and the
-## handshakes, exactly like `dac_relay.nim`.
+## link handshakes, exactly like `dac_relay.nim`.
 ##
 ## ╭─ ❧ Def. 1: the words 🌊
 ##
-##   peer      one neighbour with a finished session, sitting in a slot.
-##             It has an id (u64) and an identity (the name the caller
-##             proved for it during the handshake, e.g. a pin name).
+##   node      anything holding an AmeRouter: a router, or an endpoint
+##             with one link. It has its own route id (`selfId`).
+##   peer      one neighbour with a finished link session, in a slot. It
+##             has an id (u64) and an identity (the name the caller proved
+##             for it during the link handshake, e.g. a pin name).
 ##   router    a peer flagged as another router. Its origin ids are
 ##             believed; a client's never are.
-##   target    a line in this router's directory: id, name, who may see
-##             it, and -- for a target behind another router -- which
-##             router peer leads there (`via`).
-##   return    a short-lived note "origin X wrote from behind router
-##             peer R to target T". It is how T's answer finds X.
+##   target    a line in this node's directory: id, name, who may see it,
+##             and -- for a target behind another router -- which router
+##             peer leads there (`via`).
+##   return    a short-lived note "origin X wrote from behind router peer R
+##             to target T". It is how T's answer finds X.
 ##
 ## ╭─ ❧ Def. 2: who may send to whom 🐦‍🔥
 ##
 ##   sender           target                      allowed when
 ##   ---------------  --------------------------  ----------------------------
+##   anyone           this node itself            always -- the end-to-end
+##                                                handshake decides
 ##   a router peer    anything                    always -- the router before
 ##                                                it already checked
 ##   a client         a directory target          its identity is in the
@@ -42,8 +50,8 @@
 ##                                                = everyone)
 ##   a client         another local peer          that peer's target line is
 ##                                                visible to it, OR the
-##                                                reverse: so whoever may
-##                                                write to you may be answered
+##                                                reverse: whoever may write
+##                                                to you may be answered
 ##   a client         an origin from far away     a return note says that
 ##                                                origin wrote to THIS client
 ##
@@ -52,14 +60,15 @@
 ##
 ## ╭─ ❧ Def. 3: where a forward goes 🍣
 ##
-##   1. a local peer with that id            -> deliver to it
+##   0. target is `selfId`                   -> delivered here
+##   1. a local peer with that id            -> forward to it
 ##   2. a target line with `via` = router R  -> forward to R
 ##   3. a live return note for that id       -> forward to the router it
 ##                                              came from
-##   4. nothing                              -> refuse: arrNoRoute
+##   4. nothing, or back where it came from  -> refuse: arrNoRoute
 ##
-## Each router takes one hop from `hopsLeft`. At zero the forward is
-## refused with arrHopsSpent, so a loop between routers burns out.
+## Each node takes one hop from `hopsLeft`. At zero the forward is refused
+## with arrHopsSpent, so a loop between routers burns out.
 ##
 ## Example 1. Two routers, a phone behind the first, a NAS behind the
 ## second:
@@ -71,20 +80,22 @@
 ##
 ##   phone   forward(0x20)              -> router 1: rule "directory"; via
 ##   router1 forward(0x20, from 0x30)   -> router 2: from a router; peer 0x20
-##   router2 deliver(0x20, from 0x30)   -> nas, and notes "0x30 via router 1"
+##   router2 forward(0x20, from 0x30)   -> nas, and notes "0x30 via router 1"
+##   nas     0x20 is me                 -> delivered
 ##   nas     forward(0x30)              -> router 2: return note matches
 ##   router2 forward(0x30, from 0x20)   -> router 1: from a router; peer 0x30
-##   router1 deliver(0x30, from 0x20)   -> phone
+##   phone   0x30 is me                 -> delivered
 
 import ../../types
 import ../types
-import ../level2/route_frames
+import ../level2/route_wire
+import ../level2/route_directory
 import ../level2/seal_open
 import runePragmas
 
 const
   ameRouterCapacity* = 512
-    ## Most neighbours one router holds at once.
+    ## Most neighbours one node holds at once.
   ameRouteReturnCapacity* = 256
     ## Most return notes kept. When full, the oldest is replaced.
   ameRouteReturnMs* = 120_000'u32
@@ -100,11 +111,12 @@ type
     id*: uint64
     identity*: string
     carrier*: AmeCarrier
+      ## Only for the directory question, which is an ordinary AME frame.
     router*: bool
     session*: AmeSession
 
   ## AmeRouteTarget: one directory line (Def. 1).
-  ## via: 0 for a target that connects to THIS router itself, otherwise the
+  ## via: 0 for a target that connects to THIS node itself, otherwise the
   ##   id of the router peer that leads to it.
   AmeRouteTarget* {.role: configurator.} = object
     id*: uint64
@@ -121,9 +133,10 @@ type
     reached: uint64
     lastMs: uint32
 
-  ## AmeRouter: the whole router.
+  ## AmeRouter: one node.
   AmeRouter* {.role: truthState, expectedCount: 1,
       lifeCycle: lcForever.} = object
+    selfId*: uint64
     peers*: seq[AmeRoutePeer]
     targets*: seq[AmeRouteTarget]
     returns: seq[AmeRouteReturn]
@@ -137,8 +150,10 @@ type
     areNone,
     areDropped,
     areAnswered,
+      ## a directory question was answered
     areForwarded,
     areDelivered,
+      ## the target was this node: the payload is in `step.frame`
     areRefused
 
   ## AmeRouteSend: one sealed frame and the slot it must leave on.
@@ -147,21 +162,31 @@ type
     slot*: int
     frame*: ByteSeq
 
-  ## AmeRouteStep: outcome of one `feedAmeRouteFrame`.
+  ## AmeRouteStep: outcome of one feed.
   ## send: frames to transmit, each to `peers[slot]`, in order.
+  ## frame: the opened route frame, its origin already decided -- read its
+  ##   payload on areDelivered, its refusal on areRefused with no `send`.
+  ## slot: the neighbour it arrived from.
   AmeRouteStep* {.role: truthState, expectedCount: [0, 512],
       lifeCycle: lcJob.} = object
     event*: AmeRouteEvent
     send*: seq[AmeRouteSend]
+    frame*: AmeRouteFrame
+    slot*: int
     err*: string
 
 ## ---------------------------- setting up ----------------------------
 
-proc initAmeRouter*(capacity: int = ameRouterCapacity): AmeRouter {.
-    role: configurator, tag: "appApi".} =
+proc initAmeRouter*(selfId: uint64,
+    capacity: int = ameRouterCapacity): AmeRouter {.role: configurator,
+    tag: "appApi".} =
+  ## selfId: this node's own route id; frames for it are delivered here.
   ## capacity: how many neighbours fit; a ceiling, not a target.
+  if selfId == 0'u64:
+    raise newException(ValueError, "AME route id 0 is reserved")
   if capacity <= 0:
     raise newException(ValueError, "AME router capacity must be positive")
+  result.selfId = selfId
   result.peers = newSeq[AmeRoutePeer](capacity)
 
 proc findAmeRouteTarget*(R: AmeRouter, id: uint64): int {.role: parser.} =
@@ -187,14 +212,13 @@ proc findAmeRoutePeer*(R: AmeRouter, id: uint64): int {.role: parser.} =
 proc addAmeRouteTarget*(R: var AmeRouter, id: uint64, name: string,
     visibleTo: openArray[string], via: uint64 = 0'u64) {.role: configurator,
     tag: "appApi".} =
-  ## R: router whose directory grows by one line.
+  ## R: node whose directory grows by one line.
   ## id/name: what clients address, and what they read in the directory.
   ## visibleTo: identities that may see and reach it; "*" = everyone.
   ## via: 0 when the target connects here; else the next router's id.
   if id == 0'u64:
     raise newException(ValueError, "AME route id 0 is reserved")
-  if name.len > ameRouteNameMax:
-    raise newException(ValueError, "AME route name is longer than 32 bytes")
+  requireRouteName(name)
   if findAmeRouteTarget(R, id) >= 0:
     raise newException(ValueError, "AME route target id is already listed")
   R.targets.add(AmeRouteTarget(id: id, name: name, visibleTo: @visibleTo,
@@ -213,17 +237,17 @@ proc freeRouteSlot(R: AmeRouter): int {.role: parser.} =
 proc admitAmeRoutePeer*(R: var AmeRouter, S: AmeSession, id: uint64,
     identity: string, carrier: AmeCarrier, router: bool = false): tuple[
     ok: bool, slot: int, err: string] {.role: orchestrator, tag: "appApi".} =
-  ## R: router the neighbour joins.
-  ## S: a session whose handshake already completed.
+  ## R: node the neighbour joins.
+  ## S: the link session; its handshake already completed.
   ## id: the neighbour's route id. identity: what its handshake proved.
-  ## carrier: the transport its frames use. router: true for another router.
+  ## carrier: the transport its AME frames use. router: true for a router.
   ## A neighbour enters here and nowhere else, so nothing that did not
   ## finish a handshake ever holds a slot.
   var
     slot: int = freeRouteSlot(R)
   result.slot = -1
-  if id == 0'u64:
-    result.err = "AME route id 0 is reserved"
+  if id == 0'u64 or id == R.selfId:
+    result.err = "AME route id is reserved or this node's own"
     return
   if findAmeRoutePeer(R, id) >= 0:
     result.err = "AME route id is already connected"
@@ -284,20 +308,20 @@ proc mayReach(R: AmeRouter, slot: int, target: uint64,
     return true
   result = back >= 0 and R.returns[back].reached == p.id
 
-proc nextRouteSlot(R: AmeRouter, target: uint64, nowMs: uint32): tuple[
-    slot: int, deliver: bool] {.role: parser.} =
-  ## R/target/nowMs: Def. 3. slot -1 means no route.
+proc nextRouteSlot(R: AmeRouter, target: uint64, nowMs: uint32): int {.
+    role: parser.} =
+  ## R/target/nowMs: Def. 3, steps 1 to 3. -1 means no route.
   var
     local: int = findAmeRoutePeer(R, target)
     line: int = findAmeRouteTarget(R, target)
     back: int = findLiveReturn(R, target, nowMs)
-  result = (slot: -1, deliver: false)
-  if local >= 0 and not R.peers[local].router:
-    return (slot: local, deliver: true)
+  result = -1
+  if local >= 0:
+    return local
   if line >= 0 and R.targets[line].via != 0'u64:
-    return (slot: findAmeRoutePeer(R, R.targets[line].via), deliver: false)
+    return findAmeRoutePeer(R, R.targets[line].via)
   if back >= 0:
-    return (slot: findAmeRoutePeer(R, R.returns[back].via), deliver: false)
+    return findAmeRoutePeer(R, R.returns[back].via)
 
 proc oldestReturn(R: AmeRouter): int {.role: parser.} =
   ## R: index of the return note refreshed longest ago.
@@ -309,9 +333,10 @@ proc oldestReturn(R: AmeRouter): int {.role: parser.} =
       result = i
     i = i + 1
 
-proc noteReturn(R: var AmeRouter, origin, via: uint64,
-    reached: uint64, nowMs: uint32) {.role: actor.} =
-  ## R: router that remembers "origin wrote from behind router via to reached".
+proc noteReturn(R: var AmeRouter, origin, via, reached: uint64,
+    nowMs: uint32) {.role: actor.} =
+  ## R: node that remembers "origin wrote from behind router `via` to
+  ## `reached`".
   var
     i: int = findLiveReturn(R, origin, nowMs)
     note: AmeRouteReturn = AmeRouteReturn(origin: origin, via: via,
@@ -324,14 +349,14 @@ proc noteReturn(R: var AmeRouter, origin, via: uint64,
     return
   R.returns[oldestReturn(R)] = note
 
-## ---------------------------- answering -----------------------------
+## ---------------------------- the directory -------------------------
 
 proc directoryPage(R: AmeRouter, identity: string,
-    start: uint16): AmeRouteMessage {.role: truthBuilder.} =
+    start: uint16): AmeRouteDirectory {.role: truthBuilder.} =
   ## R/identity/start: one page of the lines this identity may see.
   var
     seen: int = 0
-  result = AmeRouteMessage(kind: arkDirectory, start: start)
+  result = AmeRouteDirectory(kind: araDirectory, start: start)
   for T in R.targets:
     if not visibleTo(T, identity):
       continue
@@ -342,122 +367,142 @@ proc directoryPage(R: AmeRouter, identity: string,
   if int(start) > seen:
     result.start = result.total
 
-proc sealTo(R: var AmeRouter, slot: int, m: AmeRouteMessage,
-    step: var AmeRouteStep): bool {.role: dataWriter.} =
-  ## R/slot/m: seal m for the neighbour in slot and queue it on `step`.
-  ## Returns false, with `step.err` set, when that session cannot send now
-  ## (an exchange is in flight, the counter ran out, ...).
+proc feedAmeRouteAsk*(R: var AmeRouter, slot: int,
+    frame: openArray[uint8]): AmeRouteStep {.role: orchestrator,
+    tag: "appApi".} =
+  ## R/slot: the node and the neighbour asking.
+  ## frame: one AME frame of kind 0x14 (an ask), FOMKE-sealed on that link.
+  ## Answers with one page of the lines that neighbour's identity may see.
+  var
+    D: AmeRouteDirectory = default(AmeRouteDirectory)
+  result.slot = slot
+  if slot < 0 or slot >= R.peers.len or not R.peers[slot].used:
+    R.dropped = R.dropped + 1'u32
+    return AmeRouteStep(event: areDropped, slot: slot,
+      err: "AME route slot is empty")
+  D = openAmeRouteDirectory(R.peers[slot].session, R.peers[slot].carrier,
+    frame)
+  if not D.ok or D.kind != araAsk:
+    R.dropped = R.dropped + 1'u32
+    result.event = areDropped
+    result.err = if D.ok: "AME route directory is not a question" else: D.err
+    return
   try:
-    step.send.add(AmeRouteSend(slot: slot, frame: sealAmeRouteFrame(
-      R.peers[slot].session, R.peers[slot].carrier, m)))
-    result = true
+    result.send.add(AmeRouteSend(slot: slot, frame: sealAmeRouteDirectory(
+      R.peers[slot].session, R.peers[slot].carrier,
+      directoryPage(R, R.peers[slot].identity, D.start))))
+    result.event = areAnswered
   except CatchableError as exc:
-    step.err = exc.msg
+    R.dropped = R.dropped + 1'u32
+    result.event = areDropped
+    result.err = exc.msg
+
+## ---------------------------- forwarding ----------------------------
 
 proc refuseTo(R: var AmeRouter, slot: int, target, origin: uint64,
     reason: AmeRouteRefusal, step: var AmeRouteStep) {.role: actor.} =
-  ## R/slot: tell the neighbour in slot that its forward went nowhere.
+  ## R/slot: tell the neighbour in slot that a forward went nowhere.
   ## target/origin/reason: what was refused, for whom, and why.
   step.event = areRefused
   R.refused = R.refused + 1'u32
-  if not sealTo(R, slot, AmeRouteMessage(kind: arkRefuse, target: target,
-      origin: origin, refusal: reason), step):
+  try:
+    step.send.add(AmeRouteSend(slot: slot, frame: sealAmeRouteRefuse(
+      R.peers[slot].session, target, origin, reason)))
+  except CatchableError as exc:
     step.event = areDropped
+    step.err = exc.msg
 
-proc passOn(R: var AmeRouter, slot: int, m: AmeRouteMessage,
-    origin: uint64, nowMs: uint32, step: var AmeRouteStep) {.
-    role: orchestrator.} =
+proc passOn(R: var AmeRouter, slot: int, origin: uint64, nowMs: uint32,
+    step: var AmeRouteStep) {.role: orchestrator.} =
   ## R/slot: the neighbour the forward came from.
-  ## m: the opened forward. origin: who it is from, already decided.
+  ## origin: who it is from, already decided. step.frame: the forward.
   var
-    next: tuple[slot: int, deliver: bool] = nextRouteSlot(R, m.target, nowMs)
-    onward: AmeRouteMessage = AmeRouteMessage(kind: arkForward,
-      target: m.target, origin: origin, hopsLeft: m.hopsLeft - 1'u8,
-      payload: m.payload)
-  if next.slot < 0 or next.slot == slot:
-    refuseTo(R, slot, m.target, origin, arrNoRoute, step)
+    next: int = nextRouteSlot(R, step.frame.target, nowMs)
+  if next < 0 or next == slot:
+    refuseTo(R, slot, step.frame.target, origin, arrNoRoute, step)
     return
-  if next.deliver:
-    onward.kind = arkDeliver
-  if not sealTo(R, next.slot, onward, step):
-    step.err = ""
-    refuseTo(R, slot, m.target, origin, arrUnreachable, step)
+  try:
+    step.send.add(AmeRouteSend(slot: next, frame: sealAmeRouteForward(
+      R.peers[next].session, step.frame.target, step.frame.payload,
+      step.frame.hopsLeft - 1'u8, origin)))
+  except CatchableError:
+    refuseTo(R, slot, step.frame.target, origin, arrUnreachable, step)
     return
   if R.peers[slot].router:
-    noteReturn(R, origin, R.peers[slot].id, m.target, nowMs)
-  step.event = if next.deliver: areDelivered else: areForwarded
-  R.delivered = R.delivered + uint32(ord(next.deliver))
-  R.forwarded = R.forwarded + uint32(ord(not next.deliver))
+    noteReturn(R, origin, R.peers[slot].id, step.frame.target, nowMs)
+  step.event = areForwarded
+  R.forwarded = R.forwarded + 1'u32
 
-proc handleForward(R: var AmeRouter, slot: int, m: AmeRouteMessage,
-    nowMs: uint32, step: var AmeRouteStep) {.role: orchestrator.} =
-  ## R/slot/m/nowMs: Def. 2 then Def. 3 for one forward.
-  var
-    origin: uint64 = R.peers[slot].id
-  if R.peers[slot].router:
-    origin = m.origin
-  if origin == 0'u64:
+proc handleForward(R: var AmeRouter, slot: int, nowMs: uint32,
+    step: var AmeRouteStep) {.role: orchestrator.} =
+  ## R/slot/nowMs: Def. 2 then Def. 3 for the forward in `step.frame`.
+  ## The origin is decided first and written back into `step.frame`, so a
+  ## delivered frame says who it is from by the handshake, not by claim.
+  if not R.peers[slot].router:
+    step.frame.origin = R.peers[slot].id
+  if step.frame.origin == 0'u64:
     step.event = areDropped
     step.err = "AME route forward from a router names no origin"
     return
-  if m.hopsLeft == 0'u8:
-    refuseTo(R, slot, m.target, origin, arrHopsSpent, step)
+  if step.frame.target == R.selfId:
+    step.event = areDelivered
+    R.delivered = R.delivered + 1'u32
     return
-  if not mayReach(R, slot, m.target, nowMs):
-    refuseTo(R, slot, m.target, origin, arrNoRoute, step)
+  if step.frame.hopsLeft == 0'u8:
+    refuseTo(R, slot, step.frame.target, step.frame.origin, arrHopsSpent,
+      step)
     return
-  passOn(R, slot, m, origin, nowMs, step)
+  if not mayReach(R, slot, step.frame.target, nowMs):
+    refuseTo(R, slot, step.frame.target, step.frame.origin, arrNoRoute, step)
+    return
+  passOn(R, slot, step.frame.origin, nowMs, step)
 
-proc handleRefusal(R: var AmeRouter, slot: int, m: AmeRouteMessage,
-    nowMs: uint32, step: var AmeRouteStep) {.role: orchestrator.} =
-  ## R/slot/m: a refusal from the router after this one, carried back
-  ## toward the origin. From a client it means nothing and is dropped.
+proc handleRefusal(R: var AmeRouter, slot: int, nowMs: uint32,
+    step: var AmeRouteStep) {.role: orchestrator.} =
+  ## R/slot: a refusal from the router after this one, carried back toward
+  ## the origin -- or kept, when the origin is this node.
   var
-    back: tuple[slot: int, deliver: bool] = (slot: -1, deliver: false)
+    back: int = -1
   if not R.peers[slot].router:
     step.event = areDropped
     step.err = "AME route refusal from a client"
     return
-  back = nextRouteSlot(R, m.origin, nowMs)
-  if back.slot < 0 or back.slot == slot:
+  step.event = areRefused
+  if step.frame.origin == R.selfId:
+    return
+  back = nextRouteSlot(R, step.frame.origin, nowMs)
+  if back < 0 or back == slot:
     step.event = areDropped
     step.err = "AME route refusal has no way back"
     return
-  step.event = areRefused
-  if not sealTo(R, back.slot, m, step):
+  try:
+    step.send.add(AmeRouteSend(slot: back, frame: sealAmeRouteRefuse(
+      R.peers[back].session, step.frame.target, step.frame.origin,
+      step.frame.refusal)))
+  except CatchableError as exc:
     step.event = areDropped
-
-## ---------------------------- the entry -----------------------------
+    step.err = exc.msg
 
 proc feedAmeRouteFrame*(R: var AmeRouter, slot: int,
     frame: openArray[uint8], nowMs: uint32): AmeRouteStep {.
     role: orchestrator, tag: "appApi".} =
-  ## R: the router.
+  ## R: the node.
   ## slot: the neighbour the frame arrived from (from `admitAmeRoutePeer`).
-  ## frame: one whole AME frame of kind 0x14.
+  ## frame: one outer route frame ("ART", see `isAmeRouteFrame`).
   ## nowMs: caller's millisecond clock (return notes expire by it).
-  ## Nothing here raises, so a neighbour cannot stop the router with junk.
-  var
-    m: AmeRouteMessage = default(AmeRouteMessage)
+  ## Nothing here raises, so a neighbour cannot stop the node with junk.
+  result.slot = slot
   if slot < 0 or slot >= R.peers.len or not R.peers[slot].used:
     R.dropped = R.dropped + 1'u32
-    return AmeRouteStep(event: areDropped, err: "AME route slot is empty")
-  m = openAmeRouteFrame(R.peers[slot].session, R.peers[slot].carrier, frame)
-  if not m.ok:
-    R.dropped = R.dropped + 1'u32
-    return AmeRouteStep(event: areDropped, err: m.err)
-  case m.kind
-  of arkAsk:
-    result.event = areAnswered
-    if not sealTo(R, slot, directoryPage(R, R.peers[slot].identity, m.start),
-        result):
-      result.event = areDropped
-  of arkForward:
-    handleForward(R, slot, m, nowMs, result)
-  of arkRefuse:
-    handleRefusal(R, slot, m, nowMs, result)
-  of arkDirectory, arkDeliver, arkUnknown:
+    return AmeRouteStep(event: areDropped, slot: slot,
+      err: "AME route slot is empty")
+  result.frame = openAmeRouteFrame(R.peers[slot].session, frame)
+  if not result.frame.ok:
     result.event = areDropped
-    result.err = "AME route message is not meant for a router"
+    result.err = result.frame.err
+  elif result.frame.kind == arkForward:
+    handleForward(R, slot, nowMs, result)
+  else:
+    handleRefusal(R, slot, nowMs, result)
   if result.event == areDropped:
     R.dropped = R.dropped + 1'u32

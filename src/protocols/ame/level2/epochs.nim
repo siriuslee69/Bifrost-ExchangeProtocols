@@ -120,6 +120,15 @@ type
       ## Opens the block on route frames arriving. Split by direction for
       ## the header keys' reason: a block this side sealed must not open as
       ## one it received.
+    nextRouteCounter*: uint32
+      ## The counter the next outer route frame on this link carries. It is
+      ## the Gimli nonce, so it never goes back and never repeats. It is its
+      ## own counter, not `nextAmeSequence`: route frames do not pass through
+      ## the ratchet, and a TCP peer would read a gap in the AME counter as
+      ## a lost frame.
+    routeReplay*: AmeReplayWindow
+      ## The last 64 route counters accepted from the peer. A route frame
+      ## seen once is refused the second time, at the first hop it reaches.
 
     lastErr*: string
 

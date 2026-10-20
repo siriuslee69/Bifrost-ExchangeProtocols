@@ -4,171 +4,179 @@
 ├⟢ 2. Using it 🐦‍🔥
 ├⟢ 3. The words ✦
 ├⟢ 4. The bytes 🍣
-├⟢ 5. Who may send to whom ⟡
-├⟢ 6. Where a forward goes, hop by hop ❧
-├⟢ 7. What each layer protects, and what it does not ⌜guide⌟
-╰⟢ 8. Limits and edge cases ୨୧
+├⟢ 5. Replay ⟡
+├⟢ 6. Who may send to whom ❧
+├⟢ 7. Where a forward goes, hop by hop ❧
+├⟢ 8. What is hidden, and from whom ⌜guide⌟
+╰⟢ 9. Limits and edge cases ୨୧
 
 ## 1. What it is, in plain words 🌊
 
-A phone wants to talk to a home server. Before this, it had two options:
-make a handshake with the home server itself (and find a way to reach it),
-or send bytes through a relay that does not understand them.
+A phone wants to talk to a home server it cannot reach directly. It makes
+ONE ordinary AME handshake: with a router. That gives the two of them a
+shared secret and an AME session -- a **link**.
 
-Now there is a third. The phone makes ONE handshake, with a router. Then it
-asks the router "who may I reach?", picks one, and hands the router a
-message for it. The router passes it on over its own session with the next
-machine. That machine may be the target, or another router.
+On that link the phone can now send two different things:
 
 ```text
-  phone ==session A==> router 1 ==session B==> router 2 ==session C==> nas
-          one handshake          set up by the routers, not by the phone
+  "AME" frame   a message for the ROUTER ITSELF, sealed by FOMKE as always
+                (e.g. "which targets may I reach?")
+  "ART" frame   a message for someone BEHIND the router: a route frame
 ```
 
-Each `==X==>` is one AME session. Each router opens the message with one
-session and seals it again with the next. **Every router can read the
-message.** That is the trade: no handshake with the far end, but trust in
-every router on the way. When a router must not read it, put an
-end-to-end AME session inside the payload.
+A route frame encrypts only the ADDRESS -- who it is for and who it is
+from, 16 bytes -- with the link's key. The payload behind it is passed on
+byte for byte. The phone puts its own end-to-end AME handshake (AM1S or
+AM1P) with the target in that payload, and later the session that
+handshake opens. No router holds that key.
+
+```text
+  phone ==link A==> router 1 ==link B==> router 2 ==link C==> nas
+          |                  |                  |
+          address sealed     address opened     address opened
+          with A             with A, sealed     with B, sealed
+                             again with B       again with C
+          payload: the phone<->nas handshake, then session frames,
+                   the same bytes on every link
+```
+
+Every node checks the address: if the target is its own id, the payload is
+for it; otherwise it passes the frame on, one hop closer.
+
+So:
+
+```text
+  a watcher on one link    sees neither target nor origin
+  a router                 sees target and origin, never the content
+  only phone and nas       can read the content
+```
 
 ## 2. Using it 🐦‍🔥
 
-The client side (phone):
+Every node -- router or endpoint -- is an `AmeRouter` with its own route
+id. An endpoint simply has one link, to its router.
 
 ```nim
 import bifrost_exchange_protocols
 
-# `phone` is the AME session the handshake with the router produced.
-send(router, phone.sealAmeRouteAsk(acrDac))           # who may I reach?
-var got = phone.openAmeRouteFrame(acrDac, recv(router))
-for e in got.entries: echo e.id, " ", e.name           # 32 "nas"
+# A finished AME handshake with the router gave `link` (an AmeSession).
+var me = initAmeRouter(0x30'u64)                      # my route id
+discard me.admitAmeRoutePeer(link, 0x10'u64, "router1", acrDac,
+  router = true)
 
-send(router, phone.sealAmeRouteForward(acrDac, 0x20'u64, payload))
+# 1. Ask the router itself whom I may reach (an ordinary AME frame).
+send(router, link.sealAmeRouteAsk(acrDac))
+var dir = link.openAmeRouteDirectory(acrDac, recv(router))
+for e in dir.entries: echo e.id, " ", e.name           # 32 "nas"
+
+# 2. Send through it: the payload is my end-to-end AME frame with the nas.
+send(router, link.sealAmeRouteForward(0x20'u64, e2eFrame))
+
+# 3. Whatever comes back:
+var datagram = recv(router)
+if isAmeRouteFrame(datagram):
+  var step = me.feedAmeRouteFrame(0, datagram, nowMs)
+  if step.event == areDelivered:
+    handleEndToEnd(step.frame.origin, step.frame.payload)
 ```
 
-The receiving side (nas) answers whoever wrote:
-
-```nim
-var m = nas.openAmeRouteFrame(acrDac, recv(router))
-if m.ok and m.kind == arkDeliver:
-  send(router, nas.sealAmeRouteForward(acrDac, m.origin, answer))
-```
-
-The router side owns sockets and handshakes; the router module only
+The router owns sockets and link handshakes; the router module only
 decides:
 
 ```nim
-var R = initAmeRouter()
-R.addAmeRouteTarget(0x20'u64, "nas", ["phone"])      # directory line
-var slot = R.admitAmeRoutePeer(sessionWithPhone, 0x30'u64, "phone",
+var R = initAmeRouter(0x10'u64)
+R.addAmeRouteTarget(0x20'u64, "nas", ["phone"])       # directory line
+var slot = R.admitAmeRoutePeer(linkWithPhone, 0x30'u64, "phone",
   acrDac).slot                                         # after the handshake
 
-var step = R.feedAmeRouteFrame(slot, datagram, nowMs)
+var step = if isAmeRouteFrame(datagram): R.feedAmeRouteFrame(slot, datagram, nowMs)
+           else: R.feedAmeRouteAsk(slot, datagram)     # an AME kind 0x14 frame
 for s in step.send:
   sendTo(addressOf(s.slot), s.frame)
 ```
 
-A datagram on a router link is a route frame when byte 4 of its header
-(the packet kind) is `0x14`; send every other kind where it went before.
-
-Runnable: `nimble exampleRouter`. Tests: `evaluation/tests/test_ame_router.nim`
-(in `nimble test`).
+Runnable, with a real end-to-end AM1P handshake through the router:
+`nimble exampleRouter`. Tests: `evaluation/tests/test_ame_router.nim` (in
+`nimble test`).
 
 ## 3. The words ✦
 
-**Def. 1 (route id).** A u64 that names one machine for routing. `0` is
-reserved: it means "not filled in".
+**Def. 1 (link).** An ordinary AME session between two neighbours. Its
+handshake proves who the neighbour is. Beside its FOMKE keys, every epoch
+of it derives a **route key** per direction (label `AME-ROUTE-BLOCK-v1`).
 
-**Def. 2 (peer).** One neighbour of a router, with a finished AME session,
-held in a numbered SLOT. It has a route id and an **identity**: a name the
-caller proved during the handshake (a pin name, an authority name).
+**Def. 2 (route id).** A u64 that names one node. `0` is reserved: it
+means "not filled in".
 
-**Def. 3 (router peer).** A peer marked `router = true`. Its origin ids are
-believed. A client's never are: the router writes the client's own id.
+**Def. 3 (node).** Anything holding an `AmeRouter`: a router, or an
+endpoint with one link. Its own id is `selfId`.
 
-**Def. 4 (target).** A line in a router's directory:
+**Def. 4 (peer).** One neighbour of a node, in a numbered SLOT, with its
+link session, its route id and its **identity**: the name the caller proved
+during the link handshake (a pin name, an authority name).
+
+**Def. 5 (router peer).** A peer marked `router = true`. Its origin ids are
+believed. A client's never are: the first router writes the client's own,
+proved id.
+
+**Def. 6 (target).** A line in a node's directory:
 
 ```text
   id      name     visibleTo            via
   0x20    "nas"    ["phone", "laptop"]  0x11     <- behind router 0x11
-  0x21    "cam"    ["*"]                0        <- connects here itself
+  0x21    "cam"    ["*"]                0        <- a peer of this node
 ```
 
-`"*"` shows the line to everyone. `via = 0` means the target is a peer of
-this router.
+**Def. 7 (return note).** A short-lived memory: "origin X wrote from behind
+router peer R to target T". It is made when a forward from a router peer is
+passed on, lives 120 seconds after the last such forward, and is the only
+way T's answer finds X. At most 256 are kept; the oldest is replaced.
 
-**Def. 5 (return note).** A short-lived memory: "origin X wrote from
-behind router peer R to target T". It is made when a forward arrives from
-a router peer, lives 120 seconds after the last such forward, and is the
-only way T's answer finds X. At most 256 are kept; the oldest is replaced.
-
-**Def. 6 (hops).** A counter in every forward. A client starts it at 6.
+**Def. 8 (hops).** A counter in every forward. A client starts it at 6.
 Each router takes one. At zero the forward is refused.
 
 ## 4. The bytes 🍣
 
-### 4.1 The outside: an ordinary AME control frame
+### 4.1 The route frame
 
 ```text
   offset  size  field
-  ------  ----  ------------------------------------------------------
-  0       26    AME header. Byte 4 (kind) = 0x14 Route. Byte 5 = class
-                Control. Sequence (offset 22) masked as on every frame.
-  26      13    FOMKE envelope
-  39      16+   tag
-  55      n     ciphertext: the route message below, sealed
+  ------  ----  ---------------------------------------------------------
+  0       3     magic "ART"
+  3       1     version 0x01
+  4       1     kind: 0x01 forward, 0x02 refuse
+  5       1     forward: hops left    refuse: reason
+  6       8     session id, u64 LE    -- which link
+  14      4     route counter, u32 LE -- this link's, one per frame
+  18      16    target id + origin id, sealed
+  34      8     tag
+  42      n     payload (forward only)
 ```
 
-An observer sees "a route frame" and its length. Nothing else.
-
-### 4.2 Inside: the route message
-
-The first plaintext byte says which of five messages it is:
+42 bytes in front of the payload. Refusal reasons:
 
 ```text
-  kind  name       sent by            body after the kind byte
-  ----  ---------  -----------------  -------------------------------------
-  0x01  ask        anyone -> router   start u16
-  0x02  directory  router -> asker    start u16 | total u16 | count u8 |
-                                      count x (id u64 | len u8 | name)
-  0x03  forward    anyone -> router   route block (24) | hops u8 | payload
-  0x04  deliver    router -> target   route block (24) | hops u8 | payload
-  0x05  refuse     router -> sender   route block (24) | reason u8
-```
-
-Refusal reasons:
-
-```text
-  0x01  no route      no such id, OR not visible to you (deliberately
-                      the same answer, so ids cannot be probed)
+  0x01  no route      no such id, OR not visible to you (deliberately the
+                      same answer, so ids cannot be probed)
   0x02  hops spent    the forward came in with hops = 0
-  0x03  unreachable   known and allowed, but that link could not take
-                      it right now (try again later)
-```
-
-### 4.3 The route block: the ids, sealed once more
-
-```text
-  offset  0 ........ 7   8 ........ 15  16 ............. 23
-          target id      origin id      tag
-          u64 LE         u64 LE         8 bytes
-          \___ sealed with Gimli __/
+  0x03  unreachable   known and allowed, but that link could not take it
+                      right now (try again later)
 ```
 
 ```text
-  message   target                  origin
-  -------   ----------------------  ------------------------------------
-  forward   where it should go      0 from a client (the router fills
-                                    it); the real origin between routers
-  deliver   the receiver itself     who sent it
-  refuse    what was refused        who it is being refused to
+  kind      target                   origin
+  --------  -----------------------  -------------------------------------
+  forward   where it should end up   0 from a client (the first router
+                                     fills it); the real origin after that
+  refuse    what was refused         who it is being refused to
 ```
 
-How the 16 bytes are sealed, step by step (Gimli: a 48-byte state, mixed by
-one fixed routine called the permutation):
+### 4.2 Sealing the 16 address bytes, with Gimli
+
+Gimli is a 48-byte state, mixed by one fixed routine (the permutation).
 
 ```text
-  state  = nonce (16 bytes) | key (32 bytes)
+  state  = nonce (16 bytes) | route key (32 bytes)
   mix the state
   sealed = first 16 bytes of the state XOR (target | origin)
   first 16 bytes of the state := sealed
@@ -177,51 +185,38 @@ one fixed routine called the permutation):
   tag    = first 8 bytes of the state
 ```
 
-The nonce:
+The nonce is the frame's own clear header:
 
 ```text
-  offset  0  1  2  3   4     5..7      8 ........ 11   12..15
-          A  M  R  B   kind  00 00 00  AME sequence    00 00 00 00
-                                       u32 LE
+  byte   0 1 2  3    4     5             6  7   8 ....... 11   12 ..... 15
+         A R T  01   kind  hops/reason   00 00  counter u32    payload len
 ```
 
-The key is the session's **route key**: derived once per epoch per
-direction, beside the header-protection key, with the label
-`AME-ROUTE-BLOCK-v1`. A frame counter never repeats inside one epoch and
-direction, so (key, nonce) never repeats.
+So the 8-byte tag covers both ids, the kind, the hop count or reason, the
+counter and the payload LENGTH. It does not cover the payload's CONTENT;
+the end-to-end session does that at the far end, with its own tag. The
+session id (offset 6) is not in the nonce; it is checked against the link,
+and an edited one makes the frame drop.
 
-Example 1. phone (0x30) -> router -> nas (0x20), payload "hi":
+Example 1. phone (0x30) -> router -> nas (0x20), payload P:
 
 ```text
-  phone -> router   kind 0x03 | block(target 0x20, origin 0) | 06 | 68 69
-  router -> nas     kind 0x04 | block(target 0x20, origin 0x30) | 05 | 68 69
-                               ^ a NEW block: other session, other key,
-                                 other frame counter
+  phone -> router  ART 01 | 01 | 06 | link A id | A ctr 7  | seal_A(20.., 00..) | P
+  router -> nas    ART 01 | 01 | 05 | link B id | B ctr 91 | seal_B(20.., 30..) | P
+                                 ^ hops - 1                 ^ new key, new nonce
 ```
 
-## 5. Who may send to whom ⟡
+### 4.3 The directory question (inside FOMKE)
+
+An ordinary AME frame, kind `0x14`, sealed by the link's ratchet. Inside:
 
 ```text
-  sender         target                      allowed when
-  -------------  --------------------------  ----------------------------------
-  a router peer  anything                    always: the router before it
-                                             already checked
-  a client       a directory line            its identity is in `visibleTo`
-                                             (or `visibleTo` has "*")
-  a client       another peer of this        the reverse is allowed: that
-                 router                      peer may write to the client.
-                                             Whoever may write to you may be
-                                             answered.
-  a client       an origin from far away     a live return note says that
-                                             origin wrote to THIS client
+  ask        01 | start u16
+  directory  02 | start u16 | total u16 | count u8 |
+                  count x (id u64 | name length u8 | name, <= 32 bytes)
 ```
 
-Example 2. Directory `nas visibleTo ["phone"]`. The phone may write to the
-nas. The nas has no line naming the phone, and may still answer it, by the
-third rule.
-
-The directory a client receives lists exactly the lines it may see; the
-page holds at most 24, and `start`/`total` say where it is:
+A page holds at most 24 entries (about 1 KB):
 
 ```text
   ask start 0   -> start 0,  total 50, 24 entries
@@ -230,39 +225,85 @@ page holds at most 24, and `start`/`total` say where it is:
   ask start 99  -> start 50, total 50,  0 entries     <- past the end: empty
 ```
 
-## 6. Where a forward goes, hop by hop ❧
+## 5. Replay ⟡
 
-At every router, in this order:
+Each link side counts its route frames (`nextRouteCounter`) and keeps the
+last 64 counters it accepted from its peer (`routeReplay`):
 
 ```text
-  forward arrives on slot s
+  frame 41 arrives        -> tag ok, 41 is new        -> accepted
+  frame 41 arrives again  -> tag ok, 41 already seen  -> dropped
+  frame 39 after 41       -> tag ok, 39 is new        -> accepted (late)
+  frame 30 after 100      -> older than the window    -> dropped
+```
+
+The counter is in the nonce, so editing it breaks the tag. The window moves
+only AFTER the tag checked out, so a forged counter cannot push honest
+frames out of it. A replay is stopped at the first router it reaches; it
+never costs the next link anything and never reaches the target.
+
+This counter never gets out of step the way a ratchet can: it is only a
+nonce, and the route key does not change per frame. Any counter ahead of
+the last one is fine, however far ahead -- losing frames costs nothing.
+
+The end-to-end session inside has its own protection against replay
+(FOMKE's), so a replayed payload would be refused at the target even if it
+were re-wrapped in a new route frame.
+
+## 6. Who may send to whom ❧
+
+```text
+  sender         target                      allowed when
+  -------------  --------------------------  ----------------------------------
+  anyone         this node itself            always: the end-to-end handshake
+                                             decides
+  a router peer  anything                    always: the router before it
+                                             already checked
+  a client       a directory line            its identity is in `visibleTo`
+                                             (or `visibleTo` has "*")
+  a client       another peer of this node   the reverse is allowed: that peer
+                                             may write to the client. Whoever
+                                             may write to you may be answered.
+  a client       an origin from far away     a live return note says that
+                                             origin wrote to THIS client
+```
+
+## 7. Where a forward goes, hop by hop ❧
+
+At every node, in this order:
+
+```text
+  route frame arrives on slot s
         |
         v
-  open with the session in s ------------- fails -> drop, no answer
+  open the address with s's route key -- fails / replay -> drop, no answer
         |
         v
-  origin := s's id (client) or the block's origin (router peer)
+  origin := s's id (client) or the frame's origin (router peer)
         |
         v
-  hops = 0 ? ----------------------------- yes  -> refuse "hops spent"
+  target is my own id? ---------------------- yes  -> delivered here
         |
         v
-  allowed (section 5)? ------------------- no   -> refuse "no route"
+  hops = 0 ? -------------------------------- yes  -> refuse "hops spent"
         |
         v
-  1. a peer with that id here?            -> deliver to it
-  2. a line with via = router R?          -> forward to R
-  3. a return note for that id?           -> forward to the router it came from
-  4. none, or it would go back out s      -> refuse "no route"
+  allowed (section 6)? ---------------------- no   -> refuse "no route"
         |
         v
-  seal for the next slot ----------------- fails -> refuse "unreachable"
+  1. a peer with that id here?             -> forward to it
+  2. a line with via = router R?           -> forward to R
+  3. a return note for that id?            -> forward to the router it came from
+  4. none, or it would go back out s       -> refuse "no route"
+        |
+        v
+  seal the address for the next link ------ fails -> refuse "unreachable"
         |
         v
   came from a router peer? -> make / refresh the return note
 ```
 
-Example 3. Two routers and the way back:
+Example 2. Two routers and the way back:
 
 ```text
   router 1: line  0x20 "nas" visibleTo ["phone"] via 0x11
@@ -270,58 +311,69 @@ Example 3. Two routers and the way back:
   router 2: line  0x20 "nas" visibleTo ["router1"]
             peers router1 0x10 (router), nas 0x20
 
-  phone   -> R1   forward 0x20                  rule: directory line
-  R1      -> R2   forward 0x20 from 0x30         line via 0x11
-  R2      -> nas  deliver 0x20 from 0x30         peer here; note "0x30 via R1"
-  nas     -> R2   forward 0x30                   rule: return note
-  R2      -> R1   forward 0x30 from 0x20         return note
-  R1      -> phone deliver 0x30 from 0x20        peer here
+  phone   -> R1    forward 0x20                 rule: directory line
+  R1      -> R2    forward 0x20 from 0x30       line via 0x11
+  R2      -> nas   forward 0x20 from 0x30       peer here; note "0x30 via R1"
+  nas              0x20 is me                   delivered
+  nas     -> R2    forward 0x30                 rule: return note
+  R2      -> R1    forward 0x30 from 0x20       return note
+  R1      -> phone forward 0x30 from 0x20       peer here
+  phone            0x30 is me                   delivered
 ```
 
-A refusal from a later router travels back the same way: a router that
-gets a refusal from a router peer passes it on toward its `origin`.
+A refusal from a later router travels back the same way: a node that gets
+a refusal from a router peer passes it on toward its `origin`, or keeps it
+when the origin is itself.
 
-## 7. What each layer protects, and what it does not ⌜guide⌟
+## 8. What is hidden, and from whom ⌜guide⌟
 
 ```text
-  layer         protects against                       does not
-  ------------  -------------------------------------  -----------------------
-  FOMKE (the    anyone on the wire: reading, editing,  the router itself -- it
-  session)      replaying, telling kinds apart         holds the key
-  route block   a target id that was not sealed for    the router -- it holds
-                THIS frame, kind and direction; ids    this key too
-                re-used across frames
-  hops          loops between routers                  a router that resets it
-  return notes  a target answering origins that never  a router lying about
-                wrote to it                            origins (router peers
-                                                       are trusted)
+  who                      sees                         does not see
+  -----------------------  ---------------------------  --------------------
+  a watcher on one link    that a route frame passed,   target, origin,
+                           its length, the link's       content
+                           counter
+  a router                 target, origin, length       content
+  the target               origin (by id), content      the path it took
 ```
 
-The 8-byte tag: forging it means guessing 64 bits, online, one frame per
-guess, with every wrong guess dropped silently -- and the guess has to be
-made from inside an authenticated session in the first place.
+Limits, said plainly:
 
-## 8. Limits and edge cases ୨୧
+- **The payload is the same bytes on every link.** Someone watching BOTH
+  sides of a router can match a frame going in to one coming out by its
+  payload, and so learn where it went. This is the price of not encrypting
+  the payload per hop.
+- **Length is visible.** Padding inside the end-to-end session helps.
+- **The tag does not cover the payload's content.** Someone on a link can
+  swap the payload for other bytes of the same length; the frame is passed
+  on and the target's end-to-end session refuses it. That is the same as
+  dropping it, which they could do anyway.
+- **Routers are trusted about origins** when they are marked as router
+  peers. Mark only routers you run.
+
+## 9. Limits and edge cases ୨୧
 
 ```text
-  what                          limit / behaviour
-  ----------------------------  ----------------------------------------------
-  route id 0                    reserved; refused by addAmeRouteTarget and
-                                admitAmeRoutePeer
-  one id, two slots             refused: "AME route id is already connected"
-  neighbours per router         512 by default (initAmeRouter(capacity))
-  name length                   32 bytes
-  directory page                24 entries, about 1 KB of body
-  forward overhead              26 bytes before the payload (kind, block, hops)
-  return notes                  256, 120 s after the last refresh
-  frame from an empty slot      dropped, counted in `dropped`
-  deliver/directory at a router dropped: not meant for a router
-  refusal from a client         dropped
-  a released slot               session and keys erased; a return note
-                                remembers a router's ID, not its slot, so a
-                                reused slot never inherits a note
+  what                            limit / behaviour
+  ------------------------------  --------------------------------------------
+  route id 0                      reserved; refused everywhere
+  a peer with the node's own id   refused by admitAmeRoutePeer
+  one id, two slots               refused: "AME route id is already connected"
+  neighbours per node             512 by default (initAmeRouter(id, capacity))
+  name length                     32 bytes
+  directory page                  24 entries, about 1 KB of body
+  route frame overhead            42 bytes
+  route counter                   2^32 - 1 frames per link, then a new
+                                  handshake ("AME route counter is exhausted")
+  replay window                   64 frames per link side
+  return notes                    256, 120 s after the last refresh
+  frame from an empty slot        dropped, counted in `dropped`
+  refusal from a client           dropped
+  while a link rotates its epoch  route frames wait, like every other frame
+                                  (the route key changes with the epoch)
+  a released slot                 session and keys erased; a return note
+                                  remembers a router's ID, not its slot
 ```
 
-The payload size is the carrier's business. Over DAC a forward is one
-datagram, so keep `payload + 26 + ameFrameOverheadBytes(S)` under the link
-MTU.
+Over DAC a route frame is one datagram, so keep the payload under the link
+MTU minus 42.

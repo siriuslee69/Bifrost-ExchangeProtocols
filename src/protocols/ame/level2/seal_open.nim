@@ -157,7 +157,7 @@ proc recvHeaderKey(S: AmeSession, useCandidate: bool = false): ByteSeq {.
     ameEpochKeyContext(S.pendingIncoming.candidate, S.auth.sessionId,
       inboundAmeDirection(S.auth.endpointRole)))
 
-proc requireAmeMaySend(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
+proc requireAmeMaySend*(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
   ## S/kind: refuses a frame while this side must stay silent:
   ##
   ##   this side's state                     may send
@@ -239,7 +239,7 @@ proc sealAmeDacFrame*(S: var AmeSession,
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
 
-proc acceptsSessionId(S: AmeSession, id: uint64): bool {.role: parser,
+proc acceptsSessionId*(S: AmeSession, id: uint64): bool {.role: parser,
     tag: "ame|validation".} =
   ## S/id: the id an arriving frame claims.
   ##
@@ -275,7 +275,7 @@ proc validateFrameBinding(S: AmeSession, f: AmeDecodedFrame,
       f.header.laneId != S.laneId:
     return "AME frame binding mismatch"
 
-proc replayAccept(W: var AmeReplayWindow, sequence: uint32): bool {.
+proc replayAccept*(W: var AmeReplayWindow, sequence: uint32): bool {.
     role: actor.} =
   ## W/sequence: bounded 64-packet replay window and authenticated sequence.
   var
@@ -477,7 +477,8 @@ proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
 
 proc openControlFrame*(S: var AmeSession, frame: openArray[uint8],
     expected: AmePacketKind, carrier: AmeCarrier,
-    useCandidate: bool = false): AmeControlOpened {.role: orchestrator.} =
+    useCandidate: bool = false): tuple[ok: bool, payload: ByteSeq,
+    err: string] {.role: orchestrator.} =
   ## S/frame/expected/carrier/useCandidate: authenticated control open inputs.
   ##
   ## `useCandidate` is the epoch-ready case. The peer sealed that frame as the
@@ -554,7 +555,6 @@ proc openControlFrame*(S: var AmeSession, frame: openArray[uint8],
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
   result.ok = true
   result.payload = opened.payload
-  result.sequence = f.header.sequence
 
 proc sealAmeDacControl*(S: var AmeSession, kind: DacMessageKind,
     body: openArray[uint8]): ByteSeq {.role: orchestrator.} =

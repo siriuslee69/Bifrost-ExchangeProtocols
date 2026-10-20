@@ -1,17 +1,11 @@
 ## -------------------------------------------------------------------------
-## AME Route Block <- who a routed message is for, sealed in one Gimli block
+## AME Route Block <- who a routed frame is for, sealed in one Gimli block
 ## -------------------------------------------------------------------------
 ##
-## A routed message names two ids: where it goes (target) and who sent it
-## (origin). Those 16 bytes are sealed on their own, with their own key,
-## before the whole message is sealed again by the session ratchet:
-##
-##   +------------------ plaintext inside the AME frame ------------------+
-##   | kind | route block (24)                 | hops | payload ...       |
-##   |      | sealed ids (16)   | tag (8)      |      |                   |
-##   +--------------------------------------------------------------------+
-##     \______________________________________________________________/
-##                  all of this is sealed AGAIN by FOMKE
+## A routed frame names two ids: where it goes (target) and who sent it
+## (origin). Those 16 bytes are the ONLY part of a route frame that is
+## encrypted per hop. The payload behind them is not touched; it is the
+## sender's own end-to-end AME frame, which no router holds a key for.
 ##
 ## ╭─ ❧ Def. 1: the block 🌊
 ##
@@ -50,26 +44,22 @@
 ## The `xor 0x01` into the hidden part marks "this was the last block". The
 ## block is always exactly 16 bytes, so no padding rule is needed.
 ##
-## ╭─ ❧ Def. 3: the nonce 🍣
+## ╭─ ❧ Def. 3: the nonce is the frame's header 🍣
 ##
-##   byte  0  1  2  3   4      5  6  7   8 ......... 11   12 ...... 15
-##         A  M  R  B   kind   00 00 00  frame counter   00 00 00 00
-##                                       u32 LE
+## The caller (level2/route_wire.nim) builds the 16 nonce bytes from the
+## route frame's own clear header: magic, kind, hops or reason, the link's
+## route counter and the payload length. So the tag covers the header too,
+## at no extra cost: a changed counter, hop count, reason or length makes
+## the tag fail, exactly like a changed id.
 ##
-## The frame counter is the AME sequence of the frame the block rides in,
-## which the ratchet's tag also covers. The key is per session, per epoch
-## and per direction. So no two blocks ever share key AND nonce, and a block
-## copied from frame 41 into frame 42 -- or from a forward into a refusal --
-## fails its tag.
+## The key is per session, per epoch and per direction, and the counter
+## never repeats on one link. So no two blocks ever share key AND nonce.
 ##
 ## ╭─ ❧ Why 8 bytes of tag is enough here ⟡
 ##
 ## A forger has to guess 64 bits, online, one frame per guess, and every
-## wrong guess is thrown away without an answer. On top of that, the block
-## only ever arrives inside a frame the ratchet already authenticated, so
-## the guess has to be made by someone holding the session keys anyway.
-## The tag is there so a router never acts on a target id that was not
-## sealed for THIS frame, with THIS direction's key.
+## wrong guess is dropped without an answer. Meeting the right tag by luck
+## takes, on average, 2^63 frames sent at one router.
 ##
 ## ╭─ ❧ Why Gimli and not a negotiated cipher ⟡
 ##
@@ -92,6 +82,7 @@ const
   ameRouteTagLen* = 8
   ameRouteBlockLen* = ameRouteIdsLen + ameRouteTagLen
   ameRouteKeyLen* = 32
+  ameRouteNonceLen* = 16
   ameRouteBlockLabel* = "AME-ROUTE-BLOCK-v1"
     ## Separates this key from every other key the same epoch derives.
 
@@ -125,33 +116,20 @@ proc setStateByte(G: var Gimli_Block, i: int, v: uint8) {.role: actor,
   G[i div 4] = (G[i div 4] and not (0xff'u32 shl shift)) or
     (uint32(v) shl shift)
 
-proc routeNonce(kind: AmeRouteKind, sequence: uint32): array[16, uint8] {.
-    role: truthBuilder.} =
-  ## kind/sequence: the message kind and the AME frame counter (Def. 3).
-  result[0] = uint8('A')
-  result[1] = uint8('M')
-  result[2] = uint8('R')
-  result[3] = uint8('B')
-  result[4] = uint8(ord(kind))
-  result[8] = uint8(sequence and 0xff'u32)
-  result[9] = uint8((sequence shr 8) and 0xff'u32)
-  result[10] = uint8((sequence shr 16) and 0xff'u32)
-  result[11] = uint8((sequence shr 24) and 0xff'u32)
-
-proc startRouteState(key: openArray[uint8], kind: AmeRouteKind,
-    sequence: uint32): Gimli_Block {.role: truthBuilder,
-    tag: "ame|cryptoBoundary".} =
-  ## key/kind/sequence: state loaded with nonce then key, shuffled once.
+proc startRouteState(key, nonce: openArray[uint8]): Gimli_Block {.
+    role: truthBuilder, tag: "ame|cryptoBoundary".} =
+  ## key/nonce: state loaded with nonce then key, shuffled once.
   var
-    nonce: array[16, uint8] = routeNonce(kind, sequence)
     i: int = 0
   if key.len != ameRouteKeyLen:
     raise newException(ValueError, "AME route key is missing or wrong length")
-  while i < 16:
+  if nonce.len != ameRouteNonceLen:
+    raise newException(ValueError, "AME route nonce must be 16 bytes")
+  while i < ameRouteNonceLen:
     setStateByte(result, i, nonce[i])
     i = i + 1
   while i < 48:
-    setStateByte(result, i, key[i - 16])
+    setStateByte(result, i, key[i - ameRouteNonceLen])
     i = i + 1
   gimliPermute(result)
 
@@ -161,15 +139,15 @@ proc finishRouteState(G: var Gimli_Block) {.role: math, inline.} =
   G[11] = G[11] xor (1'u32 shl 24)
   gimliPermute(G)
 
-proc sealAmeRouteBlock*(key: openArray[uint8], kind: AmeRouteKind,
-    sequence: uint32, target, origin: uint64): ByteSeq {.role: encryptor,
+proc sealAmeRouteBlock*(key, nonce: openArray[uint8],
+    target, origin: uint64): ByteSeq {.role: encryptor,
     tag: "ame|cryptoBoundary".} =
   ## key: this direction's route key (32 bytes).
-  ## kind/sequence: message kind and frame counter, bound as the nonce.
+  ## nonce: 16 bytes built from the frame header (Def. 3).
   ## target/origin: the two ids.
   ## Returns 24 bytes: 16 sealed + 8 tag (Def. 1).
   var
-    G: Gimli_Block = startRouteState(key, kind, sequence)
+    G: Gimli_Block = startRouteState(key, nonce)
     plain: ByteSeq = @[]
     c: uint8 = 0
     i: int = 0
@@ -189,11 +167,11 @@ proc sealAmeRouteBlock*(key: openArray[uint8], kind: AmeRouteKind,
   secureClearAmeBytes(plain)
   G = default(Gimli_Block)
 
-proc openAmeRouteBlock*(key: openArray[uint8], kind: AmeRouteKind,
-    sequence: uint32, A: openArray[uint8]): AmeRouteIds {.role: decryptor,
+proc openAmeRouteBlock*(key, nonce: openArray[uint8],
+    A: openArray[uint8]): AmeRouteIds {.role: decryptor,
     tag: "ame|cryptoBoundary".} =
   ## key: the sender's direction's route key, as this side holds it.
-  ## kind/sequence: message kind and frame counter, bound as the nonce.
+  ## nonce: 16 bytes built from the frame header as it arrived (Def. 3).
   ## A: exactly 24 bytes. `ok` is false on any mismatch, and then neither
   ## id is filled in.
   var
@@ -203,7 +181,7 @@ proc openAmeRouteBlock*(key: openArray[uint8], kind: AmeRouteKind,
     i: int = 0
   if A.len != ameRouteBlockLen:
     return
-  G = startRouteState(key, kind, sequence)
+  G = startRouteState(key, nonce)
   while i < ameRouteIdsLen:
     plain[i] = stateByte(G, i) xor A[i]
     setStateByte(G, i, A[i])
