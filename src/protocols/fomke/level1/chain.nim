@@ -33,8 +33,8 @@ import ./chain_send
 export chain_send
 
 const
-  fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeNextSecretBytes
-    ## [ LK1 | LK2 | NS ] -- what one epoch derivation hands out.
+  fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeTightKeyBytes
+    ## [ LK1 | LK2 | TK ] -- what one epoch derivation hands out.
   fomkeConfirmKeyBytes = xhkdfBlockBytes
     ## A rotation also derives the key its confirmation tag is taken with.
 
@@ -169,7 +169,7 @@ proc clearFomkePending(P: var FomkePendingUpgrade) {.role: actor,
   ## P: candidate chains erased when committed or cancelled.
   clearFomkeChain(P.candidateLane1)
   clearFomkeChain(P.candidateLane2)
-  secureClearAmeBytes(P.candidateNextSecret)
+  secureClearAmeBytes(P.candidateTightKey)
   secureClearAmeBytes(P.commit.confirmationTag)
   P = default(FomkePendingUpgrade)
 
@@ -188,7 +188,7 @@ proc clearFomkeState*(S: var FomkeState) {.role: actor,
   ## S: all current, skipped, and candidate secret material erased.
   clearFomkeChain(S.lane1)
   clearFomkeChain(S.lane2)
-  secureClearAmeBytes(S.nextSecret)
+  secureClearAmeBytes(S.tightKey)
   clearFomkeSkipped(S.skipped)
   clearFomkePending(S.pending)
   S = default(FomkeState)
@@ -199,12 +199,12 @@ proc cloneFomkeState*(S: FomkeState): FomkeState {.role: helper,
   result = S
   result.lane1 = cloneFomkeChain(S.lane1)
   result.lane2 = cloneFomkeChain(S.lane2)
-  result.nextSecret = copyFomkeBytes(S.nextSecret)
+  result.tightKey = copyFomkeBytes(S.tightKey)
   result.skipped = cloneFomkeSkipped(S.skipped)
   result.pending.candidateLane1 = cloneFomkeChain(S.pending.candidateLane1)
   result.pending.candidateLane2 = cloneFomkeChain(S.pending.candidateLane2)
-  result.pending.candidateNextSecret = copyFomkeBytes(
-    S.pending.candidateNextSecret)
+  result.pending.candidateTightKey = copyFomkeBytes(
+    S.pending.candidateTightKey)
   result.pending.commit.confirmationTag = copyFomkeBytes(
     S.pending.commit.confirmationTag)
 
@@ -282,6 +282,17 @@ proc acquireFomkeInboundKey(S: var FomkeState, index: uint64,
     clearFomkeChain(S.lane2)
     S.lane2 = C
 
+proc fomkeGapTooWide(S: FomkeState, index: uint64,
+    lane: FomkeLane): bool {.role: parser, inline.} =
+  ## S/index/lane: true when a message sits further ahead of the lane than
+  ## the reorder window lets through. Checked before anything is derived, so
+  ## it can be told apart from a bad tag -- see `FomkeOpenResult.behind`.
+  var
+    nextIndex: uint64 = S.lane1.nextIndex
+  if lane == flLane2:
+    nextIndex = S.lane2.nextIndex
+  result = index > nextIndex and index - nextIndex > uint64(S.reorderWindow)
+
 proc inboundFomkeLane*(r: FomkeRole): FomkeLane {.role: parser,
     tag: "appApi|fomke".} =
   ## r: local role mapped to the remote sender lane.
@@ -313,6 +324,10 @@ proc openFomkeMessage*(S: var FomkeState, message: FomkeMessage,
     if message.tagLen != S.tagLen or
         message.authTag.len != int(ord(S.tagLen)):
       result.err = "FOMKE tag length does not match the agreed length"
+      return
+    if fomkeGapTooWide(S, message.index, expectedLane):
+      result.behind = true
+      result.err = "FOMKE message gap exceeds the reorder window"
       return
     pending = cloneFomkeState(S)
     key = acquireFomkeInboundKey(pending, message.index, expectedLane)
@@ -423,18 +438,19 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   ## S/requestId/targetEpoch: quiescent chain and authenticated AME transaction.
   ## r/candidate: exact upgrade mask and resulting AME state.
   ##
-  ## The new epoch is derived from BOTH this epoch's next secret (NS) and the
+  ## The new epoch is derived from BOTH this epoch's next key (NK, made from
+  ## the tight key TK right here and erased right after) and the
   ## fresh KEM secrets, in one XHKDF call:
   ##
-  ##   NS + new KEM secrets + commit ──▶ [ LK1' | LK2' | NS' | confirm key ]
+  ##   NK + new KEM secrets + commit ──▶ [ LK1' | LK2' | TK' | confirm key ]
   ##
-  ## Mixing the NS keeps an attacker who only saw the new exchange out;
+  ## Mixing the NK keeps an attacker who only saw the new exchange out;
   ## mixing the new secrets lets a session recover from a past compromise,
   ## because the attacker never saw the new KEM result.
   ##
   ## The lane keys themselves are NOT an input. They were once, and that tied
   ## the new epoch to the exact position each lane had reached -- a value the
-  ## two sides only agree on once every message in flight has landed. The NS
+  ## two sides only agree on once every message in flight has landed. The TK
   ## is fixed for the whole epoch, so both sides always hold the same one.
   var
     metadata: ByteSeq = @[]
@@ -442,6 +458,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
     keys: ByteSeq = @[]
     confirmKey: ByteSeq = @[]
     confirmInfo: ByteSeq = @[]
+    nextKey: ByteSeq = @[]
   requireFomkeQuiescent(S)
   if S.skipped.len != 0:
     raise newException(ValueError,
@@ -460,12 +477,13 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   result.lane2Index = S.lane2.nextIndex
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
-  keys = deriveXhkdfInputs(S.nextSecret, secretRows, metadata,
+  nextKey = deriveFomkeTightChild(S, "FOMKE-NEXT-KEY-v1")
+  keys = deriveXhkdfInputs(nextKey, secretRows, metadata,
     fomkeEpochKeyBytes + fomkeConfirmKeyBytes, fomkeKdfFor(S, r.targetTier))
   S.pending.active = true
   S.pending.commit = result
   takeFomkeEpochKeys(keys, S.pending.candidateLane1,
-    S.pending.candidateLane2, S.pending.candidateNextSecret)
+    S.pending.candidateLane2, S.pending.candidateTightKey)
   confirmKey = sliceFomkeBytes(keys, fomkeEpochKeyBytes, fomkeConfirmKeyBytes)
   appendAmeLabel(confirmInfo, "FOMKE-UPGRADE-CONFIRM-v4")
   appendFomkeField(confirmInfo, metadata)
@@ -477,6 +495,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   secureClearAmeBytes(keys)
   secureClearAmeBytes(confirmKey)
   secureClearAmeBytes(confirmInfo)
+  secureClearAmeBytes(nextKey)
 
 proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
     role: parser, tag: "appApi|exchange|fomke".} =
@@ -508,23 +527,27 @@ proc confirmFomkeUpgrade*(S: var FomkeState, c: FomkeUpgradeCommit) {.
   var
     lane1: FomkeChainState = default(FomkeChainState)
     lane2: FomkeChainState = default(FomkeChainState)
-    nextSecret: ByteSeq = @[]
+    tightKey: ByteSeq = @[]
     targetEpoch: uint32 = 0'u32
     targetTier: AmeMaskTier = default(AmeMaskTier)
   validateFomkeUpgrade(S, c)
   lane1 = cloneFomkeChain(S.pending.candidateLane1)
   lane2 = cloneFomkeChain(S.pending.candidateLane2)
-  nextSecret = copyFomkeBytes(S.pending.candidateNextSecret)
+  tightKey = copyFomkeBytes(S.pending.candidateTightKey)
   targetEpoch = S.pending.commit.targetEpoch
   targetTier = S.pending.commit.targetTier
   clearFomkeChain(S.lane1)
   clearFomkeChain(S.lane2)
-  secureClearAmeBytes(S.nextSecret)
+  secureClearAmeBytes(S.tightKey)
   clearFomkeSkipped(S.skipped)
   clearFomkePending(S.pending)
   S.lane1 = lane1
   S.lane2 = lane2
-  S.nextSecret = move(nextSecret)
+  S.tightKey = move(tightKey)
+  ## Jump numbers start again in every epoch: JK binds the epoch, so jump 0
+  ## of this epoch and jump 0 of the last one are different keys.
+  S.sendJumps = 0'u32
+  S.recvJumps = 0'u32
   S.epoch = targetEpoch
   S.kdf = fomkeKdfFor(S, targetTier)
   S.tier = targetTier
@@ -578,7 +601,8 @@ proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
 
 proc fomkeHandshakeSecret*(S: FomkeState): ByteSeq {.role: truthBuilder,
     tag: "appApi|cryptoBoundary|fomke|kdf".} =
-  ## S: the live ratchet whose next secret is handed to the NEXT handshake.
+  ## S: the live ratchet whose carried secret (CS) is handed to the NEXT
+  ## handshake.
   ##
   ## When a session ends and the two sides later run a fresh AM1P handshake,
   ## they can carry this into it (see `withAmeNextSecret`). It then keys the
@@ -586,15 +610,10 @@ proc fomkeHandshakeSecret*(S: FomkeState): ByteSeq {.role: truthBuilder,
   ## the pre-shared key AND this -- a stolen pre-shared key alone no longer
   ## opens the next hello.
   ##
-  ## Never the raw NS: that one still has a job inside this session (the next
-  ## rotation). One secret doing two jobs is how a proof about one of them
-  ## stops holding for the other, so the export is its own derivation:
+  ## One child of the tight key, like NK and JK, each under its own label --
+  ## one secret doing two jobs is how a proof about one of them stops
+  ## holding for the other:
   ##
-  ##   NS ──XHKDF("FOMKE-NEXT-HANDSHAKE-v1", epoch)──▶ 32 bytes
-  var
-    info: ByteSeq = @[]
+  ##   TK ──XHKDF("FOMKE-NEXT-HANDSHAKE-v2", epoch)──▶ 32 bytes
   validateFomkeState(S)
-  appendAmeLabel(info, "FOMKE-NEXT-HANDSHAKE-v1")
-  appendAmeU32(info, S.epoch)
-  result = deriveXhkdf(S.nextSecret, @[], info, fomkeNextSecretBytes, S.kdf)
-  secureClearAmeBytes(info)
+  result = deriveFomkeTightChild(S, "FOMKE-NEXT-HANDSHAKE-v2")

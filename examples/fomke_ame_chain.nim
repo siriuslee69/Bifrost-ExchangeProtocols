@@ -70,5 +70,5 @@ when isMainModule:
   doAssert opened.ok
   ## The rotation replaced the next secret on both sides, from the old one
   ## plus the fresh KEM result.
-  doAssert alice.nextSecret == bob.nextSecret
+  doAssert alice.tightKey == bob.tightKey
   echo "FOMKE epoch ", alice.epoch, " exchanged both directions"

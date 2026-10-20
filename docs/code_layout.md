@@ -41,6 +41,7 @@ src/protocols
 │   │                route_wire.nim    the outer "ART" route frame: sealed
 │   │                                  address, replay window, open payload
 │   │                route_directory.nim  "whom may I reach?" (AME kind 0x14)
+│   │                lane_jump.nim  jump ask (0x15) and jump (0x16) frames
 │   │                plus agreement, at-rest protection, trust, AME wire
 │   │   └── carriers/ <- tcp.nim and dac.nim; the flag picks which compile
 │   └── level3/  <- handshake.nim   steps 3 and 4 (finish, accept), and the
@@ -72,11 +73,12 @@ src/protocols
 ├── fomke/
 │   ├── types.nim
 │   ├── level0/  <- XHKDF and protocol descriptor
-│   ├── level1/  <- chain_send.nim  the epoch split [LK1|LK2|NS], the two
-│   │                                 chains, sealing
+│   ├── level1/  <- chain_send.nim  the epoch split [LK1|LK2|TK], the two
+│   │                                 chains, sealing, children of TK
 │   │                chain.nim       opening, the reorder window, and exact
-│   │                                 AME upgrade commits (NS + new KEM ->
-│   │                                 next epoch); passes chain_send on
+│   │                                 AME upgrade commits (NK from TK + new
+│   │                                 KEM -> next epoch); passes chain_send on
+│   │                jump.nim        proved lane jumps (JK from TK)
 │   │                (the ratchet is the ONLY payload protection)
 │   ├── level2/  <- envelope/FKU1 bounded wire codecs, plus the checkpoint store
 │   └── level3/  <- public operation export surface

@@ -120,13 +120,27 @@ AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
   -> next-secret policy: missing, required, wrong, and a visible fallback
   -> only pre-shared modes take a next secret, and only 32 bytes of it
 
-FOMKE next secret
-  -> both sides hold the same NS, and it is not a lane key
-  -> what leaves for the next handshake is a derivation, not NS itself
-  -> a rotation replaces NS on both sides, whatever the lanes have done
-  -> a checkpoint (encodeFomkeState / decodeFomkeState) keeps NS
+FOMKE tight key (test_ame_psk_modes.nim)
+  -> both sides hold the same TK, and it is not a lane key
+  -> what leaves for the next handshake is a derivation, not TK itself
+  -> a rotation replaces TK on both sides, whatever the lanes have done
+  -> a checkpoint (encodeFomkeState / decodeFomkeState) keeps TK
   -> fomkeReorderCeiling is read from config, range-checked, and reaches
      the session
+
+FOMKE tight key children and lane jumps          (test_fomke_jump.nim)
+  -> NK, JK and CS are three different children of TK, equal on both sides
+  -> a checkpoint keeps TK and both jump counters
+  -> a loss burst wider than the window is refused as "behind", and a
+     jump frees the lane (pinned: it used to end the lane for good)
+  -> a bad tag is not mistaken for being behind
+  -> a jump is used once; a lost jump costs nothing (numbers only go up)
+  -> an edited jump, or one with other binding bytes, changes nothing
+  -> wrong lane, wrong epoch, too long, and during a rotation: refused
+  -> a jump to where the lane is moves nothing and keeps held keys
+  -> a real jump drops the lane's held keys
+  -> through AME: ask on the working lane, jump back, the lane opens
+  -> an edited jump frame, or one from another session, is refused
 
 FOMKE forward secrecy
   -> the state that sent a message cannot open it again afterwards

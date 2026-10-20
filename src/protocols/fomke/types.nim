@@ -34,21 +34,42 @@ const
   xhkdfMaxWorkBlocks* = 16_777_216'u64
 
   fomkeChainKeyBytes* = 64
-  fomkeNextSecretBytes* = 32
-    ## The "next secret" (NS). Born next to the two lane keys and never used
-    ## for a message. Its only job is to be carried into the NEXT epoch:
+  fomkeTightKeyBytes* = 32
+    ## The tight key (TK). Born next to the two lane keys and never used for
+    ## a message, nor as a key of its own. Every other key an epoch needs is
+    ## DERIVED from it, with a label, only at the moment it is needed:
     ##
-    ##   ISS ──XHKDF──▶ [ LK1 (64) | LK2 (64) | NS (32) ]
+    ##   ISS ──XHKDF──▶ [ LK1 (64) | LK2 (64) | TK (32) ]
     ##                                            │
-    ##   rotation:  NS + fresh KEM secrets ──XHKDF──▶ [ LK1' | LK2' | NS' ]
+    ##              ┌──────────────────┬──────────┴──────────┐
+    ##              ▼                  ▼                     ▼
+    ##   NK  "FOMKE-NEXT-KEY"   JK  "FOMKE-JUMP-KEY"   CS  "FOMKE-NEXT-
+    ##       + epoch                + epoch + lane         HANDSHAKE"
+    ##                                + jump number        + epoch
+    ##   next key: feeds the    jump key: proves one   carried secret:
+    ##   KEM rotation into      lane jump (Def. in     handed to the next
+    ##   the next epoch         level1/jump.nim)       AM1P handshake
     ##
-    ## It is a one-way image of the epoch's secret, so holding it opens no
-    ## message of this epoch -- but the next epoch cannot be derived without
-    ## it. There is no root key: nothing else outlives the derivation.
+    ##   rotation:  NK + fresh KEM secrets ──XHKDF──▶ [ LK1' | LK2' | TK' ]
+    ##
+    ## So a session holds ONE extra key, not three. NK exists for the length
+    ## of one rotation, JK for the length of one jump check; both are erased
+    ## straight after. TK is a one-way image of the epoch's secret, so holding
+    ## it opens no message of this epoch. There is no root key: nothing else
+    ## outlives the derivation.
   fomkeMessageKeyBytes* = 32
     ## What one ratchet step hands out. It is not the encryption key itself:
     ## it is the seed the per-message key block is expanded from, so its size
     ## does not change when the layout switches more cipher slots on.
+  fomkeJumpTagBytes* = 32
+    ## Length of the tag that proves a lane jump.
+  fomkeDefaultMaxJump* = 4_096'u32
+  fomkeMaxJumpLimit* = 1_048_576'u32
+    ## How many positions one jump may move a receiving lane forward. The
+    ## jump is proved BEFORE any of those steps are taken, so this bounds
+    ## honest work, not an attacker's: one step is one key derivation,
+    ## about 36 microseconds, so 4096 steps took about 150 ms (x86-64,
+    ## release build). Set per process (`fomkeMaxJump`).
   fomkeMinReorderWindow* = 4'u32
   fomkeDefaultReorderWindow* = 16'u32
   fomkeDefaultReorderCeiling* = 64'u32
@@ -185,8 +206,8 @@ type
     commit*: FomkeUpgradeCommit
     candidateLane1*: FomkeChainState
     candidateLane2*: FomkeChainState
-    candidateNextSecret*: ByteSeq
-      ## The NS the new epoch will carry, taken up together with the lanes.
+    candidateTightKey*: ByteSeq
+      ## The TK the new epoch will carry, taken up together with the lanes.
 
   ## One message's worth of work done ahead of time. `material` is the whole
   ## derived key block for that message: nonce first, then one key per
@@ -219,8 +240,8 @@ type
       ## at any other length is refused before it is even compared.
     lane1*: FomkeChainState
     lane2*: FomkeChainState
-    nextSecret*: ByteSeq
-      ## NS -- see `fomkeNextSecretBytes`. Replaced at every rotation.
+    tightKey*: ByteSeq
+      ## TK -- see `fomkeTightKeyBytes`. Replaced at every rotation.
     skipped*: seq[FomkeSkippedKey]
     reorderWindow*: uint32
       ## How far ahead of the next expected position a message may sit and
@@ -232,6 +253,15 @@ type
       ## Messages that have arrived in order since the window last moved.
     kdf*: XhkdfConfig
     pending*: FomkePendingUpgrade
+    sendJumps*: uint32
+      ## The number the next jump this side SENDS will carry. Each jump is
+      ## proved with its own key, JK(number), and the number only goes up,
+      ## so a used jump key is never used again.
+    recvJumps*: uint32
+      ## The lowest jump number this side will still ACCEPT. A jump with a
+      ## smaller number has been seen (or skipped over) and is refused, which
+      ## is what stops a captured jump from being replayed. A jump that got
+      ## lost costs nothing: the next one simply carries a higher number.
 
   FomkeMessage* {.role: truthState, tag: "fomke|packet|types".} = object
     epoch*: uint32
@@ -244,6 +274,32 @@ type
   FomkeOpenResult* {.role: truthState, tag: "fomke|types".} = object
     ok*: bool
     payload*: ByteSeq
+    err*: string
+    behind*: bool
+      ## The message claimed a position further ahead than the reorder
+      ## window allows, so it was refused BEFORE its tag could be checked.
+      ## That is either a real gap -- a burst of losses wider than the
+      ## window -- or a forgery. Only a hint, never proof: the cure is to ask
+      ## the sender for a jump (level1/jump.nim), which IS proved.
+
+  ## FomkeJump: "the next message on my lane will be number `index`".
+  ## Sent by the side whose lane the receiver can no longer follow.
+  ## tag: keyed BLAKE3 under JK(epoch, lane, number) over every field plus
+  ##   the caller's binding bytes (the AME header).
+  FomkeJump* {.role: preparedData, tag: "fomke|types",
+      expectedCount: [0, 2], lifeCycle: lcJob.} = object
+    epoch*: uint32
+    lane*: FomkeLane
+    number*: uint32
+    index*: uint64
+    tag*: ByteSeq
+
+  ## FomkeJumpResult: what accepting a jump did.
+  ## gaveUp: messages that can now never be opened -- the held keys of that
+  ##   lane, plus every position the lane stepped over.
+  FomkeJumpResult* {.role: truthState, tag: "fomke|types".} = object
+    ok*: bool
+    gaveUp*: uint64
     err*: string
 
   FomkeCheckpoint* {.role: truthState, tag: "cryptoBoundary|fomke|types".} = object

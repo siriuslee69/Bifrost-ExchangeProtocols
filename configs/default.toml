@@ -165,6 +165,13 @@ fomkePregenerationMessages = 8
 # Allowed 4 .. 4096. Raise it for very lossy/reordering links; keep it small
 # on devices that can be seized.
 fomkeReorderCeiling = 64
+# How far one proved lane JUMP may move a receiving lane forward. A burst of
+# losses wider than the reorder window leaves a lane unable to follow; the
+# sender then proves its position and the lane jumps there, giving up the
+# messages in between. One position is one key derivation, about 36 us:
+# 4096 positions took about 150 ms on a desktop (x86-64, release build).
+# Allowed 1 .. 1048576. Past it, the session has to be rebuilt.
+fomkeMaxJump = 4096
 
 [runtime.ame]
 # The AME layout (which algorithms a session offers, in order) and the

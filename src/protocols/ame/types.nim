@@ -68,6 +68,13 @@ type
       ## the answer. Sealed by the session ratchet like every control frame.
       ## Routed traffic does NOT use this kind: it travels in outer "ART"
       ## frames (level2/route_wire.nim).
+    ampkJumpAsk = 0x15'u8
+      ## "I cannot follow your lane any more." Sent by the receiver of a
+      ## stuck lane, sealed on its OWN lane, which still works.
+    ampkJump = 0x16'u8
+      ## The answer: "my next message is number N", proved with a jump key
+      ## instead of the ratchet -- the ratchet is the part that is stuck.
+      ## See level2/lane_jump.nim.
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,

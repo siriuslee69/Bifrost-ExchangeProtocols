@@ -335,9 +335,9 @@ suite "carrying the next secret into the next handshake":
       discard initAmePskAuthentication("np", pskSecret(5)).withAmeNextSecret(
         pskSecret(5)[0 ..< 16])
 
-suite "FOMKE next secret":
+suite "FOMKE tight key":
   # {.testKind: tkUnit, covers: "initFomke".}
-  test "both sides hold the same NS, and it is not a lane key":
+  test "both sides hold the same TK, and it is not a lane key":
     var
       psk: ByteSeq = pskSecret(6)
       r: PskRun = runHandshake(51'u64, initAmePskAuthentication("ns", psk),
@@ -346,17 +346,17 @@ suite "FOMKE next secret":
         default(AmeSession))
     check r.ok
     live = sessionPair(r, 51'u64)
-    check live.a.fomke.nextSecret.len == fomkeNextSecretBytes
-    check live.a.fomke.nextSecret == live.b.fomke.nextSecret
-    check live.a.fomke.nextSecret !=
-      live.a.fomke.lane1.chainKey[0 ..< fomkeNextSecretBytes]
-    check live.a.fomke.nextSecret !=
-      live.a.fomke.lane2.chainKey[0 ..< fomkeNextSecretBytes]
-    ## What leaves for the next handshake is a derivation, not NS itself.
-    check fomkeHandshakeSecret(live.a.fomke) != live.a.fomke.nextSecret
+    check live.a.fomke.tightKey.len == fomkeTightKeyBytes
+    check live.a.fomke.tightKey == live.b.fomke.tightKey
+    check live.a.fomke.tightKey !=
+      live.a.fomke.lane1.chainKey[0 ..< fomkeTightKeyBytes]
+    check live.a.fomke.tightKey !=
+      live.a.fomke.lane2.chainKey[0 ..< fomkeTightKeyBytes]
+    ## What leaves for the next handshake is a derivation, not TK itself.
+    check fomkeHandshakeSecret(live.a.fomke) != live.a.fomke.tightKey
 
   # {.testKind: tkRegression, covers: "prepareFomkeUpgrade", pins: "a rotation that fed the live lane keys into the next epoch needed both lanes at the same position".}
-  test "a rotation replaces NS on both sides, whatever the lanes have done":
+  test "a rotation replaces TK on both sides, whatever the lanes have done":
     var
       psk: ByteSeq = pskSecret(7)
       r: PskRun = runHandshake(52'u64, initAmePskAuthentication("rot", psk),
@@ -366,14 +366,14 @@ suite "FOMKE next secret":
       before: ByteSeq = @[]
     check r.ok
     live = sessionPair(r, 52'u64)
-    before = live.a.fomke.nextSecret
+    before = live.a.fomke.tightKey
     rotateOnce(live.a, live.b)
-    check live.a.fomke.nextSecret.len == fomkeNextSecretBytes
-    check live.a.fomke.nextSecret == live.b.fomke.nextSecret
-    check live.a.fomke.nextSecret != before
+    check live.a.fomke.tightKey.len == fomkeTightKeyBytes
+    check live.a.fomke.tightKey == live.b.fomke.tightKey
+    check live.a.fomke.tightKey != before
 
   # {.testKind: tkUnit, covers: "encodeFomkeState|decodeFomkeState".}
-  test "a checkpoint keeps NS":
+  test "a checkpoint keeps TK":
     var
       psk: ByteSeq = pskSecret(8)
       r: PskRun = runHandshake(53'u64, initAmePskAuthentication("cp", psk),
@@ -384,7 +384,7 @@ suite "FOMKE next secret":
     check r.ok
     live = sessionPair(r, 53'u64)
     restored = decodeFomkeState(encodeFomkeState(live.a.fomke))
-    check restored.nextSecret == live.a.fomke.nextSecret
+    check restored.tightKey == live.a.fomke.tightKey
 
 suite "reorder ceiling from config":
   # {.testKind: tkUnit, covers: "parseBifrostConfigText|initAmeSession".}

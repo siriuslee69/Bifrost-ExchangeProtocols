@@ -124,7 +124,7 @@ proc padFramePayload(S: AmeSession,
   ## length and that length must already include the padding.
   result = padAmeMessage(payload, S.auth.current.params.padding)
 
-proc encodeProtectedFrame(S: AmeSession, h: AmeFrameHeader,
+proc encodeProtectedFrame*(S: AmeSession, h: AmeFrameHeader,
     body: openArray[uint8]): ByteSeq {.role: dataWriter,
     tag: "ame|cryptoBoundary|wire".} =
   ## S/h/body: one finished frame, with its counter masked on the way out.
@@ -175,7 +175,7 @@ proc requireAmeMaySend*(S: AmeSession, kind: AmePacketKind) {.role: parser.} =
     raise newException(ValueError, "AME waits for the peer's epoch-ready " &
       "before sending anything else")
 
-proc buildAad(carrier: AmeCarrier,
+proc buildAad*(carrier: AmeCarrier,
     h: AmeFrameHeader): ByteSeq {.role: truthBuilder.} =
   ## carrier/h: transport and the whole frame header, bound into the tag.
   ## Everything a receiver reads before it can pick keys is in here, so a
@@ -342,6 +342,7 @@ proc openFrameBody(S: var AmeSession, f: AmeDecodedFrame,
     result.err = exc.msg
     return
   secureClearAmeBytes(aad)
+  S.laneBehind = opened.behind
   if not opened.ok:
     result.err = "AME authentication failed: " & opened.err
     return
@@ -454,7 +455,7 @@ proc sealControlFrame*(S: var AmeSession, kind: AmePacketKind,
   requireAmePeerTrust(S)
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady,
       ampkExchangeDeny,
-      ampkSessionIdRequest, ampkSessionIdAssign, ampkRoute}:
+      ampkSessionIdRequest, ampkSessionIdAssign, ampkRoute, ampkJumpAsk}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
@@ -465,7 +466,7 @@ proc sealControlFrame*(S: var AmeSession, kind: AmePacketKind,
   result = encodeProtectedFrame(S, h, sealFrameBody(S, h, carrier, body))
   S.nextAmeSequence = S.nextAmeSequence + 1'u32
 
-proc controlBindingError(S: AmeSession, f: AmeDecodedFrame,
+proc controlBindingError*(S: AmeSession, f: AmeDecodedFrame,
     expected: AmePacketKind): string {.role: parser.} =
   ## S/f/expected: expected authenticated control metadata.
   if f.header.packetKind != expected or f.header.messageClass != amcControl:

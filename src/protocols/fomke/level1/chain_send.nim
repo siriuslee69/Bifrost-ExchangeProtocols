@@ -31,18 +31,20 @@
 ##              XHKDF  (one call, 160 bytes out)
 ##                 │
 ##   ┌─────────────┼──────────────┬──────────────────┐
-##   │ LK1  0..63  │ LK2  64..127 │ NS  128..159     │
+##   │ LK1  0..63  │ LK2  64..127 │ TK  128..159     │
 ##   └─────────────┴──────────────┴──────────────────┘
-##     lane 1 chain   lane 2 chain   next secret: only ever used to
-##                                   derive the NEXT epoch
+##     lane 1 chain   lane 2 chain   tight key: never used directly;
+##                                   NK, JK and CS are derived from it
+##                                   only when needed (see `fomkeTightKeyBytes`)
 ##
-## A KEM rotation does the same with the NS in place of nothing:
+## A KEM rotation does the same with the NEXT KEY (NK, derived from TK) in
+## place of nothing:
 ##
-##   NS + the fresh KEM secrets + the commit ──XHKDF──▶
-##       [ LK1' | LK2' | NS' | confirmation key ]
+##   NK + the fresh KEM secrets + the commit ──XHKDF──▶
+##       [ LK1' | LK2' | TK' | confirmation key ]
 ##
-## So the new epoch needs BOTH the old NS and the new KEM result. An
-## attacker who only broke the new KEM lacks the NS; one who stole the NS
+## So the new epoch needs BOTH the old TK and the new KEM result. An
+## attacker who only broke the new KEM lacks the TK; one who stole the TK
 ## lacks the new KEM result.
 ##
 ## The message key is not used to encrypt directly. It is expanded into one
@@ -66,8 +68,8 @@ import ../level0/xhkdf
 import runePragmas
 
 const
-  fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeNextSecretBytes
-    ## [ LK1 | LK2 | NS ] -- what one epoch derivation hands out.
+  fomkeEpochKeyBytes = fomkeChainKeyBytes * 2 + fomkeTightKeyBytes
+    ## [ LK1 | LK2 | TK ] -- what one epoch derivation hands out.
   fomkeConfirmKeyBytes = xhkdfBlockBytes
     ## A rotation also derives the key its confirmation tag is taken with.
 
@@ -121,7 +123,7 @@ proc buildFomkeEpochInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
     tag: "cryptoBoundary|fomke|kdf".} =
   ## A/L/t/epoch/context: KEM path, slot layout, active slots, epoch, and
   ## the handshake transcript the caller binds in.
-  appendAmeLabel(result, "FOMKE-EPOCH-KEYS-v3")
+  appendAmeLabel(result, "FOMKE-EPOCH-KEYS-v4")
   appendAmeU32(result, epoch)
   appendFomkeField(result, encodeAmeKemAlgorithms(A))
   appendFomkeField(result, encodeAmeSuiteLayout(L))
@@ -153,8 +155,8 @@ proc validateFomkeState*(S: FomkeState) {.role: parser,
   if S.lane1.chainKey.len != fomkeChainKeyBytes or
       S.lane2.chainKey.len != fomkeChainKeyBytes:
     raise newException(ValueError, "FOMKE directional chain key is invalid")
-  if S.nextSecret.len != fomkeNextSecretBytes:
-    raise newException(ValueError, "FOMKE next secret is invalid")
+  if S.tightKey.len != fomkeTightKeyBytes:
+    raise newException(ValueError, "FOMKE tight key is invalid")
   if S.reorderCeiling > fomkeMaxReorderWindow or
       S.reorderCeiling < fomkeMinReorderWindow:
     raise newException(ValueError, "FOMKE reorder ceiling is out of range")
@@ -167,14 +169,14 @@ proc validateFomkeState*(S: FomkeState) {.role: parser,
     i = i + 1
 
 proc takeFomkeEpochKeys*(K: var ByteSeq, lane1, lane2: var FomkeChainState,
-    nextSecret: var ByteSeq) {.role: actor,
+    tightKey: var ByteSeq) {.role: actor,
     tag: "cryptoBoundary|fomke|kdf".} =
   ## K: one epoch derivation's output, cut apart and then erased.
-  ## lane1/lane2/nextSecret: where the three pieces go.
+  ## lane1/lane2/tightKey: where the three pieces go.
   ##
   ##   offset   0 .. 63   lane 1 chain key
   ##   offset  64 ..127   lane 2 chain key
-  ##   offset 128 ..159   next secret
+  ##   offset 128 ..159   tight key (TK)
   ##   anything after that belongs to the caller (the rotation's
   ##   confirmation key) and is left in K for it to take.
   if K.len < fomkeEpochKeyBytes:
@@ -183,8 +185,31 @@ proc takeFomkeEpochKeys*(K: var ByteSeq, lane1, lane2: var FomkeChainState,
   lane1.nextIndex = 0'u64
   lane2.chainKey = sliceFomkeBytes(K, fomkeChainKeyBytes, fomkeChainKeyBytes)
   lane2.nextIndex = 0'u64
-  nextSecret = sliceFomkeBytes(K, fomkeChainKeyBytes * 2,
-    fomkeNextSecretBytes)
+  tightKey = sliceFomkeBytes(K, fomkeChainKeyBytes * 2,
+    fomkeTightKeyBytes)
+
+proc deriveFomkeTightChild*(S: FomkeState, label: string,
+    extra: openArray[uint8] = []): ByteSeq {.role: truthBuilder,
+    tag: "cryptoBoundary|fomke|kdf".} =
+  ## S: state whose tight key (TK) is the parent.
+  ## label: which child -- "FOMKE-NEXT-KEY-v1" (NK), "FOMKE-JUMP-KEY-v1"
+  ##   (JK), "FOMKE-NEXT-HANDSHAKE-v2" (CS).
+  ## extra: anything else the child is bound to (a jump's lane and number).
+  ##
+  ##   TK ──XHKDF( label | epoch u32 | len u32 | extra )──▶ 32 bytes
+  ##
+  ## The epoch is always bound in, so no child of one epoch equals a child
+  ## of the next. The caller erases the child as soon as it is used; only TK
+  ## is ever held.
+  var
+    info: ByteSeq = @[]
+  if S.tightKey.len != fomkeTightKeyBytes:
+    raise newException(ValueError, "FOMKE tight key is invalid")
+  appendAmeLabel(info, label)
+  appendAmeU32(info, S.epoch)
+  appendFomkeField(info, extra)
+  result = deriveXhkdf(S.tightKey, @[], info, fomkeTightKeyBytes, S.kdf)
+  secureClearAmeBytes(info)
 
 proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
     L: AmeSuiteLayout, t: AmeMaskTier, role: FomkeRole,
@@ -227,7 +252,7 @@ proc initFomke*(S: var seq[ByteSeq], A: AmeKemAlgorithms,
   result.layout = L
   result.tier = t
   result.tagLen = tagLen
-  takeFomkeEpochKeys(keys, result.lane1, result.lane2, result.nextSecret)
+  takeFomkeEpochKeys(keys, result.lane1, result.lane2, result.tightKey)
   result.reorderCeiling = reorderCeiling
   result.reorderWindow = min(fomkeDefaultReorderWindow, reorderCeiling)
   result.orderedRun = 0'u32

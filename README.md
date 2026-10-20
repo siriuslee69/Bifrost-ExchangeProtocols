@@ -119,6 +119,7 @@ peerTrustRequired            true      keep true on anything reachable
 fomkePregeneration           false     see "Preparing ahead"
 fomkePregenerationMessages   8         yes (1 .. 4096)
 fomkeReorderCeiling          64        yes (4 .. 4096), see FOMKE
+fomkeMaxJump                 4096      yes (1 .. 1048576), see FOMKE Step 8
 ameLayoutHex                 ""        "" = derived from the build; a value
                                        pins it (every algorithm in it is then
                                        compiled, see "Tiny devices")
@@ -794,8 +795,8 @@ and an independent security review.
 - `sealed hello` := a client hello whose KEM public keys are sealed (pre-shared
   modes only).
 - `CS` := carried secret. 32 bytes a finished session hands to the NEXT
-  handshake with the same endpoint. `CS = XHKDF(NS, "next handshake")`, see
-  [FOMKE](#fomke) for NS. Code names: `ameNextHandshakeSecret` returns it,
+  handshake with the same endpoint. `CS = XHKDF(TK, "next handshake")`, see
+  [FOMKE](#fomke) for TK. Code names: `ameNextHandshakeSecret` returns it,
   `withAmeNextSecret` takes it, the hello flag is `usesNextSecret`.
 
 The handshake decides two things at once: which keys both endpoints use, and
@@ -1299,7 +1300,7 @@ post-quantum KEMs a selection must keep on. It applies to a client's hello,
 to a request this side sends, and to a request it receives -- which is then
 answered with a deny, not dropped, so the requester never waits forever.
 Running fewer exchanges never weakens the keys: every old secret stays in the
-stacks and in FOMKE's next secret. It only weakens how well a rotation heals
+stacks and in FOMKE's tight key. It only weakens how well a rotation heals
 after a compromise.
 
 **Asking by name.**
@@ -1703,7 +1704,15 @@ call, and never on measured link conditions. A test checks it.
   switched-on KEM slot.
 - `LK1(i)`, `LK2(i)` := lane key of lane 1 / lane 2 at step i, 64 bytes each.
   Code name: `chainKey`.
-- `NS(n)` := next secret of epoch n, 32 bytes. Never used for a message.
+- `TK(n)` := tight key of epoch n, 32 bytes. Never used for a message, nor as
+  a key of its own: NK, JK and CS are derived from it when needed.
+- `NK(n)` := next key, `XHKDF(TK(n), "FOMKE-NEXT-KEY-v1", n)`. Made only
+  inside a rotation, erased right after.
+- `JK(n, lane, j)` := jump key number j of one lane,
+  `XHKDF(TK(n), "FOMKE-JUMP-KEY-v1", n, lane, j)`. Made only to seal or
+  check one jump, erased right after.
+- `jump` := a proved message "the next message on my lane is number X". It
+  moves a receiving lane past a gap wider than the reorder window.
 - `MK(i)` := message key of message i on one lane, 32 bytes.
 - `step` := one XHKDF call that turns LK(i) into LK(i+1) and MK(i).
 - `key block` := the bytes one MK expands into: nonce, one key per switched-on
@@ -1735,7 +1744,7 @@ value        size   created                      erased
 -----------  -----  ---------------------------  ---------------------------------------
 ISS          var.   KEM exchange                 right after the one XHKDF call
              (initial shared secret)
-160-byte     160    that XHKDF call            right after LK1(0), LK2(0), NS(1) are
+160-byte     160    that XHKDF call            right after LK1(0), LK2(0), TK(1) are
 output                                           copied out of it (same call)
 LK1(i)       64     step i-1 of lane 1           at step i of lane 1 (LK1(i+1) replaces it)
 LK2(i)       64     step i-1 of lane 2           at step i of lane 2
@@ -1745,8 +1754,10 @@ MK(i)        32     step i                       sender: right after message i i
                                                  receiver, message i skipped (a later
                                                    message arrived first): kept as a held
                                                    key, see "held keys" below
-NS(n)        32     start of epoch n             at the rotation to epoch n+1, when
-                                                 NS(n+1) replaces it
+TK(n)        32     start of epoch n             at the rotation to epoch n+1, when
+                                                 TK(n+1) replaces it
+NK(n)        32     inside the rotation          right after the rotation's XHKDF call
+JK(n,l,j)    32     sealing / checking jump j    right after that one tag
 key block    var.   from MK(i)                   right after message i is sealed / opened
 ```
 
@@ -1759,11 +1770,12 @@ Held keys (MKs of skipped messages) are erased at the FIRST of:
   the reorder cache is full  -> the OLDEST held key is erased to make room
   the package ends           -> the DAC relay erases what is still held
   the caller gives up        -> discardAmeSessionSkipped()
+  a jump moves the lane      -> every held key of that lane is erased
   rotation                   -> every held key of the old epoch is erased
 ```
 
 So after the first derivation the session holds, at any moment: LK1 and LK2
-(lane keys, 64 bytes each), NS (next secret, 32 bytes, for the whole epoch), and at most
+(lane keys, 64 bytes each), TK (tight key, 32 bytes, for the whole epoch), and at most
 `reorder ceiling` held keys per lane (32 bytes each). The lane keys do NOT
 wait for late messages: a lane key always steps forward at once, and only the
 MKs (message keys) of the skipped positions are kept.
@@ -1781,12 +1793,12 @@ ISS + transcript + layout + tier + epoch
               XHKDF  (one call, 160 bytes out)
                  │
 ┌───────────────────┬────────────────────┬────────────────────┐
-│ LK1(0) bytes 0..63│ LK2(0) bytes 64..127│ NS(1) bytes 128..159│
+│ LK1(0) bytes 0..63│ LK2(0) bytes 64..127│ TK(1) bytes 128..159│
 └───────────────────┴────────────────────┴────────────────────┘
-  lane 1 key          lane 2 key            next secret
+  lane 1 key          lane 2 key            tight key
 ```
 
-The ISS (the KEM secrets) is erased. LK1, LK2 (the lane keys) and NS are copied into the
+The ISS (the KEM secrets) is erased. LK1, LK2 (the lane keys) and TK are copied into the
 session state and **kept** (see the table above); the 160-byte scratch copy
 is erased. There is no root key. A root key, derived first and then split
 again, added one more secret and no separation: the one call already
@@ -1795,15 +1807,29 @@ separates the pieces by position.
 Every switched-on KEM slot enters the call. A tier that names ML-KEM AND X25519
 but derived from one of them would be a hybrid in name only.
 
-NS (next secret) has exactly two jobs:
+TK (the tight key) is never used itself. Three keys are derived from it,
+each under its own label, and each only at the moment it is needed:
 
 ```text
-1. the next rotation:   NS(n) + new KEM secrets ──XHKDF──▶ LK1 | LK2 | NS(n+1)
-2. the next session:    CS = XHKDF(NS, "next handshake")
-                        ──▶ withAmeNextSecret(CS) on both endpoints
+                 TK(n)
+                   │
+   ┌───────────────┼──────────────────┬──────────────────────┐
+   ▼               ▼                  ▼                      │
+ NK(n)           JK(n, lane, j)     CS                       │
+ "next key"      "jump key"         "next handshake"         │
+   │               │                  │                      │
+   ▼               ▼                  ▼                      │
+ 1. the next     2. one lane jump   3. the next session:     │
+    rotation:       (Step 8)           withAmeNextSecret(CS) │
+    NK + new KEM                       on both endpoints     │
+    ──▶ LK1|LK2|TK(n+1)                                      │
 ```
 
-NS (the next secret) is a one-way image of the epoch's secret. An attacker who
+So a session holds ONE such key, not three. NK lives for one rotation, JK for
+one jump check; both are erased straight after. One secret per job, under its
+own label, is what keeps a proof about one job from leaking into another.
+
+TK (the tight key) is a one-way image of the epoch's secret. An attacker who
 steals it cannot compute any lane key from it, so it opens no message. It
 matters only together with the NEXT KEM secrets, which that attacker does not
 have.
@@ -1957,6 +1983,7 @@ The ceiling is fixed per session and comes from the preset (`configs/*.toml`):
 ```toml
 [runtime.fomke]
 fomkeReorderCeiling = 64     # 4 .. 4096; held keys per lane, 32 B each
+fomkeMaxJump = 4096          # 1 .. 1048576; furthest one proved jump moves a lane
 ```
 
 On a datagram link DAC usually repairs loss first (parity or a repair
@@ -1968,25 +1995,27 @@ A rotation prepares candidate lanes for epoch `n+1` next to the live lanes of
 epoch `n`, again with ONE XHKDF call:
 
 ```text
-NS(n) + new KEM secrets + the FKU1 commit ──XHKDF──▶
-    [ LK1(0) | LK2(0) | NS(n+1) | confirmation key ]    of epoch n+1
+NK(n) + new KEM secrets + the FKU1 commit ──XHKDF──▶
+    [ LK1(0) | LK2(0) | TK(n+1) | confirmation key ]    of epoch n+1
        64       64       32        32 bytes
 ```
 
-NS(n) keeps out an attacker who saw only the new KEM exchange. The new KEM
+NK(n) is derived from TK(n) for this call and erased after it. It keeps out
+an attacker who saw only the new KEM exchange. The new KEM
 secrets let a session recover from an earlier compromise, because the
 attacker never saw them.
 
 The live lane keys are **not** an input. They were once, and that bound the
 new epoch to the exact index each lane had reached, a value both endpoints
-agree on only after every message in flight has arrived. NS(n) is constant for
+agree on only after every message in flight has arrived. TK(n) is constant for
 the whole epoch, so both endpoints always hold the same one.
 
 Data is paused. The FKU1 commit must match: request id, epochs, target tier,
 exchange mask, slot generations, both lane indices, and a confirmation tag
 computed with the confirmation key above. Only then do the candidates (both
-lane keys AND NS(n+1)) replace the live values in one step, and the tier
-changes with them. The old lane keys, NS(n) and every held key of epoch n are
+lane keys AND TK(n+1)) replace the live values in one step, and the tier
+changes with them, and both jump counters start again at 0. The old lane
+keys, TK(n) and every held key of epoch n are
 erased. On any mismatch the candidates are erased and epoch `n` continues.
 
 ### Loss is not lateness ⌜guide⌟
@@ -2054,17 +2083,99 @@ if ameSessionSkippedMessages(connection) > 0:
 Those held keys are erased. The messages behind them can never be opened
 afterwards, even if the network delivers them later.
 
-**The one refusal that remains.** A burst of losses **wider than the reorder
-window** is refused, and a refusal advances nothing, so every later message
-sits further ahead and the lane cannot recover. This is deliberate: letting a
-gap that wide through is the amplifier a forged datagram wants.
+**The one refusal that remains, and its cure.** A burst of losses **wider
+than the reorder window** is refused before its tag is checked, and a
+refusal advances nothing, so every later message sits further ahead too.
+Letting a gap that wide through unchecked is the amplifier a forged datagram
+wants, so it stays refused -- and the lane is moved on by a proved JUMP
+instead (Step 8).
 
 It is rare. A soak hit it steadily until the SOCKET QUEUE was sized (the
 bursts were the kernel emptying a full receive buffer, not path loss), then
-never. See "The one socket setting a server must set" below. When it happens,
-the endpoint builds a new session, as DTLS does. Narrowing never goes below
-the number of held keys, so a lane with recent gaps does not narrow itself
-into one.
+never. See "The one socket setting a server must set" below. Narrowing never
+goes below the number of held keys, so a lane with recent gaps does not
+narrow itself into one.
+
+### Step 8: the jump ⟡
+
+Every message carries its index, so the receiver always sees where a
+message claims to sit; it only refuses to step that far unchecked. The
+SENDER of the lane can prove where it is, with a key the receiver checks in
+one step -- no chain derivation first:
+
+```text
+  alice (sender of lane 1)                     bob (stuck at index 100)
+  ------------------------                     ------------------------
+                                               message 401 refused,
+                                               "behind" (a hint only)
+           ◀──── AME 0x15 jump ask ───────────  sealed on BOB'S lane 2,
+                 [ "I am at 100" ]               which still works
+  J = { epoch, lane 1, jump 0, next 402 }
+  tag = BLAKE3-keyed(JK(n, lane 1, 0), J + AME header)
+           ───── AME 0x16 jump ───────────────▶  JK from TK, check the tag
+                                                 lane 1: 100 -> 402
+                                                 held keys of lane 1 dropped
+                                                 JK erased; next jump >= 1
+  message 402 ────────────────────────────────▶  opens
+```
+
+The messages in between are given up; the carrier sends their content again
+in new messages, as for any loss.
+
+The jump frame, after the 26-byte AME header (kind `0x16`, class Control):
+
+```text
+  offset  size  field
+  ------  ----  ----------------------------------------------------------
+  0       4     epoch, u32 LE
+  4       1     lane, the SENDER's (1 or 2)
+  5       4     jump number j, u32 LE
+  9       8     the next index on that lane, u64 LE
+  17      32    tag = BLAKE3-keyed(JK(n, lane, j), "FOMKE-JUMP-v1" | epoch |
+                lane | j | index | carrier byte + AME header)
+```
+
+**The jump key advances.** Each jump uses the next number j, and so a
+different key. The receiver refuses any j below the next one it expects:
+
+```text
+  jump 0 accepted         -> bob now wants j >= 1
+  jump 0 sent again       -> refused: "FOMKE jump was already used"
+  jump 1 lost on the way  -> jump 2 arrives, accepted; bob wants j >= 3
+```
+
+Both numbers start again at 0 in every epoch (JK binds the epoch). A
+checkpoint keeps them (state version 5).
+
+**What a jump will not do.**
+
+```text
+  during a rotation             refused: the rotation fixed both lane indices
+  further than fomkeMaxJump     refused before JK is derived; default 4096
+                                positions, about 150 ms of key steps
+                                (x86-64, release); past it, a new session
+  move a lane backwards         a jump to where the lane already is changes
+                                nothing but the expected number, and keeps
+                                the held keys
+```
+
+**Using it.**
+
+```nim
+if not openAmeDacFrame(bob, datagram).ok and ameSessionBehind(bob):
+  send(alice, sealAmeJumpAsk(bob, acrDac))      # bob, on his own lane
+
+# alice, on receiving AME kind 0x15:
+send(bob, answerAmeJumpAsk(alice, acrDac, ask))
+
+# bob, on receiving AME kind 0x16:
+var r = openAmeJump(bob, acrDac, jump)          # r.ok, r.gaveUp
+```
+
+`ameSessionBehind` is set before any tag is checked, so a forged frame can
+set it. That is harmless: the ask is sealed, and the jump only moves the lane
+to where the real sender proves it is. A sender may also send `sealAmeJump`
+unasked, for example after its transport reports a long burst.
 
 ### Preparing ahead, and what it costs ₊˚⊹♡
 
@@ -2577,7 +2688,8 @@ open. An unknown flag bit is refused, not ignored.
 Kinds: `0x04` ExchangeKeys, `0x05` ExchangeEnvelopes, `0x06` EpochReady,
 `0x07` LaneData, `0x0B` DacControl, `0x0C..0x0F` the four handshake records,
 `0x10` SessionIdRequest, `0x11` SessionIdAssign, `0x12` ExchangeDeny,
-`0x13` HandshakePackage, `0x14` Route directory (see [docs/routing.md](docs/routing.md)).
+`0x13` HandshakePackage, `0x14` Route directory (see [docs/routing.md](docs/routing.md)),
+`0x15` JumpAsk, `0x16` Jump (see FOMKE, Step 8).
 Route frames themselves are not AME frames: they start with `ART` (same doc).
 
 ExchangeDeny body (inside the sealed payload):
@@ -2818,7 +2930,8 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   configure both the same.
 - Records from before the key-schedule rework (`ver` 1, mode names AM1C / AM1M)
   are refused with "AME handshake wire version mismatch". Both endpoints must
-  run the same build. FOMKE checkpoints written before NS existed are refused
+  run the same build. FOMKE checkpoints written before the tight key (state
+  version 5) are refused
   with "FOMKE state version mismatch". There is no conversion; run a new
   handshake.
 - **"certificate proof count does not match the pinned root"**: the
@@ -2892,6 +3005,22 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   one link (a duplicate datagram, or someone replaying it), or arrived more
   than 64 frames late. Nothing to fix for a few; many mean the path
   reorders by more than 64 frames.
+
+**FOMKE lanes**
+
+- **"FOMKE message gap exceeds the reorder window"**, and every later frame
+  on that lane fails the same way: a burst of losses was wider than the
+  reorder window. `ameSessionBehind(S)` is true. Send `sealAmeJumpAsk`; the
+  peer answers with `answerAmeJumpAsk`, and `openAmeJump` moves the lane.
+  If it keeps happening, size the socket receive queue (see "The one socket
+  setting a server must set") before widening `fomkeReorderCeiling`.
+- **"FOMKE jump is longer than allowed"**: the lane is further behind than
+  `fomkeMaxJump` (default 4096). Raise it in the preset (each position is one
+  key step, about 36 us) or start a new session.
+- **"FOMKE jump was already used"**: a jump number arrived twice (a
+  duplicate datagram or a replay). Nothing to fix.
+- **"FOMKE KEM upgrade is pending"** on a jump: a rotation is in flight and
+  has fixed both lane positions. Let it finish (or cancel it), then jump.
 
 **Builds and transports**
 

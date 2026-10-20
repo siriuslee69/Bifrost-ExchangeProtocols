@@ -1,6 +1,33 @@
 # Progress
 
-Commit Message: AME routing: outer ART frames seal only the address; end-to-end payload, replay window
+Commit Message: FOMKE tight key (TK -> NK/JK/CS on demand) and proved lane jumps
+
+## 2026-10-20 FOMKE: tight key, and lanes that recover from a wide gap
+
+- Asked: a FOMKE lane stuck behind a loss burst wider than the reorder
+  window had no way back (index IS sent; a gap that wide is refused before
+  the tag, so nothing ever advanced). Only a new session fixed it.
+- Epoch split is now [ LK1 | LK2 | TK ]: the 32 bytes that were NS became
+  the tight key TK. Nothing uses TK directly; children are derived only
+  when needed, under their own labels, and erased after use
+  (`deriveFomkeTightChild` in chain_send.nim):
+    NK  "FOMKE-NEXT-KEY-v1"        feeds the KEM rotation (was raw NS)
+    JK  "FOMKE-JUMP-KEY-v1" + lane + jump number, proves one jump
+    CS  "FOMKE-NEXT-HANDSHAKE-v2"  carried into the next AM1P handshake
+- Jump (fomke/level1/jump.nim): sender proves "next index on my lane is X"
+  with BLAKE3-keyed under JK(epoch, lane, j). Receiver checks it in one
+  derivation, steps the lane to X, drops that lane's held keys. j only goes
+  up (`sendJumps` / `recvJumps`, reset per epoch), so a used JK is never
+  used again and a replayed jump is refused; a lost one costs nothing.
+- AME (level2/lane_jump.nim): kind 0x15 JumpAsk (FOMKE-sealed on the stuck
+  side's OWN lane), 0x16 Jump (JK-proved, AME header bound into the tag).
+  `ameSessionBehind` is a hint from `FomkeOpenResult.behind`.
+- `fomkeMaxJump` (config, default 4096, 1..1048576). Measured: 4096
+  positions ~148 ms, ~36 us per step (x86-64, release); sealing a jump 11 us.
+- Wire/state breaks on purpose: epoch label FOMKE-EPOCH-KEYS-v3 -> v4,
+  state codec version 4 -> 5 (counters sit just before the pending flag
+  so a flipped last byte still fails to decode -- a test pins that).
+- Verification: test_fomke_jump (12), full `nimble test`.
 
 ## 2026-10-20 Multi-hop routing for Geist: sealed address, end-to-end payload
 
@@ -49,15 +76,8 @@ Features (Planned):
   the target through `sealAmeRouteForward`.
 - Routers could fetch each other's directories (an ask between router
   peers) instead of every remote target being written with `via`.
-- FOMKE gap recovery (asked 2026-10-20). The envelope DOES carry epoch,
-  lane and the u64 message index, and a receiver jumps ahead up to the
-  reorder window (16 at start, 4..ceiling 64), holding skipped keys. A
-  loss burst WIDER than the current window is refused, nothing advances,
-  and the lane never recovers: only a new session fixes it. No message
-  exists to resync. Idea: a "jump" control frame carrying (lane, new
-  index) authenticated with a per-epoch side key (one MAC, no chain
-  derivation before the check), after which the receiver derives forward
-  to that index and drops the held keys. Bound the jump by config.
+- The DAC relay could send `sealAmeJumpAsk` on its own when a session
+  reports `ameSessionBehind`, rate-limited; today the caller does it.
 - Optional per-hop payload masking for ART frames (Gimli keystream over
   the payload, ~1 permutation per 16 bytes) so a watcher of both sides of
   a router cannot match frames by content. Off by design for now.

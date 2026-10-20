@@ -129,6 +129,15 @@ type
     routeReplay*: AmeReplayWindow
       ## The last 64 route counters accepted from the peer. A route frame
       ## seen once is refused the second time, at the first hop it reaches.
+    laneBehind*: bool
+      ## The last refused frame claimed a position further ahead on the
+      ## peer's lane than the reorder window lets through. A hint, not
+      ## proof (it is set before any tag is checked): it says "ask for a
+      ## jump" -- see level2/lane_jump.nim. Cleared by the next frame that
+      ## opens and by an accepted jump.
+    fomkeMaxJump*: uint32
+      ## The furthest one jump may move the peer's lane on this side, from
+      ## the config (`fomkeMaxJump`) when the session was made.
 
     lastErr*: string
 

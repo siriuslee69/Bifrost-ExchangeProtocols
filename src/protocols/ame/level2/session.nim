@@ -161,6 +161,7 @@ proc initAmeSession*(a: AmeAuthPackage,
   refreshAmeFrameKeys(result)
   result.fomkePregenerationEnabled = fomkePregenerationEnabled(runtime)
   result.fomkePregenerationMessages = runtime.fomkePregenerationMessages
+  result.fomkeMaxJump = runtime.fomkeMaxJump
   if result.fomkePregenerationEnabled:
     result.fomkeSendCache = prepareFomkeSendCache(result.fomke,
       result.fomkePregenerationMessages)

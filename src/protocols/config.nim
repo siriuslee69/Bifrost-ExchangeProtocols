@@ -25,6 +25,10 @@ type
       ## How many message keys a lane may hold for messages that arrive out
       ## of order (see `fomkeMaxReorderWindow`). Each held key is 32 bytes.
       ## It is also the furthest a message may sit behind and still open.
+    fomkeMaxJump*: uint32
+      ## The furthest one proved lane jump may move a receiving lane (see
+      ## fomke/level1/jump.nim). One position is one key derivation.
+      ## Further than this, a stuck lane needs a new session.
     ameLayout*: AmeSuiteLayout
     ameInitialTier*: AmeMaskTier
     ameMinPqKems*: int
@@ -56,6 +60,7 @@ proc codeBifrostConfig(): BifrostConfig {.role: configurator.} =
   result.fomkePregeneration = false
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
   result.fomkeReorderCeiling = fomkeDefaultReorderCeiling
+  result.fomkeMaxJump = fomkeDefaultMaxJump
   result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
     defaultAmeKemSlots()))
   result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
@@ -117,6 +122,8 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
   if c.fomkeReorderCeiling < fomkeMinReorderWindow or
       c.fomkeReorderCeiling > fomkeMaxReorderWindow:
     raise newException(ValueError, "Bifrost FOMKE reorder ceiling is invalid")
+  if c.fomkeMaxJump < 1'u32 or c.fomkeMaxJump > fomkeMaxJumpLimit:
+    raise newException(ValueError, "Bifrost fomkeMaxJump must be in 1..1048576")
   if c.ameMinPqKems < 0 or c.ameMinPqKems > ameMaxAlgorithmSlots:
     raise newException(ValueError, "Bifrost ameMinPqKems must be in 0..8")
   discard encodeAmeSuiteLayout(c.ameLayout)
@@ -174,6 +181,8 @@ proc applyConfigKey(c: var BifrostConfig, key, value: string) {.
     c.fomkePregenerationMessages = parseInt(value)
   of "fomkereorderceiling":
     c.fomkeReorderCeiling = uint32(parseUInt(value))
+  of "fomkemaxjump":
+    c.fomkeMaxJump = uint32(parseUInt(value))
   of "amelayouthex":
     c.ameLayout = decodeAmeSuiteLayout(decodeConfigHex(value))
     c.ameInitialTier = fullAmeMaskTier(c.ameLayout)
