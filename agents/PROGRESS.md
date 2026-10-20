@@ -1,6 +1,21 @@
 # Progress
 
-Commit Message: FOMKE tight key (TK -> NK/JK/CS on demand) and proved lane jumps
+Commit Message: Rename NK -> EK (epoch key), CS / "next secret" -> SK (session key); say why they stay apart
+
+## 2026-10-20 Names: EK and SK
+
+- NK -> EK (epoch key), CS -> SK (session key). Labels FOMKE-EPOCH-KEY-v1
+  and FOMKE-SESSION-KEY-v1. AME API: withAmeNextSecret -> withAmeSessionKey,
+  ameNextHandshakeSecret -> ameSessionKey, usesNextSecret -> usesSessionKey,
+  nextSecretRequired -> sessionKeyRequired; FOMKE fomkeHandshakeSecret ->
+  fomkeSessionKey. Error texts say "session key". Geist uses none of these.
+- Asked whether EK and SK are the same: same JOB (carry secret forward),
+  kept apart on purpose -- SK is STORED by the program (often on disk) and
+  can be exported mid-epoch, EK never leaves one call; EK = SK would put
+  one of the rotation's two inputs in a file. Written down in README,
+  FOMKE, "Why EK and SK are two keys, not one".
+- Generic "session keys" (keys of a live session) now say "traffic keys",
+  so "session key" only ever means SK.
 
 ## 2026-10-20 FOMKE: tight key, and lanes that recover from a wide gap
 
@@ -11,9 +26,9 @@ Commit Message: FOMKE tight key (TK -> NK/JK/CS on demand) and proved lane jumps
   the tight key TK. Nothing uses TK directly; children are derived only
   when needed, under their own labels, and erased after use
   (`deriveFomkeTightChild` in chain_send.nim):
-    NK  "FOMKE-NEXT-KEY-v1"        feeds the KEM rotation (was raw NS)
+    EK  "FOMKE-EPOCH-KEY-v1"       feeds the KEM rotation (was raw NS)
     JK  "FOMKE-JUMP-KEY-v1" + lane + jump number, proves one jump
-    CS  "FOMKE-NEXT-HANDSHAKE-v2"  carried into the next AM1P handshake
+    SK  "FOMKE-SESSION-KEY-v1"     carried into the next AM1P handshake
 - Jump (fomke/level1/jump.nim): sender proves "next index on my lane is X"
   with BLAKE3-keyed under JK(epoch, lane, j). Receiver checks it in one
   derivation, steps the lane to X, drops that lane's held keys. j only goes

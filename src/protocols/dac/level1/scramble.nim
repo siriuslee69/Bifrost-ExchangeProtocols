@@ -73,7 +73,7 @@ proc dacScrambleActive*(p: DacScramblePolicy): bool {.role: parser.} =
 
 proc initDacScrambleState*(seed: uint64): DacScrambleState {.role: configurator.} =
   ## seed: sender-local starting value. Feed it something the peer cannot
-  ## guess; a session key byte or a system random word both work.
+  ## guess; a traffic key byte or a system random word both work.
   result.seed = seed
 
 proc nextDacScramble(S: var DacScrambleState): uint64 {.role: math.} =

@@ -794,10 +794,10 @@ and an independent security review.
 - `salt` := 32 random bytes in a pre-shared client hello, fresh per hello.
 - `sealed hello` := a client hello whose KEM public keys are sealed (pre-shared
   modes only).
-- `CS` := carried secret. 32 bytes a finished session hands to the NEXT
-  handshake with the same endpoint. `CS = XHKDF(TK, "next handshake")`, see
-  [FOMKE](#fomke) for TK. Code names: `ameNextHandshakeSecret` returns it,
-  `withAmeNextSecret` takes it, the hello flag is `usesNextSecret`.
+- `SK` := session key. 32 bytes a finished session hands to the NEXT
+  handshake with the same endpoint. `SK = XHKDF(TK, "session key")`, see
+  [FOMKE](#fomke) for TK. Code names: `ameSessionKey` returns it,
+  `withAmeSessionKey` takes it, the hello flag is `usesSessionKey`.
 
 The handshake decides two things at once: which keys both endpoints use, and
 who the other endpoint is. It decides the second one privately: an observer
@@ -934,7 +934,7 @@ In the pre-shared modes the KEM public keys of the client hello are never
 unencrypted. They are sealed under a key derived from the PSK and the salt:
 
 ```text
-key  = XHKDF( PSK ‖ CS if present,  salt,
+key  = XHKDF( PSK ‖ SK if present,  salt,
                 "AME-AM1P-HELLO-v1" + PSK name + every unencrypted hello field )
 seal = the session's own tier AEAD (encryption + one tag): every switched-on cipher, every
        switched-on MAC -- the same masks every later frame uses
@@ -978,30 +978,34 @@ pre-shared sealed block, because the binder (the PSK's key-schedule input) is
 missing. The PSK itself never enters the derivation; only the binder does. A
 key block recovered later says nothing about a PSK that many sessions reuse.
 
-#### The carried secret: from one session to the next ⟡
+#### The session key: from one session to the next ⟡
 
-When a session ends, both endpoints can keep the CS (carried secret, 32 bytes
+The SK is NOT the key FOMKE uses for its own rotations (the epoch key, EK),
+though both come from the same tight key: the SK gets stored, the EK never
+leaves one call. See FOMKE, "Why EK and SK are two keys, not one".
+
+When a session ends, both endpoints can keep the SK (session key, 32 bytes
 from the old session). The next pre-shared handshake with the same endpoint
 takes it as a second key next to the PSK:
 
 ```nim
 # session 1 is running
-var kept = ameNextHandshakeSecret(session)        # the CS, equal on both endpoints
+var kept = ameSessionKey(session)        # the SK, equal on both endpoints
 
 # later, session 2
-var auth = initAmePskAuthentication("site-a", pskBytes).withAmeNextSecret(kept)
+var auth = initAmePskAuthentication("site-a", pskBytes).withAmeSessionKey(kept)
 ```
 
-With it, the sealed hello, both proofs and the binder all take `PSK ‖ CS` (CS:
-the carried secret) as their key. **A stolen PSK alone no longer opens the next
+With it, the sealed hello, both proofs and the binder all take `PSK ‖ SK` (SK:
+the session key) as their key. **A stolen PSK alone no longer opens the next
 hello.**
 
-Both endpoints must agree whether the CS was used. The client hello carries
+Both endpoints must agree whether the SK was used. The client hello carries
 one flag byte for that, unencrypted and covered by the tag of the sealed
 hello. The responder decides what it accepts:
 
 ```text
-hello flag   responder holds a CS   required   outcome
+hello flag   responder holds an SK  required   outcome
 ----------   --------------------   --------   ----------------------------------
 1            yes                    any        use it
 1            no                     any        refuse: nothing to match it with
@@ -1010,9 +1014,9 @@ hello flag   responder holds a CS   required   outcome
 0            no                     no         PSK only
 ```
 
-`withAmeNextSecret(kept, required = true)` stops an attacker from forcing both
+`withAmeSessionKey(kept, required = true)` stops an attacker from forcing both
 endpoints back to PSK only by breaking one handshake on purpose. Set it to
-`false` only while an endpoint may have lost its CS, for example after a
+`false` only while an endpoint may have lost its SK, for example after a
 restore from backup.
 
 #### Proving an in-session request
@@ -1330,14 +1334,14 @@ switches on always runs an exchange; `exchanges = [..]` adds more.
 **Adding, not replacing.** One more exchange never throws old key material
 away. Its secret is ADDED to that KEM's stack, which already holds a one-way
 image of every secret the KEM produced before, and the new epoch's FOMKE keys
-come from FOMKE's carried secret plus all stacks. Only old MESSAGE keys are
+come from FOMKE's epoch key (EK) plus all stacks. Only old MESSAGE keys are
 erased (forward secrecy). A fresh start with none of the old secrets is a new
 handshake.
 
 ```text
   stack(LightSaber)   = image of every LightSaber secret so far
   one more exchange   -> stack' = image of (stack, fresh secret)
-  carried secret + all stacks -> XHKDF -> new FOMKE keys
+  EK + all stacks -> XHKDF -> new FOMKE keys
 ```
 
 **The request on the wire.** The KEMs that run an exchange travel as their
@@ -1478,7 +1482,7 @@ check clientDone.auth.exchangeBinder == serverDone.auth.exchangeBinder
 check clientDone.auth.exchangeBinder != secret
 ```
 
-The binder is derived from the PSK, the CS if present, and the finished
+The binder is derived from the PSK, the SK if present, and the finished
 transcript, under its own label. It is NOT the key that proves in-session
 requests (that one comes from the current epoch, see "Proving an in-session
 request").
@@ -1705,8 +1709,8 @@ call, and never on measured link conditions. A test checks it.
 - `LK1(i)`, `LK2(i)` := lane key of lane 1 / lane 2 at step i, 64 bytes each.
   Code name: `chainKey`.
 - `TK(n)` := tight key of epoch n, 32 bytes. Never used for a message, nor as
-  a key of its own: NK, JK and CS are derived from it when needed.
-- `NK(n)` := next key, `XHKDF(TK(n), "FOMKE-NEXT-KEY-v1", n)`. Made only
+  a key of its own: EK, JK and SK are derived from it when needed.
+- `EK(n)` := epoch key, `XHKDF(TK(n), "FOMKE-EPOCH-KEY-v1", n)`. Made only
   inside a rotation, erased right after.
 - `JK(n, lane, j)` := jump key number j of one lane,
   `XHKDF(TK(n), "FOMKE-JUMP-KEY-v1", n, lane, j)`. Made only to seal or
@@ -1756,7 +1760,7 @@ MK(i)        32     step i                       sender: right after message i i
                                                    key, see "held keys" below
 TK(n)        32     start of epoch n             at the rotation to epoch n+1, when
                                                  TK(n+1) replaces it
-NK(n)        32     inside the rotation          right after the rotation's XHKDF call
+EK(n)        32     inside the rotation          right after the rotation's XHKDF call
 JK(n,l,j)    32     sealing / checking jump j    right after that one tag
 key block    var.   from MK(i)                   right after message i is sealed / opened
 ```
@@ -1815,19 +1819,53 @@ each under its own label, and each only at the moment it is needed:
                    │
    ┌───────────────┼──────────────────┬──────────────────────┐
    ▼               ▼                  ▼                      │
- NK(n)           JK(n, lane, j)     CS                       │
- "next key"      "jump key"         "next handshake"         │
+ EK(n)           JK(n, lane, j)     SK                       │
+ "epoch key"     "jump key"         "session key"            │
    │               │                  │                      │
    ▼               ▼                  ▼                      │
  1. the next     2. one lane jump   3. the next session:     │
-    rotation:       (Step 8)           withAmeNextSecret(CS) │
-    NK + new KEM                       on both endpoints     │
+    rotation:       (Step 8)           withAmeSessionKey(SK) │
+    EK + new KEM                       on both endpoints     │
     ──▶ LK1|LK2|TK(n+1)                                      │
 ```
 
-So a session holds ONE such key, not three. NK lives for one rotation, JK for
+So a session holds ONE such key, not three. EK lives for one rotation, JK for
 one jump check; both are erased straight after. One secret per job, under its
 own label, is what keeps a proof about one job from leaking into another.
+
+#### Why EK and SK are two keys, not one ⌜guide⌟
+
+EK and SK look alike: both carry secret material FORWARD into a later key
+derivation. They differ in where they go and, above all, in where they LIVE:
+
+```text
+          goes into                       lives where              for how long
+  ------  ------------------------------  -----------------------  -------------------
+  EK(n)   the rotation to epoch n+1,      memory, inside one call  one XHKDF call
+          with the fresh KEM secrets
+  SK      the NEXT session's handshake    handed to the program,   until the next
+          (sealed hello + key schedule)   which must STORE it,     handshake: minutes,
+                                          usually on disk          days, months
+```
+
+`ameSessionKey` may be called on a live session, at any epoch. Suppose EK and
+SK were the same 32 bytes:
+
+```text
+  epoch 5   program saves SK to disk           SK = EK(5)
+  epoch 5   rotation to epoch 6 runs           EK(5) + new KEM secrets -> epoch 6
+  later     attacker copies the saved SK       now holds EK(5): one of the
+                                               rotation's TWO inputs
+```
+
+The rotation promises that breaking epoch 6 needs BOTH the old secret AND the
+new KEM result. With EK = SK, half of that would sit in a file. With two
+labels, a stolen SK tells nothing about EK: both are one-way images of TK,
+and neither can be computed from the other.
+
+Keeping them apart costs nothing: neither is held. Both are derived from TK
+when needed (one XHKDF call each) and erased. The only price is one more
+label string.
 
 TK (the tight key) is a one-way image of the epoch's secret. An attacker who
 steals it cannot compute any lane key from it, so it opens no message. It
@@ -1995,12 +2033,12 @@ A rotation prepares candidate lanes for epoch `n+1` next to the live lanes of
 epoch `n`, again with ONE XHKDF call:
 
 ```text
-NK(n) + new KEM secrets + the FKU1 commit ──XHKDF──▶
+EK(n) + new KEM secrets + the FKU1 commit ──XHKDF──▶
     [ LK1(0) | LK2(0) | TK(n+1) | confirmation key ]    of epoch n+1
        64       64       32        32 bytes
 ```
 
-NK(n) is derived from TK(n) for this call and erased after it. It keeps out
+EK(n) is derived from TK(n) for this call and erased after it. It keeps out
 an attacker who saw only the new KEM exchange. The new KEM
 secrets let a session recover from an earlier compromise, because the
 attacker never saw them.
@@ -2538,7 +2576,7 @@ FKU1  -> rotation confirmation                     (fomke/level2/wire.nim)
 ```
 
 Handshake records travel as ordinary AME frames with a handshake kind, because
-there are no session keys yet:
+there are no traffic keys yet:
 
 ```text
 AMC2  -> client hello   (kind 0x0C)
@@ -2559,7 +2597,7 @@ wraps it, and nothing is inside it but the application's bytes. A frame is
 sealed exactly once.
 
 ```text
-PHASE A -- the handshake (no session keys yet)
+PHASE A -- the handshake (no traffic keys yet)
   [stream 4] -> AME4 header (kind 0x0C..0x0F) -> AMC2/AMR2/AMS2/AMF2
 
 PHASE B -- after the handshake
@@ -2867,8 +2905,8 @@ AMF2 client finish = "AMF" | ver | tagLen u8 | padding u8 | tag | u32+sealed blo
 - `ver` = 2.
 - `mode`: `0` AM1A, `1` AM1S, `2` AM1P, `3` AM1P+S. It alone decides which
   tail follows.
-- `flag`: `1` when the sealed hello and the key schedule also took a CS
-  (carried secret), `0` otherwise.
+- `flag`: `1` when the sealed hello and the key schedule also took an SK
+  (session key), `0` otherwise.
 
 Fixed-size fields carry no length. Variable fields use `u16` where the field
 is small by design and `u32` only where a post-quantum key can reach
@@ -2914,17 +2952,17 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 
 - **"client hello did not open under the shared secret"** (AM1P, AM1P+S): the
   two endpoints do not hold the same key for the sealed hello. Check, in
-  order: the same PSK name and PSK bytes on both endpoints; the same CS
-  (carried secret) on both endpoints, or none on either. An endpoint restored
-  from a backup holds an older CS: remove it on both endpoints with
-  `withAmeNextSecret(@[])` and start again with the PSK only.
-- **"client used a next secret this side does not hold"**: the initiator kept
-  a CS from an earlier session and the responder did not. Give the responder
-  the same CS, or remove it from the initiator.
-- **"client hello did not carry the required next secret"**: the responder
-  was built with `required = true` and the initiator sent no CS. This setting
+  order: the same PSK name and PSK bytes on both endpoints; the same SK
+  (session key) on both endpoints, or none on either. An endpoint restored
+  from a backup holds an older SK: remove it on both endpoints with
+  `withAmeSessionKey(@[])` and start again with the PSK only.
+- **"client used a session key this side does not hold"**: the initiator kept
+  an SK from an earlier session and the responder did not. Give the responder
+  the same SK, or remove it from the initiator.
+- **"client hello did not carry the required session key"**: the responder
+  was built with `required = true` and the initiator sent no SK. This setting
   prevents a forced fallback. Set it to `false` only while an endpoint that
-  lost its CS gets a new one.
+  lost its SK gets a new one.
 - **"client asked for an authentication mode this side does not run"**: the
   two endpoints are configured with different modes. Nothing is negotiated;
   configure both the same.

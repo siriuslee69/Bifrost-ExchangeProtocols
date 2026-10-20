@@ -498,7 +498,7 @@ type
     exchangeBinder*: ByteSeq
       ## What the PROVISIONED secret contributes to every key this session
       ## will ever derive. Derived once from the AM1P shared secret (and the
-      ## carried next secret, when one was used) and the
+      ## session key, when one was used) and the
       ## finished transcript, and empty in AM1A and AM1S, which have no
       ## provisioned secret to contribute.
       ##

@@ -21,7 +21,7 @@
 ##   | AME header, kind = 0x0F  | "AMF2" client finish record    |
 ##   +--------------------------+--------------------------------+
 ##
-## These frames are NOT encrypted -- there are no session keys yet, which is
+## These frames are NOT encrypted -- there are no traffic keys yet, which is
 ## the whole point of a handshake. They do not need to be: the server hello
 ## and the client finish each carry their own sealed block, and the header
 ## fields are repeated inside the record, so a header edited in flight makes

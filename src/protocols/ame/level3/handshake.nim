@@ -148,7 +148,7 @@ proc openServerIdentity(S: AmeClientHandshake, h: AmeServerHello,
 proc exchangeBinderKey(a: AmeAuthentication,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|kdf".} =
-  ## a/transcript: what the PROVISIONED secret (and the carried next secret,
+  ## a/transcript: what the PROVISIONED secret (and the session key,
   ## when the hello used one) contributes to every key this session will
   ## ever derive.
   ##
@@ -475,7 +475,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
   ## S/f/nowUnix/revoked: responder state and the client's sealed
   ## confirmation. The authentication used is the one the responder matched
   ## to the hello (`S.authentication`), so both ends derive from the same
-  ## secrets -- including whether the next secret took part.
+  ## secrets -- including whether the session key took part.
   ##
   ## Only here does the server learn who the client is. Nothing before this
   ## point produced a session, so a peer that cannot open this block, or whose
@@ -561,7 +561,7 @@ proc clearAmeClientHandshake*(S: var AmeClientHandshake) {.
 proc clearAmeServerHandshake*(S: var AmeServerHandshake) {.
     role: actor.} =
   ## S: initial shared secrets, copied local identity keys, and the copy of
-  ## the authentication (shared secret, next secret) to erase.
+  ## the authentication (shared secret, session key) to erase.
   var
     i: int = 0
   while i < S.sharedSecrets.len:

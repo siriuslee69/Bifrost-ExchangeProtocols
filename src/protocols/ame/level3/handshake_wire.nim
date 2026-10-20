@@ -29,7 +29,7 @@
 ##   +------+-------------+-------------+---------+----------------------+
 ##   | flag | salt (32)   | tag (32)    | u32 len | sealed offer         |
 ##   +------+-------------+-------------+---------+----------------------+
-##     flag: 0 = psk only, 1 = psk + the previous session's next secret
+##     flag: 0 = psk only, 1 = psk + the session key the last session handed out
 ##
 ## Byte 12 (right after the session id) is the mode: 0 AM1A, 1 AM1S,
 ## 2 AM1P, 3 AM1P+S. Which of the two tails follows is decided by it alone.
@@ -178,7 +178,7 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: dataWriter,
   if h.offerSalt.len != ameHelloSealFieldLen or
       h.offerTag.len != ameHelloSealFieldLen or h.sealedOffer.len == 0:
     raise newException(ValueError, "AME pre-shared hello is not sealed")
-  result.add(if h.usesNextSecret: 1'u8 else: 0'u8)
+  result.add(if h.usesSessionKey: 1'u8 else: 0'u8)
   appendAmeBytes(result, h.offerSalt)
   appendAmeBytes(result, h.offerTag)
   appendLargeField(result, h.sealedOffer)
@@ -209,7 +209,7 @@ proc readSealedHelloTail(A: openArray[uint8], cursor: var int,
     flag: uint8 = readHandshakeU8(A, cursor)
   if flag > 1'u8:
     raise newException(ValueError, "AME hello next-secret flag is invalid")
-  h.usesNextSecret = flag == 1'u8
+  h.usesSessionKey = flag == 1'u8
   h.offerSalt = readFixed(A, cursor, ameHelloSealFieldLen)
   h.offerTag = readFixed(A, cursor, ameHelloSealFieldLen)
   h.sealedOffer = readLargeField(A, cursor)

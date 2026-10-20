@@ -14,22 +14,22 @@ when isMainModule:
       initAmeTierMasks(0b10000000'u8, 0b10000000'u8, 0b10000000'u8,
         0b10000000'u8, 0b11000000'u8, 0b11000000'u8))
     upgradeTier: AmeMaskTier = fullAmeMaskTier(layout, 2'u32)
-    initialRequest: AmeExchangeRequest
-    initialKeys: AmeExchangeKeys
-    initialSender: AmeExchangeResult
+    initialRequest: AmeExchangeRequest = default(AmeExchangeRequest)
+    initialKeys: AmeExchangeKeys = default(AmeExchangeKeys)
+    initialSender: AmeExchangeResult = default(AmeExchangeResult)
     initialReceiver: seq[ByteSeq] = @[]
-    aliceAme: AmeExchangeState
-    bobAme: AmeExchangeState
-    alice: FomkeState
-    bob: FomkeState
-    message: FomkeMessage
-    opened: FomkeOpenResult
-    upgradeRequest: AmeExchangeRequest
-    upgradeKeys: AmeExchangeKeys
-    upgradeSender: AmeExchangeResult
+    aliceAme: AmeExchangeState = default(AmeExchangeState)
+    bobAme: AmeExchangeState = default(AmeExchangeState)
+    alice: FomkeState = default(FomkeState)
+    bob: FomkeState = default(FomkeState)
+    message: FomkeMessage = default(FomkeMessage)
+    opened: FomkeOpenResult = default(FomkeOpenResult)
+    upgradeRequest: AmeExchangeRequest = default(AmeExchangeRequest)
+    upgradeKeys: AmeExchangeKeys = default(AmeExchangeKeys)
+    upgradeSender: AmeExchangeResult = default(AmeExchangeResult)
     upgradeReceiver: seq[ByteSeq] = @[]
-    aliceCommit: FomkeUpgradeCommit
-    bobCommit: FomkeUpgradeCommit
+    aliceCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
+    bobCommit: FomkeUpgradeCommit = default(FomkeUpgradeCommit)
 
   initialRequest = initAmeExchangeRequest(kems, initialTier, 0b10000000'u8)
   initialKeys = generateAmeExchangeKeys(kems, initialRequest)
@@ -43,7 +43,7 @@ when isMainModule:
   applyAmeExchange(bobAme, layout, initialRequest, initialReceiver)
   ## One XHKDF call absorbs EVERY KEM slot the tier switches on, not just
   ## one, so a hybrid exchange is a hybrid in fact. Its output is cut into
-  ## [ lane 1 key | lane 2 key | next secret ] -- no root key in between.
+  ## [ lane 1 key | lane 2 key | session key ] -- no root key in between.
   alice = initFomkeFromAme(aliceAme, layout, initialTier, frInitiator)
   bob = initFomkeFromAme(bobAme, layout, initialTier, frResponder)
 
@@ -68,7 +68,7 @@ when isMainModule:
   message = sealFomkeMessage(bob, @[byte 79, 75])
   opened = openFomkeMessage(alice, message)
   doAssert opened.ok
-  ## The rotation replaced the next secret on both sides, from the old one
+  ## The rotation replaced the session key on both sides, from the old one
   ## plus the fresh KEM result.
   doAssert alice.tightKey == bob.tightKey
   echo "FOMKE epoch ", alice.epoch, " exchanged both directions"

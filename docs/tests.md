@@ -108,7 +108,7 @@ Routing through one or two routers               (test_ame_router.nim)
   -> a refusal from the far router finds its way back to the sender
   -> two routers pointing at each other stop at the first bounce
 
-AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
+AM1P sealed hello, AM1P+S, and the session key   (test_ame_psk_modes.nim)
   -> no KEM public key of an AM1P hello crosses the wire in the clear
   -> two hellos under one secret never share a salt or a ciphertext
   -> a responder with another secret cannot even open the hello
@@ -116,9 +116,9 @@ AM1P sealed hello, AM1P+S, and the next secret   (test_ame_psk_modes.nim)
   -> AM1P+S runs to the end, names both halves, and signs its rotations
   -> AM1P+S: the right secret with the wrong pin fails, and the reverse
   -> AM1P+S over a real TCP socket, through the driver
-  -> session 1 hands out a next secret that session 2 is keyed with
-  -> next-secret policy: missing, required, wrong, and a visible fallback
-  -> only pre-shared modes take a next secret, and only 32 bytes of it
+  -> session 1 hands out a session key that session 2 is keyed with
+  -> session-key policy: missing, required, wrong, and a visible fallback
+  -> only pre-shared modes take a session key, and only 32 bytes of it
 
 FOMKE tight key (test_ame_psk_modes.nim)
   -> both sides hold the same TK, and it is not a lane key
@@ -129,7 +129,7 @@ FOMKE tight key (test_ame_psk_modes.nim)
      the session
 
 FOMKE tight key children and lane jumps          (test_fomke_jump.nim)
-  -> NK, JK and CS are three different children of TK, equal on both sides
+  -> EK, JK and SK are three different children of TK, equal on both sides
   -> a checkpoint keeps TK and both jump counters
   -> a loss burst wider than the window is refused as "behind", and a
      jump frees the lane (pinned: it used to end the lane for good)

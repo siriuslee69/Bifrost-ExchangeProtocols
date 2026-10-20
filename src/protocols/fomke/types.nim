@@ -43,20 +43,23 @@ const
     ##                                            │
     ##              ┌──────────────────┬──────────┴──────────┐
     ##              ▼                  ▼                     ▼
-    ##   NK  "FOMKE-NEXT-KEY"   JK  "FOMKE-JUMP-KEY"   CS  "FOMKE-NEXT-
-    ##       + epoch                + epoch + lane         HANDSHAKE"
+    ##   EK  "FOMKE-EPOCH-KEY"  JK  "FOMKE-JUMP-KEY"   SK  "FOMKE-SESSION-
+    ##       + epoch                + epoch + lane         KEY"
     ##                                + jump number        + epoch
-    ##   next key: feeds the    jump key: proves one   carried secret:
+    ##   epoch key: feeds the   jump key: proves one   session key:
     ##   KEM rotation into      lane jump (Def. in     handed to the next
     ##   the next epoch         level1/jump.nim)       AM1P handshake
     ##
-    ##   rotation:  NK + fresh KEM secrets ──XHKDF──▶ [ LK1' | LK2' | TK' ]
+    ##   rotation:  EK + fresh KEM secrets ──XHKDF──▶ [ LK1' | LK2' | TK' ]
     ##
-    ## So a session holds ONE extra key, not three. NK exists for the length
+    ## So a session holds ONE extra key, not three. EK exists for the length
     ## of one rotation, JK for the length of one jump check; both are erased
-    ## straight after. TK is a one-way image of the epoch's secret, so holding
-    ## it opens no message of this epoch. There is no root key: nothing else
-    ## outlives the derivation.
+    ## straight after. EK and SK are kept apart on purpose: the program
+    ## STORES the SK, while EK never leaves one call -- a stored SK equal to
+    ## EK would hand a thief one of the rotation's two inputs (README, FOMKE,
+    ## "Why EK and SK are two keys, not one"). TK is a one-way image of the
+    ## epoch's secret, so holding it opens no message of this epoch. There
+    ## is no root key: nothing else outlives the derivation.
   fomkeMessageKeyBytes* = 32
     ## What one ratchet step hands out. It is not the encryption key itself:
     ## it is the seed the per-message key block is expanded from, so its size

@@ -180,15 +180,15 @@ proc initAmeSession*(a: AmeAuthPackage,
   result = initAmeSession(a, path, sessionId, rootLaneId, laneId, pathLane,
     messageClass, inboxCapacity, peerTrustRequired, peerTrust)
 
-proc ameNextHandshakeSecret*(S: AmeSession): ByteSeq {.role: truthBuilder,
+proc ameSessionKey*(S: AmeSession): ByteSeq {.role: truthBuilder,
     tag: "appApi|cryptoBoundary".} =
   ## S: a live session. Returns the 32 bytes to keep for the NEXT AM1P
-  ## handshake with the same peer (see `withAmeNextSecret`). Both sides
+  ## handshake with the same peer (see `withAmeSessionKey`). Both sides
   ## call this at the same epoch and get the same bytes.
   ##
-  ##   session A ends ──▶ keep ameNextHandshakeSecret(A)
-  ##   session B starts ──▶ withAmeNextSecret(auth, kept) ──▶ handshake
-  result = fomkeHandshakeSecret(S.fomke)
+  ##   session A ends ──▶ keep ameSessionKey(A)
+  ##   session B starts ──▶ withAmeSessionKey(auth, kept) ──▶ handshake
+  result = fomkeSessionKey(S.fomke)
 
 proc pending*(S: AmeSession): int {.role: parser.} =
   ## S: connection whose parsed inbox count is returned.

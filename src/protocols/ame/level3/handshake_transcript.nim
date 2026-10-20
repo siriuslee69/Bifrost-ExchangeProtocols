@@ -36,15 +36,15 @@
 ## the two proofs would be tags over the same string, and a responder's proof
 ## could be replayed straight back as an initiator's.
 ##
-## ╭─ ❧ the next secret ⟡
+## ╭─ ❧ the session key ⟡
 ##
-## When the previous session with this peer handed out a next secret, it is
+## When the previous session with this peer handed out a session key, it is
 ## glued onto the shared secret everywhere the shared secret is used as a
 ## key -- the proofs, the binder, the hello seal:
 ##
-##   key input  =  [ u32 len | psk ] [ u32 len | next secret, or nothing ]
+##   key input  =  [ u32 len | psk ] [ u32 len | session key, or nothing ]
 ##
-## Whether it was used is the hello's `usesNextSecret` flag, which is part of
+## Whether it was used is the hello's `usesSessionKey` flag, which is part of
 ## the transcript. A responder that answers without it therefore derives
 ## different keys, and nothing opens.
 
@@ -68,12 +68,12 @@ proc requireAmePsk(a: AmeAuthentication) {.role: parser, inline,
 
 proc amePskKeyInput*(a: AmeAuthentication): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|kdf".} =
-  ## a: the shared secret, plus the next secret when this side holds one, as
+  ## a: the shared secret, plus the session key when this side holds one, as
   ## ONE framed key. Every use of the shared secret as a key goes through
-  ## here, so the next secret can never be forgotten in one of them.
+  ## here, so the session key can never be forgotten in one of them.
   requireAmePsk(a)
   appendHandshakeBytes(result, a.psk)
-  appendHandshakeBytes(result, a.nextSecret)
+  appendHandshakeBytes(result, a.sessionKey)
 
 proc amePskTranscriptProof*(a: AmeAuthentication, d: AmePskProofDirection,
     transcript: openArray[uint8]): ByteSeq {.role: truthBuilder,
@@ -166,7 +166,7 @@ proc clientHelloClearSubject*(h: AmeClientHello): ByteSeq {.
   appendHandshakeBytes(result, encodeAmeSuiteLayout(h.layout))
   appendHandshakeBytes(result, encodeAmeMaskTier(h.initialTier))
   appendHandshakeBytes(result, h.cookie)
-  result.add(if h.usesNextSecret: 1'u8 else: 0'u8)
+  result.add(if h.usesSessionKey: 1'u8 else: 0'u8)
   appendHandshakeBytes(result, h.offerSalt)
 
 proc clientHelloSubject*(h: AmeClientHello): ByteSeq {.role: truthBuilder.} =
@@ -181,7 +181,7 @@ proc clientHelloSubject*(h: AmeClientHello): ByteSeq {.role: truthBuilder.} =
 ##
 ## In the pre-shared modes the KEM public keys are sealed before they leave:
 ##
-##   key   = XHKDF( psk ‖ next secret?,  salt = offerSalt,
+##   key   = XHKDF( psk ‖ session key?,  salt = offerSalt,
 ##                    info = "AME-AM1P-HELLO-v1" + clear hello )
 ##           -> exactly one key block for the hello's own slot layout
 ##   seal  = tier AEAD (every switched-on cipher, every switched-on MAC)
@@ -226,7 +226,7 @@ proc sealAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication) {.
     clear: ByteSeq = @[]
     material: ByteSeq = @[]
     sealed: tuple[ciphertext: ByteSeq, authTag: ByteSeq] = (@[], @[])
-  h.usesNextSecret = a.nextSecret.len > 0
+  h.usesSessionKey = a.sessionKey.len > 0
   clear = clientHelloClearSubject(h)
   material = helloOfferKey(a, h, clear)
   sealed = sealAmeTier(h.layout, h.initialTier, material,

@@ -438,13 +438,13 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   ## S/requestId/targetEpoch: quiescent chain and authenticated AME transaction.
   ## r/candidate: exact upgrade mask and resulting AME state.
   ##
-  ## The new epoch is derived from BOTH this epoch's next key (NK, made from
+  ## The new epoch is derived from BOTH the epoch key (EK, made from
   ## the tight key TK right here and erased right after) and the
   ## fresh KEM secrets, in one XHKDF call:
   ##
-  ##   NK + new KEM secrets + commit ──▶ [ LK1' | LK2' | TK' | confirm key ]
+  ##   EK + new KEM secrets + commit ──▶ [ LK1' | LK2' | TK' | confirm key ]
   ##
-  ## Mixing the NK keeps an attacker who only saw the new exchange out;
+  ## Mixing the EK keeps an attacker who only saw the new exchange out;
   ## mixing the new secrets lets a session recover from a past compromise,
   ## because the attacker never saw the new KEM result.
   ##
@@ -458,7 +458,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
     keys: ByteSeq = @[]
     confirmKey: ByteSeq = @[]
     confirmInfo: ByteSeq = @[]
-    nextKey: ByteSeq = @[]
+    epochKey: ByteSeq = @[]
   requireFomkeQuiescent(S)
   if S.skipped.len != 0:
     raise newException(ValueError,
@@ -477,8 +477,8 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   result.lane2Index = S.lane2.nextIndex
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
-  nextKey = deriveFomkeTightChild(S, "FOMKE-NEXT-KEY-v1")
-  keys = deriveXhkdfInputs(nextKey, secretRows, metadata,
+  epochKey = deriveFomkeTightChild(S, "FOMKE-EPOCH-KEY-v1")
+  keys = deriveXhkdfInputs(epochKey, secretRows, metadata,
     fomkeEpochKeyBytes + fomkeConfirmKeyBytes, fomkeKdfFor(S, r.targetTier))
   S.pending.active = true
   S.pending.commit = result
@@ -495,7 +495,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   secureClearAmeBytes(keys)
   secureClearAmeBytes(confirmKey)
   secureClearAmeBytes(confirmInfo)
-  secureClearAmeBytes(nextKey)
+  secureClearAmeBytes(epochKey)
 
 proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
     role: parser, tag: "appApi|exchange|fomke".} =
@@ -599,21 +599,21 @@ proc discardFomkeSkipped*(S: var FomkeState): int {.role: actor,
   result = S.skipped.len
   clearFomkeSkipped(S.skipped)
 
-proc fomkeHandshakeSecret*(S: FomkeState): ByteSeq {.role: truthBuilder,
+proc fomkeSessionKey*(S: FomkeState): ByteSeq {.role: truthBuilder,
     tag: "appApi|cryptoBoundary|fomke|kdf".} =
-  ## S: the live ratchet whose carried secret (CS) is handed to the NEXT
+  ## S: the live ratchet whose session key (SK) is handed to the NEXT
   ## handshake.
   ##
   ## When a session ends and the two sides later run a fresh AM1P handshake,
-  ## they can carry this into it (see `withAmeNextSecret`). It then keys the
+  ## they can carry this into it (see `withAmeSessionKey`). It then keys the
   ## sealed hello and joins the new key schedule, so the new session needs
   ## the pre-shared key AND this -- a stolen pre-shared key alone no longer
   ## opens the next hello.
   ##
-  ## One child of the tight key, like NK and JK, each under its own label --
+  ## One child of the tight key, like EK and JK, each under its own label --
   ## one secret doing two jobs is how a proof about one of them stops
   ## holding for the other:
   ##
-  ##   TK ──XHKDF("FOMKE-NEXT-HANDSHAKE-v2", epoch)──▶ 32 bytes
+  ##   TK ──XHKDF("FOMKE-SESSION-KEY-v1", epoch)──▶ 32 bytes
   validateFomkeState(S)
-  result = deriveFomkeTightChild(S, "FOMKE-NEXT-HANDSHAKE-v2")
+  result = deriveFomkeTightChild(S, "FOMKE-SESSION-KEY-v1")

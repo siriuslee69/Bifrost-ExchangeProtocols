@@ -48,7 +48,7 @@ type
   ##
   ##   AM1A / AM1S          offer          in the clear
   ##   AM1P / AM1P+S        offerSalt      in the clear, fresh per hello
-  ##                        usesNextSecret in the clear, one flag
+  ##                        usesSessionKey in the clear, one flag
   ##                        sealedOffer    ciphertext of the offer
   ##                        offerTag       its 32-byte tag
   AmeClientHello* {.role: truthState.} = object
@@ -63,7 +63,7 @@ type
       ## 32 random bytes. The shared secret is the same for every hello, so
       ## without a fresh salt two hellos would be sealed under one key and
       ## one keystream -- XOR the two and both offers fall out.
-    usesNextSecret*: bool
+    usesSessionKey*: bool
       ## True when the seal key (and the key schedule) also took the next
       ## secret from the previous session. In the clear so a responder that
       ## lacks it can refuse at once, and so a fallback is never silent.

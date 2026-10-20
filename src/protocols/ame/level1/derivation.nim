@@ -71,7 +71,7 @@ proc deriveAmeStorageKey*(L: AmeSuiteLayout, t: AmeMaskTier,
   ## The counterpart to `deriveAmeKey` for bytes that never came from a KEM
   ## exchange -- a passphrase-derived storage key, a key handed over out of
   ## band. Every switched-on KDF slot runs and the results are XORed, exactly
-  ## as they are for session keys, so breaking one KDF is not enough.
+  ## as they are for traffic keys, so breaking one KDF is not enough.
   var
     seed: ByteSeq = @[]
     layoutBytes: ByteSeq = @[]

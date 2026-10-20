@@ -12,7 +12,7 @@
 ##
 ## Everything here is about getting that far safely: the cheap checks that
 ## run before any key work, the sealed hello of the pre-shared modes and its
-## next-secret policy, and the responder's sealed identity block.
+## session-key policy, and the responder's sealed identity block.
 ##
 ## Steps 3 and 4 -- opening the answer, judging it, finishing -- are in
 ## `handshake.nim`, which imports this file and re-exports it.
@@ -262,7 +262,7 @@ proc responderIdentityError(c: AmeClientHello, a: AmeAuthentication,
   except ValueError as e:
     return e.msg
 
-proc nextSecretPolicyError(c: AmeClientHello,
+proc sessionKeyPolicyError(c: AmeClientHello,
     a: var AmeAuthentication): string {.role: parser,
     tag: "cryptoBoundary|validation".} =
   ## c/a: the hello's next-secret flag against what this side holds and
@@ -276,13 +276,13 @@ proc nextSecretPolicyError(c: AmeClientHello,
   ##   clear        any               yes        refuse: no silent fallback
   ##   clear        yes               no         drop ours, psk only
   ##   clear        no                no         psk only
-  if c.usesNextSecret and a.nextSecret.len == 0:
-    return "client used a next secret this side does not hold"
-  if not c.usesNextSecret and a.nextSecretRequired:
-    return "client hello did not carry the required next secret"
-  if not c.usesNextSecret:
-    secureClearAmeBytes(a.nextSecret)
-    a.nextSecret = @[]
+  if c.usesSessionKey and a.sessionKey.len == 0:
+    return "client used a session key this side does not hold"
+  if not c.usesSessionKey and a.sessionKeyRequired:
+    return "client hello did not carry the required session key"
+  if not c.usesSessionKey:
+    secureClearAmeBytes(a.sessionKey)
+    a.sessionKey = @[]
 
 proc answerAmeHandshake*(c: AmeClientHello,
     supported: openArray[AmeTierPath], a: AmeAuthentication,
@@ -305,7 +305,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
   ##
   ## In the pre-shared modes the order is:
   ##
-  ##   clear fields ok? ─▶ mode matches? ─▶ next-secret policy ok?
+  ##   clear fields ok? ─▶ mode matches? ─▶ session-key policy ok?
   ##        ─▶ open the sealed offer ─▶ offer fields ok? ─▶ answer
   ##
   ## so a hello this side would refuse anyway never costs a key derivation.
@@ -324,7 +324,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
     result.err = "client asked for an authentication mode this side does not run"
     return
   if ameModeUsesPsk(a.mode):
-    policyError = nextSecretPolicyError(hello, local)
+    policyError = sessionKeyPolicyError(hello, local)
     if policyError.len == 0:
       policyError = openAmeHelloOffer(hello, local)
     if policyError.len > 0:

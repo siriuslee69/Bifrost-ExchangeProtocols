@@ -12,7 +12,7 @@
 ##
 ##   what is checked                                   suite
 ##   ------------------------------------------------  --------------------
-##   NK, JK and CS are distinct children of TK         "FOMKE tight key"
+##   EK, JK and SK are distinct children of TK         "FOMKE tight key"
 ##   a jump frees the lane; its rules hold             "FOMKE jump"
 ##   the same through AME frames, ask and answer       "AME lane jump"
 
@@ -69,15 +69,15 @@ proc loseMessages(S: var FomkeState, n: int) =
 
 suite "FOMKE tight key":
   # {.testKind: tkUnit, covers: "deriveFomkeTightChild".}
-  test "NK, JK and CS are three different children of TK":
+  test "EK, JK and SK are three different children of TK":
     var
       p: JPair = jPair(1'u8)
-      nk: ByteSeq = deriveFomkeTightChild(p.alice.fomke, "FOMKE-NEXT-KEY-v1")
+      nk: ByteSeq = deriveFomkeTightChild(p.alice.fomke, "FOMKE-EPOCH-KEY-v1")
       jk0: ByteSeq = deriveFomkeTightChild(p.alice.fomke, "FOMKE-JUMP-KEY-v1",
         @[byte 1, 0, 0, 0, 0])
       jk1: ByteSeq = deriveFomkeTightChild(p.alice.fomke, "FOMKE-JUMP-KEY-v1",
         @[byte 1, 1, 0, 0, 0])
-      cs: ByteSeq = fomkeHandshakeSecret(p.alice.fomke)
+      cs: ByteSeq = fomkeSessionKey(p.alice.fomke)
     check p.alice.fomke.tightKey.len == fomkeTightKeyBytes
     check p.alice.fomke.tightKey == p.bob.fomke.tightKey
     check nk.len == fomkeTightKeyBytes
@@ -86,7 +86,7 @@ suite "FOMKE tight key":
     check cs != nk
     check cs != jk0
     check nk != p.alice.fomke.tightKey
-    check nk == deriveFomkeTightChild(p.bob.fomke, "FOMKE-NEXT-KEY-v1")
+    check nk == deriveFomkeTightChild(p.bob.fomke, "FOMKE-EPOCH-KEY-v1")
 
   # {.testKind: tkUnit, covers: "encodeFomkeState|decodeFomkeState".}
   test "a checkpoint keeps TK and both jump counters":

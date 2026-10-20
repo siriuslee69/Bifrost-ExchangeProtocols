@@ -76,7 +76,7 @@ src/protocols
 │   ├── level1/  <- chain_send.nim  the epoch split [LK1|LK2|TK], the two
 │   │                                 chains, sealing, children of TK
 │   │                chain.nim       opening, the reorder window, and exact
-│   │                                 AME upgrade commits (NK from TK + new
+│   │                                 AME upgrade commits (EK from TK + new
 │   │                                 KEM -> next epoch); passes chain_send on
 │   │                jump.nim        proved lane jumps (JK from TK)
 │   │                (the ratchet is the ONLY payload protection)
@@ -137,7 +137,7 @@ client hello (no identity: nonce, layout, tier, KEM public keys)
 
 Handshake records (AMC2/AMR2/AMS2/AMF2) travel as ordinary AME frames with a
 handshake packet kind (0x0C..0x0F). They are not encrypted -- there are no
-session keys yet -- but each of the last two carries its own sealed block, so
+traffic keys yet -- but each of the last two carries its own sealed block, so
 no identity is ever on the wire in the clear.
 
 ## Package Path

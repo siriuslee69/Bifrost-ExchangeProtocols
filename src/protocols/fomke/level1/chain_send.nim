@@ -34,13 +34,13 @@
 ##   │ LK1  0..63  │ LK2  64..127 │ TK  128..159     │
 ##   └─────────────┴──────────────┴──────────────────┘
 ##     lane 1 chain   lane 2 chain   tight key: never used directly;
-##                                   NK, JK and CS are derived from it
+##                                   EK, JK and SK are derived from it
 ##                                   only when needed (see `fomkeTightKeyBytes`)
 ##
-## A KEM rotation does the same with the NEXT KEY (NK, derived from TK) in
+## A KEM rotation does the same with the EPOCH KEY (EK, derived from TK) in
 ## place of nothing:
 ##
-##   NK + the fresh KEM secrets + the commit ──XHKDF──▶
+##   EK + the fresh KEM secrets + the commit ──XHKDF──▶
 ##       [ LK1' | LK2' | TK' | confirmation key ]
 ##
 ## So the new epoch needs BOTH the old TK and the new KEM result. An
@@ -192,8 +192,8 @@ proc deriveFomkeTightChild*(S: FomkeState, label: string,
     extra: openArray[uint8] = []): ByteSeq {.role: truthBuilder,
     tag: "cryptoBoundary|fomke|kdf".} =
   ## S: state whose tight key (TK) is the parent.
-  ## label: which child -- "FOMKE-NEXT-KEY-v1" (NK), "FOMKE-JUMP-KEY-v1"
-  ##   (JK), "FOMKE-NEXT-HANDSHAKE-v2" (CS).
+  ## label: which child -- "FOMKE-EPOCH-KEY-v1" (EK), "FOMKE-JUMP-KEY-v1"
+  ##   (JK), "FOMKE-SESSION-KEY-v1" (SK).
   ## extra: anything else the child is bound to (a jump's lane and number).
   ##
   ##   TK ──XHKDF( label | epoch u32 | len u32 | extra )──▶ 32 bytes

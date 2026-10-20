@@ -106,9 +106,9 @@ make per deployment rather than per protocol:
 4. **The pre-shared hello is sealed per hello.** Its key comes from the
    shared secret and 32 fresh random bytes (the salt), so two hellos never
    share a keystream. The seal uses the session's own cipher and MAC masks.
-5. **A next secret makes the shared secret alone insufficient.** A session
-   hands out 32 bytes (`ameNextHandshakeSecret`); the next AM1P handshake can
-   take them (`withAmeNextSecret`) as a second key beside the shared secret.
+5. **A session key makes the shared secret alone insufficient.** A session
+   hands out 32 bytes (`ameSessionKey`); the next AM1P handshake can
+   take them (`withAmeSessionKey`) as a second key beside the shared secret.
    Whether it did is a flag in the hello. A responder that sets
    `required = true` refuses any hello without it, so an attacker cannot
    force a quiet fallback.

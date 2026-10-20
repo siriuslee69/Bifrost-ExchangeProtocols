@@ -78,7 +78,7 @@ type
   ## Everything one endpoint needs in order to judge the other. Which of the
   ## groups below is filled in is chosen by `mode`:
   ##
-  ##   mode     pskId+psk   root   expectedPeer   nextSecret
+  ##   mode     pskId+psk   root   expectedPeer   sessionKey
   ##   -------  ---------   ----   ------------   ----------
   ##   AM1A        -         yes        -             -
   ##   AM1S        -          -        yes            -
@@ -97,14 +97,14 @@ type
       ## AM1A only.
     expectedPeer*: AmePinnedPeerIdentity
       ## AM1S and AM1P+S.
-    nextSecret*: ByteSeq
+    sessionKey*: ByteSeq
       ## AM1P / AM1P+S, optional. The 32 bytes the PREVIOUS session with this
-      ## peer handed out (`ameNextHandshakeSecret`). When present it keys the
+      ## peer handed out (`ameSessionKey`). When present it keys the
       ## sealed hello together with the psk AND joins the key schedule, so
       ## this session needs both. Empty = first contact, psk alone.
-    nextSecretRequired*: bool
+    sessionKeyRequired*: bool
       ## Responder policy. True refuses any hello that does NOT carry the
-      ## next secret, so an attacker cannot quietly fall this side back to
+      ## session key, so an attacker cannot quietly fall this side back to
       ## psk-only by breaking a handshake on purpose. False accepts both, and
       ## the fallback is still visible: the hello's flag says which it was.
 
@@ -132,7 +132,7 @@ type
 ##
 ## And for a pre-shared mode that met this peer before:
 ##
-##   the next secret the last      withAmeNextSecret(a, kept)
+##   the session key the last      withAmeSessionKey(a, kept)
 ##     session handed out
 
 ## ╭⟢ which modes this build carries
@@ -297,32 +297,32 @@ proc initAmePskPinnedAuthentication*(identifier: string,
   result.psk = @secret
   result.expectedPeer = peer
 
-proc withAmeNextSecret*(a: AmeAuthentication, nextSecret: openArray[uint8],
+proc withAmeSessionKey*(a: AmeAuthentication, sessionKey: openArray[uint8],
     required: bool = false): AmeAuthentication {.role: configurator,
     tag: "appApi|cryptoBoundary".} =
   ## a: a pre-shared authentication (AM1P or AM1P+S).
-  ## nextSecret: the 32 bytes the last session handed out
-  ##   (`ameNextHandshakeSecret`). Empty removes it again.
+  ## sessionKey: the 32 bytes the last session handed out
+  ##   (`ameSessionKey`). Empty removes it again.
   ## required: responder policy -- refuse hellos that do not carry it.
   ##
   ##   first session:   initAmePskAuthentication(id, psk)
-  ##   later sessions:  initAmePskAuthentication(id, psk).withAmeNextSecret(ns)
+  ##   later sessions:  initAmePskAuthentication(id, psk).withAmeSessionKey(ns)
   ##
-  ## The hello is then sealed under psk + next secret, and the next secret
+  ## The hello is then sealed under psk + session key, and the session key
   ## joins the key schedule. A stolen psk alone no longer opens the hello.
   if not ameModeUsesPsk(a.mode):
     raise newException(ValueError,
-      "AME next secret only applies to the pre-shared modes")
-  if nextSecret.len != 0 and nextSecret.len != 32:
-    raise newException(ValueError, "AME next secret must be 32 bytes")
+      "AME session key only applies to the pre-shared modes")
+  if sessionKey.len != 0 and sessionKey.len != 32:
+    raise newException(ValueError, "AME session key must be 32 bytes")
   result = a
-  result.nextSecret = @nextSecret
-  result.nextSecretRequired = required
+  result.sessionKey = @sessionKey
+  result.sessionKeyRequired = required
 
 proc clearAmeAuthentication*(A: var AmeAuthentication) {.
     role: actor, tag: "appApi|cryptoBoundary".} =
   ## A: erase provisioned shared-secret material once it is finished with.
   secureClearAmeBytes(A.psk)
-  secureClearAmeBytes(A.nextSecret)
+  secureClearAmeBytes(A.sessionKey)
   A = default(AmeAuthentication)
 

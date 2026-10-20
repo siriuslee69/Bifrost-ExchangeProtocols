@@ -4,12 +4,12 @@
 ##
 ## What these tests hold down, in one picture:
 ##
-##   session 1 (AM1P)                        session 2 (AM1P + next secret)
+##   session 1 (AM1P)                        session 2 (AM1P + session key)
 ##   ─────────────────                       ───────────────────────────────
 ##   hello  sealed under psk          ──▶    hello sealed under psk ‖ NS-out
 ##   ISS ─▶ [ LK1 | LK2 | NS ]               binder takes psk ‖ NS-out too
 ##   rotation: NS + new KEM ─▶ NS'
-##   end: ameNextHandshakeSecret ─▶ NS-out ──┘
+##   end: ameSessionKey ─▶ NS-out ──┘
 ##
 ## and the combined mode AM1P+S, where the shared secret AND a pinned
 ## signature key must both check out.
@@ -266,8 +266,8 @@ suite "AM1P+S: shared secret AND pinned signature":
       peers.clientKey, peers.serverDesc, peers.serverKey)
     check r.ok
 
-suite "carrying the next secret into the next handshake":
-  # {.testKind: tkIntegration, covers: "ameNextHandshakeSecret|withAmeNextSecret".}
+suite "carrying the session key into the next handshake":
+  # {.testKind: tkIntegration, covers: "ameSessionKey|withAmeSessionKey".}
   test "session 1 hands out a secret session 2 is keyed with":
     var
       psk: ByteSeq = pskSecret(3)
@@ -283,56 +283,56 @@ suite "carrying the next secret into the next handshake":
       opened: AmeOpenResult = default(AmeOpenResult)
     check first.ok
     live = sessionPair(first, 31'u64)
-    kept = ameNextHandshakeSecret(live.a)
+    kept = ameSessionKey(live.a)
     check kept.len == 32
-    check kept == ameNextHandshakeSecret(live.b)
+    check kept == ameSessionKey(live.b)
     second = runHandshake(32'u64,
-      initAmePskAuthentication("carry", psk).withAmeNextSecret(kept),
-      initAmePskAuthentication("carry", psk).withAmeNextSecret(kept))
+      initAmePskAuthentication("carry", psk).withAmeSessionKey(kept),
+      initAmePskAuthentication("carry", psk).withAmeSessionKey(kept))
     check second.err == ""
     check second.ok
-    check second.hello.usesNextSecret
-    ## The next secret changed the key schedule, not only the hello.
+    check second.hello.usesSessionKey
+    ## The session key changed the key schedule, not only the hello.
     check second.client.auth.exchangeBinder != first.client.auth.exchangeBinder
     again = sessionPair(second, 32'u64)
     opened = openAmeTcpFrame(again.b, sealAmeTcpFrame(again.a, @[byte 1, 2]))
     check opened.ok
     check opened.packet.payload == @[byte 1, 2]
 
-  # {.testKind: tkEdgeCase, covers: "nextSecretPolicyError".}
+  # {.testKind: tkEdgeCase, covers: "sessionKeyPolicyError".}
   test "missing, required, wrong, and a visible fallback":
     var
       psk: ByteSeq = pskSecret(4)
       kept: ByteSeq = pskSecret(40)
       other: ByteSeq = pskSecret(41)
       plain: AmeAuthentication = initAmePskAuthentication("policy", psk)
-      carrying: AmeAuthentication = plain.withAmeNextSecret(kept)
-      demanding: AmeAuthentication = plain.withAmeNextSecret(kept,
+      carrying: AmeAuthentication = plain.withAmeSessionKey(kept)
+      demanding: AmeAuthentication = plain.withAmeSessionKey(kept,
         required = true)
       r: PskRun = default(PskRun)
     ## The client used one; the responder has none to match it with.
     r = runHandshake(41'u64, carrying, plain)
-    check r.err == "client used a next secret this side does not hold"
+    check r.err == "client used a session key this side does not hold"
     ## The responder requires one; the client came without.
     r = runHandshake(42'u64, plain, demanding)
-    check r.err == "client hello did not carry the required next secret"
+    check r.err == "client hello did not carry the required session key"
     ## Both carry one, but not the same one: nothing opens.
-    r = runHandshake(43'u64, plain.withAmeNextSecret(other), carrying)
+    r = runHandshake(43'u64, plain.withAmeSessionKey(other), carrying)
     check r.err == "client hello did not open under the shared secret"
     ## Not required: psk only goes through, and the hello SAYS so.
     r = runHandshake(44'u64, plain, carrying)
     check r.ok
-    check not r.hello.usesNextSecret
+    check not r.hello.usesSessionKey
 
-  # {.testKind: tkEdgeCase, covers: "withAmeNextSecret".}
+  # {.testKind: tkEdgeCase, covers: "withAmeSessionKey".}
   test "only pre-shared modes take one, and only 32 bytes of it":
     var
       pinned: AmeAuthentication = initAmePinnedAuthentication(
         pinnedPeerIdentity(initAmeIdentityKey("np")))
     expect ValueError:
-      discard pinned.withAmeNextSecret(pskSecret(5))
+      discard pinned.withAmeSessionKey(pskSecret(5))
     expect ValueError:
-      discard initAmePskAuthentication("np", pskSecret(5)).withAmeNextSecret(
+      discard initAmePskAuthentication("np", pskSecret(5)).withAmeSessionKey(
         pskSecret(5)[0 ..< 16])
 
 suite "FOMKE tight key":
@@ -353,7 +353,7 @@ suite "FOMKE tight key":
     check live.a.fomke.tightKey !=
       live.a.fomke.lane2.chainKey[0 ..< fomkeTightKeyBytes]
     ## What leaves for the next handshake is a derivation, not TK itself.
-    check fomkeHandshakeSecret(live.a.fomke) != live.a.fomke.tightKey
+    check fomkeSessionKey(live.a.fomke) != live.a.fomke.tightKey
 
   # {.testKind: tkRegression, covers: "prepareFomkeUpgrade", pins: "a rotation that fed the live lane keys into the next epoch needed both lanes at the same position".}
   test "a rotation replaces TK on both sides, whatever the lanes have done":
