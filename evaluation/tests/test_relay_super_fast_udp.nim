@@ -22,7 +22,7 @@ import std/unittest
 
 import ../../src/protocols/types
 import ../../src/protocols/transport/types as transport_types
-import ../../src/protocols/relay/udp_forward
+import ../../src/protocols/relay/super_fast_udp
 import runePragmas
 
 proc ep(h: string, p: uint16): transport_types.UdpAddress {.role: configurator.} =
@@ -31,15 +31,15 @@ proc ep(h: string, p: uint16): transport_types.UdpAddress {.role: configurator.}
 proc nasAddr(): transport_types.UdpAddress {.role: configurator.} =
   result = ep("10.0.0.2", 9000'u16)
 
-proc relay(cfg: UdpForwardConfig = initUdpForwardConfig()): UdpForwarder {.
+proc relay(cfg: UdpForwardConfig = initUdpForwardConfig()): RelaySuperFastUdp {.
     role: configurator.} =
-  result = initUdpForwarder(nasAddr(), cfg)
+  result = initRelaySuperFastUdp(nasAddr(), cfg)
 
 suite "UDP forward":
   # {.testKind: tkIntegration, covers: "fromClient".}
   test "a datagram reaches the NAS with its bytes untouched":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       step: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
         @[byte 1, 2, 3, 4, 5], 1000'u64)
     check step.event == ufeForwarded
@@ -53,7 +53,7 @@ suite "UDP forward":
   # {.testKind: tkIntegration, covers: "fromNas".}
   test "the answer finds its way back by tag":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       client: transport_types.UdpAddress = ep("203.0.113.7", 40000'u16)
       out1: UdpForwardStep = fromClient(F, client, @[byte 9], 1000'u64)
       back: UdpForwardStep = default(UdpForwardStep)
@@ -66,7 +66,7 @@ suite "UDP forward":
   # {.testKind: tkUnit.}
   test "two clients never share a tag":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       a: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
         @[byte 1], 1000'u64)
       b: UdpForwardStep = fromClient(F, ep("203.0.113.8", 40000'u16),
@@ -85,12 +85,12 @@ suite "UDP forward":
     ## were matched to whoever holds the tag now, one client would be handed
     ## another client's bytes -- the single worst thing a relay can do.
     var
-      F: UdpForwarder = relay(initUdpForwardConfig(clientIdleMs = 5_000'u64))
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(clientIdleMs = 5_000'u64))
       first: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
         @[byte 1], 1000'u64)
       tag: uint32 = first.send[0].tag
       late: UdpForwardStep = default(UdpForwardStep)
-    discard tickUdpForwarder(F, 100_000'u64)
+    discard tickRelaySuperFastUdp(F, 100_000'u64)
     check udpForwardClients(F) == 0
     late = fromNas(F, tag, @[byte 5], 100_100'u64)
     check late.event == ufeDropped
@@ -105,7 +105,7 @@ suite "UDP forward":
     ## evicting somebody to make room would let the stranger push out the
     ## clients that are really using the relay.
     var
-      F: UdpForwarder = relay(initUdpForwardConfig(maxClients = 3))
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(maxClients = 3))
       step: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
     while i < 3:
@@ -121,7 +121,7 @@ suite "UDP forward":
   # {.testKind: tkUnit, covers: "reapIdleSlots".}
   test "a silent client loses its slot and frees the tag":
     var
-      F: UdpForwarder = relay(initUdpForwardConfig(maxClients = 1,
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(maxClients = 1,
         clientIdleMs = 5_000'u64))
       first: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
         @[byte 1], 1000'u64)
@@ -138,7 +138,7 @@ suite "UDP forward":
   # {.testKind: tkEdgeCase, covers: "bufferForNas".}
   test "a missing NAS sends datagrams to the buffer, not to a hole":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       step: UdpForwardStep = default(UdpForwardStep)
     ## The NAS has to have been heard from at least once before it can count
     ## as away. A relay starting up beside a booting NAS would otherwise
@@ -157,7 +157,7 @@ suite "UDP forward":
     ## datagram the real transport can ask for again, so the freshest few are
     ## worth more than a long tail of stale ones.
     var
-      F: UdpForwarder = relay(initUdpForwardConfig(bufferDatagrams = 4))
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(bufferDatagrams = 4))
       step: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
     discard fromNas(F, 0'u32, @[byte 1], 1000'u64)
@@ -178,7 +178,7 @@ suite "UDP forward":
   # {.testKind: tkIntegration, covers: "noteNasSeen".}
   test "a returning NAS drains the buffer in order":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       back: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
     discard fromNas(F, 0'u32, @[byte 1], 1000'u64)
@@ -199,7 +199,7 @@ suite "UDP forward":
     ## A home line hands out a different address after a reconnect. Insisting
     ## on the configured one would mean a relay that never recovers.
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       moved: transport_types.UdpAddress = ep("10.0.0.55", 9000'u16)
       step: UdpForwardStep = noteNasSeen(F, moved, 5_000'u64)
     check step.event == ufeNasChanged
@@ -210,7 +210,7 @@ suite "UDP forward":
   # {.testKind: tkEdgeCase.}
   test "an empty or impossible datagram is refused without being read":
     var
-      F: UdpForwarder = relay(initUdpForwardConfig(maxDatagramBytes = 16))
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(maxDatagramBytes = 16))
       empty: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
         @[], 1000'u64)
       huge: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
@@ -220,29 +220,29 @@ suite "UDP forward":
     ## Neither opened a slot, so rubbish cannot fill the table either.
     check udpForwardClients(F) == 0
 
-  # {.testKind: tkUnit, covers: "tickUdpForwarder".}
+  # {.testKind: tkUnit, covers: "tickRelaySuperFastUdp".}
   test "the NAS is poked only when a poke is due":
     ## Without a keepalive the relay cannot tell "nobody is talking" from "the
     ## NAS has gone", and the NAS's own router would drop the mapping.
     var
-      F: UdpForwarder = relay()
-      first: UdpForwardStep = tickUdpForwarder(F, 1_000'u64, @[byte 1])
+      F: RelaySuperFastUdp = relay()
+      first: UdpForwardStep = tickRelaySuperFastUdp(F, 1_000'u64, @[byte 1])
       soon: UdpForwardStep = default(UdpForwardStep)
       later: UdpForwardStep = default(UdpForwardStep)
     check first.send.len == 1
     check first.send[0].peer == nasAddr()
-    soon = tickUdpForwarder(F, 2_000'u64, @[byte 1])
+    soon = tickRelaySuperFastUdp(F, 2_000'u64, @[byte 1])
     check soon.send.len == 0
-    later = tickUdpForwarder(F, 30_000'u64, @[byte 1])
+    later = tickRelaySuperFastUdp(F, 30_000'u64, @[byte 1])
     check later.send.len == 1
 
   # {.testKind: tkUnit.}
   test "a tick with nothing to say sends nothing":
     var
-      F: UdpForwarder = relay()
+      F: RelaySuperFastUdp = relay()
       step: UdpForwardStep = default(UdpForwardStep)
-    discard tickUdpForwarder(F, 1_000'u64, @[byte 1])
-    step = tickUdpForwarder(F, 1_500'u64)
+    discard tickRelaySuperFastUdp(F, 1_000'u64, @[byte 1])
+    step = tickRelaySuperFastUdp(F, 1_500'u64)
     check step.send.len == 0
     check step.dropped == 0
     check step.event == ufeNone
@@ -264,4 +264,4 @@ suite "UDP forward":
       discard initUdpForwardConfig(nasKeepaliveMs = 30_000'u64,
         nasSilentMs = 10_000'u64)
     expect ValueError:
-      discard initUdpForwarder(ep("", 0'u16))
+      discard initRelaySuperFastUdp(ep("", 0'u16))

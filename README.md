@@ -2424,13 +2424,13 @@ outsider can make the process spend.
 
 ### No sockets in the module
 
-`src/protocols/relay/udp_forward.nim` only decides. It takes "a datagram
+`src/protocols/relay/super_fast_udp.nim` only decides. It takes "a datagram
 arrived from here at this time" and returns "send these bytes there"; the
 caller owns the sockets. Every rule above is testable without a network.
 
 ```nim
 var
-  F: UdpForwarder = initUdpForwarder(initUdpAddress("10.0.0.2", 9000'u16))
+  F: RelaySuperFastUdp = initRelaySuperFastUdp(initUdpAddress("10.0.0.2", 9000'u16))
   step: UdpForwardStep = fromClient(F, client, datagram, nowMs)
 ## step.send lists what to send, in order. step.send[i].tag names the
 ## local socket to send from; step.send[i].peer is where it goes.

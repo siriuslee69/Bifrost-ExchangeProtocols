@@ -46,7 +46,7 @@ import ../../src/protocols/fomke/types
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
-import ../../src/protocols/relay/udp_forward
+import ../../src/protocols/relay/super_fast_udp
 import ../../src/protocols/transport/types as transport_types
 import runePragmas
 
@@ -441,7 +441,7 @@ suite "attacks through the relay":
     ## answer that could still be in flight -- `clientIdleMs` is that lever,
     ## and 5 seconds here is deliberately far too short to force the case.
     var
-      F: UdpForwarder = initUdpForwarder(
+      F: RelaySuperFastUdp = initRelaySuperFastUdp(
         initUdpAddress("10.0.0.2", 9000'u16),
         initUdpForwardConfig(maxClients = 1, clientIdleMs = 5_000'u64))
       first: UdpForwardStep = fromClient(F,
@@ -471,7 +471,7 @@ suite "attacks through the relay":
     ## GETS   refused at the ceiling, and the clients already in the table
     ##        keep their slots.
     var
-      F: UdpForwarder = initUdpForwarder(
+      F: RelaySuperFastUdp = initRelaySuperFastUdp(
         initUdpAddress("10.0.0.2", 9000'u16),
         initUdpForwardConfig(maxClients = 8))
       real: UdpForwardStep = fromClient(F,
@@ -501,7 +501,7 @@ suite "attacks through the relay":
     ##        only judgements are size and source. Rubbish costs the NAS one
     ##        failed tag check, which is where that decision belongs.
     var
-      F: UdpForwarder = initUdpForwarder(
+      F: RelaySuperFastUdp = initRelaySuperFastUdp(
         initUdpAddress("10.0.0.2", 9000'u16))
       junk: ByteSeq = @[byte 0xFF, 0x00, 0xFF, 0x00, 0x41, 0x4D, 0x45]
       step: UdpForwardStep = fromClient(F,
@@ -527,7 +527,7 @@ suite "what the relay does NOT hide":
     ## If that ever matters, this test is where the change gets noticed.
     var
       sender: AmeSession = atSession(aerInitiator)
-      F: UdpForwarder = initUdpForwarder(
+      F: RelaySuperFastUdp = initRelaySuperFastUdp(
         initUdpAddress("10.0.0.2", 9000'u16))
       frame: ByteSeq = sealAmeDacFrame(sender, secretBytes())
       step: UdpForwardStep = fromClient(F,

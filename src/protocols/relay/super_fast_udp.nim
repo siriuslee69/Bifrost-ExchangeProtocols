@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## UDP Forward <- a blind relay that maps one address to another
+## relaySuperFastUDP <- a blind relay that maps one address to another
 ## -------------------------------------------------------------------------
 ##
 ## The shape of the problem, first, because the design falls out of it:
@@ -144,7 +144,7 @@ type
     bufferBytes*: int
     maxDatagramBytes*: int
 
-  ## UdpForwarder: one relay process's whole state.
+  ## RelaySuperFastUdp: one relay process's whole state.
   ## nas: where the NAS is reachable right now. It may move.
   ## nasSeenMs/nasPokedMs: when the NAS was last heard from, and when it was
   ##   last poked, which are what "away" and "due a keepalive" are built on.
@@ -152,7 +152,7 @@ type
   ##   into `slots`, so one bound and one hash, never a second structure a
   ##   stranger can grow independently.
   ## buffer: datagrams held while the NAS is away.
-  UdpForwarder* {.role: truthState,
+  RelaySuperFastUdp* {.role: truthState,
     expectedCount: 1, lifeCycle: lcForever.} = object
     cfg*: UdpForwardConfig
     nas*: transport_types.UdpAddress
@@ -204,8 +204,8 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
   result.bufferBytes = bufferBytes
   result.maxDatagramBytes = maxDatagramBytes
 
-proc initUdpForwarder*(nas: transport_types.UdpAddress,
-    cfg: UdpForwardConfig = initUdpForwardConfig()): UdpForwarder {.
+proc initRelaySuperFastUdp*(nas: transport_types.UdpAddress,
+    cfg: UdpForwardConfig = initUdpForwardConfig()): RelaySuperFastUdp {.
     role: configurator, tag: "relay|udp".} =
   ## nas/cfg: where the NAS is expected and how the relay should behave.
   if nas.host.len == 0 or nas.port == 0'u16:
@@ -216,7 +216,7 @@ proc initUdpForwarder*(nas: transport_types.UdpAddress,
   result.index = initTable[transport_types.UdpAddress, int]()
   result.buffer = initDeque[UdpForwardOut]()
 
-proc dropOldestBuffered(F: var UdpForwarder): int {.role: actor,
+proc dropOldestBuffered(F: var RelaySuperFastUdp): int {.role: actor,
     tag: "relay|udp".} =
   ## F: one datagram given up on to make room, and how many that was.
   ##
@@ -232,7 +232,7 @@ proc dropOldestBuffered(F: var UdpForwarder): int {.role: actor,
   F.droppedTotal = F.droppedTotal + 1'u64
   result = 1
 
-proc bufferForNas(F: var UdpForwarder, item: UdpForwardOut): int {.role: actor,
+proc bufferForNas(F: var RelaySuperFastUdp, item: UdpForwardOut): int {.role: actor,
     tag: "relay|udp".} =
   ## F/item: one datagram held for a NAS that is not answering, and how many
   ## older ones had to be given up to hold it.
@@ -250,7 +250,7 @@ proc bufferForNas(F: var UdpForwarder, item: UdpForwardOut): int {.role: actor,
   F.buffer.addLast(item)
   F.bufferBytes = F.bufferBytes + item.payload.len
 
-proc releaseSlot(F: var UdpForwarder, i: int) {.role: actor,
+proc releaseSlot(F: var RelaySuperFastUdp, i: int) {.role: actor,
     tag: "relay|udp".} =
   ## F/i: one client's slot returned to the pool.
   if not F.slots[i].inUse:
@@ -259,7 +259,7 @@ proc releaseSlot(F: var UdpForwarder, i: int) {.role: actor,
   F.slots[i].inUse = false
   F.slots[i].client = default(transport_types.UdpAddress)
 
-proc freeSlotIndex(F: var UdpForwarder): int {.role: parser,
+proc freeSlotIndex(F: var RelaySuperFastUdp): int {.role: parser,
     tag: "relay|udp".} =
   ## F: a slot position that can be handed out, or -1 when the table is full.
   var
@@ -273,7 +273,7 @@ proc freeSlotIndex(F: var UdpForwarder): int {.role: parser,
   F.slots.add(UdpForwardSlot(tag: uint32(F.slots.len) + 1'u32))
   result = F.slots.len - 1
 
-proc reapIdleSlots(F: var UdpForwarder, nowMs: uint64): int {.role: actor,
+proc reapIdleSlots(F: var RelaySuperFastUdp, nowMs: uint64): int {.role: actor,
     tag: "relay|udp".} =
   ## F/nowMs: slots with no traffic for longer than the idle limit, released.
   var
@@ -285,7 +285,7 @@ proc reapIdleSlots(F: var UdpForwarder, nowMs: uint64): int {.role: actor,
       result = result + 1
     i = i + 1
 
-proc slotForClient(F: var UdpForwarder, client: transport_types.UdpAddress,
+proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     nowMs: uint64): int {.role: actor, tag: "relay|udp".} =
   ## F/client/nowMs: the client's slot, opening one if this is the first time
   ## it has been seen. -1 means the table is full and the datagram is dropped.
@@ -306,14 +306,14 @@ proc slotForClient(F: var UdpForwarder, client: transport_types.UdpAddress,
   F.slots[result].inUse = true
   F.index[client] = result
 
-proc drainBuffer(F: var UdpForwarder, S: var UdpForwardStep) {.role: actor,
+proc drainBuffer(F: var RelaySuperFastUdp, S: var UdpForwardStep) {.role: actor,
     tag: "relay|udp".} =
   ## F/S: everything held for the NAS, queued in the order it arrived.
   while F.buffer.len > 0:
     S.send.add(F.buffer.popFirst())
   F.bufferBytes = 0
 
-proc noteNasSeen*(F: var UdpForwarder, nas: transport_types.UdpAddress,
+proc noteNasSeen*(F: var RelaySuperFastUdp, nas: transport_types.UdpAddress,
     nowMs: uint64): UdpForwardStep {.role: actor, tag: "appApi|relay|udp".} =
   ## F/nas/nowMs: the NAS answered, possibly from somewhere new.
   ##
@@ -329,7 +329,7 @@ proc noteNasSeen*(F: var UdpForwarder, nas: transport_types.UdpAddress,
   F.nasStarted = true
   drainBuffer(F, result)
 
-proc nasIsAway(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
+proc nasIsAway(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
     tag: "relay|udp", inline.} =
   ## F/nowMs: whether the NAS counts as gone right now.
   ##
@@ -340,7 +340,7 @@ proc nasIsAway(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
     return false
   result = nowMs > F.nasSeenMs and nowMs - F.nasSeenMs > F.cfg.nasSilentMs
 
-proc fromClient*(F: var UdpForwarder, client: transport_types.UdpAddress,
+proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
     role: orchestrator, tag: "appApi|relay|udp".} =
   ## F/client/payload/nowMs: one datagram off the public socket.
@@ -372,7 +372,7 @@ proc fromClient*(F: var UdpForwarder, client: transport_types.UdpAddress,
   result.send.add(item)
   F.forwardedTotal = F.forwardedTotal + 1'u64
 
-proc slotForTag(F: UdpForwarder, tag: uint32): int {.role: parser,
+proc slotForTag(F: RelaySuperFastUdp, tag: uint32): int {.role: parser,
     tag: "relay|udp".} =
   ## F/tag: which client a tag belongs to, or -1 if its slot has been released.
   var
@@ -383,7 +383,7 @@ proc slotForTag(F: UdpForwarder, tag: uint32): int {.role: parser,
       return i
     i = i + 1
 
-proc fromNas*(F: var UdpForwarder, tag: uint32,
+proc fromNas*(F: var RelaySuperFastUdp, tag: uint32,
     payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
     role: orchestrator, tag: "appApi|relay|udp".} =
   ## F/tag/payload/nowMs: one datagram back from the NAS, on the socket that
@@ -416,7 +416,7 @@ proc fromNas*(F: var UdpForwarder, tag: uint32,
   result.send.add(item)
   F.forwardedTotal = F.forwardedTotal + 1'u64
 
-proc keepaliveDue(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
+proc keepaliveDue(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
     tag: "relay|udp", inline.} =
   ## F/nowMs: whether the NAS is due a poke.
   ##
@@ -428,7 +428,7 @@ proc keepaliveDue(F: UdpForwarder, nowMs: uint64): bool {.role: parser,
     return true
   result = nowMs > F.nasPokedMs and nowMs - F.nasPokedMs >= F.cfg.nasKeepaliveMs
 
-proc tickUdpForwarder*(F: var UdpForwarder, nowMs: uint64,
+proc tickRelaySuperFastUdp*(F: var RelaySuperFastUdp, nowMs: uint64,
     keepalive: openArray[uint8] = []): UdpForwardStep {.role: orchestrator,
     tag: "appApi|relay|udp".} =
   ## F/nowMs/keepalive: the periodic call, and the bytes to poke the NAS with.
@@ -456,7 +456,7 @@ proc tickUdpForwarder*(F: var UdpForwarder, nowMs: uint64,
   result.send.add(UdpForwardOut(tag: 0'u32, peer: F.nas,
     payload: @keepalive))
 
-proc udpForwardClients*(F: UdpForwarder): int {.role: parser,
+proc udpForwardClients*(F: RelaySuperFastUdp): int {.role: parser,
     tag: "appApi|relay|udp".} =
   ## F: how many clients hold a slot right now.
   var
@@ -466,7 +466,7 @@ proc udpForwardClients*(F: UdpForwarder): int {.role: parser,
       result = result + 1
     i = i + 1
 
-proc udpForwardBuffered*(F: UdpForwarder): int {.role: parser,
+proc udpForwardBuffered*(F: RelaySuperFastUdp): int {.role: parser,
     tag: "appApi|relay|udp".} =
   ## F: how many datagrams are being held for a NAS that is not answering.
   result = F.buffer.len
