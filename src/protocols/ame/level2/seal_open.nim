@@ -413,7 +413,8 @@ proc openDecoded(S: var AmeSession, f: AmeDecodedFrame,
       return
     S.tcpRecvSequence = S.tcpRecvSequence + 1'u32
   consumeSessionIdGrace(S)
-  circ_seq.push(S.inbox, result.packet)
+  if S.keepsInbox:
+    circ_seq.push(S.inbox, result.packet)
   S.lastErr = ""
 
 proc decodeProtectedFrame*(S: AmeSession, frame: openArray[uint8],

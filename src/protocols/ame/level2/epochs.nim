@@ -51,6 +51,8 @@ type
     peerTrustRequired*: bool
     peerTrust*: AmePeerTrustResult
     inbox*: circ_seq.CircSeq[AmePacket]
+    keepsInbox*: bool
+      ## false for `ameNoInbox`: opened packets are not queued.
     lastTrigger*: AmeTierStep   ## otter:latest
     nextExchangeRequestId*: uint32
     pendingExchange*: AmePendingExchange

@@ -384,6 +384,20 @@ type
 const
   ameSessionProtocolLongName* = "Adaptive Message Encryption"
   defaultAmeInboxCapacity* = 64
+    ## Inbox slots a session reserves up front (64 x 96 B = about 8 KB).
+    ##
+    ##   inboxCapacity   what the session keeps for opened packets
+    ##   -------------   ---------------------------------------------
+    ##   n > 0           n slots reserved now, more added when needed
+    ##   0               nothing reserved, slots added only when needed
+    ##   -1              no inbox: a packet lives only in the open result
+    ##
+    ## Every mode grows when nobody calls `recv`; -1 is the only one that
+    ## keeps nothing. A relay neighbour needs no inbox at all.
+  ameInboxGrowing* = 0
+    ## inboxCapacity: reserve nothing, grow on demand.
+  ameNoInbox* = -1
+    ## inboxCapacity: keep no inbox; `recv` never returns anything.
   defaultAmeMaxFrameBytes* = 16_777_216
   ameBytesPerMiB* = 1_048_576'u64
   ameSessionProtocolId* = "bifrost.ame.session"

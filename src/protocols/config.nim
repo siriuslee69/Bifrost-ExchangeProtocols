@@ -113,7 +113,7 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
     raise newException(ValueError, "Bifrost maxTcpFrameBytes is invalid")
   if c.maxDacFrameBytes <= 0 or c.maxDacFrameBytes > defaultAmeMaxFrameBytes:
     raise newException(ValueError, "Bifrost maxDacFrameBytes is invalid")
-  if c.defaultAmeInboxCapacity <= 0 or c.defaultTimeoutMs <= 0:
+  if c.defaultAmeInboxCapacity < ameNoInbox or c.defaultTimeoutMs <= 0:
     raise newException(ValueError, "Bifrost AME runtime defaults are invalid")
   if c.fomkePregenerationMessages <= 0 or
       c.fomkePregenerationMessages > fomkeMaxPreparedMessages:

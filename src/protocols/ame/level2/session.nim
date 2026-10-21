@@ -104,6 +104,15 @@ proc requireAmePeerTrust*(S: AmeSession) {.role: parser.} =
   if err.len > 0:
     raise newException(ValueError, err)
 
+proc setAmeInbox*(S: var AmeSession, capacity: int) {.role: actor,
+    tag: "appApi".} =
+  ## S: connection whose inbox is replaced; queued packets are dropped.
+  ## capacity: n slots reserved, `ameInboxGrowing` (0) or `ameNoInbox` (-1).
+  if capacity < ameNoInbox:
+    raise newException(ValueError, "AME inbox capacity must be -1 or more")
+  S.keepsInbox = capacity != ameNoInbox
+  S.inbox = circ_seq.initCircSeq[AmePacket](max(capacity, 0))
+
 proc initAmeSession*(a: AmeAuthPackage,
     path: AmeTierPath, sessionId: uint64 = 0'u64,
     rootLaneId: uint32 = 1'u32, laneId: uint32 = 5'u32,
@@ -116,8 +125,6 @@ proc initAmeSession*(a: AmeAuthPackage,
   ## a/path/session/lane/runtime: exact connection configuration.
   var
     runtime: BifrostConfig = default(BifrostConfig)
-  if inboxCapacity < 0:
-    raise newException(ValueError, "AME inbox capacity must not be negative")
   requireAmeAuth(a)
   if a.sessionId == 0'u64:
     raise newException(ValueError, "AME authenticated session id is missing")
@@ -140,7 +147,7 @@ proc initAmeSession*(a: AmeAuthPackage,
   result.messageClass = messageClass
   result.peerTrustRequired = peerTrustRequired
   result.peerTrust = peerTrust
-  result.inbox = circ_seq.initCircSeq[AmePacket](inboxCapacity)
+  setAmeInbox(result, inboxCapacity)
   setCurrentAmeTier(result.path, result.auth.current.tier)
   runtime = currentBifrostConfig()
   ## The ratchet is started here, from the finished exchange and from the

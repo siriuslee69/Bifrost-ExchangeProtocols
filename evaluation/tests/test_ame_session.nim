@@ -1182,3 +1182,58 @@ suite "the session-level skip and cache controls":
     check not ameFomkeSendCacheNeedsRefill(a)
     ## Half of it spent is the point at which a refill is worth doing.
     check fomkePreparedMessages(a.fomkeSendCache) == 4
+
+suite "the inbox modes":
+  ##   capacity   reserved now   opened packet queued for recv
+  ##   --------   ------------   -----------------------------
+  ##   64         64 slots       yes
+  ##   0          nothing        yes, the inbox grows on demand
+  ##   -1         nothing        no -- only in the open result
+
+  # {.testKind: tkUnit, covers: "setAmeInbox".}
+  test "each capacity reserves and queues as its table row says":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      fixed: AmeSession = initAmeSession(exactAuth(aerResponder),
+        inboxCapacity = 64, peerTrustRequired = false)
+      growing: AmeSession = initAmeSession(exactAuth(aerResponder),
+        inboxCapacity = ameInboxGrowing, peerTrustRequired = false)
+      none: AmeSession = initAmeSession(exactAuth(aerResponder),
+        inboxCapacity = ameNoInbox, peerTrustRequired = false)
+      frame: ByteSeq = @[]
+      opened: AmeOpenResult = default(AmeOpenResult)
+      p: AmePacket = default(AmePacket)
+    check inboxCapacity(fixed) == 64
+    check inboxCapacity(growing) == 0
+    check inboxCapacity(none) == 0
+    frame = sealAmeDacFrame(sender, @[byte 7])
+    check openAmeDacFrame(fixed, frame).ok
+    check openAmeDacFrame(growing, frame).ok
+    opened = openAmeDacFrame(none, frame)
+    check opened.ok
+    check opened.packet.payload == @[byte 7]
+    check pending(fixed) == 1
+    check pending(growing) == 1
+    check inboxCapacity(growing) >= 1
+    check pending(none) == 0
+    check not recv(none, p)
+    check recv(growing, p)
+    check p.payload == @[byte 7]
+
+  # {.testKind: tkEdgeCase, covers: "setAmeInbox".}
+  test "switching a live session to no inbox drops what was queued":
+    var
+      sender: AmeSession = initAmeSession(exactAuth(aerInitiator),
+        peerTrustRequired = false)
+      receiver: AmeSession = initAmeSession(exactAuth(aerResponder),
+        peerTrustRequired = false)
+    check openAmeDacFrame(receiver, sealAmeDacFrame(sender, @[byte 1])).ok
+    check pending(receiver) == 1
+    setAmeInbox(receiver, ameNoInbox)
+    check pending(receiver) == 0
+    check not receiver.keepsInbox
+    check openAmeDacFrame(receiver, sealAmeDacFrame(sender, @[byte 2])).ok
+    check pending(receiver) == 0
+    expect ValueError:
+      setAmeInbox(receiver, -2)
