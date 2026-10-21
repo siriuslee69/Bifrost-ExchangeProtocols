@@ -1,6 +1,46 @@
 # Progress
 
-Commit Message: README: what an SK is bound to, other machines, copies, several devices
+Commit Message: Three relays: relaySuperFastUDP, relayFastExtraFrame, relaySlowExtractEncrypt
+
+## 2026-10-21 Three relays, one neighbour shape, optional inbox
+
+- Renamed and regrouped under src/protocols/relay/:
+    relaySuperFastUDP        super_fast_udp.nim   (was relay/udp_forward.nim,
+                                                  UdpForwarder -> RelaySuperFastUdp)
+    relayFastExtraFrame      fast_extra_frame.nim (was ame/level3/router.nim,
+                                                  AmeRouter -> RelayFastExtraFrame)
+    relaySlowExtractEncrypt  slow_extract_encrypt.nim + slow_envelope.nim (NEW)
+  The shared part (neighbours, directory, permission, return notes, the way
+  onward) is relay_node.nim: RelayNode, with both keyed relays as
+  `object of RelayNode`; `kind` picks how frames are opened and sealed.
+- RelayNeighbour (was AmeRoutePeer) now holds the neighbour's ADDRESS
+  (IP + port). An address -> slot table lets a relay be fed with the
+  sender's address (address -> neighbour -> link keys); every RelaySend
+  names the address to send to. One address holds one neighbour.
+  Asked by the user: the UDP forwarder needs no such mapping (no keys).
+- One feed call per relay: directory questions (AME kind 0x14) are told
+  apart inside feedRelayFastExtraFrame / feedRelaySlowExtractEncrypt.
+- relaySlowExtractEncrypt: whole AME data frame opened per link, 22-byte
+  RSE envelope inside, optional `inspect` (sees identity + payload, may
+  rewrite or refuse with arrNoRoute). Only the slow kind accepts one.
+- AME inbox modes (session.nim, `setAmeInbox`): n > 0 reserved slots
+  (default 64, ~8 KB), 0 = `ameInboxGrowing`, -1 = `ameNoInbox`. Relay
+  neighbours keep none: a neighbour went from ~11.5 KB to ~3.5 KB.
+  Measured before: 8,080 of a link's 8,880 heap bytes were the EMPTY inbox.
+- `hash(TransportAddress)` moved from the forwarder to transport/types.nim.
+- Tests: test_relay_fast_extra_frame (34), test_relay_slow_extract_encrypt
+  (10), test_relay_super_fast_udp (14), inbox modes in test_ame_session;
+  shared fixtures in evaluation/tests/relay_fixtures.nim. Examples:
+  `nimble exampleRelayFast`, `nimble exampleRelaySlow` (was exampleRouter).
+- Geist is NOT updated: it pins an older Bifrost and keeps working; its
+  geist-forwardd uses the old UdpForwarder name until the pin moves.
+
+Last problem: the inbox was believed fixed-size; `CircSeq.push` grows it,
+so every queuing mode grows without a ceiling while nobody calls `recv`.
+Not changed (a hard cap would drop packets whose keys are already spent);
+written into the README issue playbook. Also open: a client whose NAT
+hands it a new port is a stranger to the relay until it re-handshakes.
+
 
 ## 2026-10-20 Names: EK and SK
 

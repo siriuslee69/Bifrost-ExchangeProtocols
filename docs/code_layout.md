@@ -55,9 +55,6 @@ src/protocols
 │                    _wire.nim      those same four, byte for byte
 │                    _transcript.nim  the record both sides sign
 │                    _tcp/_dac/_transport.nim  running one over a socket
-│                    router.nim     multi-hop routing: directory, forward,
-│                                   deliver to self,
-│                                   return notes (docs/routing.md)
 │                    plus secure package, and the DAC relay that
 │                    assembles loop + peers + crypto
 ├── dac/
@@ -70,6 +67,15 @@ src/protocols
 │   ├── level2/  <- package planning, XOR/Reed-Solomon repair, exact repair, commit
 │   └── level3/  <- the link loop that drives all of it, plus the bounded
 │                    per-peer link table; both transport-agnostic
+├── relay/   <- three ways through a machine in the middle (README "Three relays")
+│   ├── super_fast_udp.nim        relaySuperFastUDP: bytes only, no key
+│   ├── relay_node.nim            what the two keyed relays share: neighbours
+│   │                             (id, identity, IP+port, link), directory,
+│   │                             permission, return notes, the way onward
+│   ├── fast_extra_frame.nim      relayFastExtraFrame: re-seals the ART address
+│   ├── slow_envelope.nim         the 22-byte RSE header inside an AME frame
+│   └── slow_extract_encrypt.nim  relaySlowExtractEncrypt: opens, inspects,
+│                                 re-seals the whole frame
 ├── fomke/
 │   ├── types.nim
 │   ├── level0/  <- XHKDF and protocol descriptor

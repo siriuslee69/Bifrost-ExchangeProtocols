@@ -1,4 +1,9 @@
-# Routing through AME routers
+# relayFastExtraFrame: routing through relays
+
+One of three relays (README, "Three relays, side by side"). The shared part
+-- neighbours, directory, permission, the way onward -- is
+`src/protocols/relay/relay_node.nim`; relaySlowExtractEncrypt uses the same
+rules with a different frame (`slow_envelope.nim`).
 
 ╭⟢ 1. What it is, in plain words 🌊
 ├⟢ 2. Using it 🐦‍🔥
@@ -53,16 +58,16 @@ So:
 
 ## 2. Using it 🐦‍🔥
 
-Every node -- router or endpoint -- is an `AmeRouter` with its own route
-id. An endpoint simply has one link, to its router.
+Every node -- relay or endpoint -- is a `RelayFastExtraFrame` with its own
+route id. An endpoint simply has one link, to its relay.
 
 ```nim
 import bifrost_exchange_protocols
 
 # A finished AME handshake with the router gave `link` (an AmeSession).
-var me = initAmeRouter(0x30'u64)                      # my route id
-discard me.admitAmeRoutePeer(link, 0x10'u64, "router1", acrDac,
-  router = true)
+var me = initRelayFastExtraFrame(0x30'u64)            # my route id
+discard me.admitRelayNeighbour(link, 0x10'u64, "router1", relayAddr,
+  acrDac, router = true)
 
 # 1. Ask the router itself whom I may reach (an ordinary AME frame).
 send(router, link.sealAmeRouteAsk(acrDac))
@@ -74,30 +79,31 @@ send(router, link.sealAmeRouteForward(0x20'u64, e2eFrame))
 
 # 3. Whatever comes back:
 var datagram = recv(router)
-if isAmeRouteFrame(datagram):
-  var step = me.feedAmeRouteFrame(0, datagram, nowMs)
-  if step.event == areDelivered:
-    handleEndToEnd(step.frame.origin, step.frame.payload)
+var step = me.feedRelayFastExtraFrame(relayAddr, datagram, nowMs)
+if step.event == reDelivered:
+  handleEndToEnd(step.frame.origin, step.frame.payload)
 ```
 
-The router owns sockets and link handshakes; the router module only
-decides:
+The program owns sockets and link handshakes; the relay module only
+decides. It is fed with the address a datagram came FROM (that address
+names the neighbour, and with it the link keys), and every frame it
+returns names the address it must go TO:
 
 ```nim
-var R = initAmeRouter(0x10'u64)
-R.addAmeRouteTarget(0x20'u64, "nas", ["phone"])       # directory line
-var slot = R.admitAmeRoutePeer(linkWithPhone, 0x30'u64, "phone",
-  acrDac).slot                                         # after the handshake
+var R = initRelayFastExtraFrame(0x10'u64)
+R.addRelayTarget(0x20'u64, "nas", ["phone"])          # directory line
+discard R.admitRelayNeighbour(linkWithPhone, 0x30'u64, "phone", phoneAddr,
+  acrDac)                                               # after the handshake
 
-var step = if isAmeRouteFrame(datagram): R.feedAmeRouteFrame(slot, datagram, nowMs)
-           else: R.feedAmeRouteAsk(slot, datagram)     # an AME kind 0x14 frame
+# ART frames and directory questions (AME kind 0x14) go in the same way
+var step = R.feedRelayFastExtraFrame(fromAddress, datagram, nowMs)
 for s in step.send:
-  sendTo(addressOf(s.slot), s.frame)
+  sendTo(s.address, s.frame)
 ```
 
 Runnable, with a real end-to-end AM1P handshake through the router:
-`nimble exampleRouter`. Tests: `evaluation/tests/test_ame_router.nim` (in
-`nimble test`).
+`nimble exampleRelayFast`. Tests:
+`evaluation/tests/test_relay_fast_extra_frame.nim` (in `nimble test`).
 
 ## 3. The words ✦
 
@@ -108,7 +114,7 @@ of it derives a **route key** per direction (label `AME-ROUTE-BLOCK-v1`).
 **Def. 2 (route id).** A u64 that names one node. `0` is reserved: it
 means "not filled in".
 
-**Def. 3 (node).** Anything holding an `AmeRouter`: a router, or an
+**Def. 3 (node).** Anything holding a `RelayFastExtraFrame`: a relay, or an
 endpoint with one link. Its own id is `selfId`.
 
 **Def. 4 (peer).** One neighbour of a node, in a numbered SLOT, with its
@@ -357,9 +363,13 @@ Limits, said plainly:
   what                            limit / behaviour
   ------------------------------  --------------------------------------------
   route id 0                      reserved; refused everywhere
-  a peer with the node's own id   refused by admitAmeRoutePeer
-  one id, two slots               refused: "AME route id is already connected"
-  neighbours per node             512 by default (initAmeRouter(id, capacity))
+  a peer with the node's own id   refused by admitRelayNeighbour
+  one id, two slots               refused: "relay id is already connected"
+  one address, two slots          refused: "relay address is already connected"
+  datagram from an unknown        dropped: "relay slot is empty" (also after
+  address                         a NAT gives the client a new port)
+  neighbours per node             512 by default
+                                  (initRelayFastExtraFrame(id, capacity))
   name length                     32 bytes
   directory page                  24 entries, about 1 KB of body
   route frame overhead            42 bytes

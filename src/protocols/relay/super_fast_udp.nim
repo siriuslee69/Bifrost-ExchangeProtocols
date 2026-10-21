@@ -170,13 +170,6 @@ type
     droppedTotal*: uint64
     forwardedTotal*: uint64
 
-proc hash*(a: transport_types.UdpAddress): Hash {.role: helper.} =
-  ## a: endpoint used as a table key.
-  ## Hashing the record rather than a "host:port" string built per datagram
-  ## keeps the hot path free of allocation, which matters on the weak machine
-  ## this runs on.
-  result = !$(hash(a.host) !& hash(a.port))
-
 proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     clientIdleMs: uint64 = udpForwardClientIdleMs,
     nasKeepaliveMs: uint64 = udpForwardNasKeepaliveMs,

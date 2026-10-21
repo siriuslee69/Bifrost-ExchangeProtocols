@@ -1,5 +1,5 @@
 ## -------------------------------------------------------------------------
-## AME Router Tests <- one link handshake, then end to end through routers
+## relayFastExtraFrame Tests <- one link handshake, then end to end through relays
 ## -------------------------------------------------------------------------
 ##
 ## The picture every multi-hop test below builds:
@@ -8,7 +8,7 @@
 ##
 ## Each `==X==>` is one AME LINK session: one end held by the left node,
 ## the other by the right. Every node -- the phone and the nas too -- is an
-## AmeRouter with its own id. No socket is opened; a frame is handed from
+## RelayFastExtraFrame with its own id. No socket is opened; a frame is handed from
 ## one node to the next by hand, so every rule is checked exactly.
 ##
 ##   what is checked                         where
@@ -16,8 +16,8 @@
 ##   the Gimli block opens only in place     "AME route block"
 ##   the ART frame, its tag and replay       "AME route wire"
 ##   the directory question, inside FOMKE    "AME route directory"
-##   Def. 2 (who may send) and Def. 3        "AME router, one hop"
-##   two routers, end to end, and back       "AME router, two hops"
+##   Def. 2 (who may send) and Def. 3        "relayFastExtraFrame, one hop"
+##   two routers, end to end, and back       "relayFastExtraFrame, two hops"
 
 import std/unittest
 
@@ -29,56 +29,18 @@ import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/path_triggers
 import ../../src/protocols/ame/level1/route_block
 import ../../src/protocols/ame/level2/seal_open
+import ../../src/protocols/ame/level2/session
 import ../../src/protocols/ame/level2/route_wire
 import ../../src/protocols/ame/level2/route_directory
-import ../../src/protocols/ame/level3/router
+import ../../src/protocols/transport/types as transport_types
+import ../../src/protocols/relay/relay_node
+import ../../src/protocols/relay/fast_extra_frame
 import ../../src/protocols/ame/level3/handshake
 import ../../src/protocols/ame/level3/handshake_wire
+import ./relay_fixtures
 import runePragmas
 
-const
-  rtKems: AmeKemAlgorithms = [akaX25519, akaFireSaber]
-  idR1: uint64 = 0x10'u64
-  idR2: uint64 = 0x11'u64
-  idNas: uint64 = 0x20'u64
-  idCam: uint64 = 0x21'u64
-  idPhone: uint64 = 0x30'u64
-  idLaptop: uint64 = 0x31'u64
-  nowUnix: int64 = 500'i64
-
-type
-  ## RtPair: the two ends of one link session.
-  RtPair = object
-    left: AmeSession
-    right: AmeSession
-
-proc rtLayout(): AmeSuiteLayout =
-  result = defaultAmeLayout(rtKems)
-
-proc rtTier(L: AmeSuiteLayout): AmeMaskTier =
-  result = initAmeMaskTier(L, 1'u32, initAmeTierMasks(0b11000000'u8,
-    occupiedAmeMask(L.ciphers.length), occupiedAmeMask(L.macs.length),
-    occupiedAmeMask(L.hashes.length), occupiedAmeMask(L.signatures.length),
-    occupiedAmeMask(L.kdfs.length)))
-
-proc rtAuth(role: AmeEndpointRole, seed: byte): AmeAuthPackage =
-  ## role/seed: one end; the same seed on both roles makes a pair.
-  var
-    layout: AmeSuiteLayout = rtLayout()
-    tier: AmeMaskTier = rtTier(layout)
-    state: AmeExchangeState = initAmeExchangeState(rtKems)
-  applyAmeExchange(state, layout, initAmeExchangeRequest(rtKems, tier,
-    0b11000000'u8), [@[seed, 2'u8, 3'u8, 4'u8], @[seed, 6'u8, 7'u8, 8'u8]])
-  result = initAmeAuthPackage(layout, tier, state, endpointRole = role)
-
-proc rtPair(seed: byte): RtPair =
-  ## seed: which link; every link in a test gets its own.
-  result.left = initAmeSession(rtAuth(aerInitiator, seed),
-    peerTrustRequired = false)
-  result.right = initAmeSession(rtAuth(aerResponder, seed),
-    peerTrustRequired = false)
-
-proc onlyFrame(step: AmeRouteStep, slot: int): ByteSeq =
+proc onlyFrame(step: RelayStep, slot: int): ByteSeq =
   ## step/slot: the single frame the node queued, which must be for slot.
   check step.send.len == 1
   check step.send[0].slot == slot
@@ -291,52 +253,52 @@ suite "AME route directory":
     expect ValueError:
       discard sealAmeRouteDirectory(link.left, acrDac, page)
 
-suite "AME router, one hop":
+suite "relayFastExtraFrame, one hop":
   ## phone (0x30), laptop (0x31) and nas (0x20) on one router (0x10).
   ## nas is visible to the phone; cam is listed for the laptop only.
   setup:
     var
-      R: AmeRouter = initAmeRouter(idR1, 8)
-      phoneNode: AmeRouter = initAmeRouter(idPhone, 1)
-      nasNode: AmeRouter = initAmeRouter(idNas, 1)
+      R: RelayFastExtraFrame = initRelayFastExtraFrame(idR1, 8)
+      phoneNode: RelayFastExtraFrame = initRelayFastExtraFrame(idPhone, 1)
+      nasNode: RelayFastExtraFrame = initRelayFastExtraFrame(idNas, 1)
       phone: RtPair = rtPair(20'u8)
       laptop: RtPair = rtPair(21'u8)
       nas: RtPair = rtPair(22'u8)
       sPhone: int = -1
       sLaptop: int = -1
       sNas: int = -1
-      step: AmeRouteStep = default(AmeRouteStep)
+      step: RelayStep = default(RelayStep)
       dir: AmeRouteDirectory = default(AmeRouteDirectory)
-    R.addAmeRouteTarget(idNas, "nas", ["phone"])
-    R.addAmeRouteTarget(idCam, "cam", ["laptop"])
-    sPhone = R.admitAmeRoutePeer(phone.right, idPhone, "phone", acrDac).slot
-    sLaptop = R.admitAmeRoutePeer(laptop.right, idLaptop, "laptop",
+    R.addRelayTarget(idNas, "nas", ["phone"])
+    R.addRelayTarget(idCam, "cam", ["laptop"])
+    sPhone = R.admitRelayNeighbour(phone.right, idPhone, "phone", at(idPhone), acrDac).slot
+    sLaptop = R.admitRelayNeighbour(laptop.right, idLaptop, "laptop", at(idLaptop),
       acrDac).slot
-    sNas = R.admitAmeRoutePeer(nas.right, idNas, "nas", acrDac).slot
-    discard phoneNode.admitAmeRoutePeer(phone.left, idR1, "router1", acrDac,
+    sNas = R.admitRelayNeighbour(nas.right, idNas, "nas", at(idNas), acrDac).slot
+    discard phoneNode.admitRelayNeighbour(phone.left, idR1, "router1", at(idR1), acrDac,
       router = true)
-    discard nasNode.admitAmeRoutePeer(nas.left, idR1, "router1", acrDac,
+    discard nasNode.admitRelayNeighbour(nas.left, idR1, "router1", at(idR1), acrDac,
       router = true)
 
-  # {.testKind: tkUnit, covers: "feedAmeRouteAsk".}
+  # {.testKind: tkUnit, covers: "feedRelayAsk".}
   test "the directory lists only what this identity may see":
-    step = R.feedAmeRouteAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac))
-    check step.event == areAnswered
+    step = R.feedRelayAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac))
+    check step.event == reAnswered
     dir = openAmeRouteDirectory(phone.left, acrDac, onlyFrame(step, sPhone))
     check dir.kind == araDirectory
     check dir.total == 1'u16
     check dir.entries == @[AmeRouteEntry(id: idNas, name: "nas")]
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteAsk".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayAsk".}
   test "a long directory is read in pages of 24":
     var
       i: int = 0
       seen: seq[AmeRouteEntry] = @[]
     while i < 30:
-      R.addAmeRouteTarget(0x1000'u64 + uint64(i), "t" & $i, ["*"])
+      R.addRelayTarget(0x1000'u64 + uint64(i), "t" & $i, ["*"])
       i = i + 1
     while seen.len < 31:
-      step = R.feedAmeRouteAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac,
+      step = R.feedRelayAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac,
         uint16(seen.len)))
       dir = openAmeRouteDirectory(phone.left, acrDac, onlyFrame(step, sPhone))
       check dir.total == 31'u16
@@ -345,116 +307,163 @@ suite "AME router, one hop":
       seen.add(dir.entries)
     check seen[0].name == "nas"
     check seen[30].name == "t29"
-    step = R.feedAmeRouteAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac,
+    step = R.feedRelayAsk(sPhone, sealAmeRouteAsk(phone.left, acrDac,
       500'u16))
     dir = openAmeRouteDirectory(phone.left, acrDac, onlyFrame(step, sPhone))
     check dir.ok
     check dir.entries.len == 0
 
-  # {.testKind: tkIntegration, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkIntegration, covers: "feedRelayFastExtraFrame".}
   test "forward, deliver, and the answer back":
     var
       sent: ByteSeq = @[]
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
       @[byte 1, 2, 3]), 0'u32)
-    check step.event == areForwarded
+    check step.event == reForwarded
     sent = onlyFrame(step, sNas)
-    step = nasNode.feedAmeRouteFrame(0, sent, 0'u32)
-    check step.event == areDelivered
+    step = nasNode.feedRelayFastExtraFrame(0, sent, 0'u32)
+    check step.event == reDelivered
     check step.frame.target == idNas
     check step.frame.origin == idPhone
     check step.frame.hopsLeft == ameRouteDefaultHops - 1'u8
     check step.frame.payload == @[byte 1, 2, 3]
     ## The nas has no line visible to it naming the phone. It may answer
     ## anyway, because the phone may write to it (Def. 2, the reverse).
-    step = R.feedAmeRouteFrame(sNas, sealAmeRouteForward(nas.left,
+    step = R.feedRelayFastExtraFrame(sNas, sealAmeRouteForward(nas.left,
       step.frame.origin, @[byte 9]), 0'u32)
-    check step.event == areForwarded
-    step = phoneNode.feedAmeRouteFrame(0, onlyFrame(step, sPhone), 0'u32)
-    check step.event == areDelivered
+    check step.event == reForwarded
+    step = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, sPhone), 0'u32)
+    check step.event == reDelivered
     check step.frame.origin == idNas
     check step.frame.payload == @[byte 9]
 
-  # {.testKind: tkUnit, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkUnit, covers: "feedRelayFastExtraFrame".}
   test "a forward for the router itself is delivered there":
-    step = R.feedAmeRouteFrame(sLaptop, sealAmeRouteForward(laptop.left,
+    step = R.feedRelayFastExtraFrame(sLaptop, sealAmeRouteForward(laptop.left,
       idR1, @[byte 5]), 0'u32)
-    check step.event == areDelivered
+    check step.event == reDelivered
     check step.send.len == 0
     check step.frame.origin == idLaptop
     check step.frame.payload == @[byte 5]
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
   test "hidden and unknown targets get the same refusal":
     var
-      hidden: AmeRouteStep = default(AmeRouteStep)
-      unknown: AmeRouteStep = default(AmeRouteStep)
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(phone.left,
+      hidden: RelayStep = default(RelayStep)
+      unknown: RelayStep = default(RelayStep)
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left,
       idCam, @[byte 1]), 0'u32)
-    check step.event == areRefused
-    hidden = phoneNode.feedAmeRouteFrame(0, onlyFrame(step, sPhone), 0'u32)
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(phone.left,
+    check step.event == reRefused
+    hidden = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, sPhone), 0'u32)
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left,
       0x99'u64, @[byte 1]), 0'u32)
-    unknown = phoneNode.feedAmeRouteFrame(0, onlyFrame(step, sPhone), 0'u32)
-    check hidden.event == areRefused
+    unknown = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, sPhone), 0'u32)
+    check hidden.event == reRefused
     check hidden.frame.refusal == arrNoRoute
     check unknown.frame.refusal == hidden.frame.refusal
     check hidden.frame.target == idCam
     check hidden.send.len == 0
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
   test "a forward with no hops left is refused":
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
       @[byte 1], 0'u8), 0'u32)
-    step = phoneNode.feedAmeRouteFrame(0, onlyFrame(step, sPhone), 0'u32)
+    step = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, sPhone), 0'u32)
     check step.frame.refusal == arrHopsSpent
 
-  # {.testKind: tkRegression, covers: "feedAmeRouteFrame", pins: "a client could claim any origin".}
+  # {.testKind: tkRegression, covers: "feedRelayFastExtraFrame", pins: "a client could claim any origin".}
   test "a client's own origin claim is overwritten":
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
       @[byte 7], 3'u8, idLaptop), 0'u32)
-    step = nasNode.feedAmeRouteFrame(0, onlyFrame(step, sNas), 0'u32)
+    step = nasNode.feedRelayFastExtraFrame(0, onlyFrame(step, sNas), 0'u32)
     check step.frame.origin == idPhone
 
-  # {.testKind: tkRegression, covers: "feedAmeRouteFrame", pins: "a captured route frame could be sent again".}
+  # {.testKind: tkRegression, covers: "feedRelayFastExtraFrame", pins: "a captured route frame could be sent again".}
   test "a replayed forward stops at the router":
     var
       frame: ByteSeq = sealAmeRouteForward(phone.left, idNas, @[byte 1])
-    check R.feedAmeRouteFrame(sPhone, frame, 0'u32).event == areForwarded
-    step = R.feedAmeRouteFrame(sPhone, frame, 0'u32)
-    check step.event == areDropped
+    check R.feedRelayFastExtraFrame(sPhone, frame, 0'u32).event == reForwarded
+    step = R.feedRelayFastExtraFrame(sPhone, frame, 0'u32)
+    check step.event == reDropped
     check step.send.len == 0
     check step.err == "AME route replay rejected"
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
   test "junk, a frame for another link and an empty slot are dropped":
-    step = R.feedAmeRouteFrame(sPhone, @[byte 1, 2, 3], 0'u32)
-    check step.event == areDropped
-    step = R.feedAmeRouteFrame(sPhone, sealAmeRouteForward(laptop.left,
+    step = R.feedRelayFastExtraFrame(sPhone, @[byte 1, 2, 3], 0'u32)
+    check step.event == reDropped
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(laptop.left,
       idNas, @[byte 1]), 0'u32)
-    check step.event == areDropped
-    step = R.feedAmeRouteFrame(7, sealAmeRouteForward(phone.left, idNas,
+    check step.event == reDropped
+    step = R.feedRelayFastExtraFrame(7, sealAmeRouteForward(phone.left, idNas,
       @[byte 1]), 0'u32)
-    check step.event == areDropped
+    check step.event == reDropped
     check step.send.len == 0
 
-  # {.testKind: tkEdgeCase, covers: "admitAmeRoutePeer".}
+  # {.testKind: tkEdgeCase, covers: "admitRelayNeighbour".}
   test "an id is connected once, and a full router says so":
     var
-      tiny: AmeRouter = initAmeRouter(idR2, 1)
-    check not R.admitAmeRoutePeer(phone.right, idPhone, "phone", acrDac).ok
-    check not R.admitAmeRoutePeer(phone.right, idR1, "self", acrDac).ok
-    check tiny.admitAmeRoutePeer(phone.right, idPhone, "phone", acrDac).ok
-    check tiny.admitAmeRoutePeer(nas.right, idNas, "nas", acrDac).err ==
-      "AME router is full"
+      tiny: RelayFastExtraFrame = initRelayFastExtraFrame(idR2, 1)
+    check not R.admitRelayNeighbour(phone.right, idPhone, "phone", at(idPhone), acrDac).ok
+    check not R.admitRelayNeighbour(phone.right, idR1, "self", at(idR1), acrDac).ok
+    check tiny.admitRelayNeighbour(phone.right, idPhone, "phone", at(idPhone), acrDac).ok
+    check tiny.admitRelayNeighbour(nas.right, idNas, "nas", at(idNas), acrDac).err ==
+      "relay is full"
 
-suite "AME router, two hops":
+  # {.testKind: tkUnit, covers: "relaySlotOf".}
+  test "the sender's address names the neighbour, and every frame out names its address":
+    check R.relaySlotOf(at(idPhone)) == sPhone
+    check R.relaySlotOf(at(idNas)) == sNas
+    step = R.feedRelayFastExtraFrame(at(idPhone), sealAmeRouteForward(
+      phone.left, idNas, @[byte 5]), 0'u32)
+    check step.event == reForwarded
+    check step.slot == sPhone
+    check step.send.len == 1
+    check step.send[0].address == at(idNas)
+    step = nasNode.feedRelayFastExtraFrame(at(idR1), step.send[0].frame, 0'u32)
+    check step.event == reDelivered
+    check step.frame.origin == idPhone
+
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
+  test "a datagram from an address that never finished a handshake is dropped":
+    step = R.feedRelayFastExtraFrame(initTransportAddress("203.0.113.9",
+      1'u16), sealAmeRouteForward(phone.left, idNas, @[byte 1]), 0'u32)
+    check step.event == reDropped
+    check step.err == "relay slot is empty"
+    check step.send.len == 0
+
+  # {.testKind: tkUnit, covers: "feedRelayFastExtraFrame".}
+  test "a directory question goes through the same feed call":
+    step = R.feedRelayFastExtraFrame(at(idPhone), sealAmeRouteAsk(phone.left,
+      acrDac), 0'u32)
+    check step.event == reAnswered
+    check step.send[0].address == at(idPhone)
+
+  # {.testKind: tkEdgeCase, covers: "admitRelayNeighbour".}
+  test "one address holds one neighbour; leaving frees it":
+    var
+      extra: RtPair = rtPair(23'u8)
+    check R.admitRelayNeighbour(extra.right, 0x44'u64, "extra", at(idPhone),
+      acrDac).err == "relay address is already connected"
+    R.releaseRelayNeighbour(sPhone)
+    check R.relaySlotOf(at(idPhone)) == -1
+    check R.admitRelayNeighbour(extra.right, 0x44'u64, "extra", at(idPhone),
+      acrDac).ok
+
+  # {.testKind: tkUnit, covers: "admitRelayNeighbour".}
+  test "a neighbour's link keeps no inbox":
+    check not R.neighbours[sPhone].session.keepsInbox
+    check inboxCapacity(R.neighbours[sPhone].session) == 0
+    check R.neighbours[sPhone].address == at(idPhone)
+
+
+suite "relayFastExtraFrame, two hops":
   setup:
     var
-      phoneNode: AmeRouter = initAmeRouter(idPhone, 1)
-      R1: AmeRouter = initAmeRouter(idR1, 4)
-      R2: AmeRouter = initAmeRouter(idR2, 4)
-      nasNode: AmeRouter = initAmeRouter(idNas, 1)
+      phoneNode: RelayFastExtraFrame = initRelayFastExtraFrame(idPhone, 1)
+      R1: RelayFastExtraFrame = initRelayFastExtraFrame(idR1, 4)
+      R2: RelayFastExtraFrame = initRelayFastExtraFrame(idR2, 4)
+      nasNode: RelayFastExtraFrame = initRelayFastExtraFrame(idNas, 1)
       phone: RtPair = rtPair(30'u8)
       trunk: RtPair = rtPair(31'u8)
       nas: RtPair = rtPair(32'u8)
@@ -462,22 +471,22 @@ suite "AME router, two hops":
       pR2: int = -1
       qR1: int = -1
       qNas: int = -1
-      step: AmeRouteStep = default(AmeRouteStep)
-    R1.addAmeRouteTarget(idNas, "nas", ["phone"], via = idR2)
-    R1.addAmeRouteTarget(idCam, "cam", ["phone"], via = idR2)
-    R2.addAmeRouteTarget(idNas, "nas", ["router1"])
-    pPhone = R1.admitAmeRoutePeer(phone.right, idPhone, "phone", acrDac).slot
-    pR2 = R1.admitAmeRoutePeer(trunk.left, idR2, "router2", acrDac,
+      step: RelayStep = default(RelayStep)
+    R1.addRelayTarget(idNas, "nas", ["phone"], via = idR2)
+    R1.addRelayTarget(idCam, "cam", ["phone"], via = idR2)
+    R2.addRelayTarget(idNas, "nas", ["router1"])
+    pPhone = R1.admitRelayNeighbour(phone.right, idPhone, "phone", at(idPhone), acrDac).slot
+    pR2 = R1.admitRelayNeighbour(trunk.left, idR2, "router2", at(idR2), acrDac,
       router = true).slot
-    qR1 = R2.admitAmeRoutePeer(trunk.right, idR1, "router1", acrDac,
+    qR1 = R2.admitRelayNeighbour(trunk.right, idR1, "router1", at(idR1), acrDac,
       router = true).slot
-    qNas = R2.admitAmeRoutePeer(nas.right, idNas, "nas", acrDac).slot
-    discard phoneNode.admitAmeRoutePeer(phone.left, idR1, "router1", acrDac,
+    qNas = R2.admitRelayNeighbour(nas.right, idNas, "nas", at(idNas), acrDac).slot
+    discard phoneNode.admitRelayNeighbour(phone.left, idR1, "router1", at(idR1), acrDac,
       router = true)
-    discard nasNode.admitAmeRoutePeer(nas.left, idR2, "router2", acrDac,
+    discard nasNode.admitRelayNeighbour(nas.left, idR2, "router2", at(idR2), acrDac,
       router = true)
 
-  # {.testKind: tkIntegration, covers: "feedAmeRouteFrame|sealAmeRouteForward".}
+  # {.testKind: tkIntegration, covers: "feedRelayFastExtraFrame|sealAmeRouteForward".}
   test "an end-to-end AM1P handshake and session through two routers":
     ## Only the phone and the nas hold the PSK. Every handshake record and
     ## the first session frame cross both routers as route payload, and the
@@ -501,27 +510,27 @@ suite "AME router, two hops":
     proc toNas(payload: openArray[uint8]): ByteSeq =
       ## phone -> R1 -> R2 -> nas; returns what the nas node received.
       var
-        s: AmeRouteStep = R1.feedAmeRouteFrame(pPhone,
+        s: RelayStep = R1.feedRelayFastExtraFrame(pPhone,
           sealAmeRouteForward(phone.left, idNas, payload), 0'u32)
-      check s.event == areForwarded
+      check s.event == reForwarded
       check containsWindow(onlyFrame(s, pR2), payload)
-      s = R2.feedAmeRouteFrame(qR1, onlyFrame(s, pR2), 0'u32)
-      check s.event == areForwarded
-      s = nasNode.feedAmeRouteFrame(0, onlyFrame(s, qNas), 0'u32)
-      check s.event == areDelivered
+      s = R2.feedRelayFastExtraFrame(qR1, onlyFrame(s, pR2), 0'u32)
+      check s.event == reForwarded
+      s = nasNode.feedRelayFastExtraFrame(0, onlyFrame(s, qNas), 0'u32)
+      check s.event == reDelivered
       check s.frame.origin == idPhone
       result = s.frame.payload
 
     proc toPhone(payload: openArray[uint8]): ByteSeq =
       ## nas -> R2 -> R1 -> phone, by the return note R2 made.
       var
-        s: AmeRouteStep = R2.feedAmeRouteFrame(qNas,
+        s: RelayStep = R2.feedRelayFastExtraFrame(qNas,
           sealAmeRouteForward(nas.left, idPhone, payload), 0'u32)
-      check s.event == areForwarded
-      s = R1.feedAmeRouteFrame(pR2, onlyFrame(s, qR1), 0'u32)
-      check s.event == areForwarded
-      s = phoneNode.feedAmeRouteFrame(0, onlyFrame(s, pPhone), 0'u32)
-      check s.event == areDelivered
+      check s.event == reForwarded
+      s = R1.feedRelayFastExtraFrame(pR2, onlyFrame(s, qR1), 0'u32)
+      check s.event == reForwarded
+      s = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(s, pPhone), 0'u32)
+      check s.event == reDelivered
       check s.frame.origin == idNas
       result = s.frame.payload
 
@@ -548,12 +557,12 @@ suite "AME router, two hops":
     check opened.packet.payload == secret
     check not containsWindow(sealed, secret)
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
   test "each hop seals the address anew; the payload stays the same":
     var
       first: ByteSeq = sealAmeRouteForward(phone.left, idNas, @[byte 1, 2])
       second: ByteSeq = @[]
-    step = R1.feedAmeRouteFrame(pPhone, first, 0'u32)
+    step = R1.feedRelayFastExtraFrame(pPhone, first, 0'u32)
     second = onlyFrame(step, pR2)
     check first[ameRouteHeaderLen ..< ameRouteOverhead] !=
       second[ameRouteHeaderLen ..< ameRouteOverhead]
@@ -561,56 +570,56 @@ suite "AME router, two hops":
     check first[5] == ameRouteDefaultHops
     check second[5] == ameRouteDefaultHops - 1'u8
 
-  # {.testKind: tkEdgeCase, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkEdgeCase, covers: "feedRelayFastExtraFrame".}
   test "a return note answers only the one written to, and only for a while":
     var
       other: RtPair = rtPair(33'u8)
-      qOther: int = R2.admitAmeRoutePeer(other.right, 0x40'u64, "other",
+      qOther: int = R2.admitRelayNeighbour(other.right, 0x40'u64, "other", at(0x40'u64),
         acrDac).slot
-      otherNode: AmeRouter = initAmeRouter(0x40'u64, 1)
-    discard otherNode.admitAmeRoutePeer(other.left, idR2, "router2", acrDac,
+      otherNode: RelayFastExtraFrame = initRelayFastExtraFrame(0x40'u64, 1)
+    discard otherNode.admitRelayNeighbour(other.left, idR2, "router2", at(idR2), acrDac,
       router = true)
-    step = R1.feedAmeRouteFrame(pPhone, sealAmeRouteForward(phone.left,
+    step = R1.feedRelayFastExtraFrame(pPhone, sealAmeRouteForward(phone.left,
       idNas, @[byte 1]), 0'u32)
-    discard R2.feedAmeRouteFrame(qR1, onlyFrame(step, pR2), 0'u32)
+    discard R2.feedRelayFastExtraFrame(qR1, onlyFrame(step, pR2), 0'u32)
     ## The phone wrote to the nas, not to `other`: the note is no ticket
     ## for anyone else on router 2.
-    step = R2.feedAmeRouteFrame(qOther, sealAmeRouteForward(other.left,
+    step = R2.feedRelayFastExtraFrame(qOther, sealAmeRouteForward(other.left,
       idPhone, @[byte 2]), 10'u32)
-    step = otherNode.feedAmeRouteFrame(0, onlyFrame(step, qOther), 10'u32)
+    step = otherNode.feedRelayFastExtraFrame(0, onlyFrame(step, qOther), 10'u32)
     check step.frame.refusal == arrNoRoute
     ## And once it has expired, the nas itself is refused as well.
-    step = R2.feedAmeRouteFrame(qNas, sealAmeRouteForward(nas.left, idPhone,
-      @[byte 3]), ameRouteReturnMs + 1'u32)
-    step = nasNode.feedAmeRouteFrame(0, onlyFrame(step, qNas),
-      ameRouteReturnMs + 1'u32)
+    step = R2.feedRelayFastExtraFrame(qNas, sealAmeRouteForward(nas.left, idPhone,
+      @[byte 3]), relayReturnMs + 1'u32)
+    step = nasNode.feedRelayFastExtraFrame(0, onlyFrame(step, qNas),
+      relayReturnMs + 1'u32)
     check step.frame.refusal == arrNoRoute
 
-  # {.testKind: tkIntegration, covers: "feedAmeRouteFrame".}
+  # {.testKind: tkIntegration, covers: "feedRelayFastExtraFrame".}
   test "a refusal from the far router finds its way back":
     ## Router 1 lists cam behind router 2; router 2 has never heard of it.
-    step = R1.feedAmeRouteFrame(pPhone, sealAmeRouteForward(phone.left,
+    step = R1.feedRelayFastExtraFrame(pPhone, sealAmeRouteForward(phone.left,
       idCam, @[byte 1]), 0'u32)
-    check step.event == areForwarded
-    step = R2.feedAmeRouteFrame(qR1, onlyFrame(step, pR2), 0'u32)
-    check step.event == areRefused
-    step = R1.feedAmeRouteFrame(pR2, onlyFrame(step, qR1), 0'u32)
-    check step.event == areRefused
-    step = phoneNode.feedAmeRouteFrame(0, onlyFrame(step, pPhone), 0'u32)
-    check step.event == areRefused
+    check step.event == reForwarded
+    step = R2.feedRelayFastExtraFrame(qR1, onlyFrame(step, pR2), 0'u32)
+    check step.event == reRefused
+    step = R1.feedRelayFastExtraFrame(pR2, onlyFrame(step, qR1), 0'u32)
+    check step.event == reRefused
+    step = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, pPhone), 0'u32)
+    check step.event == reRefused
     check step.frame.target == idCam
     check step.frame.origin == idPhone
     check step.frame.refusal == arrNoRoute
 
-  # {.testKind: tkRegression, covers: "feedAmeRouteFrame", pins: "two routers pointing at each other forward forever".}
+  # {.testKind: tkRegression, covers: "feedRelayFastExtraFrame", pins: "two routers pointing at each other forward forever".}
   test "two routers pointing at each other stop at the first bounce":
     ## Router 2 is (wrongly) told cam is behind router 1, while router 1
     ## says cam is behind router 2. Router 2 would send the forward straight
     ## back where it came from, and that is refused outright. Longer loops
     ## are what `hopsLeft` is for.
-    R2.addAmeRouteTarget(idCam, "cam", ["*"], via = idR1)
-    step = R1.feedAmeRouteFrame(pPhone, sealAmeRouteForward(phone.left,
+    R2.addRelayTarget(idCam, "cam", ["*"], via = idR1)
+    step = R1.feedRelayFastExtraFrame(pPhone, sealAmeRouteForward(phone.left,
       idCam, @[byte 1]), 0'u32)
-    check step.event == areForwarded
-    step = R2.feedAmeRouteFrame(qR1, onlyFrame(step, pR2), 0'u32)
-    check step.event == areRefused
+    check step.event == reForwarded
+    step = R2.feedRelayFastExtraFrame(qR1, onlyFrame(step, pR2), 0'u32)
+    check step.event == reRefused

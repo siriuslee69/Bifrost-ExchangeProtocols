@@ -2,7 +2,7 @@
 ## Transport Types <- shared TCP/TLS/UDP endpoint profile records
 ## -----------------------------------------------------------------
 
-import std/strutils
+import std/[strutils, hashes]
 
 import ../types
 import runePragmas
@@ -121,11 +121,11 @@ proc defaultTlsConfig*(): TlsConfig {.role: configurator.} =
 proc normalizeTransportHostValue(h: string): string {.role: parser.} =
   ## h: host-only address value without scheme or embedded port.
   var
-    t: string
-    inner: string
-    colonCount: int
-    i: int
-    ch: char
+    t: string = ""
+    inner: string = ""
+    colonCount: int = 0
+    i: int = 0
+    ch: char = '\0'
   t = h.strip()
   if t.len == 0:
     raise newException(ValueError, "transport host must not be blank")
@@ -164,6 +164,12 @@ proc initTransportAddress*(h: string, p: uint16): TransportAddress {.role: confi
   ## initTransportAddress: initialize transport address.
   result.host = normalizeTransportHostValue(h)
   result.port = p
+
+proc hash*(a: TransportAddress): Hash {.role: helper.} =
+  ## a: endpoint used as a table key (relays map address -> slot).
+  ## Hashing the record rather than a "host:port" string built per datagram
+  ## keeps the hot path free of allocation.
+  result = !$(hash(a.host) !& hash(a.port))
 
 proc initTcpAddress*(h: string, p: uint16): TcpAddress {.role: configurator.} =
   ## initTcpAddress: initialize TCP address.

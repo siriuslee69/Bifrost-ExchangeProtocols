@@ -88,7 +88,7 @@ AME authentication modes (AM1A / AM1S / AM1P / AM1P+S)
   -> proof bytes a frame-proved rotation should not carry are refused
   -> the same, over a real TCP socket, through the driver
 
-Routing through one or two routers               (test_ame_router.nim)
+relayFastExtraFrame: one or two relays     (test_relay_fast_extra_frame.nim)
   -> the Gimli address block opens only with its key and nonce
   -> an ART frame carries the payload untouched; an AME frame is not one
   -> a route frame seen once is refused the second time; one older than
@@ -107,6 +107,19 @@ Routing through one or two routers               (test_ame_router.nim)
   -> a return note answers only the one written to, and expires
   -> a refusal from the far router finds its way back to the sender
   -> two routers pointing at each other stop at the first bounce
+  -> the sender's address names the neighbour; every frame out names the
+     address it goes to; a stranger's datagram is dropped
+  -> one address holds one neighbour; leaving frees it
+  -> a directory question goes through the same feed call
+  -> a neighbour's link keeps no inbox
+
+relaySlowExtractEncrypt              (test_relay_slow_extract_encrypt.nim)
+  -> the 22-byte envelope; short, foreign, unknown, reasonless ones refused
+  -> forward, deliver and the answer back; the relay reads the payload
+  -> a client's origin claim is overwritten; a hidden target is refused
+  -> strangers, junk and a replayed AME frame are dropped
+  -> the inspector sees the identity, may rewrite or refuse (arrNoRoute)
+  -> a fast relay cannot be given an inspector
 
 AM1P sealed hello, AM1P+S, and the session key   (test_ame_psk_modes.nim)
   -> no KEM public key of an AM1P hello crosses the wire in the clear

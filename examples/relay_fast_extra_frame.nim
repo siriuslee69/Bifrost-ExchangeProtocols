@@ -1,8 +1,12 @@
 ## -------------------------------------------------------------------------
-## AME Router Example <- one link handshake, then end to end through it
+## relayFastExtraFrame Example <- one link handshake, then end to end through it
 ## -------------------------------------------------------------------------
 ##
 ##   phone (0x30) ==link A==> router (0x10) ==link B==> nas (0x20)
+##   192.0.2.30:40030          198.51.100.10:47656         192.0.2.20:40020
+##
+##   Every datagram is fed with the address it came from: address -> the
+##   neighbour -> its link keys. Every frame that leaves names its address.
 ##
 ##   1. phone asks the router who it may reach   (AME frame, FOMKE-sealed)
 ##   2. phone and nas run an AM1P handshake       (inside ART route frames)
@@ -18,32 +22,13 @@
 import std/strutils
 
 import bifrost_exchange_protocols
+import ./relay_links
 
 const
-  kems: AmeKemAlgorithms = [akaX25519, akaX25519]
   idRouter: uint64 = 0x10'u64
   idNas: uint64 = 0x20'u64
   idPhone: uint64 = 0x30'u64
   e2eSession: uint64 = 0x5151'u64
-
-proc linkPair(): tuple[left, right: AmeSession] =
-  ## Both ends of one fresh link, as a finished handshake leaves them.
-  var
-    layout: AmeSuiteLayout = defaultAmeLayout(kems)
-    tier: AmeMaskTier = fullAmeMaskTier(layout, 1'u32)
-    request: AmeExchangeRequest = initAmeExchangeRequest(kems, tier,
-      0b11000000'u8)
-    keys: AmeExchangeKeys = generateAmeExchangeKeys(kems, request)
-    sealed: AmeExchangeResult = sealAmeExchange(kems, request, keys.publicKeys)
-    leftState: AmeExchangeState = initAmeExchangeState(kems)
-    rightState: AmeExchangeState = initAmeExchangeState(kems)
-  applyAmeExchange(leftState, layout, request, sealed.sharedSecrets)
-  applyAmeExchange(rightState, layout, request, openAmeExchange(kems,
-    request, sealed.envelopes, keys.secretKeys))
-  result.left = initAmeSession(initAmeAuthPackage(layout, tier, leftState,
-    endpointRole = aerInitiator), peerTrustRequired = false)
-  result.right = initAmeSession(initAmeAuthPackage(layout, tier, rightState,
-    endpointRole = aerResponder), peerTrustRequired = false)
 
 proc text(A: openArray[uint8]): string =
   ## A: bytes shown as text.
@@ -55,12 +40,13 @@ when isMainModule:
   var
     a: tuple[left, right: AmeSession] = linkPair()   # phone <-> router
     b: tuple[left, right: AmeSession] = linkPair()   # nas   <-> router
-    router: AmeRouter = initAmeRouter(idRouter)
-    phoneNode: AmeRouter = initAmeRouter(idPhone, 1)
-    nasNode: AmeRouter = initAmeRouter(idNas, 1)
-    slotPhone: int = -1
-    slotNas: int = -1
-    step: AmeRouteStep = default(AmeRouteStep)
+    phoneAt: UdpAddress = initTransportAddress("192.0.2.30", 40030'u16)
+    nasAt: UdpAddress = initTransportAddress("192.0.2.20", 40020'u16)
+    routerAt: UdpAddress = initTransportAddress("198.51.100.10", 47656'u16)
+    router: RelayFastExtraFrame = initRelayFastExtraFrame(idRouter)
+    phoneNode: RelayFastExtraFrame = initRelayFastExtraFrame(idPhone, 1)
+    nasNode: RelayFastExtraFrame = initRelayFastExtraFrame(idNas, 1)
+    step: RelayStep = default(RelayStep)
     dir: AmeRouteDirectory = default(AmeRouteDirectory)
     layout: AmeSuiteLayout = defaultAmeLayout(kems)
     tier: AmeMaskTier = fullAmeMaskTier(layout, 1'u32)
@@ -76,32 +62,36 @@ when isMainModule:
 
   proc phoneToNas(payload: openArray[uint8]): ByteSeq =
     ## phone -> router -> nas. Returns what the nas node received.
-    step = router.feedAmeRouteFrame(slotPhone,
+    step = router.feedRelayFastExtraFrame(phoneAt,
       a.left.sealAmeRouteForward(idNas, payload), 0'u32)
-    step = nasNode.feedAmeRouteFrame(0, step.send[0].frame, 0'u32)
-    doAssert step.event == areDelivered and step.frame.origin == idPhone
+    doAssert step.send[0].address == nasAt
+    step = nasNode.feedRelayFastExtraFrame(routerAt, step.send[0].frame, 0'u32)
+    doAssert step.event == reDelivered and step.frame.origin == idPhone
     result = step.frame.payload
 
   proc nasToPhone(payload: openArray[uint8]): ByteSeq =
     ## nas -> router -> phone. Returns what the phone node received.
-    step = router.feedAmeRouteFrame(slotNas,
+    step = router.feedRelayFastExtraFrame(nasAt,
       b.left.sealAmeRouteForward(idPhone, payload), 0'u32)
-    step = phoneNode.feedAmeRouteFrame(0, step.send[0].frame, 0'u32)
-    doAssert step.event == areDelivered and step.frame.origin == idNas
+    doAssert step.send[0].address == phoneAt
+    step = phoneNode.feedRelayFastExtraFrame(routerAt, step.send[0].frame, 0'u32)
+    doAssert step.event == reDelivered and step.frame.origin == idNas
     result = step.frame.payload
 
   ## The router's directory, and its two links. Each endpoint holds the
   ## other end of its link, marked as a router.
-  router.addAmeRouteTarget(idNas, "nas", ["phone"])
-  slotPhone = router.admitAmeRoutePeer(a.right, idPhone, "phone", acrDac).slot
-  slotNas = router.admitAmeRoutePeer(b.right, idNas, "nas", acrDac).slot
-  discard phoneNode.admitAmeRoutePeer(a.left, idRouter, "router", acrDac,
-    router = true)
-  discard nasNode.admitAmeRoutePeer(b.left, idRouter, "router", acrDac,
-    router = true)
+  router.addRelayTarget(idNas, "nas", ["phone"])
+  doAssert router.admitRelayNeighbour(a.right, idPhone, "phone", phoneAt,
+    acrDac).ok
+  doAssert router.admitRelayNeighbour(b.right, idNas, "nas", nasAt, acrDac).ok
+  doAssert phoneNode.admitRelayNeighbour(a.left, idRouter, "router", routerAt,
+    acrDac, router = true).ok
+  doAssert nasNode.admitRelayNeighbour(b.left, idRouter, "router", routerAt,
+    acrDac, router = true).ok
 
   ## 1. Who may I reach? (an ordinary AME frame, for the router itself)
-  step = router.feedAmeRouteAsk(slotPhone, a.left.sealAmeRouteAsk(acrDac))
+  step = router.feedRelayFastExtraFrame(phoneAt, a.left.sealAmeRouteAsk(acrDac),
+    0'u32)
   dir = a.left.openAmeRouteDirectory(acrDac, step.send[0].frame)
   for e in dir.entries:
     echo "phone sees     0x", toHex(e.id, 2), " ", e.name

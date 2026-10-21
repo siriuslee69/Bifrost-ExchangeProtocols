@@ -39,6 +39,10 @@ import ./protocols/dac/level1/repair_chunk as dac_repair_chunk
 import ./protocols/dac/level0/package_commit as dac_package_commit
 import ./protocols/dac/level0/protocols as dac_protocols
 import ./protocols/relay/super_fast_udp as relay_super_fast_udp
+import ./protocols/relay/slow_envelope as relay_slow_envelope
+import ./protocols/relay/relay_node as relay_relay_node
+import ./protocols/relay/fast_extra_frame as relay_fast_extra_frame
+import ./protocols/relay/slow_extract_encrypt as relay_slow_extract_encrypt
 
 when dacAdaptiveBuilt:
   ## The adaptive layer: everything that watches a connection and changes how
@@ -54,7 +58,8 @@ when dacAdaptiveBuilt:
   export dac_ack_policy, dac_scramble, dac_path_policy
   export dac_package_transfer, dac_link, dac_link_table
 
-export relay_super_fast_udp
+export relay_super_fast_udp, relay_slow_envelope, relay_relay_node,
+  relay_fast_extra_frame, relay_slow_extract_encrypt
 export core_types
 export bifrost_config
 export transport_types

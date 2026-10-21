@@ -528,7 +528,8 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_handshake_package.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_psk_modes.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_dac_relay.nim", @["-r"])
-    runNim("c", "evaluation/tests/test_ame_router.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_relay_fast_extra_frame.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_relay_slow_extract_encrypt.nim", @["-r"])
     runNim("c", "evaluation/tests/test_relay_super_fast_udp.nim", @["-r"])
     runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
     runNim("c", "evaluation/tests/test_attack_surface.nim", @["-r"])
@@ -583,8 +584,11 @@ task exampleAmeExactPath, "Run the exact AME algorithm-path example":
 task exampleSecurePackage, "Run authority handshake and repaired package example":
   runNim("c", "examples/secure_authority_package.nim", @["-r"])
 
-task exampleRouter, "Run the AME router example: directory, forward, answer":
-  runNim("c", "examples/ame_router.nim", @["-r"])
+task exampleRelayFast, "Run the relayFastExtraFrame example: directory, forward, answer":
+  runNim("c", "examples/relay_fast_extra_frame.nim", @["-r"])
+
+task exampleRelaySlow, "Run the relaySlowExtractEncrypt example: read passes, write refused":
+  runNim("c", "examples/relay_slow_extract_encrypt.nim", @["-r"])
 
 task exampleFomke, "Run AME-backed forward-only message ratchet example":
   runNim("c", "examples/fomke_ame_chain.nim", @["-r"])
@@ -800,7 +804,8 @@ task examples, "Run all Bifrost examples":
   runNim("c", "examples/ame_exact_path.nim", @["-r"])
   runNim("c", "examples/secure_authority_package.nim", @["-r"])
   runNim("c", "examples/fomke_ame_chain.nim", @["-r"])
-  runNim("c", "examples/ame_router.nim", @["-r"])
+  runNim("c", "examples/relay_fast_extra_frame.nim", @["-r"])
+  runNim("c", "examples/relay_slow_extract_encrypt.nim", @["-r"])
 
 task releaseHygiene, "Check generated and local repo artifacts that should not ship":
   runRepoHygiene(@["--root=."])

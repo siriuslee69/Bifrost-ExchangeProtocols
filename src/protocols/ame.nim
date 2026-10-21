@@ -65,7 +65,7 @@
 ##   protocols/ame/level1/signatures  <- the signature flag, in full
 ##   protocols/ame/level1/symmetric   <- the symmetric flag, in full
 ##   protocols/ame/level2/carriers    <- the carrier flag, in full
-##   protocols/ame/level3/router      <- multi-hop routing through one session
+##   (routing through relays lives in protocols/relay/, see relay_node.nim)
 
 
 import ./dac/build
@@ -93,7 +93,6 @@ import ./ame/level2/carriers as ame_carriers
 import ./ame/level2/route_wire as ame_route_wire
 import ./ame/level2/route_directory as ame_route_directory
 import ./ame/level2/lane_jump as ame_lane_jump
-import ./ame/level3/router as ame_router
 import ./ame/level3/handshake as ame_handshake
 import ./ame/level3/handshake_wire as ame_handshake_wire
 import ./ame/level3/handshake_transport as ame_handshake_transport
@@ -122,7 +121,6 @@ export ame_carriers
 export ame_route_wire
 export ame_route_directory
 export ame_lane_jump
-export ame_router
 export ame_handshake
 export ame_handshake_wire
 export ame_handshake_transport

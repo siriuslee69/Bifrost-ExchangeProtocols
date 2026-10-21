@@ -407,10 +407,14 @@ Large AME handshake records can use native DAC packages with
 `sendAmeHandshakeDac` and `feedAmeHandshakeDatagram`, including repair for
 a lost shard. See [the wire format and limits](docs/handshake-packages.md).
 
-One handshake with a router is enough to reach every target it shows you,
-over one or more routers, with an end-to-end AM1S/AM1P session the routers
-cannot read: `sealAmeRouteAsk`, `sealAmeRouteForward`, `AmeRouter`. See
-[Routing through AME routers](docs/routing.md) and `nimble exampleRouter`.
+Three relays carry traffic through a machine in the middle:
+`relaySuperFastUDP` (bytes only, no key), `relayFastExtraFrame` (one
+handshake with the relay reaches every target it shows you, with an
+end-to-end AM1S/AM1P session the relays cannot read) and
+`relaySlowExtractEncrypt` (the relay opens, judges and re-seals every
+frame). See [Three relays, side by side](#three-relays-side-by-side-),
+[docs/routing.md](docs/routing.md), `nimble exampleRelayFast` and
+`nimble exampleRelaySlow`.
 
 ```nim
 import bifrost_exchange_protocols
@@ -2330,7 +2334,67 @@ one tag. They remain as two named layouts in `ame/level1/presets.nim`:
 `presetAmeTier(L)` switches on every slot of the preset layout. The bytes are
 **not** the old formats. Nothing sealed by the old code opens under these.
 
-## Relaying through a VPS 🌊
+## Three relays, side by side ⟡
+
+**Definitions**
+
+- `relay` := a process on a machine in the middle (usually a VPS) that
+  carries datagrams between machines that cannot reach each other.
+- `neighbour` := one machine a keyed relay has a finished handshake with.
+- `link` := the AME session between a relay and one neighbour.
+
+```text
+  name                     module (src/protocols/relay/)  the relay ...       keys held
+  -----------------------  -----------------------------  ------------------  -------------
+  relaySuperFastUDP        super_fast_udp.nim             moves bytes         none
+  relayFastExtraFrame      fast_extra_frame.nim           re-seals 16         one link per
+                                                          address bytes       neighbour
+  relaySlowExtractEncrypt  slow_extract_encrypt.nim       opens, reads,       one link per
+                                                          re-seals all        neighbour
+```
+
+```text
+  question                          SuperFastUDP   FastExtraFrame   SlowExtractEncrypt
+  --------------------------------  -------------  ---------------  ------------------
+  relay can read the payload?       no             no               YES
+  handshakes for phone -> nas       1 (end-end)    2 (link + e2e)   1 per link
+  many targets behind one relay?    no (one NAS)   yes, directory   yes, directory
+  relay may refuse by content?      no             no               yes (`inspect`)
+  extra bytes per frame             0              42 (ART header)  22 + AME frame
+  memory per client/neighbour       ~60 B          ~3.5 KB          ~3.5 KB
+```
+
+What one neighbour of a keyed relay holds (`RelayNeighbour`,
+`relay_node.nim`):
+
+```text
+  field      what                                     why it is needed
+  ---------  ---------------------------------------  ---------------------
+  id         u64 route id                             addressing
+  identity   proved name ("phone")                    permission
+  address    IP + port its datagrams come from        address -> its keys,
+                                                      and where answers go
+  carrier    DAC or TCP                               how to seal for it
+  router     another relay?                           trust its origin ids?
+  session    the link: TK, two lane chain keys,       open + seal
+             header and route keys, counters
+```
+
+Nothing of it is written to disk: a copy of the link secrets on disk would
+outlive the session and break forward secrecy, and the rest is rebuilt by
+the next handshake. The link keeps no inbox (`ameNoInbox`), so a
+neighbour costs ~3.5 KB instead of ~11.5 KB.
+
+The relay is fed with the address a datagram came FROM; every frame it
+returns names the address it must go TO:
+
+```nim
+var step = R.feedRelayFastExtraFrame(fromAddress, datagram, nowMs)
+for s in step.send:
+  sendTo(s.address, s.frame)
+```
+
+## relaySuperFastUDP: relaying through a VPS 🌊
 
 **Definitions**
 
@@ -2466,7 +2530,7 @@ absorb. Two places count them:
 A soak measured it: 2,787 kernel discards in 72 seconds with the default, 2
 with 4 MB, and one third more work done.
 
-## Routing through AME routers 🐦‍🔥
+## relayFastExtraFrame: routing through relays 🐦‍🔥
 
 **Definitions**
 
@@ -2509,13 +2573,74 @@ counter, payload length). The per-link counter and a 64-frame replay window
 stop a replayed frame at the first router it reaches.
 
 ```nim
-send(router, link.sealAmeRouteAsk(acrDac))               # who may I reach?
-var dir = link.openAmeRouteDirectory(acrDac, recv(router))  # [0x20 "nas"]
-send(router, link.sealAmeRouteForward(0x20'u64, e2eFrame))
+# client side
+send(relay, link.sealAmeRouteAsk(acrDac))                # who may I reach?
+var dir = link.openAmeRouteDirectory(acrDac, recv(relay))  # [0x20 "nas"]
+send(relay, link.sealAmeRouteForward(0x20'u64, e2eFrame))
+
+# relay side
+var R = initRelayFastExtraFrame(0x10'u64)
+R.addRelayTarget(0x20'u64, "nas", ["phone"])
+discard R.admitRelayNeighbour(linkWithPhone, 0x30'u64, "phone", phoneAddr,
+  acrDac)
+var step = R.feedRelayFastExtraFrame(fromAddress, datagram, nowMs)
+for s in step.send: sendTo(s.address, s.frame)
 ```
 
 Byte layout, replay, who may send to whom, the way answers find their way
 back, and what is and is not hidden: [docs/routing.md](docs/routing.md).
+Runnable: `nimble exampleRelayFast`.
+
+## relaySlowExtractEncrypt: a relay that reads ❧
+
+**Definitions**
+
+- `envelope` := the 22 bytes `RSE`, version, kind, hops, target, origin in
+  front of the payload, INSIDE an ordinary FOMKE-sealed AME data frame.
+- `inspector` := an optional routine the relay runs on every forward it is
+  about to pass on; it sees the payload in clear and may change or refuse it.
+
+Here every link carries ordinary AME data frames, and the routing header
+lives inside them. The relay opens the whole frame with the sender's link,
+can read and judge the payload, and seals it again with the next link. No
+second, end-to-end handshake is needed -- and none would help: the relay
+reads everything by design.
+
+```text
+  phone ==link A==> relay ==link B==> nas
+          AME[A]:          open with A        AME[B]:
+          RSE | payload    inspect(payload)   RSE | payload
+                           seal with B
+```
+
+```text
+  offset  size  field
+  ------  ----  ----------------------------------------------------
+  0       3     magic "RSE"
+  3       1     version 0x01
+  4       1     kind: 0x01 forward, 0x02 refuse
+  5       1     forward: hops left    refuse: reason
+  6       8     target id, u64 LE
+  14      8     origin id, u64 LE (0 from a client; the first relay
+                writes the proved one)
+  22      n     payload
+```
+
+The AME frame around it already authenticates every byte and keeps its own
+replay window, so the envelope has no tag or counter of its own.
+
+```nim
+proc noWrites(identity: string, f: var AmeRouteFrame): bool =
+  result = identity != "phone" or not textOf(f.payload).startsWith("W:")
+
+var R = initRelaySlowExtractEncrypt(0x10'u64, inspect = noWrites)
+# addRelayTarget / admitRelayNeighbour / feed... exactly as above
+send(relay, link.sealSlowForward(acrDac, 0x20'u64, bytesOf("R:/notes")))
+```
+
+Pick it when the middle machine must DECIDE on the content (narrow rights,
+refuse writes, rewrite a field); pick relayFastExtraFrame when it must not
+see the content at all. Runnable: `nimble exampleRelaySlow`.
 
 ## Layout
 
@@ -2570,7 +2695,7 @@ Each protocol folder has its own `README.md` with one line per file.
 | Build library | `nimble buildLib` |
 | Run tests | `nimble test` |
 | Run examples | `nimble examples` |
-| Run the router example | `nimble exampleRouter` |
+| Run the relay examples | `nimble exampleRelayFast`, `nimble exampleRelaySlow` |
 | Run benchmarks | `nimble benchmarks` |
 | Soak AME+DAC over real sockets | `nimble soak` |
 | Run AVX2 server benchmarks | `nimble benchmarksServerSimd` |
@@ -3063,8 +3188,21 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 
 **Routing**
 
+- **A client goes quiet behind its relay, its datagrams counted as
+  "relay slot is empty"**: a keyed relay finds a neighbour by the exact
+  IP + port its datagrams come from. A home router or a phone network may
+  hand the client a NEW port mid-session (NAT rebinding), and from then on
+  the relay sees a stranger. The client has to make a new link handshake;
+  the relay admits it again under the new address. Not fixed: following an
+  address change on the strength of an authenticated frame alone is
+  planned, not built.
+- **Memory of an endpoint grows while nothing reads `recv`**: every inbox
+  mode except `ameNoInbox` (-1) queues each opened packet and grows without
+  a ceiling. A relay's own links keep no inbox; an endpoint that does not
+  call `recv` should be made with `inboxCapacity = ameNoInbox` and read
+  the packet from the open result instead.
 - **Every forward comes back as "no route"**: check, in order: the target
-  line's `visibleTo` names the identity given to `admitAmeRoutePeer` for the
+  line's `visibleTo` names the identity given to `admitRelayNeighbour` for the
   sender (not its route id); a target behind another router has `via` set to
   that router's route id, and that router is admitted with `router = true`;
   the next router has its own line for the target, visible to THIS router's
@@ -3074,7 +3212,7 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   only as a return note, which lives 120 s after the last forward from that
   origin. A target that answers later needs a directory line for the origin
   instead.
-- **`feedAmeRouteFrame` drops a frame with "AME route block did not
+- **`feedRelayFastExtraFrame` drops a frame with "AME route block did not
   authenticate"**: the two ends of that link disagree on the route key --
   one side is on an older build, or a frame crossed an epoch switch (it was
   sealed under the old epoch and arrived after the new one). The sender's

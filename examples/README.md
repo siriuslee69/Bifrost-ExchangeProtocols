@@ -23,21 +23,39 @@ immutable algorithm layout -> ordered mask tiers -> data trigger
 Each family and tier path may contain up to eight slots. Repeated KEM
 algorithms are independent.
 
-Run the AME router example:
+Run the relayFastExtraFrame example:
 
 ```text
-nimble exampleRouter
+nimble exampleRelayFast
 ```
 
-`ame_router.nim` demonstrates:
+`relay_fast_extra_frame.nim` demonstrates:
 
 ```text
-phone ==link A==> router ==link B==> nas
-  ask        (AME frame, for the router)   -> [0x20 "nas"]
+phone ==link A==> relay ==link B==> nas
+  ask        (AME frame, for the relay)    -> [0x20 "nas"]
   AM1P       (inside ART route frames)     -> phone <-> nas, end to end
-  "hello nas" on that session              -> the router only re-seals
+  "hello nas" on that session              -> the relay only re-seals
                                               the 16-byte address
+  every datagram is fed with the address it came from
 ```
+
+Run the relaySlowExtractEncrypt example:
+
+```text
+nimble exampleRelaySlow
+```
+
+`relay_slow_extract_encrypt.nim` demonstrates:
+
+```text
+phone ==link A==> relay ==link B==> nas
+  "R:/notes"   relay opens it, its rule says yes  -> nas gets it
+  "W:/notes"   relay opens it, its rule says no   -> phone hears arrNoRoute
+```
+
+`relay_links.nim` is not an example of its own: it makes the link pairs
+both examples use.
 
 One handshake per neighbour, with the router only. See
 [docs/routing.md](../docs/routing.md).
