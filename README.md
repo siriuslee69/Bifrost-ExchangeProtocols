@@ -416,6 +416,13 @@ frame). See [Three relays, side by side](#three-relays-side-by-side-),
 [docs/routing.md](docs/routing.md), `nimble exampleRelayFast` and
 `nimble exampleRelaySlow`.
 
+Each relay also takes one restriction mode, which decides who may talk to
+whom: `rmGroup` (one sequence of member and server pairs), `rmListed` (accept
+and reject lists of source addresses) or `rmProfile` (a predefined target set,
+chosen by index). They are compiled in or out with `-d:bifrostRestriction=`,
+and switched on at run time with `setRelayRestriction`. Devices set their part
+with AME kind 0x17. See [docs/restriction.md](docs/restriction.md).
+
 ```nim
 import bifrost_exchange_protocols
 

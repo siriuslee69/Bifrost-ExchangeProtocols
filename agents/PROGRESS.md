@@ -1,5 +1,56 @@
 # Progress
 
+Commit Message: Restriction modes: group, listed and profile, chosen at build or run time
+
+## 2026-10-29 Restriction modes, per relay
+
+Two axes, kept apart (docs/restriction.md):
+
+- relay mode, how a frame is carried: relaySuperFastUDP, relayFastExtraFrame,
+  relaySlowExtractEncrypt (unchanged).
+- restriction mode, who may pass to whom: rmOpen (default), rmGroup, rmListed,
+  rmProfile.
+
+What was added:
+
+- src/protocols/relay/restriction_types.nim: the shapes, and the build define
+  `-d:bifrostRestriction=all|group|listed|profile` (comma list allowed). A mode
+  left out has no code in the binary (`when` guards); the codec is always there.
+- restriction_group.nim, restriction_listed.nim, restriction_profile.nim: one
+  module per mode, each guarded.
+- restriction.nim: the one check (`restrictionAllows`), the control frame
+  codec (AME kind 0x17: listed, profile, group, acknowledgement), the book codec.
+- restriction_store.nim: the book is saved and read through Geist, one row.
+- relay_node.nim: a restriction per relay, a book, `setRelayRestriction` (runtime,
+  refused for a mode not compiled in), `attachRestrictionBook` (load on start),
+  `feedRelayControl` (routes kind 0x14 and 0x17), the check in passOn. A refused
+  frame is dropped silently and counted in `restricted`. A failed save refuses
+  the update and restores the book.
+- fast_extra_frame.nim and slow_extract_encrypt.nim feed their control frames
+  through feedRelayControl; slow_envelope.nim: isAmeRouteControl.
+- AME packet kind 0x17 (ampkRestriction), allowed in control sealing.
+- Submodules: Geist-Database (pinned c8b8b84), Var-Invariants (pinned 83361e4),
+  both needed by the Geist store. config.nims puts both on the path.
+
+Verified:
+
+- evaluation/tests/test_relay_restriction.nim: 13 checks pass with all modes,
+  and with each single mode (group, listed, profile); the modes left out are
+  checked to refuse by name.
+- Existing relay tests (fast, slow, super fast, DAC relay), test_wire_fuzz and
+  test_ame_session: pass.
+- nimble test in full: 713 checks, 0 failed (the run began before the last small
+  edit to relay_node.nim; the restriction tests were rerun after it).
+
+Not done:
+
+- relaySuperFastUDP: it holds no key and cannot read kind 0x17. Restrictions
+  there would have to come from the operator.
+- relaySlowExtractEncrypt shares the check and the control path, but has no
+  test of its own yet.
+- Nebel does not set a mode or a book folder yet, and has no command to send a
+  restriction. Its relay daemons still run as before.
+
 Commit Message: Three relays: relaySuperFastUDP, relayFastExtraFrame, relaySlowExtractEncrypt
 
 ## 2026-10-21 Three relays, one neighbour shape, optional inbox

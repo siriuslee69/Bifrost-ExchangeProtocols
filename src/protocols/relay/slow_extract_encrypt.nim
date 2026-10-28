@@ -71,8 +71,8 @@ proc feedRelaySlowExtractEncrypt*(R: var RelaySlowExtractEncrypt, slot: int,
   ## Nothing here raises, so a neighbour cannot stop the node with junk.
   if droppedFromEmptySlot(R, slot, result):
     return
-  if isAmeRouteAsk(frame):
-    return feedRelayAsk(R, slot, frame)
+  if isAmeRouteControl(frame):
+    return feedRelayControl(R, slot, frame)
   result = feedOpenedRelayFrame(R, slot, openSlowFrame(
     R.neighbours[slot].session, R.neighbours[slot].carrier, frame), nowMs)
 

@@ -71,10 +71,15 @@ type
     ampkJumpAsk = 0x15'u8
       ## "I cannot follow your lane any more." Sent by the receiver of a
       ## stuck lane, sealed on its OWN lane, which still works.
-    ampkJump = 0x16'u8
+    ampkJump = 0x16'u8,
       ## The answer: "my next message is number N", proved with a jump key
       ## instead of the ratchet -- the ratchet is the part that is stuck.
       ## See level2/lane_jump.nim.
+    ampkRestriction = 0x17'u8
+      ## A neighbour's own restriction for the relay: its accept and reject
+      ## lists, a profile index, or the members its server claims. Sealed on
+      ## the link like every control frame; Bifrost applies it, no app sees it.
+      ## See relay/restriction.nim.
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,

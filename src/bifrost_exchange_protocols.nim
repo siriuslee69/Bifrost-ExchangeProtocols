@@ -43,6 +43,8 @@ import ./protocols/relay/slow_envelope as relay_slow_envelope
 import ./protocols/relay/relay_node as relay_relay_node
 import ./protocols/relay/fast_extra_frame as relay_fast_extra_frame
 import ./protocols/relay/slow_extract_encrypt as relay_slow_extract_encrypt
+import ./protocols/relay/restriction as relay_restriction
+import ./protocols/relay/restriction_store as relay_restriction_store
 
 when dacAdaptiveBuilt:
   ## The adaptive layer: everything that watches a connection and changes how
@@ -59,7 +61,8 @@ when dacAdaptiveBuilt:
   export dac_package_transfer, dac_link, dac_link_table
 
 export relay_super_fast_udp, relay_slow_envelope, relay_relay_node,
-  relay_fast_extra_frame, relay_slow_extract_encrypt
+  relay_fast_extra_frame, relay_slow_extract_encrypt, relay_restriction,
+  relay_restriction_store
 export core_types
 export bifrost_config
 export transport_types

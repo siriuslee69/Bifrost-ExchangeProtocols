@@ -258,6 +258,9 @@ were re-wrapped in a new route frame.
 
 ## 6. Who may send to whom ❧
 
+> The per-relay restriction modes (group, listed, profile) and how devices set
+> them are described in [restriction.md](restriction.md).
+
 ```text
   sender         target                      allowed when
   -------------  --------------------------  ----------------------------------

@@ -26,3 +26,11 @@
 	path = submodules/Nimble-Tasks
 	url = https://github.com/siriuslee69/Nimble-Tasks.git
 	branch = main
+[submodule "submodules/Geist-Database"]
+	path = submodules/Geist-Database
+	url = ../Geist-Database.git
+	branch = nightly
+[submodule "submodules/Var-Invariants"]
+	path = submodules/Var-Invariants
+	url = https://github.com/siriuslee69/Var-Invariants.git
+	branch = main

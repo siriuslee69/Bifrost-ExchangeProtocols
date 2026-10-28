@@ -174,3 +174,11 @@ elif fileExists(thisDir() & "/submodules/Tyr-Crypto/tyr_simd.nims"):
 else:
   echo "config.nims: Tyr's tyr_simd.nims was not found; -d:tyrSimd is " &
     "ignored. Update the Tyr-Crypto submodule."
+
+## Geist (the storage library) keeps the relay's saved state: the restriction
+## book, so groups, lists and profiles survive a restart. Geist's own
+## dependencies are the libraries Bifrost already puts on its path.
+if dirExists(joinPath(repoRoot, "submodules", "Geist-Database", "src")):
+  addPathIfExists(joinPath(repoRoot, "submodules", "Geist-Database", "src"))
+if dirExists(joinPath(repoRoot, "submodules", "Var-Invariants", "src")):
+  addPathIfExists(joinPath(repoRoot, "submodules", "Var-Invariants", "src"))

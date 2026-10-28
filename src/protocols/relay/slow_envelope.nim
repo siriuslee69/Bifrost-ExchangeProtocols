@@ -49,6 +49,7 @@ import ../ame/level2/wire
 import ../ame/level2/seal_open
 import ../ame/level2/route_wire
 import runePragmas
+import ./restriction
 
 const
   relaySlowMagic* = [uint8('R'), uint8('S'), uint8('E')]
@@ -143,3 +144,10 @@ proc isAmeRouteAsk*(A: openArray[uint8]): bool {.role: parser,
     result = decodeAmeFrame(A).header.packetKind == ampkRoute
   except CatchableError:
     result = false
+
+proc isAmeRouteControl*(A: openArray[uint8]): bool {.role: parser,
+    tag: "appApi".} =
+  ## A: one datagram on a relaySlowExtractEncrypt link. True for a directory
+  ## question (kind 0x14) and for a restriction update (kind 0x17): both are
+  ## control frames that never carry an envelope.
+  result = isAmeRouteAsk(A) or isRestrictionFrame(A)

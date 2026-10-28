@@ -108,6 +108,8 @@ import ../ame/level2/session
 import ../ame/level2/route_wire
 import ../ame/level2/route_directory
 import ./slow_envelope
+import ./restriction
+import ./restriction_store
 import runePragmas
 
 const
@@ -177,6 +179,14 @@ type
     returns: seq[RelayReturn]
     inspect: RelayInspect
     forwarded*: uint32
+    restriction*: RestrictionMode
+      ## The one way this relay decides who may talk to whom (default rmOpen).
+    book*: RestrictionBook
+      ## What the restriction modes keep: groups, lists, profiles.
+    restricted*: uint32
+      ## Frames the restriction refused. They get no answer at all.
+    bookDir*: string
+      ## Where the book is saved through Geist. "" keeps it in memory only.
     delivered*: uint32
     refused*: uint32
     dropped*: uint32
@@ -501,6 +511,80 @@ proc feedRelayAsk*(R: var RelayNode, slot: int,
     result.event = reDropped
     result.err = exc.msg
 
+proc setRelayRestriction*(R: var RelayNode, mode: RestrictionMode): string {.
+    role: actor, tag: "appApi".} =
+  ## R/mode: switch the mode on at runtime. "" when it is on, else why not:
+  ## the mode was not compiled into this binary.
+  result = checkRestrictionMode(mode)
+  if result.len == 0:
+    R.restriction = mode
+
+proc attachRestrictionBook*(R: var RelayNode, dir: string): string {.
+    role: actor, tag: "storageIo|appApi".} =
+  ## R/dir: keep the book in this folder. A book saved there before is read
+  ## back now. "" when it is ready, else why not (a damaged book is refused,
+  ## and the relay keeps its empty book).
+  var
+    got: tuple[ok: bool, found: bool, book: RestrictionBook, err: string] =
+      loadRestrictionBook(dir)
+  if not got.ok:
+    return got.err
+  if got.found:
+    R.book = got.book
+  R.bookDir = dir
+
+proc feedRelayRestriction(R: var RelayNode, slot: int,
+    frame: openArray[uint8]): RelayStep {.role: orchestrator.} =
+  ## R/slot/frame: a neighbour's restriction update (kind 0x17) on its own link.
+  ## It is applied to that neighbour's part of the book and acknowledged.
+  ## Nothing reaches the application.
+  var
+    u: RestrictionUpdate = RestrictionUpdate()
+    e: string = ""
+    prev: RestrictionBook = RestrictionBook()
+  result.slot = slot
+  if droppedFromEmptySlot(R, slot, result):
+    return
+  u = openRestrictionFrame(R.neighbours[slot].session,
+    R.neighbours[slot].carrier, frame)
+  if not u.ok:
+    R.dropped = R.dropped + 1'u32
+    result.event = reDropped
+    result.err = u.err
+    return
+  prev = R.book
+  e = applyRestrictionUpdate(R.book, R.neighbours[slot].identity, u)
+  if e.len > 0:
+    R.dropped = R.dropped + 1'u32
+    result.event = reDropped
+    result.err = e
+    return
+  if R.bookDir.len > 0:
+    let w = saveRestrictionBook(R.bookDir, R.book)
+    if not w.ok:
+      R.book = prev
+      R.dropped = R.dropped + 1'u32
+      result.event = reDropped
+      result.err = w.err
+      return
+  try:
+    queueSend(R, slot, sealRestrictionAck(R.neighbours[slot].session,
+      R.neighbours[slot].carrier), result)
+    result.event = reAnswered
+  except CatchableError as exc:
+    R.dropped = R.dropped + 1'u32
+    result.event = reDropped
+    result.err = exc.msg
+
+proc feedRelayControl*(R: var RelayNode, slot: int,
+    frame: openArray[uint8]): RelayStep {.role: orchestrator.} =
+  ## R/slot/frame: a control frame from a neighbour: a directory question
+  ## (kind 0x14) or a restriction update (kind 0x17). Told apart by the clear
+  ## AME header. Both feed procs call this on their own.
+  if isRestrictionFrame(frame):
+    return feedRelayRestriction(R, slot, frame)
+  return feedRelayAsk(R, slot, frame)
+
 ## ---------------------------- forwarding ----------------------------
 
 proc refuseTo(R: var RelayNode, slot: int, target, origin: uint64,
@@ -535,6 +619,12 @@ proc passOn(R: var RelayNode, slot: int, origin: uint64, nowMs: uint32,
     sealed: ByteSeq = @[]
   if next < 0 or next == slot:
     refuseTo(R, slot, step.frame.target, origin, arrNoRoute, step)
+    return
+  if not restrictionAllows(R.book, R.restriction, R.neighbours[slot].identity,
+      R.neighbours[next].identity, R.neighbours[slot].address):
+    R.restricted = R.restricted + 1'u32
+    step.event = reDropped
+    step.err = "restricted: " & $R.restriction
     return
   try:
     sealed = sealForwardFor(R, next, step.frame.target, origin,
