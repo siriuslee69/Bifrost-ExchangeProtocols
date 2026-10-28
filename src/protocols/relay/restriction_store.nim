@@ -45,10 +45,17 @@ proc saveRestrictionBook*(dir: string, B: RestrictionBook): tuple[ok: bool,
     err: string] {.role: dataWriter, tag: "storageIo|write".} =
   ## dir/B: the folder the relay keeps its state in, and the book to keep.
   var
-    db: Session = openGeist[BookRow](dir, appConfig())
-    row: BookRow = BookRow(key: bookRowKey, body: bytesText(encodeBook(B)))
-    ids: seq[RowId] = db.findIds("key", bookRowKey)
+    enc: tuple[ok: bool, bytes: ByteSeq, err: string] = encodeBook(B)
+    db: Session = default(Session)
+    row: BookRow = BookRow(key: bookRowKey)
+    ids: seq[RowId] = @[]
     saved: tuple[ok: bool, err: string] = (false, "")
+  if not enc.ok:
+    result.err = enc.err
+    return
+  row.body = bytesText(enc.bytes)
+  db = openGeist[BookRow](dir, appConfig())
+  ids = db.findIds("key", bookRowKey)
   try:
     if ids.len > 0:
       discard db.set(ids[0], row)

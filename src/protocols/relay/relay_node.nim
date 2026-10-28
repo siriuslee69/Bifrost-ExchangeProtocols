@@ -138,9 +138,15 @@ type
     identity*: string
     address*: transport_types.UdpAddress
       ## where its datagrams come from, and where frames for it are sent
+    source*: SourceAddr
+      ## the same address in compact form, for the restriction checks
     carrier*: AmeCarrier
     router*: bool
     session*: AmeSession
+    answered*: bool
+      ## true once a restricted frame from this neighbour got an answer
+    answeredMs*: uint32
+      ## when that answer was sent; the next one waits restrictionAnswerMs
 
   ## RelayTarget: one directory line (Def. 1).
   ## via: 0 for a target that connects to THIS node itself, otherwise the
@@ -182,9 +188,13 @@ type
     restriction*: RestrictionMode
       ## The one way this relay decides who may talk to whom (default rmOpen).
     book*: RestrictionBook
-      ## What the restriction modes keep: groups, lists, profiles.
+      ## What the restriction modes keep: the group object and each
+      ## connection's address lists.
     restricted*: uint32
-      ## Frames the restriction refused. They get no answer at all.
+      ## Frames the restriction refused, answered or not.
+    restrictionAnswerMs*: uint32
+      ## Gap between two answers to one restricted neighbour. A restricted
+      ## frame inside the gap is dropped without an answer. 0 never answers.
     bookDir*: string
       ## Where the book is saved through Geist. "" keeps it in memory only.
     delivered*: uint32
@@ -242,6 +252,7 @@ proc setupRelayNode*(R: var RelayNode, kind: RelayKind, selfId: uint64,
   R.neighbours = newSeq[RelayNeighbour](capacity)
   R.bySource = initTable[transport_types.UdpAddress, int]()
   R.inspect = inspect
+  R.restrictionAnswerMs = restrictionAnswerDefaultMs
 
 proc findRelayTarget*(R: RelayNode, id: uint64): int {.role: parser.} =
   ## R/id: index of the directory line with that id, or -1.
@@ -319,12 +330,17 @@ proc admitRelayNeighbour*(R: var RelayNode, S: AmeSession, id: uint64,
   var
     err: string = admitError(R, id, address)
     slot: int = freeRelaySlot(R)
+    src: tuple[ok: bool, src: SourceAddr, err: string] = sourceOfAddress(address)
   result.slot = -1
   if err.len > 0:
     result.err = err
     return
+  if not src.ok:
+    result.err = "relay address must be an IP address: " & src.err
+    return
   R.neighbours[slot] = RelayNeighbour(used: true, id: id, identity: identity,
-    address: address, carrier: carrier, router: router, session: S)
+    address: address, source: src.src, carrier: carrier, router: router,
+    session: S)
   setAmeInbox(R.neighbours[slot].session, ameNoInbox)
   R.bySource[address] = slot
   result.ok = true
@@ -519,6 +535,26 @@ proc setRelayRestriction*(R: var RelayNode, mode: RestrictionMode): string {.
   if result.len == 0:
     R.restriction = mode
 
+proc setRestrictionAnswerMs*(R: var RelayNode, ms: uint32) {.role: actor,
+    tag: "appApi".} =
+  ## R/ms: the gap between two answers to one restricted neighbour. 0 means a
+  ## restricted frame is never answered, only counted and dropped.
+  R.restrictionAnswerMs = ms
+
+proc restrictionAnswerDue(R: var RelayNode, slot: int, nowMs: uint32): bool {.
+    role: actor.} =
+  ## R/slot/nowMs: true when this neighbour may be answered now, and records
+  ## that it was. The first restricted frame always gets an answer, unless the
+  ## gap is 0.
+  if R.restrictionAnswerMs == 0'u32:
+    return false
+  if R.neighbours[slot].answered and
+      nowMs - R.neighbours[slot].answeredMs < R.restrictionAnswerMs:
+    return false
+  R.neighbours[slot].answered = true
+  R.neighbours[slot].answeredMs = nowMs
+  result = true
+
 proc attachRestrictionBook*(R: var RelayNode, dir: string): string {.
     role: actor, tag: "storageIo|appApi".} =
   ## R/dir: keep the book in this folder. A book saved there before is read
@@ -560,7 +596,7 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     result.err = e
     return
   if R.bookDir.len > 0:
-    let w = saveRestrictionBook(R.bookDir, R.book)
+    var w: tuple[ok: bool, err: string] = saveRestrictionBook(R.bookDir, R.book)
     if not w.ok:
       R.book = prev
       R.dropped = R.dropped + 1'u32
@@ -621,8 +657,11 @@ proc passOn(R: var RelayNode, slot: int, origin: uint64, nowMs: uint32,
     refuseTo(R, slot, step.frame.target, origin, arrNoRoute, step)
     return
   if not restrictionAllows(R.book, R.restriction, R.neighbours[slot].identity,
-      R.neighbours[next].identity, R.neighbours[slot].address):
+      R.neighbours[next].identity, R.neighbours[slot].source):
     R.restricted = R.restricted + 1'u32
+    if restrictionAnswerDue(R, slot, nowMs):
+      refuseTo(R, slot, step.frame.target, origin, arrNoRoute, step)
+      return
     step.event = reDropped
     step.err = "restricted: " & $R.restriction
     return

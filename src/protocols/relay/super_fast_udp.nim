@@ -68,6 +68,9 @@ import std/[deques, tables, hashes]
 import ../types
 import ../transport/types as transport_types
 import runePragmas
+import ./restriction_types
+import ./restriction_address
+import ./restriction_filter
 
 const
   udpForwardMaxClients* = 512
@@ -169,6 +172,15 @@ type
     bufferBytes*: int
     droppedTotal*: uint64
     forwardedTotal*: uint64
+    restriction*: RestrictionMode
+      ## Which clients may send to the NAS. The operator sets it: this relay
+      ## reads no AME frames, so no device can change it. rmOpen by default.
+    filter*: SourceRules
+      ## The lists that mode reads: accept and reject for rmListed, allowed
+      ## for rmAllowed. Client addresses, as the operator writes them.
+    restricted*: uint64
+      ## Datagrams refused by the restriction. Never answered: this relay has
+      ## no reply format that a client could read as a refusal.
 
 proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     clientIdleMs: uint64 = udpForwardClientIdleMs,
@@ -333,6 +345,33 @@ proc nasIsAway(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
     return false
   result = nowMs > F.nasSeenMs and nowMs - F.nasSeenMs > F.cfg.nasSilentMs
 
+proc setSuperFastRestriction*(F: var RelaySuperFastUdp, mode: RestrictionMode,
+    rules: SourceRules): string {.role: actor, tag: "appApi|relay|udp".} =
+  ## F/mode/rules: the operator's restriction on who may send to the NAS.
+  ## "" when set, else why not. rmGroup needs AME control frames, which this
+  ## relay never opens, so it is refused here.
+  if mode == rmGroup:
+    return "the super-fast relay cannot run the group mode: it reads no control frames"
+  if not restrictionBuilt(mode):
+    return "restriction mode " & $mode & " is not compiled into this relay"
+  if rules.accept.len > restrictionMaxRules or rules.reject.len > restrictionMaxRules or
+      rules.allowed.len > restrictionMaxRules:
+    return "a list holds at most " & $restrictionMaxRules & " addresses"
+  F.restriction = mode
+  F.filter = rules
+  result = ""
+
+proc clientMayReach(F: RelaySuperFastUdp, client: transport_types.UdpAddress): bool {.
+    role: parser.} =
+  ## F/client: the operator's list decides for this client's address. Text
+  ## is turned into the compact form per datagram, which is only paid while a
+  ## restriction is set: the default rmOpen never gets here.
+  var
+    src: tuple[ok: bool, src: SourceAddr, err: string] = sourceOfAddress(client)
+  if not src.ok:
+    return false
+  result = filterAllows(F.restriction, F.filter, src.src)
+
 proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
     role: orchestrator, tag: "appApi|relay|udp".} =
@@ -347,6 +386,12 @@ proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     result.event = ufeDropped
     result.dropped = 1
     result.err = "UDP forward datagram size is out of range"
+    return
+  if F.restriction != rmOpen and not clientMayReach(F, client):
+    F.restricted = F.restricted + 1'u64
+    result.event = ufeDropped
+    result.dropped = 1
+    result.err = "restricted: " & $F.restriction
     return
   slot = slotForClient(F, client, nowMs)
   if slot < 0:

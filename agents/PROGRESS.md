@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Restriction modes: group, listed and profile, chosen at build or run time
+Commit Message: Restriction: compact addresses, group object, allowed lists, rate-limited answers
 
 ## 2026-10-29 Restriction modes, per relay
 
@@ -9,47 +9,60 @@ Two axes, kept apart (docs/restriction.md):
 - relay mode, how a frame is carried: relaySuperFastUDP, relayFastExtraFrame,
   relaySlowExtractEncrypt (unchanged).
 - restriction mode, who may pass to whom: rmOpen (default), rmGroup, rmListed,
-  rmProfile.
+  rmAllowed. The profile mode is gone (no enum, no predefined sets).
 
-What was added:
+Design, as the operator asked for it:
 
-- src/protocols/relay/restriction_types.nim: the shapes, and the build define
-  `-d:bifrostRestriction=all|group|listed|profile` (comma list allowed). A mode
-  left out has no code in the binary (`when` guards); the codec is always there.
-- restriction_group.nim, restriction_listed.nim, restriction_profile.nim: one
-  module per mode, each guarded.
-- restriction.nim: the one check (`restrictionAllows`), the control frame
-  codec (AME kind 0x17: listed, profile, group, acknowledgement), the book codec.
+- Addresses are compact: SourceAddr = family + packed IPv4 (4 bytes) or IPv6
+  (16 bytes) + port. family 0 is "any host". Text is parsed once, when a
+  neighbour joins (restriction_address.nim); a hostname neighbour is refused.
+- rmGroup is ONE object: members, endpoints, and links (member index,
+  endpoint index). A member talks to an endpoint over a link only.
+- rmListed: accept and reject lists per connection (reject wins).
+- rmAllowed: per connection, the list of senders allowed to reach IT. Empty =
+  nobody reaches it; its own outbound stays unrestricted.
+- Restriction is checked at every hop, against the neighbour the frame goes to.
+- Answers: the first restricted frame from a neighbour gets arrNoRoute (the same
+  answer as a missing route); further ones within `restrictionAnswerMs`
+  (default 1000) are dropped silently. 0 never answers. Set per relay.
+- relaySuperFastUDP: operator-set restriction (`setSuperFastRestriction`):
+  rmOpen, rmListed, rmAllowed on client addresses, checked before a client takes
+  a slot. Group is refused there. Refusals are silent: no reply format exists.
+
+Files:
+
+- restriction_address.nim (new): IPv4/IPv6 text, SourceAddr, sourceMatches.
+- restriction_types.nim: modes, SourceRules, ReachEntry, GroupBook, RestrictionBook.
+- restriction_group.nim, restriction_listed.nim, restriction_allowed.nim: one
+  module per mode, each behind a `when`. restriction_profile.nim removed.
+- restriction_filter.nim (new): filterAllows, the list dispatch shared by the
+  relay and the super-fast relay (no AME imports).
+- restriction.nim: restrictionAllows, the kind 0x17 codec (listed, allowed,
+  group, acknowledgement), the book codec (encodeBook returns ok/err).
 - restriction_store.nim: the book is saved and read through Geist, one row.
-- relay_node.nim: a restriction per relay, a book, `setRelayRestriction` (runtime,
-  refused for a mode not compiled in), `attachRestrictionBook` (load on start),
-  `feedRelayControl` (routes kind 0x14 and 0x17), the check in passOn. A refused
-  frame is dropped silently and counted in `restricted`. A failed save refuses
-  the update and restores the book.
-- fast_extra_frame.nim and slow_extract_encrypt.nim feed their control frames
-  through feedRelayControl; slow_envelope.nim: isAmeRouteControl.
-- AME packet kind 0x17 (ampkRestriction), allowed in control sealing.
-- Submodules: Geist-Database (pinned c8b8b84), Var-Invariants (pinned 83361e4),
-  both needed by the Geist store. config.nims puts both on the path.
+- relay_node.nim: RelayNeighbour.source and answer clock; passOn check and the
+  gap-limited answer; setRestrictionAnswerMs; setRelayRestriction; book load/save.
+- super_fast_udp.nim: restriction, filter, restricted counter, clientMayReach.
+- Build define: `-d:bifrostRestriction=all|group|listed|allowed` (comma list).
 
-Verified:
+Verified (compiled and run, each build):
 
-- evaluation/tests/test_relay_restriction.nim: 13 checks pass with all modes,
-  and with each single mode (group, listed, profile); the modes left out are
-  checked to refuse by name.
-- Existing relay tests (fast, slow, super fast, DAC relay), test_wire_fuzz and
-  test_ame_session: pass.
-- nimble test in full: 713 checks, 0 failed (the run began before the last small
-  edit to relay_node.nim; the restriction tests were rerun after it).
+- test_restriction_address: 11 checks, all builds.
+- test_relay_restriction (fast relay, codec, every mode, answer gap, saved book):
+  13 checks in all, 10 in listed, 18 in group,allowed.
+- test_relay_slow_restriction (relaySlowExtractEncrypt): 4 checks in all;
+  the refusal is opened on the phone's side and reads arrNoRoute.
+- test_relay_super_fast_restriction: 5 checks in all, 3 in group.
+- Existing relay tests: see the run noted below.
 
-Not done:
+Not done / open questions:
 
-- relaySuperFastUDP: it holds no key and cannot read kind 0x17. Restrictions
-  there would have to come from the operator.
-- relaySlowExtractEncrypt shares the check and the control path, but has no
-  test of its own yet.
-- Nebel does not set a mode or a book folder yet, and has no command to send a
-  restriction. Its relay daemons still run as before.
+- relaySuperFastUDP refusals are silent. A client cannot be answered without a
+  new reply format on the wire. Asked the operator; not decided.
+- Nebel does not set a mode, an answer interval, or a book folder yet, and has
+  no command to send a restriction. Its relay daemons still run as before.
+- Per-datagram address parsing in the super-fast relay runs only while a
+  restriction is set. Not measured against the fast path.
 
 Commit Message: Three relays: relaySuperFastUDP, relayFastExtraFrame, relaySlowExtractEncrypt
 

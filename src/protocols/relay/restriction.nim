@@ -6,92 +6,84 @@
 ## A relay decides, for each frame it would pass from one neighbour to
 ## another, whether it may. The relay operator picks ONE mode per relay; each
 ## device sets its own part by an AME control frame, kind 0x17, sealed on its
-## link. Bifrost reads that frame itself. The three modes are described in
+## link. Bifrost reads that frame itself. The modes are described in
 ## restriction_types.nim; which of them are compiled in is decided there too.
 ##
-##   mode        decides by                        cost             good for
-##   ----------  --------------------------------  ---------------  -----------------
-##   rmOpen      nothing: every pair may talk      none             a relay with no need
-##   rmGroup     one sequence of (member, server)  one entry each   many clients, one
-##                                                                   server behind it
-##   rmListed    per recipient: accept and reject  a list each      versatile, costly
-##               lists of source ADDRESSES                          to keep up to date
-##   rmProfile   a profile index on the device,    one small index  targets that change
-##               naming a predefined target set    per device       often
+##   mode        decides by                          set by        cost
+##   ----------  ----------------------------------  ------------  -------------
+##   rmOpen      nothing: every pair may talk        operator      none
+##   rmGroup     one group object: members, endpoints device        a link each
+##               and the links between them
+##   rmListed    the target's accept and reject      target device a list each
+##               lists of source ADDRESSES
+##   rmAllowed   the target's allowed list: who      target device a list each
+##               may reach it (empty = nobody)
+##
+## THE CHECK RUNS AT EVERY HOP. Each relay tests the frame against the
+## neighbour it is about to pass it to, so a restricted pair is stopped at the
+## first relay that knows it, not at the end.
 ##
 ## The control frame body, every integer little-endian:
 ##
 ##   offset  field
 ##   ------  ---------------------------------------------------------------
 ##   0       version: 1 = update, 2 = acknowledgement
-##   1       op (update only): 1 listed, 2 profile, 3 group
+##   1       op (update only): 1 listed, 2 allowed, 3 group
 ##   2...    the op's payload
 ##
-##   listed:  u8 accept count | rules | u8 reject count | rules
-##   profile: u8 index
-##   group:   u8 count | (u16 len | member identity) each
-##            the sender is the server; every member is claimed by it
+##   listed:  u8 accept count | addresses | u8 reject count | addresses
+##   allowed: u8 count | addresses
+##   group:   u8 count | (u16 length | identity) each
 ##
-##   rule = u16 host length | host bytes | u16 port
+##   address = u8 family | bytes | u16 port
+##     family 0: any host, no bytes      (text "*")
+##     family 4: 4 bytes, the dotted quad
+##     family 6: 16 bytes, network order
+##     port 0 matches any port
 ##
 ## A body cut short, with an unknown version or op, or a count above the
 ## limit, is refused with a reason. Nothing here raises for a neighbour.
-## The codec is always compiled, so a relay built for one mode still reads
-## what another mode's devices send, and says which mode it lacks.
-
-import std/strutils
 
 import ../types
 import runePragmas
-import ../transport/types as transport_types
 import ../ame/types
 import ../ame/level2/seal_open
 import ../ame/level2/wire
 import ./restriction_types
+import ./restriction_address
 import ./restriction_group
 import ./restriction_listed
-import ./restriction_profile
+import ./restriction_allowed
+import ./restriction_filter
 
-export restriction_types, restriction_group, restriction_listed, restriction_profile
-
-type
-  ## RestrictionUpdate: one decoded control frame, not yet applied.
-  RestrictionUpdate* {.role: truthState.} = object
-    ok*: bool
-    ack*: bool
-    op*: uint8
-    listed*: ListedFilter
-    profile*: uint8
-    members*: seq[string]
-    err*: string
+export restriction_types, restriction_address, restriction_group,
+  restriction_listed, restriction_allowed, restriction_filter
 
 ## ------------------------------ the check ------------------------------
 
 proc restrictionAllows*(B: RestrictionBook, mode: RestrictionMode,
-    src, dst: string, srcAddress: transport_types.UdpAddress): bool {.
-    role: parser.} =
+    src, dst: string, srcAddress: SourceAddr): bool {.role: parser.} =
   ## B/mode: the book and the one mode in force.
   ## src/dst: the identities of the two neighbours; srcAddress: where the frame
-  ## arrived from. The one check every forward goes through. A mode that is not
-  ## compiled in refuses: a relay never passes what it cannot check.
+  ## arrived from, already compact. The one check every forward goes through.
+  ## A mode that is not compiled in refuses: a relay never passes what it
+  ## cannot check.
+  var
+    i: int = findReach(B, dst)
+    none: SourceRules = SourceRules()
   case mode
   of rmOpen:
     result = true
   of rmGroup:
     when restrictionGroupBuilt:
-      result = groupAllows(B, src, dst)
+      result = groupAllows(B.group, src, dst)
     else:
       result = false
-  of rmListed:
-    when restrictionListedBuilt:
-      result = listedAllowsTo(B, dst, srcAddress)
+  of rmListed, rmAllowed:
+    if i < 0:
+      result = filterAllows(mode, none, srcAddress)
     else:
-      result = false
-  of rmProfile:
-    when restrictionProfileBuilt:
-      result = profileAllows(B, src, dst)
-    else:
-      result = false
+      result = filterAllows(mode, B.reach[i].rules, srcAddress)
 
 proc checkRestrictionMode*(mode: RestrictionMode): string {.role: parser.} =
   ## mode: a mode a relay is about to switch on. "" when compiled in, else why not.
@@ -108,15 +100,14 @@ proc applyRestrictionUpdate*(B: var RestrictionBook, identity: string,
   case U.op
   of restrictionOpListed:
     when restrictionListedBuilt:
-      setListed(B, identity, U.listed)
-      result = ""
+      result = setListed(B, identity, U.rules.accept, U.rules.reject)
     else:
       result = checkRestrictionMode(rmListed)
-  of restrictionOpProfile:
-    when restrictionProfileBuilt:
-      result = setProfile(B, identity, U.profile)
+  of restrictionOpAllowed:
+    when restrictionAllowedBuilt:
+      result = setAllowed(B, identity, U.rules.allowed)
     else:
-      result = checkRestrictionMode(rmProfile)
+      result = checkRestrictionMode(rmAllowed)
   of restrictionOpGroup:
     when restrictionGroupBuilt:
       result = setGroup(B, identity, U.members)
@@ -125,43 +116,54 @@ proc applyRestrictionUpdate*(B: var RestrictionBook, identity: string,
   else:
     result = "restriction op " & $U.op & " is not one of 1, 2, 3"
 
-## ------------------------------ the frame ------------------------------
-
-proc ruleError(r: FilterRule): string {.role: sanitizer.} =
-  ## r: one rule. "" when it can be written and read back.
-  if r.host.len == 0:
-    return "a rule names no host (use \"*\" for any)"
-  if r.host.len > restrictionMaxHost:
-    return "a rule host is longer than " & $restrictionMaxHost & " bytes"
-  if r.host != r.host.strip():
-    return "a rule host has spaces around it"
+## ------------------------------ the bytes ------------------------------
 
 proc putU16(B: var ByteSeq, v: int) {.role: helper.} =
   ## B/v: append v as two little-endian bytes.
   B.add uint8(v and 0xFF)
   B.add uint8((v shr 8) and 0xFF)
 
-proc putText(B: var ByteSeq, s: string) {.role: helper.} =
-  ## B/s: a u16 length, then the bytes.
+proc putText(B: var ByteSeq, s: string): string {.role: helper.} =
+  ## B/s: a u16 length, then the bytes. "" when written, else why not.
+  if s.len > restrictionMaxIdentity:
+    return "an identity is longer than " & $restrictionMaxIdentity & " bytes"
   B.putU16(s.len)
   for c in s:
     B.add uint8(ord(c))
+  result = ""
 
-proc putRules(B: var ByteSeq, R: seq[FilterRule]): string {.role: helper.} =
-  ## B/R: a count, then every rule. The error, or "".
+proc putAddress(B: var ByteSeq, a: SourceAddr) {.role: helper.} =
+  ## B/a: family, the address bytes for that family, then the port.
   var
     i: int = 0
-    e: string = ""
-  if R.len > restrictionMaxRules:
-    return "a list holds at most " & $restrictionMaxRules & " rules"
-  B.add uint8(R.len)
-  while i < R.len:
-    e = ruleError(R[i])
-    if e.len > 0:
-      return e
-    B.putText(R[i].host)
-    B.putU16(int(R[i].port))
+  B.add a.family
+  case a.family
+  of 4:
+    B.add a.v4.a
+    B.add a.v4.b
+    B.add a.v4.c
+    B.add a.v4.d
+  of 6:
+    while i < 16:
+      B.add a.v6[i]
+      i = i + 1
+  else:
+    discard
+  B.putU16(int(a.port))
+
+proc putAddresses(B: var ByteSeq, A: seq[SourceAddr]): string {.role: helper.} =
+  ## B/A: a count, then every address. The error, or "".
+  var
+    i: int = 0
+  if A.len > restrictionMaxRules:
+    return "a list holds at most " & $restrictionMaxRules & " addresses"
+  B.add uint8(A.len)
+  while i < A.len:
+    if A[i].family notin {0'u8, 4'u8, 6'u8}:
+      return "an address family is not 0, 4 or 6"
+    B.putAddress(A[i])
     i = i + 1
+  result = ""
 
 proc readU8(A: openArray[uint8], o: var int, v: var int): bool {.
     role: sanitizer.} =
@@ -172,46 +174,107 @@ proc readU8(A: openArray[uint8], o: var int, v: var int): bool {.
   o = o + 1
   result = true
 
+proc readU16(A: openArray[uint8], o: var int, v: var int): bool {.
+    role: sanitizer.} =
+  ## A/o/v: two little-endian bytes at o. False when there are not two.
+  if o + 2 > A.len:
+    return false
+  v = int(A[o]) or (int(A[o + 1]) shl 8)
+  o = o + 2
+  result = true
+
 proc readText(A: openArray[uint8], o: var int, s: var string): string {.
     role: sanitizer.} =
   ## A/o/s: a u16 length and its bytes. "" when read whole.
   var
     n: int = 0
     i: int = 0
-  if o + 2 > A.len:
+  if not readU16(A, o, n):
     return "body ends inside a length"
-  n = int(A[o]) or (int(A[o + 1]) shl 8)
-  o = o + 2
-  if n > restrictionMaxHost or o + n > A.len:
-    return "body ends inside a text"
+  if n > restrictionMaxIdentity or o + n > A.len:
+    return "body ends inside an identity"
   s = newString(n)
   while i < n:
     s[i] = char(A[o + i])
     i = i + 1
   o = o + n
 
-proc readRules(A: openArray[uint8], o: var int,
-    L: var seq[FilterRule]): string {.role: sanitizer.} =
-  ## A/o/L: a count, then that many rules. The error, or "".
+proc readAddress(A: openArray[uint8], o: var int, a: var SourceAddr): string {.
+    role: sanitizer.} =
+  ## A/o/a: one address. The error, or "".
+  var
+    v: int = 0
+    p: int = 0
+    i: int = 0
+  if not readU8(A, o, v):
+    return "body ends before an address"
+  case v
+  of 0:
+    a = SourceAddr(family: 0)
+  of 4:
+    if o + 4 > A.len:
+      return "body ends inside an IPv4 address"
+    a = SourceAddr(family: 4)
+    a.v4 = (A[o], A[o + 1], A[o + 2], A[o + 3])
+    o = o + 4
+  of 6:
+    if o + 16 > A.len:
+      return "body ends inside an IPv6 address"
+    a = SourceAddr(family: 6)
+    while i < 16:
+      a.v6[i] = A[o + i]
+      i = i + 1
+    o = o + 16
+  else:
+    return "address family " & $v & " is not 0, 4 or 6"
+  if not readU16(A, o, p):
+    return "body ends inside a port"
+  a.port = uint16(p)
+
+proc readIdentity(A: openArray[uint8], o: var int,
+    L: var seq[string]): string {.role: sanitizer.} =
+  ## A/o/L: one identity, added to L when read whole. The error, or "".
+  var
+    s: string = ""
+  result = readText(A, o, s)
+  if result.len == 0:
+    L.add s
+
+proc readMembers(A: openArray[uint8], o: var int,
+    L: var seq[string]): string {.role: sanitizer.} =
+  ## A/o/L: a count, then that many identities. The error, or "".
   var
     n: int = 0
     i: int = 0
-    r: FilterRule = FilterRule()
+  if not readU8(A, o, n):
+    return "group body has no member count"
+  while i < n:
+    result = readIdentity(A, o, L)
+    if result.len > 0:
+      return
+    i = i + 1
+
+proc readAddresses(A: openArray[uint8], o: var int,
+    L: var seq[SourceAddr]): string {.role: sanitizer.} =
+  ## A/o/L: a count, then that many addresses. The error, or "".
+  var
+    n: int = 0
+    i: int = 0
+    a: SourceAddr = SourceAddr(family: 0)
     e: string = ""
   if not readU8(A, o, n):
-    return "body ends before a rule count"
+    return "body ends before an address count"
   if n > restrictionMaxRules:
-    return "body has more than " & $restrictionMaxRules & " rules"
+    return "body has more than " & $restrictionMaxRules & " addresses"
   while i < n:
-    e = readText(A, o, r.host)
+    e = readAddress(A, o, a)
     if e.len > 0:
       return e
-    if o + 2 > A.len:
-      return "body ends inside a rule port"
-    r.port = uint16(int(A[o]) or (int(A[o + 1]) shl 8))
-    o = o + 2
-    L.add r
+    L.add a
     i = i + 1
+  result = ""
+
+## ------------------------------ the frame ------------------------------
 
 proc sealRestrictionFrame*(S: var AmeSession, carrier: AmeCarrier,
     body: ByteSeq): ByteSeq {.role: orchestrator, tag: "ame|wire".} =
@@ -220,39 +283,47 @@ proc sealRestrictionFrame*(S: var AmeSession, carrier: AmeCarrier,
   result = sealControlFrame(S, ampkRestriction, carrier, body)
 
 proc sealListedUpdate*(S: var AmeSession, carrier: AmeCarrier,
-    F: ListedFilter): ByteSeq {.role: orchestrator, tag: "ame|wire".} =
-  ## F: the lists THIS device accepts from and refuses. Raises when invalid.
+    accept, reject: seq[SourceAddr]): ByteSeq {.role: orchestrator,
+    tag: "ame|wire".} =
+  ## accept/reject: the addresses THIS device accepts from and refuses.
+  ## Raises when a list is too long.
   var
     body: ByteSeq = @[restrictionVersion, restrictionOpListed]
-    e: string = putRules(body, F.accept)
+    e: string = putAddresses(body, accept)
   if e.len > 0:
     raise newException(ValueError, e)
-  e = putRules(body, F.reject)
+  e = putAddresses(body, reject)
   if e.len > 0:
     raise newException(ValueError, e)
   result = sealRestrictionFrame(S, carrier, body)
 
-proc sealProfileUpdate*(S: var AmeSession, carrier: AmeCarrier,
-    profile: uint8): ByteSeq {.role: orchestrator, tag: "ame|wire".} =
-  ## profile: the index of the predefined set this device reaches.
-  result = sealRestrictionFrame(S, carrier,
-    @[restrictionVersion, restrictionOpProfile, profile])
+proc sealAllowedUpdate*(S: var AmeSession, carrier: AmeCarrier,
+    allowed: seq[SourceAddr]): ByteSeq {.role: orchestrator, tag: "ame|wire".} =
+  ## allowed: the addresses that may reach THIS device. An empty list
+  ## closes it to everyone. Raises when the list is too long.
+  var
+    body: ByteSeq = @[restrictionVersion, restrictionOpAllowed]
+    e: string = putAddresses(body, allowed)
+  if e.len > 0:
+    raise newException(ValueError, e)
+  result = sealRestrictionFrame(S, carrier, body)
 
 proc sealGroupUpdate*(S: var AmeSession, carrier: AmeCarrier,
     members: seq[string]): ByteSeq {.role: orchestrator, tag: "ame|wire".} =
-  ## members: the identities this SERVER claims. Raises when too many or too
-  ## long. The relay replaces this server's entries with exactly these.
+  ## members: the identities this ENDPOINT claims. Raises when too many or too
+  ## long. The relay replaces this endpoint's links with exactly these.
   var
     body: ByteSeq = @[restrictionVersion, restrictionOpGroup]
     i: int = 0
+    e: string = ""
   if members.len > restrictionMaxMembers:
-    raise newException(ValueError, "a group holds at most " &
+    raise newException(ValueError, "a group update claims at most " &
       $restrictionMaxMembers & " members")
   body.add uint8(members.len)
   while i < members.len:
-    if members[i].len > restrictionMaxHost:
-      raise newException(ValueError, "a member identity is too long")
-    body.putText(members[i])
+    e = body.putText(members[i])
+    if e.len > 0:
+      raise newException(ValueError, e)
     i = i + 1
   result = sealRestrictionFrame(S, carrier, body)
 
@@ -269,9 +340,6 @@ proc decodeRestrictionFrame*(A: openArray[uint8]): RestrictionUpdate {.
     o: int = 0
     v: int = 0
     e: string = ""
-    n: int = 0
-    i: int = 0
-    s: string = ""
   if not readU8(A, o, v):
     result.err = "restriction body is empty"
     return
@@ -288,23 +356,13 @@ proc decodeRestrictionFrame*(A: openArray[uint8]): RestrictionUpdate {.
   result.op = uint8(v)
   case result.op
   of restrictionOpListed:
-    e = readRules(A, o, result.listed.accept)
+    e = readAddresses(A, o, result.rules.accept)
     if e.len == 0:
-      e = readRules(A, o, result.listed.reject)
-  of restrictionOpProfile:
-    if not readU8(A, o, v):
-      e = "profile body has no index"
-    else:
-      result.profile = uint8(v)
+      e = readAddresses(A, o, result.rules.reject)
+  of restrictionOpAllowed:
+    e = readAddresses(A, o, result.rules.allowed)
   of restrictionOpGroup:
-    if not readU8(A, o, n):
-      e = "group body has no member count"
-    else:
-      while i < n and e.len == 0:
-        e = readText(A, o, s)
-        if e.len == 0:
-          result.members.add s
-        i = i + 1
+    e = readMembers(A, o, result.members)
   else:
     e = "restriction op " & $result.op & " is not one of 1, 2, 3"
   if e.len > 0:
@@ -347,121 +405,111 @@ proc openRestrictionAck*(S: var AmeSession, carrier: AmeCarrier,
 
 ## ------------------------------ persisting ------------------------------
 
-proc encodeBook*(B: RestrictionBook): ByteSeq {.role: truthBuilder.} =
+proc putRules(B: var ByteSeq, R: ReachEntry): string {.role: helper.} =
+  ## B/R: the three lists of one connection. The error, or "".
+  result = putAddresses(B, R.rules.accept)
+  if result.len == 0:
+    result = putAddresses(B, R.rules.reject)
+  if result.len == 0:
+    result = putAddresses(B, R.rules.allowed)
+
+proc encodeBook*(B: RestrictionBook): tuple[ok: bool, bytes: ByteSeq,
+    err: string] {.role: truthBuilder.} =
   ## B: the whole book, for a store to keep. decodeBook reads it back.
+  ## Refused only when a list is over its limit, which the setters never allow.
   var
     i: int = 0
-    j: int = 0
     e: string = ""
-  result.add restrictionVersion
-  result.putU16(B.groups.len)
-  for g in B.groups:
-    result.putText(g.member)
-    result.putText(g.server)
-  result.putU16(B.listed.len)
-  while i < B.listed.len:
-    result.putText(B.listed[i].identity)
-    e = putRules(result, B.listed[i].filter.accept)
-    e = putRules(result, B.listed[i].filter.reject)
+  result.bytes.add restrictionVersion
+  result.bytes.putU16(B.group.members.len)
+  for m in B.group.members:
+    e = result.bytes.putText(m)
+    if e.len > 0:
+      result.err = e
+      return
+  result.bytes.putU16(B.group.endpoints.len)
+  for x in B.group.endpoints:
+    e = result.bytes.putText(x)
+    if e.len > 0:
+      result.err = e
+      return
+  result.bytes.putU16(B.group.links.len)
+  for l in B.group.links:
+    result.bytes.putU16(int(l.member))
+    result.bytes.putU16(int(l.endpoint))
+  result.bytes.putU16(B.reach.len)
+  while i < B.reach.len:
+    e = result.bytes.putText(B.reach[i].identity)
+    if e.len == 0:
+      e = result.bytes.putRules(B.reach[i])
+    if e.len > 0:
+      result.err = e
+      return
     i = i + 1
-  result.putU16(B.profileOf.len)
-  for p in B.profileOf:
-    result.putText(p.identity)
-    result.add p.profile
-  result.add uint8(B.profiles.len)
-  while j < B.profiles.len:
-    result.add uint8(B.profiles[j].len)
-    for name in B.profiles[j]:
-      result.putText(name)
-    j = j + 1
+  result.ok = true
 
 proc decodeBook*(A: openArray[uint8]): tuple[ok: bool, book: RestrictionBook,
     err: string] {.role: sanitizer.} =
-  ## A: bytes written by encodeBook. Every count is checked against the bytes.
-  ## The operator's profiles are read back too: the book is the whole state.
+  ## A: bytes written by encodeBook. Every count is checked against the bytes,
+  ## and every link against the member and endpoint lists it points into.
   var
     o: int = 1
     n: int = 0
     i: int = 0
     e: string = ""
-    g: GroupEntry = GroupEntry()
-    l: ListedEntry = ListedEntry()
-    p: ProfileEntry = ProfileEntry()
-    v: int = 0
-    names: seq[string] = @[]
+    s: string = ""
+    m: int = 0
+    x: int = 0
+    link: GroupLink = GroupLink()
+    entry: ReachEntry = ReachEntry()
   if A.len < 1 or A[0] != restrictionVersion:
     result.err = "book has no version 1"
     return
-  if o + 2 > A.len:
-    result.err = "book ends before the group count"
+  if not readU16(A, o, n):
+    result.err = "book ends before the member count"
     return
-  n = int(A[o]) or (int(A[o + 1]) shl 8)
-  o = o + 2
-  while i < n:
-    e = readText(A, o, g.member)
-    if e.len == 0:
-      e = readText(A, o, g.server)
-    if e.len > 0:
-      result.err = e
-      return
-    result.book.groups.add g
+  while i < n and e.len == 0:
+    e = readText(A, o, s)
+    result.book.group.members.add s
     i = i + 1
-  if o + 2 > A.len:
-    result.err = "book ends before the listed count"
-    return
-  n = int(A[o]) or (int(A[o + 1]) shl 8)
-  o = o + 2
+  if e.len == 0 and not readU16(A, o, n):
+    e = "book ends before the endpoint count"
   i = 0
-  while i < n:
-    e = readText(A, o, l.identity)
-    if e.len == 0:
-      e = readRules(A, o, l.filter.accept)
-    if e.len == 0:
-      e = readRules(A, o, l.filter.reject)
-    if e.len > 0:
-      result.err = e
-      return
-    result.book.listed.add l
-    l.filter = ListedFilter()
+  while i < n and e.len == 0:
+    e = readText(A, o, s)
+    result.book.group.endpoints.add s
     i = i + 1
-  if o + 2 > A.len:
-    result.err = "book ends before the profile count"
-    return
-  n = int(A[o]) or (int(A[o + 1]) shl 8)
-  o = o + 2
+  if e.len == 0 and not readU16(A, o, n):
+    e = "book ends before the link count"
   i = 0
-  while i < n:
-    e = readText(A, o, p.identity)
-    if e.len == 0 and readU8(A, o, v):
-      p.profile = uint8(v)
-    elif e.len == 0:
-      e = "book ends inside a profile choice"
-    if e.len > 0:
-      result.err = e
-      return
-    result.book.profileOf.add p
+  while i < n and e.len == 0:
+    if not readU16(A, o, m) or not readU16(A, o, x):
+      e = "book ends inside a link"
+    elif m >= result.book.group.members.len or
+        x >= result.book.group.endpoints.len:
+      e = "book has a link to a member or endpoint it does not hold"
+    else:
+      link = GroupLink(member: uint16(m), endpoint: uint16(x))
+      result.book.group.links.add link
     i = i + 1
-  if not readU8(A, o, n):
-    result.err = "book has no profile table"
-    return
+  if e.len == 0 and not readU16(A, o, n):
+    e = "book ends before the connection count"
   i = 0
-  while i < n:
-    var count: int = 0
-    if not readU8(A, o, count):
-      result.err = "book ends inside the profile table"
-      return
-    names = @[]
-    var j: int = 0
-    while j < count:
-      var name: string = ""
-      e = readText(A, o, name)
-      if e.len > 0:
-        result.err = e
-        return
-      names.add name
-      j = j + 1
-    result.book.profiles.add names
+  while i < n and e.len == 0:
+    entry = ReachEntry()
+    e = readText(A, o, entry.identity)
+    if e.len == 0:
+      e = readAddresses(A, o, entry.rules.accept)
+    if e.len == 0:
+      e = readAddresses(A, o, entry.rules.reject)
+    if e.len == 0:
+      e = readAddresses(A, o, entry.rules.allowed)
+    if e.len == 0:
+      result.book.reach.add entry
     i = i + 1
+  if e.len > 0:
+    result.err = e
+    return
   if o != A.len:
     result.err = "book has " & $(A.len - o) & " trailing bytes"
     return

@@ -417,11 +417,14 @@ frame). See [Three relays, side by side](#three-relays-side-by-side-),
 `nimble exampleRelaySlow`.
 
 Each relay also takes one restriction mode, which decides who may talk to
-whom: `rmGroup` (one sequence of member and server pairs), `rmListed` (accept
-and reject lists of source addresses) or `rmProfile` (a predefined target set,
-chosen by index). They are compiled in or out with `-d:bifrostRestriction=`,
-and switched on at run time with `setRelayRestriction`. Devices set their part
-with AME kind 0x17. See [docs/restriction.md](docs/restriction.md).
+whom: `rmGroup` (one group object of members, endpoints and the links between
+them), `rmListed` (accept and reject lists of source addresses) or `rmAllowed`
+(per connection, the senders allowed to reach it; empty means nobody). They are
+compiled in or out with `-d:bifrostRestriction=`, and switched on at run time
+with `setRelayRestriction`. Devices set their own part with AME kind 0x17. A
+refused frame is answered once per interval (`setRestrictionAnswerMs`, default
+1000 ms), and the rest are dropped silently. See
+[docs/restriction.md](docs/restriction.md).
 
 ```nim
 import bifrost_exchange_protocols
