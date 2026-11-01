@@ -182,7 +182,7 @@ suite "super-fast control link is kept alive":
     check pass(H, 1_000'u32) == 1
     discard H.F.setSuperFastBrake(0'u8)
     check pass(H, 2_000'u32) == 1
-    check pass(H, 20_000'u32) == 0
+    check pass(H, 10_000'u32) == 0
     check pass(H, 2_000'u32 + uint32(controlKeepaliveMs)) == 1
     ## the server answered the order it was sent with its stance
     out1 = tickSuperFastControl(H.ctl, H.F, 62_000'u64 + uint64(controlKeepaliveMs))
@@ -203,3 +203,42 @@ suite "super-fast control link is kept alive":
     discard tickSuperFastControl(H.ctl, H.F, 1_000'u64)
     check not H.ctl.controlSilent(1_000'u64 + controlSilentMs)
     check H.ctl.controlSilent(1_001'u64 + controlSilentMs)
+
+suite "super-fast control link carries an admin word":
+  # {.testKind: tkIntegration, covers: "openFromServer|sealToServer".}
+  test "a controller's request reaches the forwarder and its reply comes back":
+    var
+      H: Chain = newChain()
+      slot: int = ameDacPeerSlot(H.server, H.fwdKey)
+      req: ByteSeq = sealAmeDacControl(H.server.sessions[slot], dmkAdmin,
+        @[byte 1, 2, 3])
+      opened: AmeDacControlOpen = default(AmeDacControlOpen)
+      reply: ByteSeq = @[]
+      back: AmeDacControlOpen = default(AmeDacControlOpen)
+    opened = H.ctl.openFromServer(req, 500'u64)
+    check opened.ok
+    check opened.kind == dmkAdmin
+    check opened.body == @[byte 1, 2, 3]
+    check H.ctl.heardMs == 500'u64
+    reply = H.ctl.sealToServer(dmkAdminReply, @[byte 9])
+    back = openAmeDacControl(H.server.sessions[slot], reply)
+    check back.ok and back.kind == dmkAdminReply and back.body == @[byte 9]
+
+  # {.testKind: tkEdgeCase, covers: "openFromServer".}
+  test "junk is refused and counts as no sign of life":
+    var
+      H: Chain = newChain()
+      opened: AmeDacControlOpen = H.ctl.openFromServer(@[byte 1, 2, 3], 700'u64)
+    check not opened.ok
+    check H.ctl.heardMs == 0'u64
+
+  # {.testKind: tkUnit, covers: "openFromServer".}
+  test "a stance is still read on the way":
+    var
+      H: Chain = newChain()
+      slot: int = ameDacPeerSlot(H.server, H.fwdKey)
+      opened: AmeDacControlOpen = H.ctl.openFromServer(sealAmeDacControl(
+        H.server.sessions[slot], dmkBrakeStance, encodeDacBrakeStance(false)),
+        10'u64)
+    check opened.ok and opened.kind == dmkBrakeStance
+    check H.ctl.deaf

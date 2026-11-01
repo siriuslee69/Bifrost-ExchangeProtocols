@@ -52,9 +52,10 @@ import runePragmas
 import var_invariants
 
 const
-  controlKeepaliveMs* = 30_000'u64
+  controlKeepaliveMs* = 15_000'u64
     ## At level 0 the link is still touched this often, so the server does not
-    ## drop it as idle. Above 0 the refresh (`dacBrakeRefreshMs`) does that.
+    ## drop it as idle and so its answers prove, often enough, that home is alive
+    ## (the plain ping is not used when this link is up). Above 0 the refresh (`dacBrakeRefreshMs`) does that.
   controlSilentMs* = 90_000'u64
     ## No word back from the server for this long and the link counts as dead
     ## (`controlSilent`): the caller makes a new one.
@@ -153,6 +154,34 @@ proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8],
     return exc.msg
   result = if opened.ok: "the forwarder reads only the brake stance"
     else: opened.err
+
+proc openFromServer*(C: var SuperFastControl, payload: openArray[uint8],
+    nowMs: uint64): AmeDacControlOpen {.role: actor, tag: "appApi|relay|udp"} =
+  ## C/payload/nowMs: a datagram that came back from the server, opened. Any
+  ## frame that authenticates counts as a sign of life (`controlSilent`), and a
+  ## stance is read here (`deaf`). Every other kind is handed back for the caller
+  ## to deal with: this is how a forwarder receives a controller's `dmkAdmin`.
+  ## `ok` false: it did not open, `err` says why. Never raises.
+  try:
+    result = openAmeDacControl(C.session, payload)
+  except CatchableError as exc:
+    result.err = exc.msg
+    return
+  if not result.ok:
+    return
+  C.heardMs = nowMs
+  if result.kind == dmkBrakeStance:
+    try:
+      C.deaf = not decodeDacBrakeStance(result.body)
+    except CatchableError:
+      discard
+
+proc sealToServer*(C: var SuperFastControl, kind: DacMessageKind,
+    body: openArray[uint8]): ByteSeq {.role: encryptor,
+    tag: "appApi|relay|udp|cryptoBoundary"} =
+  ## C/kind/body: one control message sealed for the server on this link (for
+  ## example the `dmkAdminReply` to a `dmkAdmin`). May raise like any seal.
+  result = sealAmeDacControl(C.session, kind, body)
 
 proc controlSilent*(C: SuperFastControl, nowMs: uint64): bool {.role: parser,
     tag: "appApi|relay|udp"} =

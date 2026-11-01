@@ -62,7 +62,7 @@ type
     host*: string
     port*: uint16
 
-  ## DacMessageKind: the ten words DAC can say, besides `dmkUnknown`.
+  ## DacMessageKind: the twelve words DAC can say, besides `dmkUnknown`.
   ##
   ## Every one of them except `dmkUnknown` has a branch in `feedDacMessage`.
   ## That is the whole list and there is nothing else to look up: if a kind is
@@ -85,8 +85,14 @@ type
     dmkPackageCommit = 0x08'u8,
     dmkBrake = 0x09'u8,
       ## A RELAY telling a neighbour how hard to slow down (0..3).
-    dmkBrakeStance = 0x0A'u8
+    dmkBrakeStance = 0x0A'u8,
       ## A neighbour telling a relay once whether it will follow dmkBrake.
+    dmkAdmin = 0x0B'u8,
+      ## A controller asking the other end to change its own settings. The body
+      ## is opaque here: the APPLICATION defines the commands and decides who
+      ## may give them. Bifrost only carries it, sealed.
+    dmkAdminReply = 0x0C'u8
+      ## The answer to a dmkAdmin, in the same opaque form.
 
   ## DacPathLane: horizontal path condition profile.
   DacPathLane* = enum

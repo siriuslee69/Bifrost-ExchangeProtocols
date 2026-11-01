@@ -117,11 +117,13 @@ runtime memory views built from messages that already arrived.
 | PackageCommit        | Receiver -> Sender | Package verified/finished      |
 | Brake                | Relay -> Neighbour | Slow down, level 0..3          |
 | BrakeStance          | Neighbour -> Relay | I will / will not follow Brake |
+| Admin                | Controller -> End  | Change your own settings (opaque)|
+| AdminReply           | End -> Controller  | The answer to an Admin         |
 +----------------------+--------------------+--------------------------------+
 ```
 
-Ten words, and `feedDacMessage` has a branch for every one of them. There
-is no eleventh row to look up and no kind that arrives and is quietly ignored.
+Twelve words, and `feedDacMessage` has a branch for every one of them. There
+is no thirteenth row to look up and no kind that arrives and is quietly ignored.
 One of them, Brake, is an order and not a fact: see "The Brake" below.
 
 Concrete transfer:

@@ -300,12 +300,13 @@ suite "every word DAC has is a word the loop acts on":
       total = total + 1
       if dacLinkHandlesKind(k):
         handled = handled + 1
-    ## Eleven words, ten of them real. Only `dmkUnknown` -- the byte no kind
+    ## Thirteen words, twelve of them real. Only `dmkUnknown` -- the byte no kind
     ## claims -- is unhandled, and that is the whole difference. The two brake
     ## words have a branch each: `dmkBrake` acts, `dmkBrakeStance` is answered
-    ## with a reason, because an endpoint is not the one who reads it.
-    check total == 11
-    check handled == 10
+    ## with a reason, because an endpoint is not the one who reads it. The two
+    ## admin words belong to the application and are answered with a reason.
+    check total == 13
+    check handled == 12
     check not dacLinkHandlesKind(dmkUnknown)
 
 suite "secure package over the relay":

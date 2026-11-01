@@ -211,7 +211,7 @@ mask `1100_0000` switches on XChaCha20 (slot 0) and Gimli (slot 1). AES-CTR
 
 - `carrier` := the transport under AME: TCP (a byte stream) or DAC
   (datagrams).
-- `DAC kind` := the first byte of a DAC word. It says which of ten DAC words
+- `DAC kind` := the first byte of a DAC word. It says which of twelve DAC words
   follows.
 
 ```text
@@ -305,9 +305,9 @@ WIRE, stored package (outer to inner)
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
 
-### The ten DAC words ୨୧
+### The twelve DAC words ୨୧
 
-DAC writes no bytes itself. It has ten words, and AME carries them. The list
+DAC writes no bytes itself. It has twelve words, and AME carries them. The list
 is the whole of `DacMessageKind`:
 
 | byte | word | sent by | meaning |
@@ -323,8 +323,10 @@ is the whole of `DacMessageKind`:
 | `0x08` | PackageCommit | receiver | "everything arrived and the digest matches" |
 | `0x09` | Brake | a relay only | "slow down": one byte, level 0..3 (an order, not a fact) |
 | `0x0A` | BrakeStance | a neighbour | "I will / will not follow a Brake", sent once at the start |
+| `0x0B` | Admin | a controller | "change your own settings": the body is opaque, the APPLICATION defines the commands and who may give them |
+| `0x0C` | AdminReply | the controlled end | the answer to an Admin |
 
-Each of the ten real words has a branch in `feedDacMessage`. No DAC kind
+Each of the twelve real words has a branch in `feedDacMessage`. No DAC kind
 arrives and is ignored. Brake is the one word that orders instead of stating;
 only a relay may say it (`src/protocols/dac/README.md`, "The Brake").
 

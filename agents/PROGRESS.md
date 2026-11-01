@@ -1,6 +1,16 @@
 # Progress
 
-Commit Message: VIP places in relaySuperFastUDP; control link keepalive and answers
+Commit Message: DAC admin words (opaque controller request and reply); control link keepalive 15 s
+
+## 2026-11-01 Admin words
+
+- dmkAdmin (0x0B) / dmkAdminReply (0x0C): carriers only. The body is opaque; the
+  application defines the commands and the rights (Nebel: forwarder management).
+- super_fast_control: `openFromServer` hands back any opened control frame (stance
+  still read on the way), `sealToServer` seals a reply. Keepalive at level 0 is
+  15 s (was 30 s) so home's answers prove it is alive often enough to replace the
+  plain ping.
+- Tests: 3 new in test_super_fast_control; test_ame_dac_relay counts 13/12.
 
 ## 2026-11-01 VIP places, control link keepalive
 

@@ -760,6 +760,9 @@ proc dispatchDacBody(S: var DacLink, k: DacMessageKind,
     feedDacBrake(S, body, nowMs, R)
   of dmkBrakeStance:
     feedDacBrakeStance(S, body, R)
+  of dmkAdmin, dmkAdminReply:
+    R.kind = dlkIgnored
+    R.err = "DAC admin is for the application, not for the link loop"
   else:
     R.kind = dlkIgnored
 
