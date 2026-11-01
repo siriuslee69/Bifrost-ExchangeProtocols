@@ -127,7 +127,7 @@ suite "super-fast control link":
       steps: seq[AmeDacRelayStep] = tickAmeDacRelay(H.server, 10'u32)
     check steps.len == 1
     check dacKeyEqual(steps[0].peer, H.fwdKey)
-    check H.ctl.fromServerControl(steps[0].send[0]) == ""
+    check H.ctl.fromServerControl(steps[0].send[0], 10'u64) == ""
     check H.ctl.deaf
     discard H.F.setSuperFastBrake(2'u8)
     check pass(H, 1_000'u32) == 0
@@ -168,4 +168,38 @@ suite "super-fast control link":
   test "junk on the control socket is refused":
     var
       H: Chain = newChain()
-    check H.ctl.fromServerControl(@[byte 1, 2, 3]) != ""
+    check H.ctl.fromServerControl(@[byte 1, 2, 3], 10'u64) != ""
+
+suite "super-fast control link is kept alive":
+  # {.testKind: tkIntegration, covers: "controlSilent|tickSuperFastControl".}
+  test "level 0 is still touched now and then, and the server answers every order":
+    var
+      H: Chain = newChain()
+      out1: seq[UdpForwardOut] = @[]
+      back: seq[AmeDacRelayStep] = @[]
+      i: int = 0
+    discard H.F.setSuperFastBrake(1'u8)
+    check pass(H, 1_000'u32) == 1
+    discard H.F.setSuperFastBrake(0'u8)
+    check pass(H, 2_000'u32) == 1
+    check pass(H, 20_000'u32) == 0
+    check pass(H, 2_000'u32 + uint32(controlKeepaliveMs)) == 1
+    ## the server answered the order it was sent with its stance
+    out1 = tickSuperFastControl(H.ctl, H.F, 62_000'u64 + uint64(controlKeepaliveMs))
+    for o in out1:
+      discard feedAmeDacDatagram(H.server, H.fwdKey, o.payload, 70_000'u32)
+    back = tickAmeDacRelay(H.server, 70_001'u32)
+    while i < back.len:
+      if dacKeyEqual(back[i].peer, H.fwdKey) and back[i].send.len > 0:
+        check H.ctl.fromServerControl(back[i].send[0], 70_002'u64) == ""
+      i = i + 1
+    check H.ctl.heardMs == 70_002'u64
+
+  # {.testKind: tkEdgeCase, covers: "controlSilent".}
+  test "a link the server never answers counts as dead after 90 seconds":
+    var
+      H: Chain = newChain()
+    discard H.F.setSuperFastBrake(1'u8)
+    discard tickSuperFastControl(H.ctl, H.F, 1_000'u64)
+    check not H.ctl.controlSilent(1_000'u64 + controlSilentMs)
+    check H.ctl.controlSilent(1_001'u64 + controlSilentMs)

@@ -164,3 +164,20 @@ Two runs at 1200 B differ by under 2 %. p99 at 1200 B: 63 ns and 1852 ns.
   again into the outgoing frame. Handing the payload on as a view of the
   incoming bytes would remove both. It is the first place to look if this
   relay ever needs to be faster.
+
+### What the VIP list costs (relaySuperFastUDP, 1200 B, 100 000 datagrams)
+
+The list is read only while the relay is congested. The worst case is measured:
+8 VIPs on the list and a sender that is not one of them, so every entry is
+compared. Three runs, mean per datagram (the machine was not otherwise idle, so
+runs differ by about 20 ns):
+
+| relay | run 1 | run 2 | run 3 |
+|---|---:|---:|---:|
+| no VIP list | 84 ns | 105 ns | 91 ns |
+| 8 VIPs, not congested | 76 ns | 125 ns | 76 ns |
+| 8 VIPs, congested (brake on, nothing dropped) | 95 ns | 151 ns | 98 ns |
+
+Reading it: while nothing is congested the list adds nothing that rises above
+the noise. While congested it adds roughly 10 to 45 ns per datagram, which is
+small beside the ~1300 ns the extra-frame relay needs.

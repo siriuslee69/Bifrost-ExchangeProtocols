@@ -105,6 +105,10 @@ const
     ## Datagrams per second the relay lets through from ALL clients together,
     ## per brake level (0 = no limit). The levels are the same four as DAC's
     ## (dac/level0/brake.nim): 00 go ham .. 11 full brakes.
+  udpForwardVipSlots* = 8
+    ## How many client addresses may be named VIP. A fixed list, set once.
+  udpForwardVipBufferDatagrams* = 16
+    ## The VIP overflow box, in datagrams, held while the NAS is away.
 
 type
   ## UdpForwardEvent: what one call decided to do.
@@ -156,6 +160,8 @@ type
     bufferBytes*: int
     maxDatagramBytes*: int
     brakePerSecond*: array[4, int]
+    vipSlots*: int
+    vipBufferDatagrams*: int
 
   ## RelaySuperFastUdp: one relay process's whole state.
   ## nas: where the NAS is reachable right now. It may move.
@@ -199,6 +205,16 @@ type
     brakeCount: int
     braked*: uint64
       ## Datagrams dropped by the brake, never answered.
+    vips: seq[transport_types.UdpAddress]
+      ## The VIP clients (see `addSuperFastVip`): a fixed list, `cfg.vipSlots`
+      ## long, filled from the front.
+    vipBuffer: OverflowRing[UdpForwardOut]
+      ## VIP datagrams held while the NAS is away; they leave before the rest.
+    usedSlots*: int
+      ## Client slots in use, kept so "is the table full" costs one compare.
+    vipForwarded*: uint64
+      ## Datagrams passed because their sender is VIP while it mattered
+      ## (a brake, a full table or an absent NAS).
 
 proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     clientIdleMs: uint64 = udpForwardClientIdleMs,
@@ -207,7 +223,9 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     bufferDatagrams: int = udpForwardBufferDatagrams,
     bufferBytes: int = udpForwardBufferBytes,
     maxDatagramBytes: int = udpForwardMaxDatagramBytes,
-    brakePerSecond: array[4, int] = udpForwardBrakePerSecond):
+    brakePerSecond: array[4, int] = udpForwardBrakePerSecond,
+    vipSlots: int = udpForwardVipSlots,
+    vipBufferDatagrams: int = udpForwardVipBufferDatagrams):
     UdpForwardConfig {.role: configurator.} =
   ## Every field refused rather than silently corrected, because each one is a
   ## bound on memory a stranger can cause this process to spend.
@@ -215,6 +233,8 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     raise newException(ValueError, "UDP forward client table must hold one")
   if bufferDatagrams < 0 or bufferBytes < 0:
     raise newException(ValueError, "UDP forward buffer must not be negative")
+  if vipSlots < 0 or vipBufferDatagrams < 0:
+    raise newException(ValueError, "UDP forward VIP lists must not be negative")
   if maxDatagramBytes <= 0 or maxDatagramBytes > udpForwardMaxDatagramBytes:
     raise newException(ValueError, "UDP forward datagram cap is out of range")
   if nasSilentMs < nasKeepaliveMs:
@@ -230,6 +250,8 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     if r < 0:
       raise newException(ValueError, "UDP forward brake rate must not be negative")
   result.brakePerSecond = brakePerSecond
+  result.vipSlots = vipSlots
+  result.vipBufferDatagrams = vipBufferDatagrams
   result.maxDatagramBytes = maxDatagramBytes
 
 proc initRelaySuperFastUdp*(nas: transport_types.UdpAddress,
@@ -243,6 +265,8 @@ proc initRelaySuperFastUdp*(nas: transport_types.UdpAddress,
   result.slots = @[]
   result.index = initTable[transport_types.UdpAddress, int]()
   result.buffer = initOverflowRing[UdpForwardOut](cfg.bufferDatagrams)
+  result.vips = newSeq[transport_types.UdpAddress](cfg.vipSlots)
+  result.vipBuffer = initOverflowRing[UdpForwardOut](cfg.vipBufferDatagrams)
 
 proc dropOldestBuffered(F: var RelaySuperFastUdp): int {.role: actor,
     tag: "relay|udp".} =
@@ -285,6 +309,7 @@ proc releaseSlot(F: var RelaySuperFastUdp, i: int) {.role: actor,
     return
   F.index.del(F.slots[i].client)
   F.slots[i].inUse = false
+  F.usedSlots = F.usedSlots - 1
   F.slots[i].client = default(transport_types.UdpAddress)
 
 proc freeSlotIndex(F: var RelaySuperFastUdp): int {.role: parser,
@@ -313,10 +338,70 @@ proc reapIdleSlots(F: var RelaySuperFastUdp, nowMs: uint64): int {.role: actor,
       result = result + 1
     i = i + 1
 
+proc addSuperFastVip*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress): string {.
+    role: actor, tag: "appApi|relay|udp".} =
+  ## F/client: name a client address VIP. "" when added, else why not. Port 0
+  ## means every port of that host (a phone changes its port, its address stays).
+  ##
+  ## A VIP client is only treated differently while the relay is CONGESTED:
+  ##
+  ##   a brake is on      -> its datagrams are not dropped by the cap
+  ##   the table is full  -> it takes the place of the quietest ordinary client
+  ##   the NAS is away    -> its datagrams wait in a box of their own and leave first
+  ##
+  ## When nothing is congested the list is never looked at, so it costs nothing.
+  ## The NAS itself is always first: its answers are never braked, never held
+  ## back and never refused a place.
+  var
+    i: int = 0
+  if client.host.len == 0:
+    return "a VIP needs an address"
+  while i < F.cfg.vipSlots:
+    if F.vips[i].host.len == 0:
+      F.vips[i] = client
+      return ""
+    if F.vips[i] == client:
+      return ""
+    i = i + 1
+  result = "the VIP list holds at most " & $F.cfg.vipSlots & " addresses"
+
+proc clearSuperFastVips*(F: var RelaySuperFastUdp) {.role: actor,
+    tag: "appApi|relay|udp".} =
+  ## F: the VIP list emptied; the width stays.
+  F.vips = newSeq[transport_types.UdpAddress](F.cfg.vipSlots)
+
+proc isVip(F: RelaySuperFastUdp, client: transport_types.UdpAddress): bool {.
+    role: parser, tag: "relay|udp".} =
+  ## F/client: whether this address is on the VIP list. Only called while the
+  ## relay is congested (see `congested`); a list of 8 compares two strings
+  ## at most 8 times.
+  var
+    i: int = 0
+  while i < F.cfg.vipSlots:
+    if F.vips[i].host.len > 0 and F.vips[i].host == client.host and
+        (F.vips[i].port == 0'u16 or F.vips[i].port == client.port):
+      return true
+    i = i + 1
+
+proc stalestPlainSlot(F: RelaySuperFastUdp): int {.role: parser,
+    tag: "relay|udp".} =
+  ## F: the in-use slot of an ordinary (not VIP) client that was seen longest
+  ## ago, or -1 when every slot belongs to a VIP.
+  var
+    i: int = 0
+  result = -1
+  while i < F.slots.len:
+    if F.slots[i].inUse and not F.isVip(F.slots[i].client) and
+        (result < 0 or F.slots[i].lastSeenMs < F.slots[result].lastSeenMs):
+      result = i
+    i = i + 1
+
 proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
-    nowMs: uint64): int {.role: actor, tag: "relay|udp".} =
+    nowMs: uint64, vip: bool = false): int {.role: actor, tag: "relay|udp".} =
   ## F/client/nowMs: the client's slot, opening one if this is the first time
   ## it has been seen. -1 means the table is full and the datagram is dropped.
+  ## vip: this client is VIP and the relay is congested; when the table is full
+  ## it takes the place of the quietest ordinary client instead of being refused.
   ##
   ## Dropping when full is the honest answer. The alternative -- evicting
   ## somebody to make room -- lets a stranger sending from many addresses push
@@ -327,8 +412,13 @@ proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     return
   discard reapIdleSlots(F, nowMs)
   result = freeSlotIndex(F)
+  if result < 0 and vip:
+    result = stalestPlainSlot(F)
+    if result >= 0:
+      releaseSlot(F, result)
   if result < 0:
     return
+  F.usedSlots = F.usedSlots + 1
   F.slots[result].client = client
   F.slots[result].lastSeenMs = nowMs
   F.slots[result].inUse = true
@@ -336,7 +426,10 @@ proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
 
 proc drainBuffer(F: var RelaySuperFastUdp, S: var UdpForwardStep) {.role: actor,
     tag: "relay|udp".} =
-  ## F/S: everything held for the NAS, queued in the order it arrived.
+  ## F/S: everything held for the NAS: the VIP box first, then the rest, each
+  ## in the order it arrived.
+  while F.vipBuffer.len > 0:
+    S.send.add(F.vipBuffer.popFirst())
   while F.buffer.len > 0:
     S.send.add(F.buffer.popFirst())
   F.bufferBytes = 0
@@ -383,6 +476,32 @@ proc setSuperFastRestriction*(F: var RelaySuperFastUdp, mode: RestrictionMode,
   F.restriction = mode
   F.filter = rules
   result = ""
+
+proc congested(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
+    tag: "relay|udp", inline.} =
+  ## F/nowMs: whether the relay is under pressure right now: a brake is on, the
+  ## client table is full, or the NAS is away. Three cheap compares; this is
+  ## the only thing the VIP list costs while nothing is wrong.
+  result = F.brake != 0'u8 or F.usedSlots >= F.cfg.maxClients or
+    nasIsAway(F, nowMs)
+
+proc vipsMatter(F: RelaySuperFastUdp, client: transport_types.UdpAddress,
+    nowMs: uint64): bool {.role: parser, tag: "relay|udp", inline.} =
+  ## F/client/nowMs: true when the relay is congested AND this client is VIP.
+  ## The list is not looked at when nothing is congested, or when it is empty.
+  result = F.cfg.vipSlots > 0 and congested(F, nowMs) and isVip(F, client)
+
+proc bufferVipForNas(F: var RelaySuperFastUdp, item: UdpForwardOut): int {.
+    role: actor, tag: "relay|udp".} =
+  ## F/item: a VIP datagram held for a NAS that is not answering, in the VIP
+  ## box. Returns 1 when it (or an older VIP datagram) was given up.
+  if F.cfg.vipBufferDatagrams == 0 or item.payload.len > F.cfg.bufferBytes:
+    F.droppedTotal = F.droppedTotal + 1'u64
+    return 1
+  if F.vipBuffer.isFull:
+    F.droppedTotal = F.droppedTotal + 1'u64
+    result = 1
+  discard F.vipBuffer.addLast(item)
 
 proc clientMayReach(F: RelaySuperFastUdp, client: transport_types.UdpAddress): bool {.
     role: parser.} =
@@ -443,24 +562,26 @@ proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
   var
     slot: int = 0
     item: UdpForwardOut = default(UdpForwardOut)
+    vip: bool = false
   if payload.len == 0 or payload.len > F.cfg.maxDatagramBytes:
     result.event = ufeDropped
     result.dropped = 1
     result.err = "UDP forward datagram size is out of range"
     return
+  vip = F.vipsMatter(client, nowMs)
   if F.restriction != rmOpen and not clientMayReach(F, client):
     F.restricted = F.restricted + 1'u64
     result.event = ufeDropped
     result.dropped = 1
     result.err = "restricted: " & $F.restriction
     return
-  if not brakeAllows(F, nowMs):
+  if not vip and not brakeAllows(F, nowMs):
     F.braked = F.braked + 1'u64
     result.event = ufeDropped
     result.dropped = 1
     result.err = "braked: level " & $F.brake
     return
-  slot = slotForClient(F, client, nowMs)
+  slot = slotForClient(F, client, nowMs, vip)
   if slot < 0:
     result.event = ufeDropped
     result.dropped = 1
@@ -471,11 +592,16 @@ proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
   item.payload = @payload
   if nasIsAway(F, nowMs):
     result.event = ufeBuffered
-    result.dropped = bufferForNas(F, item)
+    if vip:
+      result.dropped = bufferVipForNas(F, item)
+    else:
+      result.dropped = bufferForNas(F, item)
     return
   result.event = ufeForwarded
   result.send.add(item)
   F.forwardedTotal = F.forwardedTotal + 1'u64
+  if vip:
+    F.vipForwarded = F.vipForwarded + 1'u64
 
 proc slotForTag(F: RelaySuperFastUdp, tag: uint32): int {.role: parser,
     tag: "relay|udp".} =
@@ -573,5 +699,6 @@ proc udpForwardClients*(F: RelaySuperFastUdp): int {.role: parser,
 
 proc udpForwardBuffered*(F: RelaySuperFastUdp): int {.role: parser,
     tag: "appApi|relay|udp".} =
-  ## F: how many datagrams are being held for a NAS that is not answering.
-  result = F.buffer.len
+  ## F: how many datagrams are being held for a NAS that is not answering,
+  ## VIP box included.
+  result = F.buffer.len + F.vipBuffer.len

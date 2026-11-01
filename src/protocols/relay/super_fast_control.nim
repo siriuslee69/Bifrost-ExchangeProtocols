@@ -51,6 +51,14 @@ import ./super_fast_udp
 import runePragmas
 import var_invariants
 
+const
+  controlKeepaliveMs* = 30_000'u64
+    ## At level 0 the link is still touched this often, so the server does not
+    ## drop it as idle. Above 0 the refresh (`dacBrakeRefreshMs`) does that.
+  controlSilentMs* = 90_000'u64
+    ## No word back from the server for this long and the link counts as dead
+    ## (`controlSilent`): the caller makes a new one.
+
 type
   ## SuperFastControl: the control link and what it last said.
   ## capacityPerSecond: datagrams per second that count as 100 % busy. 0 turns
@@ -58,6 +66,8 @@ type
   ## level/told/sentMs: the last level sent, whether any was, and when.
   ## totalAt/totalMs: the forwarder's counter at the last measurement.
   ## deaf: the server said it will not follow orders.
+  ## heardMs/startedMs: when the server last answered, and when this link was
+  ##   first used. `controlSilent` is built on them.
   SuperFastControl* {.role: truthState, expectedCount: 1,
       lifeCycle: lcForever.} = object
     session*: AmeSession
@@ -69,6 +79,8 @@ type
     totalMs*: uint64
     loadLevel*: uint8
     deaf*: bool
+    heardMs*: uint64
+    startedMs*: uint64
 
 proc initSuperFastControl*(session: AmeSession,
     capacityPerSecond: int = 5000): SuperFastControl {.role: configurator,
@@ -108,8 +120,10 @@ proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
   measureLoad(C, F, nowMs)
   want = max(F.brake, C.loadLevel)
   changed = want != C.level
-  due = want > 0'u8 and C.told and nowMs > C.sentMs and
-    nowMs - C.sentMs >= uint64(dacBrakeRefreshMs)
+  if C.startedMs == 0'u64:
+    C.startedMs = nowMs
+  due = C.told and nowMs > C.sentMs and nowMs - C.sentMs >=
+    (if want > 0'u8: uint64(dacBrakeRefreshMs) else: controlKeepaliveMs)
   if C.deaf or not (changed or due):
     return
   try:
@@ -121,10 +135,11 @@ proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
   C.told = true
   C.sentMs = nowMs
 
-proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8]): string {.
-    role: actor, tag: "appApi|relay|udp".} =
-  ## C/payload: a datagram that came back on the tag-0 socket. "" when it was
-  ## understood, else why not. The one word read is dmkBrakeStance: whether the
+proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8],
+    nowMs: uint64): string {.role: actor, tag: "appApi|relay|udp"} =
+  ## C/payload/nowMs: a datagram that came back from the server. "" when it was
+  ## understood, else why not. Any frame that authenticates counts as a sign of
+  ## life (`controlSilent`). The one word read is dmkBrakeStance: whether the
   ## server follows orders. Anything else is refused.
   var
     opened: AmeDacControlOpen = default(AmeDacControlOpen)
@@ -132,8 +147,19 @@ proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8]): str
     opened = openAmeDacControl(C.session, payload)
     if opened.ok and opened.kind == dmkBrakeStance:
       C.deaf = not decodeDacBrakeStance(opened.body)
+      C.heardMs = nowMs
       return ""
   except CatchableError as exc:
     return exc.msg
   result = if opened.ok: "the forwarder reads only the brake stance"
     else: opened.err
+
+proc controlSilent*(C: SuperFastControl, nowMs: uint64): bool {.role: parser,
+    tag: "appApi|relay|udp"} =
+  ## C/nowMs: true when the link has been used for `controlSilentMs` and the
+  ## server has not answered once in that time (it answers every order with
+  ## its stance). The server has then forgotten this link, or is gone: make a
+  ## new session and a new `SuperFastControl`.
+  var
+    last: uint64 = max(C.heardMs, C.startedMs)
+  result = C.startedMs > 0'u64 and nowMs > last and nowMs - last > controlSilentMs

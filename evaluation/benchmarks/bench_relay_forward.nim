@@ -103,11 +103,17 @@ proc benchCopy(payload: int, n: int): Timing =
     i = i + 1
   result.totalNs = nsOf(t0, getMonoTime())
 
-proc benchSuperFast(payload: int, n: int): Timing =
+proc benchSuperFast(payload: int, n: int, vips: int = 0,
+    congested: bool = false): Timing =
   ## relaySuperFastUDP: client datagram in, datagram for the NAS out.
+  ## vips: how many VIP addresses are on the list (none of them is a sender,
+  ## the worst case for the list). congested: a brake is on, with a cap so high
+  ## that nothing is dropped -- only the VIP lookup is switched on.
   var
     F: RelaySuperFastUdp = initRelaySuperFastUdp(
-      initUdpAddress("10.0.0.2", 9000'u16))
+      initUdpAddress("10.0.0.2", 9000'u16),
+      initUdpForwardConfig(brakePerSecond = [0, 100_000_000, 100_000_000,
+        100_000_000]))
     D: ByteSeq = newSeq[uint8](payload)
     C: seq[transport_types.UdpAddress] = @[]
     s: UdpForwardStep = default(UdpForwardStep)
@@ -115,8 +121,15 @@ proc benchSuperFast(payload: int, n: int): Timing =
     b: MonoTime = getMonoTime()
     t0: MonoTime = getMonoTime()
     i: int = 0
-  result.name = "relaySuperFastUDP"
+  result.name = "relaySuperFastUDP" & (if vips > 0: ", " & $vips & " VIPs" else: "") &
+    (if congested: ", congested" else: "")
   result.samples = newSeq[int64](n)
+  while i < vips:
+    discard F.addSuperFastVip(initUdpAddress("198.51.100." & $(i + 1), 0'u16))
+    i = i + 1
+  if congested:
+    discard F.setSuperFastBrake(1'u8)
+  i = 0
   while i < 50:
     C.add(initUdpAddress("203.0.113." & $(i + 1), 40000'u16))
     discard fromClient(F, C[i], D, 1000'u64)
@@ -188,14 +201,19 @@ proc main() =
   echo ""
   T.add(benchCopy(payload, n))
   T.add(benchSuperFast(payload, n))
+  T.add(benchSuperFast(payload, n, vips = 8))
+  T.add(benchSuperFast(payload, n, vips = 8, congested = true))
   T.add(benchFastExtraFrame(payload, n))
   for t in T:
     t.report(n, timer)
   echo ""
   echo "extra time per datagram, relayFastExtraFrame over relaySuperFastUDP:"
-  echo "  mean   ", T[2].totalNs div int64(n) - T[1].totalNs div int64(n), " ns"
-  echo "  ratio  ", formatFloat(float(T[2].totalNs) / float(T[1].totalNs),
+  echo "  mean   ", T[4].totalNs div int64(n) - T[1].totalNs div int64(n), " ns"
+  echo "  ratio  ", formatFloat(float(T[4].totalNs) / float(T[1].totalNs),
     ffDecimal, 1), "x"
-  echo "(sink ", T[0].sink + T[1].sink + T[2].sink, ")"
+  echo "the VIP list: 8 VIPs idle cost ", T[2].totalNs div int64(n) -
+    T[1].totalNs div int64(n), " ns, congested ", T[3].totalNs div int64(n) -
+    T[1].totalNs div int64(n), " ns per datagram (mean, over the same relay with none)"
+  echo "(sink ", T[0].sink + T[1].sink + T[2].sink + T[3].sink + T[4].sink, ")"
 
 main()

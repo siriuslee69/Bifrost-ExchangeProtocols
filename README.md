@@ -2701,6 +2701,37 @@ Byte layout, replay, who may send to whom, the way answers find their way
 back, and what is and is not hidden: [docs/routing.md](docs/routing.md).
 Runnable: `nimble exampleRelayFast`.
 
+### VIP places: who is kept when the relay is crowded ♡
+
+**Definitions**
+
+- `congested` := a brake is on, OR the client table is full, OR the NAS is away.
+- `VIP` := a client address on a short, fixed list (`vipSlots`, default 8).
+
+```nim
+discard F.addSuperFastVip(initUdpAddress("198.51.100.7", 0'u16))   # port 0 = every port
+```
+
+Only while the relay is congested, a VIP client is treated differently:
+
+```text
+  a brake is on      the cap drops ordinary clients; a VIP is never dropped by it
+  the table is full  a VIP newcomer takes the place of the quietest ordinary
+                     client (an ordinary newcomer is still refused; a table
+                     of VIPs pushes nobody out)
+  the NAS is away    VIP datagrams wait in a box of their own (vipBufferDatagrams,
+                     default 16) and leave BEFORE the rest
+```
+
+**The NAS is always first.** Its answers are never braked, never held back and
+never refused a place, so the server can talk to the outside even when many
+clients are being dropped.
+
+**What it costs.** While nothing is congested the list is never read: the check
+is three compares (`congested`). Measured with 8 VIPs, sender not on the list
+(worst case): no measurable difference idle; about 10 to 45 ns per datagram
+while congested (`docs/benchmarks.md`).
+
 ### Overflow: a small fixed box so a burst is not lost ⟡
 
 **Definitions**

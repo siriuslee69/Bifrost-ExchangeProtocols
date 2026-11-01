@@ -1,6 +1,18 @@
 # Progress
 
-Commit Message: Overflow ring for all relays; relay_node holds no Geist; benchRelay
+Commit Message: VIP places in relaySuperFastUDP; control link keepalive and answers
+
+## 2026-11-01 VIP places, control link keepalive
+
+- relaySuperFastUDP: `addSuperFastVip` (fixed list, `vipSlots`; port 0 = any port).
+  Only while congested (brake on, table full, NAS away): VIP is exempt from the
+  cap, takes the quietest ordinary place when the table is full, and waits in a
+  box of its own that leaves first. The NAS is always first (answers never
+  braked). Idle cost: none measurable; congested: ~10-45 ns.
+- super_fast_control: keepalive at level 0 (`controlKeepaliveMs` 30 s), the
+  server answers every order with its stance, `controlSilent` after 90 s;
+  `fromServerControl` takes a clock.
+- Tests: test_relay_super_fast_vip (8), test_super_fast_control (9).
 
 ## 2026-11-01 Overflow ring, hooks for the book, relay forwarding benchmark
 

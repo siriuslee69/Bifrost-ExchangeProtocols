@@ -269,6 +269,23 @@ proc spreadOne(R: var AmeDacRelay, i: int, nowMs: uint32,
   if step.send.len > 0 or step.err.len > 0:
     A.add(step)
 
+proc answerSource(R: var AmeDacRelay, nowMs: uint32,
+    A: var seq[AmeDacRelayStep]) {.role: actor.} =
+  ## R/nowMs/A: tell the brake source whether this side follows its orders.
+  ## Sent after EVERY order, so the source learns the link is alive and what
+  ## the server will do (`controlSilent`).
+  var
+    i: int = findDacLinkSlot(R.table, R.brakeSource)
+    step: AmeDacRelayStep = AmeDacRelayStep(peer: R.brakeSource)
+    msg: seq[DacTaggedMessage] = @[]
+  if i < 0:
+    return
+  msg.add(dacMessage(dmkBrakeStance,
+    encodeDacBrakeStance(R.relayForceRequest)))
+  sealRelayMessages(R, i, msg, step)
+  if step.send.len > 0:
+    A.add(step)
+
 proc spreadBrake(R: var AmeDacRelay, nowMs: uint32,
     A: var seq[AmeDacRelayStep]) {.role: orchestrator.} =
   ## R/nowMs/A: the level the source last ordered, passed to every peer. Done
@@ -279,6 +296,7 @@ proc spreadBrake(R: var AmeDacRelay, nowMs: uint32,
   if not R.brakeSpread:
     return
   R.brakeSpread = false
+  answerSource(R, nowMs, A)
   while i < R.table.slots.len:
     spreadOne(R, i, nowMs, A)
     i = i + 1
