@@ -26,9 +26,9 @@
 ## business. This module only stops sending it orders that would be ignored
 ## and lets the relay ask (`relayFollowsBrake`).
 ##
-## This does NOT apply to relaySuperFastUDP: it opens no frame and keeps no
-## key, so it can neither send an order nor read a stance. It has one global
-## brake instead (relay/super_fast_udp.nim, `setSuperFastBrake`).
+## relaySuperFastUDP opens no client frame, so it does not use this module. It
+## tells its one server over a control link, and the server tells the clients
+## (relay/super_fast_control.nim).
 
 import ../ame/types
 import ../ame/level2/seal_open
@@ -38,10 +38,6 @@ import ../dac/level0/brake
 import ./relay_node
 import runePragmas
 import var_invariants
-
-const
-  relayBrakeDeaf*: uint8 = 0b0010_0000'u8
-    ## The neighbour announced that it will not follow brake orders.
 
 proc relayBrakeOf*(R: RelayNode, slot: int): uint8 {.role: parser.} =
   ## R/slot: the level last ordered for that neighbour (0 when none, or when
@@ -54,7 +50,7 @@ proc relayFollowsBrake*(R: RelayNode, slot: int): bool {.role: parser.} =
   ## R/slot: false when that neighbour said it will not follow orders.
   if slot < 0 or slot >= R.neighbours.len or not R.neighbours[slot].used:
     return false
-  result = (R.neighbours[slot].brake and relayBrakeDeaf) == 0'u8
+  result = (R.neighbours[slot].brake and dacBrakeDeaf) == 0'u8
 
 proc isDacControlFrame*(A: openArray[uint8]): bool {.role: parser.} =
   ## A: one datagram. True when its clear AME header says kind 0x0B (DAC
@@ -94,7 +90,7 @@ proc setRelayBrake*(R: var RelayNode, slot: int, level: uint8,
     result.event = reDropped
     result.err = "relay brake: no neighbour in that slot"
     return
-  if (R.neighbours[slot].brake and relayBrakeDeaf) != 0'u8:
+  if (R.neighbours[slot].brake and dacBrakeDeaf) != 0'u8:
     return
   if relayBrakeOf(R, slot) == level:
     return
@@ -181,8 +177,8 @@ proc feedRelayBrake*(R: var RelayNode, slot: int,
     result.err = if opened.ok: "relay reads only the brake stance" else: opened.err
     return
   if follows:
-    R.neighbours[slot].brake = R.neighbours[slot].brake and not relayBrakeDeaf
+    R.neighbours[slot].brake = R.neighbours[slot].brake and not dacBrakeDeaf
   else:
-    R.neighbours[slot].brake = (R.neighbours[slot].brake or relayBrakeDeaf) and
+    R.neighbours[slot].brake = (R.neighbours[slot].brake or dacBrakeDeaf) and
       not dacBrakeLevelMask
   result.event = reAnswered

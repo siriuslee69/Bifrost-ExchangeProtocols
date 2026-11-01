@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: DAC brake: a relay slows neighbours down (2 bits); super-fast brake; shared UDP ports
+Commit Message: Super-fast control link: forwarder -> server -> clients
 
 ## 2026-11-01 DAC brake, super-fast brake, shared ports
 
@@ -13,8 +13,12 @@ Decisions, as the operator gave them:
   configs/default.toml and BifrostConfig). A refusing side announces it once at
   the start with dmkBrakeStance 0x0A [0]; the relay keeps the bit on the
   neighbour (RelayNeighbour.brake, bit 5) and stops ordering it.
-- Not for relaySuperFastUDP: it opens no frame. It has one operator-set brake
-  for all clients together (`setSuperFastBrake`, datagrams per second).
+- relaySuperFastUDP: it opens no client frame, so it tells its ONE server over a
+  control link (relay/super_fast_control.nim, one session, tag-0 socket); the
+  server (`setAmeDacBrakeSource`) slows its own sends and tells every client.
+  A client marks its server `peerIsRelay = true` (= speaks for a relay). The
+  hard cap (`setSuperFastBrake`, datagrams per second) stays as a backstop.
+  Cost: the forwarder holds ONE key, for control frames only.
 - Several super-fast forwarders on one machine: `bindUdpShared` /
   `openDacListenerShared` (SO_REUSEPORT, Linux), warning when the port was
   taken. `udpPortInUse` probes beforehand.
@@ -33,7 +37,7 @@ My own additions (not asked for, please check):
 
 Files:
 
-- new: dac/level0/brake.nim, relay/relay_brake.nim
+- new: dac/level0/brake.nim, relay/relay_brake.nim, relay/super_fast_control.nim
 - changed: dac/types.nim (2 kinds), dac/level3/link.nim (state, feed, tick,
   delay, chunk size), ame/level3/dac_relay.nim (relayForceRequest, peerIsRelay),
   relay/relay_node.nim (2 neighbour fields), fast_extra_frame.nim and
@@ -41,7 +45,8 @@ Files:
   relay/super_fast_udp.nim (brake), transport/udp_ops.nim and
   dac/level0/transport.nim (shared bind), config.nim, configs/default.toml.
 - tests: test_dac_brake (16), test_relay_super_fast_brake (6),
-  test_udp_shared_port (4); test_ame_dac_relay count updated.
+  test_super_fast_control (7), test_udp_shared_port (4); test_ame_dac_relay
+  count updated.
 
 Verified (compiled and run): the three new suites; dac wire/link/table/giveup/
 path adaptation/defaults/scramble; ame dac relay; fast/slow/super-fast relay and
@@ -57,6 +62,10 @@ Not done / open questions:
   is not built; the relay only learns the bit.
 - relaySlowExtractEncrypt neighbours over TCP (acrTcp) get no brake: DAC control
   frames are datagram-only.
+- The forwarder's caller still has to route tag-0 replies to `fromServerControl` and
+  run the handshake with the server (Nebel does neither yet).
+- Mirroring one client to two servers is not built (see the answer given in chat:
+  a shared port splits clients, it does not copy).
 - Windows shared port has no per-client split (system decides); untested here.
 
 Commit Message: Restriction: compact addresses, group object, allowed lists, rate-limited answers

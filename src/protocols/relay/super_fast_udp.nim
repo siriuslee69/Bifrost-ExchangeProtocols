@@ -16,6 +16,10 @@
 ## is NOT a participant. It does not hold a key, does not open a frame, does
 ## not know a session id from a sequence number. It moves bytes.
 ##
+## One exception, kept apart in super_fast_control.nim: a single control link to
+## the server, so it can pass on "I am crowded". It carries no client bytes and
+## opens no client frame.
+##
 ## ┊ Why it must not authenticate ┊
 ##
 ## Authenticating would mean running the exchange, holding keys, and paying a
@@ -395,10 +399,10 @@ proc setSuperFastBrake*(F: var RelaySuperFastUdp, level: uint8): string {.
   ## F/level: the operator's slow-down for ALL clients at once, 0 (go ham)
   ## .. 3 (full brakes). "" when set, else why not.
   ##
-  ## This relay opens no frame and holds no key, so it cannot send a client a
-  ## brake order (that is a relay with a link, relay/relay_brake.nim) and
-  ## cannot hear a client's stance. What it can do is limit how many datagrams
-  ## per second it passes to the NAS, summed over every client:
+  ## Two things happen at this level. (1) With a control link to the server
+  ## (relay/super_fast_control.nim) the level is SENT to the server, which
+  ## tells every client. (2) Always, this relay limits how many datagrams per
+  ## second it passes to the NAS, summed over every client:
   ##
   ##   level   datagrams per second (default)
   ##     0     no limit

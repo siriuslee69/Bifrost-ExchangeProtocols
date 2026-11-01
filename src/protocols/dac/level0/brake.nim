@@ -59,6 +59,9 @@ const
   dacBrakeFromRelay*: uint8 = 0b0000_0100'u8
   dacBrakeRefuse*: uint8 = 0b0000_1000'u8
   dacBrakeStancePending*: uint8 = 0b0001_0000'u8
+  dacBrakeDeaf*: uint8 = 0b0010_0000'u8
+    ## Set by whoever ORDERS: the peer said it will not follow orders. Same
+    ## bit on a relay's neighbour and on a server's client link.
 
 type
   ## DacBrakeBits: the one byte a neighbour keeps per connection (see top).

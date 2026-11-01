@@ -11,6 +11,7 @@ import ../../types
 import ../types
 import ../../config
 import ../../dac/types
+import ../../dac/level0/brake
 import ../../dac/level1/scramble
 import ../../dac/level2/package_transfer
 import ../../dac/level3/link
@@ -78,6 +79,12 @@ type
       ## The setting for a side that is NOT a relay: follow a relay's brake
       ## order (true, the norm) or not (false). Each admitted relay peer is
       ## told once when it is false. See dac/level0/brake.nim.
+    brakeSource: DacLinkKey
+    brakeSourceSet: bool
+    brakeLevel: uint8
+    brakeSpread: bool
+      ## A server behind a crowded relay: the source's last level, and whether
+      ## the other peers are still owed a copy of it.
     dropped*: uint32
     forgotten*: uint32
       ## How many held frame keys this relay has given up on, across every
@@ -214,6 +221,68 @@ proc applyLinkStep(R: var AmeDacRelay, slot: int, inner: DacLinkStep,
   if step.err.len > 0 and step.kind == adrNone:
     step.kind = adrDropped
 
+proc setAmeDacBrakeSource*(R: var AmeDacRelay, key: DacLinkKey): bool {.
+    role: actor.} =
+  ## R/key: the peer that speaks for a crowded relay in front of this server
+  ## (relaySuperFastUDP's control link). Its orders are accepted, and each one
+  ## is spread to every other peer. false when that peer has no slot yet.
+  ##
+  ##   forwarder --dmkBrake 2--> THIS server --dmkBrake 2--> every client
+  ##                                  |
+  ##                                  +-- and its own sends to them slow too
+  var
+    i: int = findDacLinkSlot(R.table, key)
+  if i < 0:
+    return false
+  setDacPeerIsRelay(R.table.slots[i].link, true)
+  R.brakeSource = key
+  R.brakeSourceSet = true
+  result = true
+
+proc noteBrakeSource(R: var AmeDacRelay, slot: int, inner: DacLinkStep) {.
+    role: actor.} =
+  ## R/slot/inner: when the order that was just fed came from the brake
+  ## source, remember its level and owe the other peers a copy.
+  if not R.brakeSourceSet or inner.kind != dlkBrakeReceived:
+    return
+  if not dacKeyEqual(R.table.slots[slot].key, R.brakeSource):
+    return
+  R.brakeLevel = dacBrakeLevel(R.table.slots[slot].link)
+  R.brakeSpread = true
+
+proc spreadOne(R: var AmeDacRelay, i: int, nowMs: uint32,
+    A: var seq[AmeDacRelayStep]) {.role: actor.} =
+  ## R/i/nowMs/A: one peer is slowed on this side and told to slow down.
+  ## The source itself is skipped. A peer that said it will not follow is
+  ## not sent an order it would ignore (this side still slows its own sends).
+  var
+    step: AmeDacRelayStep = AmeDacRelayStep(peer: R.table.slots[i].key)
+    msg: seq[DacTaggedMessage] = @[]
+  if not R.table.slots[i].used or dacKeyEqual(R.table.slots[i].key,
+      R.brakeSource):
+    return
+  discard applyDacBrake(R.table.slots[i].link, R.brakeLevel, nowMs)
+  if not dacPeerFollows(R.table.slots[i].link):
+    return
+  msg.add(dacMessage(dmkBrake, encodeDacBrake(R.brakeLevel)))
+  sealRelayMessages(R, i, msg, step)
+  if step.send.len > 0 or step.err.len > 0:
+    A.add(step)
+
+proc spreadBrake(R: var AmeDacRelay, nowMs: uint32,
+    A: var seq[AmeDacRelayStep]) {.role: orchestrator.} =
+  ## R/nowMs/A: the level the source last ordered, passed to every peer. Done
+  ## on the next tick after an order arrives, so the forwarder's repeats (every
+  ## `dacBrakeRefreshMs`) keep every client's lease alive too.
+  var
+    i: int = 0
+  if not R.brakeSpread:
+    return
+  R.brakeSpread = false
+  while i < R.table.slots.len:
+    spreadOne(R, i, nowMs, A)
+    i = i + 1
+
 proc dropRelayStep(R: var AmeDacRelay, key: DacLinkKey, why: string,
     step: var AmeDacRelayStep) {.role: actor.} =
   ## R/key/why: relay, the peer that sent it, and why the datagram is gone.
@@ -235,6 +304,7 @@ proc feedAmeDacDatagram*(R: var AmeDacRelay, key: DacLinkKey,
   var
     slot: int = findDacLinkSlot(R.table, key)
     opened: AmeDacControlOpen = default(AmeDacControlOpen)
+    inner: DacLinkStep = default(DacLinkStep)
   result.peer = key
   if slot < 0:
     dropRelayStep(R, key, "DAC datagram from a peer with no session", result)
@@ -248,8 +318,10 @@ proc feedAmeDacDatagram*(R: var AmeDacRelay, key: DacLinkKey,
     dropRelayStep(R, key, opened.err, result)
     return
   R.table.slots[slot].lastSeenMs = nowMs
-  applyLinkStep(R, slot, feedDacMessage(R.table.slots[slot].link, opened.kind,
-    opened.body, nowMs), result)
+  inner = feedDacMessage(R.table.slots[slot].link, opened.kind, opened.body,
+    nowMs)
+  applyLinkStep(R, slot, inner, result)
+  noteBrakeSource(R, slot, inner)
 
 proc sendAmeDacPackage*(R: var AmeDacRelay, key: DacLinkKey,
     packageId: uint64, payload: openArray[uint8],
@@ -312,6 +384,7 @@ proc tickAmeDacRelay*(R: var AmeDacRelay,
     i: int = 0
     step: AmeDacRelayStep = default(AmeDacRelayStep)
     inner: DacLinkStep = default(DacLinkStep)
+  spreadBrake(R, nowMs, result)
   while i < R.table.slots.len:
     if not R.table.slots[i].used:
       i = i + 1

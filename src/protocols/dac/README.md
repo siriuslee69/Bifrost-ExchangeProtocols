@@ -191,11 +191,20 @@ Any other length, or a level above 3, is refused.
   relay      -> neighbour : may order       (the neighbour obeys by default)
   neighbour  -> relay     : may NOT order   (a relay reads only the stance)
   neighbour  -> neighbour : may NOT order   (the link never saw a relay)
+  server speaking for a relay -> client : may order (see below)
 ```
 
 So there is one controlling point. The neighbour's link knows whether its
 peer is a relay (the handshake says so: `admitAmeDacPeer(... peerIsRelay)`).
 An order from anyone else is ignored.
+
+**A server that speaks for a relay.** A relay that cannot open frames
+(relaySuperFastUDP) has one control link to its server. The server marks that
+peer as its brake source (`setAmeDacBrakeSource`); each order from it is passed
+on to every other peer (`dmkBrake`) and slows the server's own sends to them.
+A client marks its server with `peerIsRelay = true`, meaning "this peer speaks
+for a relay". Only the source's order is spread; a client cannot order its
+server.
 
 ### Follow or not: `relayForceRequest`
 
@@ -228,9 +237,9 @@ neighbour still returns to full speed by itself.
 
 ### Where it does NOT work
 
-`relaySuperFastUDP` opens no frame and holds no key. It can neither send an
-order nor read a stance. It has one operator-set brake for all clients
-together instead: see the README, "relaySuperFastUDP".
+`relaySuperFastUDP` cannot send an order to a client: it opens no frame and
+holds no client key. It tells its ONE server over a control link instead, and
+the server tells the clients. See the README, "relaySuperFastUDP".
 
 ## Four words DAC used to have ꒰ঌ ໒꒱
 

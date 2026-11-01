@@ -137,7 +137,7 @@ proc initDacLinkKey*(host: string, port: uint16,
   result.port = port
   result.carrier = carrier
 
-proc dacKeyEqual(a, b: DacLinkKey): bool {.role: parser.} =
+proc dacKeyEqual*(a, b: DacLinkKey): bool {.role: parser.} =
   ## a/b: two peer keys compared field by field.
   result = a.port == b.port and a.carrier == b.carrier and a.host == b.host
 

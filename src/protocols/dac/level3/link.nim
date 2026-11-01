@@ -25,6 +25,7 @@ import ../level1/path_policy
 import ../level1/scramble
 import ../level2/package_transfer
 import runePragmas
+import var_invariants
 
 const
   dacLinkAscii* = """
@@ -73,6 +74,7 @@ type
     dlkCommitReceived,
     dlkPathStatsReceived,
     dlkBrakeReceived,
+    dlkStanceReceived,
     dlkIgnored
 
   ## DacLinkStep: outcome of one fed frame or one tick.
@@ -674,26 +676,52 @@ proc feedDacCommit(S: var DacLink, body: openArray[uint8],
   clearDacOutgoing(S)
   R.kind = dlkCommitReceived
 
+proc applyDacBrake*(S: var DacLink, level: uint8, nowMs: uint32): bool {.
+    role: actor, needs: level <= 3'u8.} =
+  ## S/level/nowMs: put a brake level in force on this side. false when this
+  ## side refuses brakes (`relayForceRequest` off); it then owes its peer a
+  ## stance. WHO may order is decided before this: the link's own peer
+  ## (`feedDacBrake`) or, for a server passing on a relay's order, the relay
+  ## that spoke for it (`ameDacSpreadBrake`).
+  if not dacFollowsRelay(S):
+    S.brake = S.brake or dacBrakeStancePending
+    return false
+  S.brake = (S.brake and not dacBrakeLevelMask) or level
+  S.brakeMs = nowMs
+  result = true
+
+proc dacPeerFollows*(S: DacLink): bool {.role: parser, inline.} =
+  ## S: false when the peer said it will not follow this side's orders.
+  result = (S.brake and dacBrakeDeaf) == 0'u8
+
 proc feedDacBrake(S: var DacLink, body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
   ## S/body/nowMs/R: link, brake body, clock, and the step being filled.
-  ## An order counts only from a relay, and only when this side follows
-  ## relays. Anything else is ignored; a refused order from a relay also makes
-  ## this side repeat its stance, so a stance message that got lost is
-  ## repaired by the next order instead of being left wrong.
+  ## An order counts only from a peer marked as a relay (or as speaking for
+  ## one), and only when this side follows relays. Anything else is ignored;
+  ## a refused order also makes this side repeat its stance, so a stance
+  ## message that got lost is repaired by the next order.
   var
     level: uint8 = decodeDacBrake(body)
   R.kind = dlkIgnored
   if (S.brake and dacBrakeFromRelay) == 0'u8:
     R.err = "DAC brake order from a peer that is not a relay"
     return
-  if not dacFollowsRelay(S):
-    S.brake = S.brake or dacBrakeStancePending
+  if not applyDacBrake(S, level, nowMs):
     R.err = "DAC brake order refused: relayForceRequest is off"
     return
-  S.brake = (S.brake and not dacBrakeLevelMask) or level
-  S.brakeMs = nowMs
   R.kind = dlkBrakeReceived
+
+proc feedDacBrakeStance(S: var DacLink, body: openArray[uint8],
+    R: var DacLinkStep) {.role: orchestrator.} =
+  ## S/body/R: the peer says whether it follows this side's orders. A fact
+  ## about the speaker, so it is kept whatever this side is; only a side that
+  ## orders ever reads it (`dacPeerFollows`).
+  if decodeDacBrakeStance(body):
+    S.brake = S.brake and not dacBrakeDeaf
+  else:
+    S.brake = S.brake or dacBrakeDeaf
+  R.kind = dlkStanceReceived
 
 proc tickDacBrake(S: var DacLink, nowMs: uint32, F: var seq[DacTaggedMessage]) {.
     role: actor.} =
@@ -731,8 +759,7 @@ proc dispatchDacBody(S: var DacLink, k: DacMessageKind,
   of dmkBrake:
     feedDacBrake(S, body, nowMs, R)
   of dmkBrakeStance:
-    R.kind = dlkIgnored
-    R.err = "DAC brake stance is for a relay, not for an endpoint"
+    feedDacBrakeStance(S, body, R)
   else:
     R.kind = dlkIgnored
 

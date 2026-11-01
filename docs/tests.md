@@ -132,6 +132,12 @@ DAC brake: a relay slows a neighbour down        (test_dac_brake.nim)
      relay; a lost stance is repaired; a client cannot order a relay
   -> relayForceRequest: on by default, readable from the config
 
+relaySuperFastUDP control link         (test_super_fast_control.nim)
+  -> forwarder -> server -> client, every hop a sealed frame; the level is sent
+     on change, repeated while above 0, and reset by 0; load alone raises it
+  -> a server or client that will not follow is not sent orders
+  -> an order from a peer that is not the source reaches nobody; junk refused
+
 relaySuperFastUDP brake                  (test_relay_super_fast_brake.nim)
   -> level 0 has no limit; a level limits ALL clients together per second
   -> lifting it, a level above 3, a negative rate; answers are not braked

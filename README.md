@@ -2521,11 +2521,53 @@ var
   DAC uses.
 - `shared port` := one UDP port held by several forwarders at once.
 
-This relay opens no frame, so it cannot tell a client "slow down" (that is a
-relay with a link: "Slowing neighbours down" below). It does the one thing it
-can: it limits how many datagrams per second it passes to the NAS, **all
-clients together**. The rest are dropped and counted in `braked`. Clients feel
-the drop as loss, and DAC's own repair and path reports slow them down.
+This relay opens no client frame, so it cannot tell a client "slow down". It
+has two ways to slow clients, with different jobs:
+
+```text
+  1. the SIGNAL   a control link to its ONE server (super_fast_control.nim)
+                  forwarder -> server: "level 2" -> server -> every client
+  2. the LIMIT    a hard cap on datagrams per second, all clients together
+                  (always on guard, even with no server connected)
+```
+
+**The signal.** The forwarder has exactly one destination, the server. It also
+holds ONE session with that server, for a few control frames. It still holds no
+key for client traffic (clients seal end-to-end with the server). It measures
+its own load, and sends `dmkBrake [level]` when the level changes and every
+10 s while it is above 0:
+
+```text
+  client ===== end-to-end session ===== server
+     \                                   |
+      \_ datagram __ forwarder __________/
+                        |  control link: dmkBrake [2]   (tag-0 socket)
+                        +==========================> server
+  server: slows its own sends to every client, then sends each client dmkBrake [2]
+```
+
+```nim
+# forwarder side
+var ctl = initSuperFastControl(sessionWithServer, capacityPerSecond = 5000)
+for o in ctl.tickSuperFastControl(F, nowMs): sendFromTag0(o.peer, o.payload)
+discard ctl.fromServerControl(datagramFromTag0)    # the server's stance
+# server side
+discard server.admitAmeDacPeer(forwarderKey, session, nowMs)
+discard server.setAmeDacBrakeSource(forwarderKey)
+# client side: the server speaks for the relay
+discard client.admitAmeDacPeer(serverKey, session, nowMs, peerIsRelay = true)
+```
+
+The level is the larger of the operator's (`setSuperFastBrake`) and the load
+level (50 / 75 / 90 % of `capacityPerSecond`). A server or client with
+`relayForceRequest = false` is not sent orders it would ignore. A stolen VPS
+gives up the control key only: it could then make the server slow its clients,
+which it could already do by dropping datagrams.
+
+**The limit.** It caps how many datagrams per second the forwarder passes to
+the NAS, **all clients together**. The rest are dropped and counted in
+`braked`. Clients feel the drop as loss, and DAC's own repair and path reports
+slow them down.
 
 ```nim
 discard F.setSuperFastBrake(2'u8)   # "" when set; level 0 lifts it again
@@ -2567,6 +2609,7 @@ var b = openDacListenerShared(initDacAddress("0.0.0.0", 9000))   # b.warning != 
 - On Windows there is no split: the second bind is allowed, and the system
   decides which socket gets a datagram.
 - `udpPortInUse(address)` tells you beforehand whether a port is taken.
+
 ### The one socket setting a server must set ⟡
 
 **Definitions**
