@@ -230,7 +230,7 @@ nowhere.
 ```
 
 The book (the group object and every connection's lists) is kept through
-**Geist**, the storage library. `attachGeistBook(R, dir)` (restriction_store.nim; the node itself takes hooks via `attachRestrictionBook(R, load, save)` and compiles no database) reads it when
+**Geist**, the storage library. `attachGeistBook(R, dir)` (import `relay/restriction_store` yourself: the umbrella module does not, so a program that does not want Geist never compiles it; the node itself takes hooks via `attachRestrictionBook(R, load, save)` and compiles no database) reads it when
 the relay starts, and every accepted update is saved before the
 acknowledgement goes out. A save that fails refuses the update, so the device
 never believes a change that the relay would forget on restart.
