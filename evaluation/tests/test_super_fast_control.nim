@@ -242,3 +242,30 @@ suite "super-fast control link carries an admin word":
         10'u64)
     check opened.ok and opened.kind == dmkBrakeStance
     check H.ctl.deaf
+
+suite "super-fast control link with several forwarders":
+  # {.testKind: tkUnit, covers: "tickSuperFastControl|measureLoad".}
+  test "the load is the sum of all of them; the brake is the strongest":
+    var
+      H: Chain = newChain(capacity = 100)
+      out1: seq[UdpForwardOut] = @[]
+      srv: transport_types.UdpAddress = initUdpAddress("10.0.0.2", 9000'u16)
+    discard H.ctl.tickSuperFastControl(0'u64, 0'u8, srv, 0'u64)
+    ## two routes pass 50 each in a second: together 100 = full load
+    out1 = H.ctl.tickSuperFastControl(100'u64, 0'u8, srv, 1_000'u64)
+    check out1.len == 1
+    check H.ctl.level == 3'u8
+    ## the strongest operator level among the routes counts too
+    check H.ctl.tickSuperFastControl(100'u64, 3'u8, srv, 1_500'u64).len == 0
+    check H.ctl.level == 3'u8
+
+  # {.testKind: tkEdgeCase, covers: "measureLoad".}
+  test "a total that goes down (a route was closed) is no load, not a wrap-around":
+    var
+      H: Chain = newChain(capacity = 100)
+      srv: transport_types.UdpAddress = initUdpAddress("10.0.0.2", 9000'u16)
+    discard H.ctl.tickSuperFastControl(5000'u64, 0'u8, srv, 0'u64)
+    discard H.ctl.tickSuperFastControl(40'u64, 0'u8, srv, 1_000'u64)
+    check H.ctl.loadLevel == 0'u8
+    discard H.ctl.tickSuperFastControl(60'u64, 0'u8, srv, 2_000'u64)
+    check H.ctl.loadLevel == 0'u8

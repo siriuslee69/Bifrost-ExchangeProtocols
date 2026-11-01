@@ -1,6 +1,12 @@
 # Progress
 
-Commit Message: DAC admin words (opaque controller request and reply); control link keepalive 15 s
+Commit Message: Control link reports the load of SEVERAL forwarders (sum) and their strongest brake
+
+- tickSuperFastControl(C, forwarded, brake, server, nowMs): a program that runs
+  several routes passes the total datagrams of all and the strongest operator
+  level; the one-forwarder form calls it. A total that goes down (a route
+  closed) counts as no load for that second instead of wrapping around.
+
 
 ## 2026-11-01 Admin words
 

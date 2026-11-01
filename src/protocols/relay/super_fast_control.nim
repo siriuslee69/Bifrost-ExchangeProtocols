@@ -43,6 +43,7 @@
 ## in super_fast_udp.nim still holds for it.
 
 import ../types
+import ../transport/types as transport_types
 import ../ame/types
 import ../ame/level2/seal_open
 import ../dac/types
@@ -91,9 +92,10 @@ proc initSuperFastControl*(session: AmeSession,
   result.session = session
   result.capacityPerSecond = capacityPerSecond
 
-proc measureLoad(C: var SuperFastControl, F: RelaySuperFastUdp,
-    nowMs: uint64) {.role: math.} =
-  ## C/F/nowMs: once a second, turn the forwarder's counter into a level.
+proc measureLoad(C: var SuperFastControl, total: uint64, nowMs: uint64) {.role: math.} =
+  ## C/total/nowMs: once a second, turn the datagrams forwarded so far (all
+  ## routes together) into a level. A total that went DOWN -- a route was
+  ## closed -- counts as no load for that second instead of wrapping around.
   var
     rate: uint64 = 0'u64
   if C.capacityPerSecond == 0:
@@ -101,25 +103,28 @@ proc measureLoad(C: var SuperFastControl, F: RelaySuperFastUdp,
   if nowMs < C.totalMs or nowMs - C.totalMs < 1000'u64:
     if C.totalMs == 0'u64:
       C.totalMs = nowMs
-      C.totalAt = F.forwardedTotal
+      C.totalAt = total
     return
-  rate = (F.forwardedTotal - C.totalAt) * 1000'u64 div (nowMs - C.totalMs)
+  if total >= C.totalAt:
+    rate = (total - C.totalAt) * 1000'u64 div (nowMs - C.totalMs)
   C.loadLevel = dacBrakeForLoad(int(min(rate, uint64(high(int32)))),
     C.capacityPerSecond)
   C.totalMs = nowMs
-  C.totalAt = F.forwardedTotal
+  C.totalAt = total
 
-proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
-    nowMs: uint64): seq[UdpForwardOut] {.role: orchestrator,
-    tag: "appApi|relay|udp".} =
-  ## C/F/nowMs: the periodic call, beside `tickRelaySuperFastUdp`. Returns the
-  ## sealed datagrams to send (tag 0, to the server), usually none.
+proc tickSuperFastControl*(C: var SuperFastControl, forwarded: uint64,
+    brake: uint8, server: transport_types.UdpAddress, nowMs: uint64):
+    seq[UdpForwardOut] {.role: orchestrator, tag: "appApi|relay|udp".} =
+  ## C/forwarded/brake/server/nowMs: the periodic call for a program that
+  ## runs SEVERAL forwarders (routes): `forwarded` is the datagrams passed by all
+  ## of them together, `brake` the strongest operator level among them. Returns
+  ## the sealed datagrams to send (tag 0, to `server`), usually none.
   var
     want: uint8 = 0'u8
     changed: bool = false
     due: bool = false
-  measureLoad(C, F, nowMs)
-  want = max(F.brake, C.loadLevel)
+  measureLoad(C, forwarded, nowMs)
+  want = max(brake, C.loadLevel)
   changed = want != C.level
   if C.startedMs == 0'u64:
     C.startedMs = nowMs
@@ -128,13 +133,21 @@ proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
   if C.deaf or not (changed or due):
     return
   try:
-    result.add(UdpForwardOut(tag: 0'u32, peer: F.nas,
+    result.add(UdpForwardOut(tag: 0'u32, peer: server,
       payload: sealAmeDacControl(C.session, dmkBrake, encodeDacBrake(want))))
   except CatchableError:
     return
   C.level = want
   C.told = true
   C.sentMs = nowMs
+
+proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
+    nowMs: uint64): seq[UdpForwardOut] {.role: orchestrator,
+    tag: "appApi|relay|udp".} =
+  ## C/F/nowMs: the periodic call for ONE forwarder, beside
+  ## `tickRelaySuperFastUdp`. Returns the sealed datagrams to send (tag 0, to
+  ## the server), usually none.
+  result = tickSuperFastControl(C, F.forwardedTotal, F.brake, F.nas, nowMs)
 
 proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8],
     nowMs: uint64): string {.role: actor, tag: "appApi|relay|udp"} =
