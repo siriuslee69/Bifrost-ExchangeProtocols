@@ -147,6 +147,11 @@ type
       ## true once a restricted frame from this neighbour got an answer
     answeredMs*: uint32
       ## when that answer was sent; the next one waits restrictionAnswerMs
+    brake*: uint8
+      ## what this relay has ordered the neighbour, and whether the neighbour
+      ## said it will not follow (relay_brake.nim has the bits)
+    brakeMs*: uint32
+      ## when the order was last sent; it is repeated to keep it alive
 
   ## RelayTarget: one directory line (Def. 1).
   ## via: 0 for a target that connects to THIS node itself, otherwise the

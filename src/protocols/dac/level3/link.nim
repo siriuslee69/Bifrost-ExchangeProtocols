@@ -11,6 +11,7 @@ import ../../types
 import ../types
 import ../level0/defaults
 import ../level0/ack_range
+import ../level0/brake
 import ../level0/package_commit
 import ../level1/package_manifest
 import ../level1/package_chunk
@@ -71,6 +72,7 @@ type
     dlkRepairRequested,
     dlkCommitReceived,
     dlkPathStatsReceived,
+    dlkBrakeReceived,
     dlkIgnored
 
   ## DacLinkStep: outcome of one fed frame or one tick.
@@ -129,6 +131,8 @@ type
   ## committed: packages this side has received whole and verified. Only a
   ## `damVerified` receiver says it out loud, in every receipt.
   ## peerCommits: the last commit count the PEER reported.
+  ## brake/brakeMs: what a relay has ordered this side to do, and when the
+  ## order arrived. One byte (see level0/brake.nim) plus one clock value.
   DacLink* {.role: truthState.} = object
     defaults*: DacScenarioDefaults
     policy*: DacScramblePolicy
@@ -137,6 +141,8 @@ type
     pathMoves*: uint16
     committed*: uint8
     peerCommits*: uint8
+    brake*: DacBrakeBits
+    brakeMs*: uint32
     outgoing*: DacOutgoing
     incoming*: DacIncoming
 
@@ -162,6 +168,56 @@ proc initDacLink*(d: DacScenarioDefaults, seed: uint64,
   result.outgoing.timer = initDacRepairTimer()
   result.outgoing.scramble = initDacScrambleState(seed)
   result.incoming.ack = initDacAckPolicy(d, not policy.shuffleChunks)
+
+## ----------------------------- the brake -----------------------------
+## A relay may order this side to slow down (level0/brake.nim has the table).
+## Only a relay: an order from anybody else is ignored. A side that does not
+## want to follow relays says so once, and the relay stops asking.
+
+proc dacBrakeLevel*(S: DacLink): uint8 {.role: parser, inline.} =
+  ## S: the level a relay has ordered, 0 when none is in force.
+  result = S.brake and dacBrakeLevelMask
+
+proc dacFollowsRelay*(S: DacLink): bool {.role: parser, inline.} =
+  ## S: whether this side obeys a relay's brake (`relayForceRequest`).
+  result = (S.brake and dacBrakeRefuse) == 0'u8
+
+proc dacStanceDue(S: var DacLink) {.role: actor, inline.} =
+  ## S: owe the relay a stance message when it is a relay and orders are
+  ## refused; nothing to say otherwise.
+  if (S.brake and dacBrakeFromRelay) != 0'u8 and not dacFollowsRelay(S):
+    S.brake = S.brake or dacBrakeStancePending
+
+proc setDacPeerIsRelay*(S: var DacLink, yes: bool) {.role: actor.} =
+  ## S/yes: whether the peer on this link is a relay. Set by whoever admitted
+  ## the peer, because only the handshake knows what the peer is.
+  if yes:
+    S.brake = S.brake or dacBrakeFromRelay
+  else:
+    S.brake = S.brake and not (dacBrakeFromRelay or dacBrakeLevelMask)
+  dacStanceDue(S)
+
+proc setDacRelayForceRequest*(S: var DacLink, yes: bool) {.role: actor.} =
+  ## S/yes: `relayForceRequest`. true (the norm) follows a relay's brake.
+  ## false refuses it, and a relay peer is told once on the next tick.
+  if yes:
+    S.brake = S.brake and not (dacBrakeRefuse or dacBrakeStancePending)
+    return
+  S.brake = (S.brake or dacBrakeRefuse) and not dacBrakeLevelMask
+  dacStanceDue(S)
+
+proc dacBrakedDefaults(S: DacLink, n: int): DacScenarioDefaults {.role: math.} =
+  ## S/n: the link's defaults with the chunk cut down by the brake, for a
+  ## package of n bytes. Kept whole when the smaller chunks would make more
+  ## chunks than a package may have: the wait still slows the send.
+  var
+    c: uint16 = dacBrakeChunkBytes(S.defaults.chunkBytes, dacBrakeLevel(S))
+  result = S.defaults
+  if c == result.chunkBytes or n <= 0:
+    return
+  if (n + int(c) - 1) div int(c) > int(S.limits.maxChunks):
+    return
+  result.chunkBytes = c
 
 proc appendDacParityFrames(S: var DacLink, F: var seq[DacTaggedMessage],
     groupId: uint32) {.role: dataWriter.} =
@@ -191,8 +247,8 @@ proc beginDacPackage*(S: var DacLink, packageId: uint64,
     g: uint32 = 0'u32
   if S.outgoing.active:
     raise newException(ValueError, "DAC link already has a package in flight")
-  S.outgoing.plan = planDacPackage(packageId, A, S.defaults, S.defaults.transferClass,
-    S.limits)
+  S.outgoing.plan = planDacPackage(packageId, A, dacBrakedDefaults(S, A.len),
+    S.defaults.transferClass, S.limits)
   S.outgoing.active = true
   S.outgoing.rounds = 0'u8
   S.outgoing.sentMs = newSeq[uint32](S.outgoing.plan.chunks.len)
@@ -216,7 +272,9 @@ proc dacSendDelayMs*(S: var DacLink): uint16 {.role: math.} =
   ## S: link drawing one send delay.
   ## Returns milliseconds the caller should wait before the next frame leaves.
   ## Nothing sleeps here; pacing belongs to whoever owns the clock.
-  result = dacScrambleDelayMs(S.outgoing.scramble, S.policy)
+  ## A relay's brake adds its wait on top of the scramble delay.
+  result = uint16(min(uint32(dacScrambleDelayMs(S.outgoing.scramble, S.policy)) +
+    uint32(dacBrakeGapMs[int(dacBrakeLevel(S))]), uint32(high(uint16))))
 
 proc clearDacOutgoing(S: var DacLink) {.role: actor.} =
   ## S: link whose finished outgoing package is released.
@@ -616,6 +674,39 @@ proc feedDacCommit(S: var DacLink, body: openArray[uint8],
   clearDacOutgoing(S)
   R.kind = dlkCommitReceived
 
+proc feedDacBrake(S: var DacLink, body: openArray[uint8], nowMs: uint32,
+    R: var DacLinkStep) {.role: orchestrator.} =
+  ## S/body/nowMs/R: link, brake body, clock, and the step being filled.
+  ## An order counts only from a relay, and only when this side follows
+  ## relays. Anything else is ignored; a refused order from a relay also makes
+  ## this side repeat its stance, so a stance message that got lost is
+  ## repaired by the next order instead of being left wrong.
+  var
+    level: uint8 = decodeDacBrake(body)
+  R.kind = dlkIgnored
+  if (S.brake and dacBrakeFromRelay) == 0'u8:
+    R.err = "DAC brake order from a peer that is not a relay"
+    return
+  if not dacFollowsRelay(S):
+    S.brake = S.brake or dacBrakeStancePending
+    R.err = "DAC brake order refused: relayForceRequest is off"
+    return
+  S.brake = (S.brake and not dacBrakeLevelMask) or level
+  S.brakeMs = nowMs
+  R.kind = dlkBrakeReceived
+
+proc tickDacBrake(S: var DacLink, nowMs: uint32, F: var seq[DacTaggedMessage]) {.
+    role: actor.} =
+  ## S/nowMs/F: housekeeping for the brake. An order that has not been
+  ## repeated within `dacBrakeHoldMs` lapses; a stance owed to the relay is
+  ## put on the outgoing list once.
+  if dacBrakeLevel(S) != 0'u8 and nowMs > S.brakeMs and
+      nowMs - S.brakeMs > dacBrakeHoldMs:
+    S.brake = S.brake and not dacBrakeLevelMask
+  if (S.brake and dacBrakeStancePending) != 0'u8:
+    S.brake = S.brake and not dacBrakeStancePending
+    F.add(dacMessage(dmkBrakeStance, encodeDacBrakeStance(dacFollowsRelay(S))))
+
 proc dispatchDacBody(S: var DacLink, k: DacMessageKind,
     body: openArray[uint8], nowMs: uint32,
     R: var DacLinkStep) {.role: orchestrator.} =
@@ -637,6 +728,11 @@ proc dispatchDacBody(S: var DacLink, k: DacMessageKind,
     feedDacCommit(S, body, R)
   of dmkPathStats:
     feedDacPathStats(S, body, R)
+  of dmkBrake:
+    feedDacBrake(S, body, nowMs, R)
+  of dmkBrakeStance:
+    R.kind = dlkIgnored
+    R.err = "DAC brake stance is for a relay, not for an endpoint"
   else:
     R.kind = dlkIgnored
 
@@ -760,6 +856,7 @@ proc tickDacLink*(S: var DacLink, nowMs: uint32): DacLinkStep {.
   ## receive has gone quiet with holes in it. The two repair timers are separate
   ## because the two roles are: a link that only receives still has to be able
   ## to ask, and a link that only sends still has to be able to top up parity.
+  tickDacBrake(S, nowMs, result.messages)
   if dacAckDue(S.incoming.ack, nowMs):
     emitDacAck(S, result.messages, nowMs)
   if dacSenderRepairDue(S, nowMs):

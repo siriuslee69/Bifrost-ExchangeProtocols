@@ -19,6 +19,10 @@ type
     defaultAmeInboxCapacity*: int
     defaultTimeoutMs*: int
     peerTrustRequired*: bool
+    relayForceRequest*: bool
+      ## For a side that is NOT a relay: follow a relay's slow-down order
+      ## (true, the default) or ignore it (false). A side that ignores it tells
+      ## each relay once, at the start, so the relay stops asking.
     fomkePregeneration*: bool
     fomkePregenerationMessages*: int
     fomkeReorderCeiling*: uint32
@@ -57,6 +61,7 @@ proc codeBifrostConfig(): BifrostConfig {.role: configurator.} =
   result.defaultAmeInboxCapacity = defaultAmeInboxCapacity
   result.defaultTimeoutMs = 4000
   result.peerTrustRequired = true
+  result.relayForceRequest = true
   result.fomkePregeneration = false
   result.fomkePregenerationMessages = fomkeDefaultPreparedMessages
   result.fomkeReorderCeiling = fomkeDefaultReorderCeiling
@@ -176,6 +181,7 @@ proc applyConfigKey(c: var BifrostConfig, key, value: string) {.
   of "defaultameinboxcapacity": c.defaultAmeInboxCapacity = parseInt(value)
   of "defaulttimeoutms": c.defaultTimeoutMs = parseInt(value)
   of "peertrustrequired": c.peerTrustRequired = parseBool(value)
+  of "relayforcerequest": c.relayForceRequest = parseBool(value)
   of "fomkepregeneration": c.fomkePregeneration = parseBool(value)
   of "fomkepregenerationmessages":
     c.fomkePregenerationMessages = parseInt(value)

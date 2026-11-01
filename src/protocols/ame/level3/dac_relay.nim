@@ -9,6 +9,7 @@ when not dacAdaptiveBuilt:
 
 import ../../types
 import ../types
+import ../../config
 import ../../dac/types
 import ../../dac/level1/scramble
 import ../../dac/level2/package_transfer
@@ -73,6 +74,10 @@ type
   AmeDacRelay* {.role: truthState.} = object
     table*: DacLinkTable
     sessions*: seq[AmeSession]
+    relayForceRequest*: bool
+      ## The setting for a side that is NOT a relay: follow a relay's brake
+      ## order (true, the norm) or not (false). Each admitted relay peer is
+      ## told once when it is false. See dac/level0/brake.nim.
     dropped*: uint32
     forgotten*: uint32
       ## How many held frame keys this relay has given up on, across every
@@ -84,18 +89,23 @@ proc initAmeDacRelay*(d: DacScenarioDefaults, seed: uint64,
     capacity: int = dacLinkTableCapacity,
     idleMs: uint32 = dacLinkIdleSweepMs,
     policy: DacScramblePolicy = initDacScramblePolicy(),
-    limits: DacPackageLimits = defaultDacPackageLimits()): AmeDacRelay {.
+    limits: DacPackageLimits = defaultDacPackageLimits(),
+    relayForceRequest: bool = currentBifrostConfig().relayForceRequest): AmeDacRelay {.
     role: configurator.} =
   ## d/seed/capacity/idleMs/policy/limits: passed straight to the link table.
+  ## relayForceRequest: follow a relay's slow-down order (see the field).
+  result.relayForceRequest = relayForceRequest
   result.table = initDacLinkTable(d, seed, capacity, idleMs, policy, limits)
   result.sessions = newSeq[AmeSession](result.table.slots.len)
 
 proc admitAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey, S: AmeSession,
-    nowMs: uint32): tuple[ok: bool, slot: int, err: string] {.
-    role: orchestrator.} =
+    nowMs: uint32, peerIsRelay: bool = false): tuple[ok: bool, slot: int,
+    err: string] {.role: orchestrator.} =
   ## R/key: relay and the peer address the session was established with.
   ## S: an AME session whose handshake already completed.
   ## nowMs: caller's millisecond clock.
+  ## peerIsRelay: the handshake knows what the peer is; only a relay peer's
+  ## brake order is obeyed, and only to a relay is the stance announced.
   ## A peer enters here and nowhere else, so the relay never has to decide
   ## whether an unknown datagram deserves memory.
   var
@@ -106,6 +116,8 @@ proc admitAmeDacPeer*(R: var AmeDacRelay, key: DacLinkKey, S: AmeSession,
     result.err = "DAC relay is full of live links"
     return
   R.sessions[a.slot] = S
+  setDacPeerIsRelay(R.table.slots[a.slot].link, peerIsRelay)
+  setDacRelayForceRequest(R.table.slots[a.slot].link, R.relayForceRequest)
   result.ok = true
   result.slot = a.slot
 

@@ -121,6 +121,26 @@ relaySlowExtractEncrypt              (test_relay_slow_extract_encrypt.nim)
   -> the inspector sees the identity, may rewrite or refuse (arrNoRoute)
   -> a fast relay cannot be given an inspector
 
+DAC brake: a relay slows a neighbour down        (test_dac_brake.nim)
+  -> a brake body is one byte, 0..3; a stance body is one byte, 0 or 1
+  -> the chunk shrinks by level and never below the floor
+  -> a relay's order adds wait and shrinks the next package's chunks
+  -> an order from a peer that is not a relay is ignored
+  -> an order is a lease: it lapses unless it is repeated; level 0 resets
+  -> a side that refuses ignores the order and says so, once
+  -> over a real sealed link: order, repeat, reset; the stance reaches the
+     relay; a lost stance is repaired; a client cannot order a relay
+  -> relayForceRequest: on by default, readable from the config
+
+relaySuperFastUDP brake                  (test_relay_super_fast_brake.nim)
+  -> level 0 has no limit; a level limits ALL clients together per second
+  -> lifting it, a level above 3, a negative rate; answers are not braked
+
+Shared UDP port                          (test_udp_shared_port.nim)
+  -> a held port is "in use"; a second sharing holder is allowed and warned
+  -> one client always lands on the same holder; many clients are spread
+     over the holders (Linux)
+
 AM1P sealed hello, AM1P+S, and the session key   (test_ame_psk_modes.nim)
   -> no KEM public key of an AM1P hello crosses the wire in the clear
   -> two hellos under one secret never share a salt or a ciphertext
@@ -257,7 +277,7 @@ AME DAC relay
   -> the relay path carries no package seal, because it needs none
   -> a package that leaves through a file still carries its own seal
   -> every kind that opens a link is a kind the loop acts on
-  -> the enum IS the list of kinds the loop acts on: nine words, eight real
+  -> the enum IS the list of kinds the loop acts on: eleven kinds, ten real words
   -> a completed package reports what this side measured
   -> a peer's report moves this side's lane, one step at a time
   -> a report cannot move a lane out from under a package in flight

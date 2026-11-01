@@ -151,6 +151,10 @@ maxDacFrameBytes = 16777216
 defaultAmeInboxCapacity = 64
 defaultTimeoutMs = 4000
 peerTrustRequired = true
+# A side that is not a relay follows a relay's slow-down order (dmkBrake)
+# by default. false ignores it; that side then tells each relay once, when
+# the link starts, so the relay stops sending orders it would not obey.
+relayForceRequest = true
 
 [runtime.fomke]
 # Preparing message keys ahead of time cuts send latency. It also keeps the

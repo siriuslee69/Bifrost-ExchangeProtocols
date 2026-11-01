@@ -2,7 +2,7 @@
 ## UDP Ops <- generic datagram UDP helpers for protocol repos
 ## -------------------------------------------------------
 
-import std/[net, nativesockets, options, strutils]
+import std/[net, nativesockets, options, strutils, oserrors]
 when not defined(windows):
   import std/posix
 
@@ -220,6 +220,75 @@ proc bindUdp*(a: UdpAddress, recvBufferBytes: int = 0): Socket {.
   maybeEnableDualStackWildcard(result, host)
   discard setUdpReceiveBuffer(result, recvBufferBytes)
   result.bindAddr(Port(a.port), host)
+
+proc udpPortInUse*(a: UdpAddress): bool {.role: parser.} =
+  ## a: the address to test. True only when somebody already holds that exact
+  ## port ("address in use"); a refusal for any other reason (a port below
+  ## 1024 without permission, say) is not "in use" and is left for the real
+  ## bind to report. Port 0 asks the system for any free port, so it is never
+  ## taken. The probe is closed again at once.
+  var
+    host: string = normalizeUdpHost(a.host)
+    probe: Socket = nil
+    code: int = 0
+  if a.port == 0'u16:
+    return false
+  probe = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
+  try:
+    probe.bindAddr(Port(a.port), host)
+  except OSError:
+    code = int(osLastError())
+    when defined(windows):
+      result = code == 10048
+    else:
+      result = code == int(EADDRINUSE)
+  finally:
+    closeSocketQuietly(probe)
+
+proc bindUdpShared*(a: UdpAddress, recvBufferBytes: int = 0): tuple[
+    sock: Socket, warning: string] {.role: truthBuilder.} =
+  ## a/recvBufferBytes: as `bindUdp`.
+  ## Binds a port that other sockets may hold at the same time, for several
+  ## forwarders on one machine. `warning` is "" when the port was free and
+  ## says so when it was already taken; the bind still goes ahead.
+  ##
+  ##   forwarder 1 ──┐                 The kernel hands each CLIENT (its address
+  ##   forwarder 2 ──┼── port 9000     and port) to ONE of the sockets, always
+  ##   forwarder 3 ──┘                 the same one. It does not choose by what
+  ##                                   the forwarder leads to.
+  ##
+  ## So a shared port is for forwarders that lead to the SAME place (more
+  ## workers on one port). Forwarders for different targets need different
+  ## ports, or clients land on the wrong one.
+  ##
+  ## Every holder should bind with this proc. A holder made by plain `bindUdp`
+  ## is still let in on Linux (it sets reuse-address), but it is NOT part of
+  ## the split: the system may hand it every datagram or none of them. The
+  ## warning is printed for it all the same.
+  ## Windows has no per-client split: there it only allows the second bind,
+  ## and which socket gets a datagram is up to the system.
+  var
+    host: string = normalizeUdpHost(a.host)
+    taken: bool = udpPortInUse(a)
+  result.sock = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
+  result.sock.setSockOpt(OptReuseAddr, true)
+  when not defined(windows):
+    result.sock.setSockOpt(OptReusePort, true)
+  maybeEnableDualStackWildcard(result.sock, host)
+  discard setUdpReceiveBuffer(result.sock, recvBufferBytes)
+  try:
+    result.sock.bindAddr(Port(a.port), host)
+  except OSError as e:
+    closeSocketQuietly(result.sock)
+    raise newException(IOError, "UDP port " & $a.port &
+      " could not be bound for sharing: " & e.msg)
+  if taken:
+    result.warning = "UDP port " & $a.port & " was already in use; sharing it."
+    when defined(windows):
+      result.warning.add(" Windows decides which socket gets a datagram.")
+    else:
+      result.warning.add(" Each client goes to one holder, so every holder" &
+        " must lead to the same place.")
 
 proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestrator.} =
   ## connectUdp: connect UDP.

@@ -115,11 +115,14 @@ runtime memory views built from messages that already arrived.
 | RepairHint           | Receiver -> Sender | I need these missing bytes     |
 | RepairChunk          | Sender -> Receiver | Here are the requested bytes   |
 | PackageCommit        | Receiver -> Sender | Package verified/finished      |
+| Brake                | Relay -> Neighbour | Slow down, level 0..3          |
+| BrakeStance          | Neighbour -> Relay | I will / will not follow Brake |
 +----------------------+--------------------+--------------------------------+
 ```
 
-Eight words, and `feedDacMessage` has a branch for every one of them. There
-is no ninth row to look up and no kind that arrives and is quietly ignored.
+Ten words, and `feedDacMessage` has a branch for every one of them. There
+is no eleventh row to look up and no kind that arrives and is quietly ignored.
+One of them, Brake, is an order and not a fact: see "The Brake" below.
 
 Concrete transfer:
 
@@ -137,6 +140,97 @@ Nothing precedes step 1. A DAC message can only travel inside an AME frame,
 so a session already exists by the time DAC has anything to say — which is
 also why there is no longer a reachability probe: reaching the peer is a
 precondition for asking whether you can reach it.
+
+## The Brake: one word that IS an instruction ꒰ঌ ໒꒱
+
+Every other DAC word is a fact about its speaker. This one is an order, and it
+is allowed because of **who may say it**: a *relay* only.
+
+**Definitions**
+
+- `relay` := a node in the middle that passes frames between two others
+  (relayFastExtraFrame, relaySlowExtractEncrypt).
+- `neighbour` := a client or server that uses the relay as its middleman.
+- `level` := a number 0..3 that says how hard to slow down.
+- `lease` := an order that runs out unless it is repeated.
+
+A relay can be crowded without its neighbours seeing it. It says so with one
+byte, and the neighbour slows its own sending:
+
+```text
+  level  bits  meaning                    wait added   chunk size
+  -----  ----  -------------------------  ----------   ----------
+    0    00    no congestion, go ham          0 ms        100 %
+    1    01    a little crowded               4 ms         75 %
+    2    10    crowded                       16 ms         50 %
+    3    11    full brakes                   64 ms         25 %
+```
+
+"Wait added" goes on top of the wait the link already draws. "Chunk size"
+is how much of the usual chunk a new package is cut into (never below 128
+bytes). A package already in flight keeps its chunks; its waits change at once.
+
+```text
+  relay                                       neighbour
+  -----                                       ---------
+  setRelayBrake(slot, 2) --- dmkBrake [2] ---------> slows down
+  tickRelayBrakes()      --- dmkBrake [2] (again) -> order stays alive
+  resetRelayBrakes()     --- dmkBrake [0] ---------> back to full speed
+```
+
+| body | direction | bytes |
+|---|---|---|
+| `dmkBrake` (0x09) | relay -> neighbour | `[level]`, one byte, 0..3 |
+| `dmkBrakeStance` (0x0A) | neighbour -> relay | `[follows]`, one byte, 1 or 0 |
+
+Any other length, or a level above 3, is refused.
+
+### Who may order whom
+
+```text
+  relay      -> neighbour : may order       (the neighbour obeys by default)
+  neighbour  -> relay     : may NOT order   (a relay reads only the stance)
+  neighbour  -> neighbour : may NOT order   (the link never saw a relay)
+```
+
+So there is one controlling point. The neighbour's link knows whether its
+peer is a relay (the handshake says so: `admitAmeDacPeer(... peerIsRelay)`).
+An order from anyone else is ignored.
+
+### Follow or not: `relayForceRequest`
+
+A neighbour has one setting, `relayForceRequest` (`configs/default.toml`,
+default `true`). `true` obeys a relay's order. `false` ignores it. A side that
+ignores it tells the relay **once, when the link starts**, with `dmkBrakeStance`
+`[0]`. The relay keeps that bit on the neighbour and stops sending orders that
+would be ignored (`relayFollowsBrake`). If that message is lost, the next order
+the neighbour refuses makes it say so again.
+
+### Memory
+
+One byte per link on the neighbour, one byte plus one clock value per
+neighbour on the relay:
+
+```text
+  neighbour (DacLink.brake)                  relay (RelayNeighbour.brake)
+  bit  7 6 5  4        3       2          1 0     bit  7 6  5     4 3 2  1 0
+       - - -  stance   refuse  from relay level          - -  deaf  - - -  level
+              pending                                             (said no)
+```
+
+A byte of 0 is the normal case: level 0, relay orders are followed.
+
+### An order is a lease
+
+The order lapses 30 s after it arrived (`dacBrakeHoldMs`), and a relay repeats
+a non-zero order every 10 s (`dacBrakeRefreshMs`). If "back to 00" is lost, the
+neighbour still returns to full speed by itself.
+
+### Where it does NOT work
+
+`relaySuperFastUDP` opens no frame and holds no key. It can neither send an
+order nor read a stance. It has one operator-set brake for all clients
+together instead: see the README, "relaySuperFastUDP".
 
 ## Four words DAC used to have ꒰ঌ ໒꒱
 

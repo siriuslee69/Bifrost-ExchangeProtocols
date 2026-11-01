@@ -62,7 +62,7 @@ type
     host*: string
     port*: uint16
 
-  ## DacMessageKind: the nine words DAC can say.
+  ## DacMessageKind: the ten words DAC can say, besides `dmkUnknown`.
   ##
   ## Every one of them except `dmkUnknown` has a branch in `feedDacMessage`.
   ## That is the whole list and there is nothing else to look up: if a kind is
@@ -82,7 +82,11 @@ type
     dmkAckRange = 0x05'u8,
     dmkRepairHint = 0x06'u8,
     dmkRepairChunk = 0x07'u8,
-    dmkPackageCommit = 0x08'u8
+    dmkPackageCommit = 0x08'u8,
+    dmkBrake = 0x09'u8,
+      ## A RELAY telling a neighbour how hard to slow down (0..3).
+    dmkBrakeStance = 0x0A'u8
+      ## A neighbour telling a relay once whether it will follow dmkBrake.
 
   ## DacPathLane: horizontal path condition profile.
   DacPathLane* = enum

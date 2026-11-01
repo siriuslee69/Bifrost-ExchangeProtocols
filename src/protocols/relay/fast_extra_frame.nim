@@ -39,6 +39,7 @@
 import ../transport/types as transport_types
 import ../ame/level2/route_wire
 import ./relay_node
+import ./relay_brake
 import runePragmas
 
 type
@@ -64,6 +65,8 @@ proc feedRelayFastExtraFrame*(R: var RelayFastExtraFrame, slot: int,
   if droppedFromEmptySlot(R, slot, result):
     return
   if not isAmeRouteFrame(frame):
+    if isDacControlFrame(frame):
+      return feedRelayBrake(R, slot, frame)
     return feedRelayControl(R, slot, frame)
   result = feedOpenedRelayFrame(R, slot,
     openAmeRouteFrame(R.neighbours[slot].session, frame), nowMs)

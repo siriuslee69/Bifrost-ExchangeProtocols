@@ -44,6 +44,7 @@
 import ../transport/types as transport_types
 import ./slow_envelope
 import ./relay_node
+import ./relay_brake
 import runePragmas
 
 type
@@ -71,6 +72,8 @@ proc feedRelaySlowExtractEncrypt*(R: var RelaySlowExtractEncrypt, slot: int,
   ## Nothing here raises, so a neighbour cannot stop the node with junk.
   if droppedFromEmptySlot(R, slot, result):
     return
+  if isDacControlFrame(frame):
+    return feedRelayBrake(R, slot, frame)
   if isAmeRouteControl(frame):
     return feedRelayControl(R, slot, frame)
   result = feedOpenedRelayFrame(R, slot, openSlowFrame(

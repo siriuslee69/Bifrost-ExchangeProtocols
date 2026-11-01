@@ -38,9 +38,11 @@ import ./protocols/dac/level1/repair_hint as dac_repair_hint
 import ./protocols/dac/level1/repair_chunk as dac_repair_chunk
 import ./protocols/dac/level0/package_commit as dac_package_commit
 import ./protocols/dac/level0/protocols as dac_protocols
+import ./protocols/dac/level0/brake as dac_brake
 import ./protocols/relay/super_fast_udp as relay_super_fast_udp
 import ./protocols/relay/slow_envelope as relay_slow_envelope
 import ./protocols/relay/relay_node as relay_relay_node
+import ./protocols/relay/relay_brake as relay_relay_brake
 import ./protocols/relay/fast_extra_frame as relay_fast_extra_frame
 import ./protocols/relay/slow_extract_encrypt as relay_slow_extract_encrypt
 import ./protocols/relay/restriction as relay_restriction
@@ -62,7 +64,7 @@ when dacAdaptiveBuilt:
 
 export relay_super_fast_udp, relay_slow_envelope, relay_relay_node,
   relay_fast_extra_frame, relay_slow_extract_encrypt, relay_restriction,
-  relay_restriction_store
+  relay_restriction_store, relay_relay_brake
 export core_types
 export bifrost_config
 export transport_types
@@ -98,4 +100,4 @@ export dac_ack_range
 export dac_repair_hint
 export dac_repair_chunk
 export dac_package_commit
-export dac_protocols
+export dac_protocols, dac_brake

@@ -221,6 +221,14 @@ proc openDacListener*(a: DacAddress,
   ## `setUdpReceiveBuffer` explains what is lost without it, and how to see it.
   result = udp_ops.bindUdp(carrierAddressFromDac(a), recvBufferBytes)
 
+proc openDacListenerShared*(a: DacAddress, recvBufferBytes: int = 0): tuple[
+    sock: DacSocket, warning: string] {.role: truthBuilder.} =
+  ## a/recvBufferBytes: as `openDacListener`.
+  ## For several forwarders on one machine: the port may already be held by
+  ## another sharing listener. `warning` is "" or says it was. Read
+  ## `bindUdpShared` first for what sharing means.
+  result = udp_ops.bindUdpShared(carrierAddressFromDac(a), recvBufferBytes)
+
 proc openDacPeer*(a: DacAddress, timeoutMs: int = 4000): DacSocket {.
     role: orchestrator.} =
   ## a: remote DAC endpoint for outbound frames.

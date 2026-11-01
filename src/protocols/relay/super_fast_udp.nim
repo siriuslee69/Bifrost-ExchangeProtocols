@@ -96,6 +96,10 @@ const
   udpForwardMaxDatagramBytes* = 65_507
     ## The largest a UDP payload can be. Anything claiming more is refused
     ## without being looked at.
+  udpForwardBrakePerSecond*: array[4, int] = [0, 4000, 1000, 200]
+    ## Datagrams per second the relay lets through from ALL clients together,
+    ## per brake level (0 = no limit). The levels are the same four as DAC's
+    ## (dac/level0/brake.nim): 00 go ham .. 11 full brakes.
 
 type
   ## UdpForwardEvent: what one call decided to do.
@@ -146,6 +150,7 @@ type
     bufferDatagrams*: int
     bufferBytes*: int
     maxDatagramBytes*: int
+    brakePerSecond*: array[4, int]
 
   ## RelaySuperFastUdp: one relay process's whole state.
   ## nas: where the NAS is reachable right now. It may move.
@@ -181,6 +186,14 @@ type
     restricted*: uint64
       ## Datagrams refused by the restriction. Never answered: this relay has
       ## no reply format that a client could read as a refusal.
+    brake*: uint8
+      ## The operator's brake level, 0..3. One level for ALL clients at once:
+      ## this relay reads no frame, so it cannot tell a client to slow down and
+      ## cannot hear whether one will. See `setSuperFastBrake`.
+    brakeWindowMs: uint64
+    brakeCount: int
+    braked*: uint64
+      ## Datagrams dropped by the brake, never answered.
 
 proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     clientIdleMs: uint64 = udpForwardClientIdleMs,
@@ -188,7 +201,8 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     nasSilentMs: uint64 = udpForwardNasSilentMs,
     bufferDatagrams: int = udpForwardBufferDatagrams,
     bufferBytes: int = udpForwardBufferBytes,
-    maxDatagramBytes: int = udpForwardMaxDatagramBytes):
+    maxDatagramBytes: int = udpForwardMaxDatagramBytes,
+    brakePerSecond: array[4, int] = udpForwardBrakePerSecond):
     UdpForwardConfig {.role: configurator.} =
   ## Every field refused rather than silently corrected, because each one is a
   ## bound on memory a stranger can cause this process to spend.
@@ -207,6 +221,10 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
   result.nasSilentMs = nasSilentMs
   result.bufferDatagrams = bufferDatagrams
   result.bufferBytes = bufferBytes
+  for r in brakePerSecond:
+    if r < 0:
+      raise newException(ValueError, "UDP forward brake rate must not be negative")
+  result.brakePerSecond = brakePerSecond
   result.maxDatagramBytes = maxDatagramBytes
 
 proc initRelaySuperFastUdp*(nas: transport_types.UdpAddress,
@@ -372,6 +390,44 @@ proc clientMayReach(F: RelaySuperFastUdp, client: transport_types.UdpAddress): b
     return false
   result = filterAllows(F.restriction, F.filter, src.src)
 
+proc setSuperFastBrake*(F: var RelaySuperFastUdp, level: uint8): string {.
+    role: actor, tag: "appApi|relay|udp".} =
+  ## F/level: the operator's slow-down for ALL clients at once, 0 (go ham)
+  ## .. 3 (full brakes). "" when set, else why not.
+  ##
+  ## This relay opens no frame and holds no key, so it cannot send a client a
+  ## brake order (that is a relay with a link, relay/relay_brake.nim) and
+  ## cannot hear a client's stance. What it can do is limit how many datagrams
+  ## per second it passes to the NAS, summed over every client:
+  ##
+  ##   level   datagrams per second (default)
+  ##     0     no limit
+  ##     1     4000          the rest are dropped and counted in `braked`.
+  ##     2     1000          Clients feel it as loss, and DAC's own repair
+  ##     3      200          and path reports slow them down.
+  if level > 3'u8:
+    return "the brake level is 0..3"
+  F.brake = level
+  F.brakeWindowMs = 0'u64
+  F.brakeCount = 0
+  result = ""
+
+proc brakeAllows(F: var RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
+    tag: "relay|udp".} =
+  ## F/nowMs: whether one more client datagram fits in this second's budget.
+  ## A second is counted from its first datagram, not from the wall clock.
+  var
+    rate: int = F.cfg.brakePerSecond[int(F.brake)]
+  if F.brake == 0'u8 or rate == 0:
+    return true
+  if nowMs < F.brakeWindowMs or nowMs - F.brakeWindowMs >= 1000'u64:
+    F.brakeWindowMs = nowMs
+    F.brakeCount = 0
+  if F.brakeCount >= rate:
+    return false
+  F.brakeCount = F.brakeCount + 1
+  result = true
+
 proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
     role: orchestrator, tag: "appApi|relay|udp".} =
@@ -392,6 +448,12 @@ proc fromClient*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     result.event = ufeDropped
     result.dropped = 1
     result.err = "restricted: " & $F.restriction
+    return
+  if not brakeAllows(F, nowMs):
+    F.braked = F.braked + 1'u64
+    result.event = ufeDropped
+    result.dropped = 1
+    result.err = "braked: level " & $F.brake
     return
   slot = slotForClient(F, client, nowMs)
   if slot < 0:

@@ -211,7 +211,7 @@ mask `1100_0000` switches on XChaCha20 (slot 0) and Gimli (slot 1). AES-CTR
 
 - `carrier` := the transport under AME: TCP (a byte stream) or DAC
   (datagrams).
-- `DAC kind` := the first byte of a DAC word. It says which of nine DAC words
+- `DAC kind` := the first byte of a DAC word. It says which of ten DAC words
   follows.
 
 ```text
@@ -305,9 +305,9 @@ WIRE, stored package (outer to inner)
 
 See [Wire Formats: Low-Level View](#wire-formats-low-level-view) for exact bytes.
 
-### The nine DAC words ୨୧
+### The ten DAC words ୨୧
 
-DAC writes no bytes itself. It has nine words, and AME carries them. The list
+DAC writes no bytes itself. It has ten words, and AME carries them. The list
 is the whole of `DacMessageKind`:
 
 | byte | word | sent by | meaning |
@@ -321,9 +321,12 @@ is the whole of `DacMessageKind`:
 | `0x06` | RepairHint | receiver | "these chunks did not arrive; send them again" |
 | `0x07` | RepairChunk | sender | one chunk, sent again |
 | `0x08` | PackageCommit | receiver | "everything arrived and the digest matches" |
+| `0x09` | Brake | a relay only | "slow down": one byte, level 0..3 (an order, not a fact) |
+| `0x0A` | BrakeStance | a neighbour | "I will / will not follow a Brake", sent once at the start |
 
-Each of the eight real words has a branch in `feedDacMessage`. No DAC kind
-arrives and is ignored.
+Each of the ten real words has a branch in `feedDacMessage`. No DAC kind
+arrives and is ignored. Brake is the one word that orders instead of stating;
+only a relay may say it (`src/protocols/dac/README.md`, "The Brake").
 
 > Four more words existed: a path probe, a path-switch request and its ack,
 > and a realtime pose packet. None had a branch in the loop. See
@@ -2510,6 +2513,60 @@ var
 ## local socket to send from; step.send[i].peer is where it goes.
 ```
 
+### Slowing everyone down, and several forwarders on one machine ♡
+
+**Definitions**
+
+- `brake level` := 0 (no limit) to 3 (full brakes), the same four steps
+  DAC uses.
+- `shared port` := one UDP port held by several forwarders at once.
+
+This relay opens no frame, so it cannot tell a client "slow down" (that is a
+relay with a link: "Slowing neighbours down" below). It does the one thing it
+can: it limits how many datagrams per second it passes to the NAS, **all
+clients together**. The rest are dropped and counted in `braked`. Clients feel
+the drop as loss, and DAC's own repair and path reports slow them down.
+
+```nim
+discard F.setSuperFastBrake(2'u8)   # "" when set; level 0 lifts it again
+```
+
+| level | datagrams per second (all clients) |
+|---|---:|
+| 0 | no limit |
+| 1 | 4000 |
+| 2 | 1000 |
+| 3 | 200 |
+
+The numbers are `udpForwardBrakePerSecond`; `initUdpForwardConfig` takes your
+own. Answers from the NAS are never braked. This relay also does not read a
+client's "I will not follow" message, because it reads no message at all.
+
+**Several forwarders on one machine.** Each forwarder is its own
+`RelaySuperFastUdp` and may have its own port. Two may also hold the **same**
+port, and the second one gets a warning but is allowed:
+
+```nim
+var a = openDacListenerShared(initDacAddress("0.0.0.0", 9000))   # a.warning == ""
+var b = openDacListenerShared(initDacAddress("0.0.0.0", 9000))   # b.warning != ""
+```
+
+```text
+  client 1 ─┐                 ┌─ forwarder A
+  client 2 ─┼─ UDP port 9000 ─┤        The system gives each client (its
+  client 3 ─┘                 └─ forwarder B   address and port) to ONE of them,
+                                         always the same one.
+```
+
+- It splits **clients**, not targets. Use a shared port only for forwarders
+  that lead to the same NAS (more workers on one port). Forwarders for
+  different NASes need different ports.
+- Every holder must bind with `openDacListenerShared`. A holder made with
+  `openDacListener` is let in on Linux but is not part of the split: it may
+  get every datagram or none.
+- On Windows there is no split: the second bind is allowed, and the system
+  decides which socket gets a datagram.
+- `udpPortInUse(address)` tells you beforehand whether a port is taken.
 ### The one socket setting a server must set ⟡
 
 **Definitions**
@@ -2600,6 +2657,34 @@ for s in step.send: sendTo(s.address, s.frame)
 Byte layout, replay, who may send to whom, the way answers find their way
 back, and what is and is not hidden: [docs/routing.md](docs/routing.md).
 Runnable: `nimble exampleRelayFast`.
+
+### Slowing neighbours down ⟡
+
+**Definitions**
+
+- `brake level` := 0 (go ham) to 3 (full brakes).
+- `stance` := a neighbour's one-time "I will / will not follow your brake".
+
+A crowded relay can tell its neighbours to send slower. Only a relay can
+(DAC `dmkBrake`, see `src/protocols/dac/README.md`, "The Brake"):
+
+```nim
+var step = R.setRelayBrake(slot, 2'u8, nowMs)       # one neighbour
+var steps = R.applyRelayLoad(used, capacity, nowMs) # level from how full: 0..3
+var again = R.tickRelayBrakes(nowMs)                # repeat orders; call often
+var off = R.resetRelayBrakes(nowMs)                 # everyone back to 00
+## send every frame in step.send / steps[i].send to its address
+```
+
+A neighbour that is not a relay follows the order unless its
+`relayForceRequest` (`configs/default.toml`) is `false`. It then says so once,
+when the link starts; the relay keeps that bit (`relayFollowsBrake(R, slot)`)
+and stops sending it orders. A neighbour cannot order a relay.
+
+```nim
+var C = initAmeDacRelay(defaults, seed)                 # relayForceRequest from the config
+discard C.admitAmeDacPeer(key, session, nowMs, peerIsRelay = true)
+```
 
 ## relaySlowExtractEncrypt: a relay that reads ❧
 
@@ -3198,6 +3283,15 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 
 **Routing**
 
+- **A client does not slow down when its relay sends a brake order**: the
+  client's `relayForceRequest` is `false`, or the link was admitted without
+  `peerIsRelay = true` (then the order is ignored on purpose). The relay sees
+  the first case in `relayFollowsBrake`. An order also lapses 30 s after it
+  arrived unless the relay repeats it, so a relay that never calls
+  `tickRelayBrakes` brakes for 30 s only.
+- **A second forwarder on a used port starts with a warning**: expected. See
+  "Several forwarders on one machine". A forwarder bound with the plain
+  `openDacListener` is not part of the per-client split.
 - **A client goes quiet behind its relay, its datagrams counted as
   "relay slot is empty"**: a keyed relay finds a neighbour by the exact
   IP + port its datagrams come from. A home router or a phone network may
