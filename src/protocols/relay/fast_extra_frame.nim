@@ -48,11 +48,14 @@ type
       lifeCycle: lcForever.} = object of RelayNode
 
 proc initRelayFastExtraFrame*(selfId: uint64,
-    capacity: int = relayCapacity): RelayFastExtraFrame {.
+    capacity: int = relayCapacity,
+    overflowSlots: int = relayOverflowSlots): RelayFastExtraFrame {.
     role: configurator, tag: "appApi".} =
   ## selfId: this node's own id; frames for it are delivered here.
   ## capacity: how many neighbours fit; a ceiling, not a target.
-  setupRelayNode(result, rkFastExtraFrame, selfId, capacity)
+  ## overflowSlots: width of the overflow ring (relay_node.nim), set once.
+  setupRelayNode(result, rkFastExtraFrame, selfId, capacity,
+    overflowSlots = overflowSlots)
 
 proc feedRelayFastExtraFrame*(R: var RelayFastExtraFrame, slot: int,
     frame: openArray[uint8], nowMs: uint32): RelayStep {.

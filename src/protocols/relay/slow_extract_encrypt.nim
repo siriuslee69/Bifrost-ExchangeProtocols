@@ -54,13 +54,16 @@ type
 
 proc initRelaySlowExtractEncrypt*(selfId: uint64,
     capacity: int = relayCapacity,
-    inspect: RelayInspect = nil): RelaySlowExtractEncrypt {.
+    inspect: RelayInspect = nil,
+    overflowSlots: int = relayOverflowSlots): RelaySlowExtractEncrypt {.
     role: configurator, tag: "appApi".} =
   ## selfId: this node's own id; frames for it are delivered here.
   ## capacity: how many neighbours fit; a ceiling, not a target.
   ## inspect: sees every forward before it is passed on (see RelayInspect);
   ##   nil passes every forward that Def. 3 of relay_node.nim allows.
-  setupRelayNode(result, rkSlowExtractEncrypt, selfId, capacity, inspect)
+  ## overflowSlots: width of the overflow ring (relay_node.nim), set once.
+  setupRelayNode(result, rkSlowExtractEncrypt, selfId, capacity, inspect,
+    overflowSlots)
 
 proc feedRelaySlowExtractEncrypt*(R: var RelaySlowExtractEncrypt, slot: int,
     frame: openArray[uint8], nowMs: uint32): RelayStep {.

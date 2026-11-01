@@ -67,11 +67,12 @@
 ## owns the sockets. That is the same split the DAC link modules use, and it
 ## is what makes every rule below testable without a network.
 
-import std/[deques, tables, hashes]
+import std/[tables, hashes]
 
 import ../types
 import ../transport/types as transport_types
 import runePragmas
+import ./overflow_ring
 import ./restriction_types
 import ./restriction_address
 import ./restriction_filter
@@ -177,7 +178,7 @@ type
     nasStarted*: bool
     slots*: seq[UdpForwardSlot]
     index*: Table[transport_types.UdpAddress, int]
-    buffer*: Deque[UdpForwardOut]
+    buffer*: OverflowRing[UdpForwardOut]
     bufferBytes*: int
     droppedTotal*: uint64
     forwardedTotal*: uint64
@@ -241,7 +242,7 @@ proc initRelaySuperFastUdp*(nas: transport_types.UdpAddress,
   result.nas = nas
   result.slots = @[]
   result.index = initTable[transport_types.UdpAddress, int]()
-  result.buffer = initDeque[UdpForwardOut]()
+  result.buffer = initOverflowRing[UdpForwardOut](cfg.bufferDatagrams)
 
 proc dropOldestBuffered(F: var RelaySuperFastUdp): int {.role: actor,
     tag: "relay|udp".} =
@@ -274,7 +275,7 @@ proc bufferForNas(F: var RelaySuperFastUdp, item: UdpForwardOut): int {.role: ac
   while F.bufferBytes + item.payload.len > F.cfg.bufferBytes and
       F.buffer.len > 0:
     result = result + dropOldestBuffered(F)
-  F.buffer.addLast(item)
+  discard F.buffer.addLast(item)
   F.bufferBytes = F.bufferBytes + item.payload.len
 
 proc releaseSlot(F: var RelaySuperFastUdp, i: int) {.role: actor,

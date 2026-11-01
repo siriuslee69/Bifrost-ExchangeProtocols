@@ -43,6 +43,7 @@ import ./protocols/relay/super_fast_udp as relay_super_fast_udp
 import ./protocols/relay/super_fast_control as relay_super_fast_control
 import ./protocols/relay/slow_envelope as relay_slow_envelope
 import ./protocols/relay/relay_node as relay_relay_node
+import ./protocols/relay/overflow_ring as relay_overflow_ring
 import ./protocols/relay/relay_brake as relay_relay_brake
 import ./protocols/relay/fast_extra_frame as relay_fast_extra_frame
 import ./protocols/relay/slow_extract_encrypt as relay_slow_extract_encrypt
@@ -65,7 +66,8 @@ when dacAdaptiveBuilt:
 
 export relay_super_fast_udp, relay_slow_envelope, relay_relay_node,
   relay_fast_extra_frame, relay_slow_extract_encrypt, relay_restriction,
-  relay_restriction_store, relay_relay_brake, relay_super_fast_control
+  relay_restriction_store, relay_relay_brake, relay_super_fast_control,
+  relay_overflow_ring
 export core_types
 export bifrost_config
 export transport_types

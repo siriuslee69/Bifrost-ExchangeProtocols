@@ -1,6 +1,22 @@
 # Progress
 
-Commit Message: Super-fast control link: forwarder -> server -> clients
+Commit Message: Overflow ring for all relays; relay_node holds no Geist; benchRelay
+
+## 2026-11-01 Overflow ring, hooks for the book, relay forwarding benchmark
+
+- relay/overflow_ring.nim: fixed-width ring, width set once, oldest out when
+  full. relaySuperFastUDP uses it for the "NAS away" box (width =
+  bufferDatagrams); RelayNode has one for frames past a per-turn budget
+  (`overflowSlots`, `setRelayBudget`, `tickRelayOverflow`).
+- relay_node no longer imports restriction_store (and so no Geist):
+  `attachRestrictionBook(R, load, save)` takes hooks; `attachGeistBook(R, dir)`
+  in restriction_store.nim is the ready pair. Needed so a router can be built
+  with no database (Nebel `checkHop`).
+- bench: evaluation/benchmarks/bench_relay_forward.nim (`nimble benchRelay`),
+  numbers in docs/benchmarks.md: forwarder ~75-115 ns, extra-frame ~0.8-4.6 us
+  (100 B - 8 kB), frames prebuilt, no sockets.
+- Tests: test_relay_overflow (7).
+
 
 ## 2026-11-01 DAC brake, super-fast brake, shared ports
 

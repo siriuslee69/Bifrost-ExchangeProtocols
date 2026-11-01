@@ -13,6 +13,7 @@ import std/os
 import runePragmas
 import geist
 import ./restriction
+import ./relay_node
 
 type
   ## BookRow: the one row a store holds for a relay.
@@ -99,3 +100,17 @@ proc loadRestrictionBook*(dir: string): tuple[ok: bool, found: bool,
     return
   result.found = true
   result.book = got.book
+
+proc attachGeistBook*(R: var RelayNode, dir: string): string {.role: actor,
+    tag: "storageIo|appApi".} =
+  ## R/dir: keep the node's restriction book in a Geist folder. A book saved
+  ## there before is read back now. "" when ready, else why not.
+  ##
+  ## This is the ONLY place a relay meets Geist. The node takes hooks
+  ## (`attachRestrictionBook`) and compiles no database; a program that wants
+  ## the book on disk imports this module, one that does not never does.
+  result = R.attachRestrictionBook(
+    proc (): tuple[ok: bool, found: bool, book: RestrictionBook, err: string] =
+      result = loadRestrictionBook(dir),
+    proc (B: RestrictionBook): string =
+      result = saveRestrictionBook(dir, B).err)

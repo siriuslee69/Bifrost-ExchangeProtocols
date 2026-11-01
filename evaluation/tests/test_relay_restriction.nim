@@ -23,6 +23,7 @@ import ../../src/protocols/ame/level2/route_wire
 import ../../src/protocols/relay/relay_node
 import ../../src/protocols/relay/fast_extra_frame
 import ../../src/protocols/relay/restriction
+import ../../src/protocols/relay/restriction_store
 import ./relay_fixtures
 import runePragmas
 
@@ -324,7 +325,7 @@ suite "restriction on a relay, all builds":
         check R.setRelayRestriction(m).len > 0
         check R.restriction != m
 
-  # {.testKind: tkRegression, covers: "attachRestrictionBook|saveRestrictionBook".}
+  # {.testKind: tkRegression, covers: "attachGeistBook|saveRestrictionBook".}
   test "the book is saved through Geist and read back by a new relay":
     var
       dir: string = getTempDir() / "bifrost_restriction_test"
@@ -332,8 +333,7 @@ suite "restriction on a relay, all builds":
       back: RelayFastExtraFrame = initRelayFastExtraFrame(rtRelay, 4)
       step: RelayStep = default(RelayStep)
     removeDir(dir)
-    check n.R.attachRestrictionBook(dir) == ""
-    check n.R.bookDir == dir
+    check n.R.attachGeistBook(dir) == ""
     when restrictionGroupBuilt:
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs)
@@ -344,6 +344,6 @@ suite "restriction on a relay, all builds":
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealAllowedUpdate(n.nas.left, acrDac, @[srcOf(rtPhone)]), rtNowMs)
     check step.event == reAnswered
-    check back.attachRestrictionBook(dir) == ""
+    check back.attachGeistBook(dir) == ""
     check back.book == n.R.book
     removeDir(dir)

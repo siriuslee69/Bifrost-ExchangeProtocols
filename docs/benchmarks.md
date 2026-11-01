@@ -113,3 +113,54 @@ The `cached_` variants seal from a prepared slot, so they exclude the key
 derivation. The gap between a cached and an uncached seal is exactly what
 `setAmeFomkePregeneration` moves off the send path — and exactly the latency
 you pay for the forward secrecy of not holding future keys in memory.
+
+## Relay forwarding time: relaySuperFastUDP against relayFastExtraFrame
+
+`nimble benchRelay` (file: `evaluation/benchmarks/bench_relay_forward.nim`).
+
+**What is timed.** One thing: how long the relay holds a datagram.
+
+```text
+  datagram handed to the relay ──► relay decides ──► frame ready to send
+  |<-------------------- this span, per datagram -------------------->|
+```
+
+**What is NOT in it.**
+
+- The sender's sealing and the receiver's opening. Every route frame is built
+  before the clock starts, so no client or server encryption is measured.
+- Sockets. Both relays are the decision half only; the kernel's receive and
+  send cost is the same for both and is left out.
+- The clock. Reading it twice costs 10-17 ns; that is measured on an empty
+  loop and taken off the median and p99 (not off the mean).
+
+**Setup.** 50 000 datagrams per payload size, release build, one thread.
+CPU: 13th Gen Intel Core i9-13900K. Nanoseconds per datagram:
+
+| payload | plain copy | relaySuperFastUDP (median / mean) | relayFastExtraFrame (median / mean) | extra time | ratio (mean) |
+|---:|---:|---:|---:|---:|---:|
+| 100 B | - | 69 / 114 | 773 / 814 | ~700 ns | 7x |
+| 1200 B | 28 | 45 / 74 | 1306 / 1366 | ~1290 ns | 18x |
+| 8000 B | - | 82 / 114 | 4540 / 4641 | ~4530 ns | 40x |
+
+Two runs at 1200 B differ by under 2 %. p99 at 1200 B: 63 ns and 1852 ns.
+
+**Reading it.**
+
+- relaySuperFastUDP costs about one copy of the datagram plus a table lookup:
+  **well under 0.2 µs**, flat in the payload size.
+- relayFastExtraFrame has a fixed part (about 0.7 µs: neighbour lookup, replay
+  check, opening the 16 address bytes, sealing them again) and a part that
+  grows with the payload (about 0.45 ns per byte, i.e. the payload is copied
+  twice on the way through). At 1200 B it is **about 1.3 µs, 18 times
+  the forwarder**.
+- Seen from the wire: 1.3 µs is about 770 000 datagrams per second per core
+  for the extra-frame relay, against over 10 million for the forwarder. A real
+  deployment is limited by the sockets long before either number.
+- The payload-sized part is not cryptography (only the 16 address bytes are
+  sealed). It is copying and allocation, and the code shows where:
+  `openAmeRouteFrame` copies the payload into a new sequence
+  (`route_wire.nim`, `result.payload = @(...)`), and `sealRouteWire` appends it
+  again into the outgoing frame. Handing the payload on as a view of the
+  incoming bytes would remove both. It is the first place to look if this
+  relay ever needs to be faster.

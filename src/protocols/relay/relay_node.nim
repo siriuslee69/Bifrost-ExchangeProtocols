@@ -109,7 +109,8 @@ import ../ame/level2/route_wire
 import ../ame/level2/route_directory
 import ./slow_envelope
 import ./restriction
-import ./restriction_store
+import ./overflow_ring
+import var_invariants
 import runePragmas
 
 const
@@ -121,6 +122,9 @@ const
     ## How long a return note lives after the last forward that refreshed it.
   relayEveryone* = "*"
     ## Written in `visibleTo` to show a target to every identity.
+  relayOverflowSlots* = 32
+    ## Default width of the overflow ring (frames held when the send budget is
+    ## spent). Set per node with `overflowSlots`; 0 holds nothing.
 
 type
   ## RelayKind: how frames are opened and sealed on every link of a node.
@@ -178,6 +182,14 @@ type
   RelayInspect* = proc (identity: string, f: var AmeRouteFrame): bool {.
     closure.}
 
+  ## RelayBookSave: how the restriction book is kept. "" when saved, else why
+  ## not. The application passes one in; the node itself touches no storage.
+  RelayBookSave* = proc (B: RestrictionBook): string {.closure.}
+
+  ## RelayBookLoad: the saved book, read back.
+  RelayBookLoad* = proc (): tuple[ok: bool, found: bool, book: RestrictionBook,
+    err: string] {.closure.}
+
   ## RelayNode: what both keyed relays are made of.
   RelayNode* {.role: truthState, expectedCount: 1,
       lifeCycle: lcForever.} = object of RootObj
@@ -200,8 +212,16 @@ type
     restrictionAnswerMs*: uint32
       ## Gap between two answers to one restricted neighbour. A restricted
       ## frame inside the gap is dropped without an answer. 0 never answers.
-    bookDir*: string
-      ## Where the book is saved through Geist. "" keeps it in memory only.
+    bookSave: RelayBookSave
+      ## Where the book is kept. nil keeps it in memory only.
+    overflow: OverflowRing[RelaySend]
+      ## Frames that could not leave this turn (the budget was spent), oldest
+      ## first; a fixed-width ring (overflow_ring.nim).
+    budget*: int
+      ## Frames one turn may send; 0 = no limit. See `setRelayBudget`.
+    spent: int
+    held*: uint64
+      ## Frames that went into the ring instead of out.
     delivered*: uint32
     refused*: uint32
     dropped*: uint32
@@ -240,15 +260,19 @@ type
 ## ---------------------------- setting up ----------------------------
 
 proc setupRelayNode*(R: var RelayNode, kind: RelayKind, selfId: uint64,
-    capacity: int, inspect: RelayInspect = nil) {.role: configurator.} =
+    capacity: int, inspect: RelayInspect = nil,
+    overflowSlots: int = relayOverflowSlots) {.role: configurator.} =
   ## R: the node being built (a RelayFastExtraFrame or RelaySlowExtractEncrypt).
   ## kind: how its links open and seal. selfId: its own id.
   ## capacity: how many neighbours fit; a ceiling, not a target.
   ## inspect: slow kind only; nil lets every allowed forward through.
+  ## overflowSlots: width of the overflow ring, set once (0 holds nothing).
   if selfId == 0'u64:
     raise newException(ValueError, "relay id 0 is reserved")
   if capacity <= 0:
     raise newException(ValueError, "relay capacity must be positive")
+  if overflowSlots < 0:
+    raise newException(ValueError, "relay overflow width must not be negative")
   if inspect != nil and kind != rkSlowExtractEncrypt:
     raise newException(ValueError,
       "only relaySlowExtractEncrypt can read what it passes on")
@@ -257,6 +281,7 @@ proc setupRelayNode*(R: var RelayNode, kind: RelayKind, selfId: uint64,
   R.neighbours = newSeq[RelayNeighbour](capacity)
   R.bySource = initTable[transport_types.UdpAddress, int]()
   R.inspect = inspect
+  R.overflow = initOverflowRing[RelaySend](overflowSlots)
   R.restrictionAnswerMs = restrictionAnswerDefaultMs
 
 proc findRelayTarget*(R: RelayNode, id: uint64): int {.role: parser.} =
@@ -458,12 +483,64 @@ proc noteReturn(R: var RelayNode, origin, via, reached: uint64,
 
 ## ------------------------- sealing per kind -------------------------
 
-proc queueSend(R: RelayNode, slot: int, frame: ByteSeq,
+proc queueSend(R: var RelayNode, slot: int, frame: ByteSeq,
     step: var RelayStep) {.role: actor.} =
   ## R/slot: the neighbour the frame leaves to; its address goes with it.
-  step.send.add(RelaySend(slot: slot, address: R.neighbours[slot].address,
-    frame: frame))
+  ## Once the turn's budget is spent (`setRelayBudget`) the frame goes into the
+  ## overflow ring instead, and leaves on a later `tickRelayOverflow`.
+  var
+    item: RelaySend = RelaySend(slot: slot, address: R.neighbours[slot].address,
+      frame: frame)
+  if R.budget > 0 and R.spent >= R.budget:
+    discard R.overflow.addLast(item)
+    R.held = R.held + 1'u64
+    return
+  R.spent = R.spent + 1
+  step.send.add(item)
 
+
+## ----------------------- overflow and the budget ----------------------
+##
+##   feed -> frames to send   budget left   -> out at once
+##                            budget spent  -> ring (oldest out when full)
+##   tickRelayOverflow:  a new turn starts; the ring is emptied, oldest first,
+##                       up to the budget, ahead of anything new
+##
+## The budget is how many frames one turn may send. 0 = no limit, and then the
+## ring is never used. A crowded relay sets a budget (for example from its
+## brake level); a short burst then waits in the ring instead of being lost.
+
+proc setRelayBudget*(R: var RelayNode, perTurn: int) {.role: actor,
+    tag: "appApi", needs: perTurn >= 0.} =
+  ## R/perTurn: frames one turn may send; 0 = no limit.
+  R.budget = perTurn
+
+proc relayOverflowHeld*(R: RelayNode): int {.role: parser, tag: "appApi".} =
+  ## R: frames waiting in the ring now.
+  result = R.overflow.len
+
+proc relayOverflowDropped*(R: RelayNode): uint64 {.role: parser,
+    tag: "appApi".} =
+  ## R: frames thrown out of a full ring (or refused by a ring of width 0).
+  result = R.overflow.dropped
+
+proc tickRelayOverflow*(R: var RelayNode): RelayStep {.role: actor,
+    tag: "appApi".} =
+  ## R: start a new turn and let held frames go, oldest first, up to the
+  ## budget. A frame whose neighbour has left meanwhile (or whose slot now
+  ## holds another address) is dropped, never sent to a stranger.
+  var
+    item: RelaySend = default(RelaySend)
+  R.spent = 0
+  while R.overflow.len > 0 and (R.budget == 0 or R.spent < R.budget):
+    item = R.overflow.popFirst()
+    if item.slot < 0 or item.slot >= R.neighbours.len or
+        not R.neighbours[item.slot].used or
+        R.neighbours[item.slot].address != item.address:
+      R.dropped = R.dropped + 1'u32
+      continue
+    R.spent = R.spent + 1
+    result.send.add(item)
 proc sealForwardFor(R: var RelayNode, slot: int, target, origin: uint64,
     hopsLeft: uint8, payload: openArray[uint8]): ByteSeq {.
     role: encryptor, tag: "cryptoBoundary".} =
@@ -560,19 +637,25 @@ proc restrictionAnswerDue(R: var RelayNode, slot: int, nowMs: uint32): bool {.
   R.neighbours[slot].answeredMs = nowMs
   result = true
 
-proc attachRestrictionBook*(R: var RelayNode, dir: string): string {.
-    role: actor, tag: "storageIo|appApi".} =
-  ## R/dir: keep the book in this folder. A book saved there before is read
-  ## back now. "" when it is ready, else why not (a damaged book is refused,
-  ## and the relay keeps its empty book).
+proc attachRestrictionBook*(R: var RelayNode, load: RelayBookLoad,
+    save: RelayBookSave): string {.role: actor, tag: "appApi".} =
+  ## R/load/save: how the application keeps the book. A book saved before is
+  ## read back now. "" when it is ready, else why not (a damaged book is
+  ## refused, and the relay keeps its empty book).
+  ##
+  ## The node itself touches no storage, so a router built from this module
+  ## compiles no database. `restriction_store.attachGeistBook` is the ready
+  ## hook pair for a Geist folder; import that module only where it is wanted.
   var
     got: tuple[ok: bool, found: bool, book: RestrictionBook, err: string] =
-      loadRestrictionBook(dir)
+      (true, false, RestrictionBook(), "")
+  if load != nil:
+    got = load()
   if not got.ok:
     return got.err
   if got.found:
     R.book = got.book
-  R.bookDir = dir
+  R.bookSave = save
 
 proc feedRelayRestriction(R: var RelayNode, slot: int,
     frame: openArray[uint8]): RelayStep {.role: orchestrator.} =
@@ -600,13 +683,13 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     result.event = reDropped
     result.err = e
     return
-  if R.bookDir.len > 0:
-    var w: tuple[ok: bool, err: string] = saveRestrictionBook(R.bookDir, R.book)
-    if not w.ok:
+  if R.bookSave != nil:
+    e = R.bookSave(R.book)
+    if e.len > 0:
       R.book = prev
       R.dropped = R.dropped + 1'u32
       result.event = reDropped
-      result.err = w.err
+      result.err = e
       return
   try:
     queueSend(R, slot, sealRestrictionAck(R.neighbours[slot].session,

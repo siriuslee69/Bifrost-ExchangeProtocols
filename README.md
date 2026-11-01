@@ -2701,6 +2701,36 @@ Byte layout, replay, who may send to whom, the way answers find their way
 back, and what is and is not hidden: [docs/routing.md](docs/routing.md).
 Runnable: `nimble exampleRelayFast`.
 
+### Overflow: a small fixed box so a burst is not lost ⟡
+
+**Definitions**
+
+- `overflow ring` := a box with a fixed number of slots, made once. When it is
+  full, the OLDEST item leaves to make room.
+- `budget` := how many frames one turn may send (0 = no limit).
+
+All three relays have one. Without it, a crowded relay loses everything it
+cannot send this instant; with it, a short burst waits and leaves next turn.
+
+```text
+  relaySuperFastUDP   udpForwardBufferDatagrams slots   holds datagrams while
+                      (initUdpForwardConfig)             the NAS is away
+  keyed relays        overflowSlots slots                holds frames past the
+                      (initRelayFastExtraFrame(..., overflowSlots = 64))
+                                                         budget of a turn
+```
+
+```nim
+R.setRelayBudget(200)               # at most 200 frames leave per turn
+# every turn: the held frames go first, oldest first, up to the budget
+var held = R.tickRelayOverflow()
+echo R.relayOverflowHeld(), " waiting, ", R.relayOverflowDropped(), " thrown out"
+```
+
+The width is set once (default 32, `relayOverflowSlots`; 0 holds nothing) and
+never grows, so the memory cost is known in advance. A held frame whose
+neighbour has left in the meantime is dropped; it is never sent to whoever now
+sits in that slot. Everything held is something DAC can ask for again.
 ### Slowing neighbours down ⟡
 
 **Definitions**

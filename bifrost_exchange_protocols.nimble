@@ -489,6 +489,9 @@ task vectors, "Regenerate committed BFX2 test vectors":
 task benchmarks, "Run the committed protocol benchmark harness":
   runNim("c", "evaluation/benchmarks/bench_protocols.nim", @["-d:release", "-r"])
 
+task benchRelay, "Time how long the relays hold a datagram: relaySuperFastUDP against relayFastExtraFrame":
+  runNim("c", "evaluation/benchmarks/bench_relay_forward.nim", @["-d:release", "-r"])
+
 task benchLowMem, "Build each tiny-device profile, measure flash/heap/stack, update README":
   runNim("c", "evaluation/benchmarks/lowmem/bench_lowmem_sizes.nim", @["-r"])
 
@@ -536,6 +539,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_relay_slow_restriction.nim", @["-r"])
     runNim("c", "evaluation/tests/test_relay_super_fast_restriction.nim", @["-r"])
     runNim("c", "evaluation/tests/test_relay_super_fast_brake.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_relay_overflow.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dac_brake.nim", @["-r"])
     runNim("c", "evaluation/tests/test_super_fast_control.nim", @["-r"])
     runNim("c", "evaluation/tests/test_udp_shared_port.nim", @["-r"])
