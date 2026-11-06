@@ -21,6 +21,10 @@ one copy is both the posting box entry and the archive entry, for both users.
 Only symmetric keys are stored. Asymmetric algorithms (KEMs) appear only for a
 short moment, inside a normal AME handshake, and are erased right after it.
 
+A user who loses every device opens the whole archive again from a new one,
+with nothing but their user name and password. No key has to be kept on a
+device or on paper.
+
 A chat that must keep forward secrecy stays a plain FOMKE session with no
 archive. This draft covers chats WITH an archive only.
 
@@ -31,29 +35,39 @@ Terms from the README (`XHKDF`, `KEM`, `AEAD`, `AAD`, `seal`, `open`, `erase`,
 their meaning.
 
 - `user` := one person with one account.
+- `userId` := the account's name on the server. It never changes. It is not
+  secret.
 - `device` := one installation of the app. A user may have several.
+- `deviceId` := 16 random bytes a device makes for itself when it is first
+  set up.
 - `server` := the machine that stores the records. It holds no key that
   opens a message.
 - `chat` := the conversation of exactly two users.
 - `chatId` := 16 random bytes that name one chat. Chosen by the user who
   opens the chat.
-- `passphrase` := what the user types to unlock the archive on a new device.
-- `UAK` := user archive key, 32 bytes. Made from the passphrase. Known only
-  to the user's own devices. Never stored anywhere.
+- `password` := what the user types to unlock the archive on any device.
+- `KEK` := key-encryption key, 32 bytes. Made from password, userId and
+  userSalt. Its only job is to open CAK1. Never stored anywhere.
+- `DMK` := data master key, 32 bytes, made of random bytes once at sign-up.
+  Every other key of the user is derived from it. Stored only inside CAK1.
+- `UAK` := user archive key, 32 bytes, derived from the DMK. Opens the
+  user's vault.
 - `vault` := the records on the server that only one user can open: the
-  user's device list and one vault entry per chat.
+  wrapped DMK, the device list, one vault entry per chat, one lane record per
+  own lane.
 - `CAS` := chat archive secret, 32 bytes. One per chat and generation. Both
   users of the chat hold the same CAS.
 - `generation` := one numbered CAS of a chat, starting at 1. A new
   generation is made by a fresh KEM exchange ("CAS renewal").
-- `lane` := the sending line of ONE device in ONE chat, named by a `u32`.
-  Every lane has its own counter.
+- `lane` := the sending line of ONE device in ONE chat, named by a random
+  `u32`. Every lane has its own counter.
+- `own lane` := a lane that one of the user's own devices writes to.
 - `epoch` := a run of `E` messages on one lane (`E` = `epochSize`, default
   256). Each epoch has its own key.
 - `K_e` := epoch key, 32 bytes. One per (generation, lane, epoch).
 - `index` := the position of a message inside its epoch, `0 .. E-1`.
-- `position` := the four numbers that name one message
-  `(gen, lane, epoch, index)` inside one chatId.
+- `position` := the four numbers that name one message,
+  `(gen, lane, epoch, index)`, inside one chatId.
 - `key block` := the bytes one message key expands into: nonce, one key per
   switched-on cipher slot, one key per switched-on MAC slot. Same as FOMKE
   Step 3.
@@ -71,13 +85,16 @@ their meaning.
  │  -> deleted by the server once picked up. Nothing stays.               │
  └─────────────────────────────────────────────────────────────────────────┘
  ┌─ vault of user A (server, only A can open) ────────────────────────────┐
- │  CAU1  how to turn A's passphrase into UAK      (unencrypted, 1×)       │
- │  CAD1  A's device list                          (sealed with UAK, 1×)   │
- │  CAV1  CAS of chat X, generation g              (sealed with UAK,       │
- │                                                  1× per chat and gen)   │
+ │  CAU1  Argon2id settings + userSalt         (unencrypted, 1×)           │
+ │  CAK1  the DMK, wrapped with KEK            (1×)                        │
+ │  CAD1  A's device list                      (sealed with UAK, 1×)       │
+ │  CAV1  CAS of chat X, generation g          (sealed with UAK,           │
+ │                                              1× per chat and gen)       │
+ │  CAL1  "lane L in chat X is one of mine"    (sealed with UAK,           │
+ │                                              1× per own lane)           │
  └─────────────────────────────────────────────────────────────────────────┘
  ┌─ vault of user B ──────────────────────────────────────────────────────┐
- │  the same three kinds, sealed with B's own UAK                          │
+ │  the same five kinds, sealed with B's own keys                          │
  └─────────────────────────────────────────────────────────────────────────┘
  ┌─ chat store of chat X (server, A and B can open) ──────────────────────┐
  │  CAM1  one record per message, stored ONCE for both users               │
@@ -88,42 +105,85 @@ their meaning.
 What has to be written back, and how often:
 
 ```text
-event                    who writes what                         how often
-───────────────────────  ──────────────────────────────────────  ─────────────────────
-a message is sent        sender: one CAM1                         per message
-a message is read        reader: CAR1 (the read pointer)          whenever it moves
-chat start               each user: one CAV1                      once per chat
-CAS renewal              each user: one CAV1                      rare (see 5.5)
-a device joins           that device: CAD1 rewritten              once per device
-an epoch ends            nobody: K_e is derived, not stored       never
+event                       who writes what                        how often
+──────────────────────────  ─────────────────────────────────────  ──────────────────────
+a message is sent           sender: one CAM1                        per message
+a message is read           reader: CAR1 (the read pointer)         whenever it moves
+chat start                  each user: one CAV1                     once per chat
+a device first writes       that device: one CAL1                   once per device
+  into a chat                                                         and chat
+CAS renewal                 each user: one CAV1                     rare (see 4.5)
+a device joins / leaves     that device: CAD1 rewritten             once per device
+password change             the user: CAU1 + CAK1                   when the user wants
+full key change             the user: CAK1, CAD1, every CAV1,       after a suspected
+                            every CAL1 (see 4.6)                      leak only
+an epoch ends               nobody: K_e is derived, not stored      never
 ```
 
-The reader's one CAV1 at chat start rides along with the reader's first CAR1.
-No extra request is needed for it.
+Nothing above needs a request of its own:
+
+- The reader's CAV1 at chat start goes along with the reader's first CAR1.
+- A device's CAL1 goes along with the first CAM1 it writes into that chat.
 
 ## 2. The key ladder ⟡
 
 ```text
-passphrase ──Argon2id──▶ UAK                    (only on the user's devices)
-                          │
-                          │ opens
-                          ▼
-              CAV1 ──▶ CAS(g)                   (both users of the chat)
-                          │
-                          │ XHKDF, one call per epoch
-                          ▼
-                     K_e(g, lane, e)            (both users of the chat)
-                          │
-                          │ XHKDF, one call per message, with the salt
-                          ▼
-                     key block ──▶ seal / open one CAM1
+password + userId + userSalt
+          │
+       Argon2id
+          │
+          ▼
+         KEK ──opens──▶ CAK1 ──▶ DMK            (only on the user's devices)
+                                  │
+                                  │ XHKDF, one label per job
+                                  ▼
+                                 UAK
+                                  │
+                                  │ opens
+                                  ▼
+                      CAV1 ──▶ CAS(g)           (both users of the chat)
+                                  │
+                                  │ XHKDF, one call per epoch
+                                  ▼
+                             K_e(g, lane, e)    (both users of the chat)
+                                  │
+                                  │ XHKDF, one call per message, with the salt
+                                  ▼
+                             key block ──▶ seal / open one CAM1
 ```
 
-### 2.1 Every derivation
+### 2.1 Why the password does not make the DMK directly ⌜guide⌟
+
+The password only opens CAK1. Everything else hangs on the DMK, which is
+random and never changes on a password change:
 
 ```text
-UAK         = XHKDF( Argon2id(passphrase, userSalt, params),
-                     "CHAT-USER-KEY-v1" )                                -> 32 B
+event                        DMK made from the password      DMK random, in CAK1
+───────────────────────────  ──────────────────────────────  ────────────────────
+password changed             reseal CAD1, every CAV1,        reseal CAK1 only
+                             every CAL1 (hundreds)           (1 record)
+the app dies halfway         some records under the old      nothing is halfway:
+                             key, some under the new one     the new CAK1 replaces
+                             -> both keys needed             the old in one step
+```
+
+The cost is one record of 83 bytes.
+
+A password change is therefore NOT a key change. It protects nothing that an
+attacker already had. Someone who once held the old password AND the server's
+data already holds the DMK. For that case there is the **full key change**
+(4.6).
+
+### 2.2 Every derivation
+
+```text
+KEK         = XHKDF( Argon2id( NFKC(password),
+                               userSalt ‖ userId, settings in CAU1 ),
+                     "CHAT-KEK-v1" )                                     -> 32 B
+
+DMK         = 32 random bytes, made once at sign-up (and at a full key change)
+
+UAK         = XHKDF( DMK, "CHAT-USER-KEY-v1", keyGen )                   -> 32 B
 
 CAS(g)      = XHKDF( TK(n) of the A↔B AME session,
                      "CHAT-ARCHIVE-KEY-v1", chatId, g )                  -> 32 B
@@ -135,14 +195,17 @@ key block   = XHKDF( K_e,
                      "CHAT-MESSAGE-KEY-v1", chatId, g, lane, e,
                      index, salt )            -> ameTierKeyMaterialLen(L, t) B
 
-vault key   = XHKDF( UAK,
-                     "CHAT-VAULT-KEY-v1", chatId, g, salt )
+master key  = XHKDF( KEK, "CHAT-MASTER-WRAP-v1", keyGen, salt )
+  wrap key                                    -> key block of the vault tier
+
+vault key   = XHKDF( UAK, "CHAT-VAULT-KEY-v1", chatId, g, salt )
                                               -> key block of the vault tier
 
 device list = XHKDF( UAK, "CHAT-DEVICES-KEY-v1", salt )
   key                                         -> key block of the vault tier
 
-lane        = first 4 bytes of XHKDF( UAK, "CHAT-LANE-v1", deviceId, chatId )
+lane record = XHKDF( UAK, "CHAT-LANE-RECORD-v1", chatId, lane, salt )
+  key                                         -> key block of the vault tier
 ```
 
 Every input carries its own label. No two jobs share a key, the same rule
@@ -152,21 +215,39 @@ never be a key that a rotation also uses. It is a one-way image of TK under
 its own label. Knowing CAS tells nothing about TK, EK or any FOMKE message
 key.
 
+`NFKC` is Unicode normalisation: the same password always becomes the same
+bytes, whichever keyboard typed it.
+
+```text
+ "ä" typed on a phone      -> 1 code point   U+00E4
+ "ä" typed as a + ¨        -> 2 code points  U+0061 U+0308
+ both after NFKC           -> U+00E4         same KEK, same DMK
+```
+
+Without it, a user with an umlaut in the password could be locked out on a
+new device.
+
+`userId` and `userSalt` are not secret. They only make sure that two users
+with the same password still get different KEKs, and that a table of guesses
+built for one user is worth nothing for another.
+
 The **vault tier** is fixed by the record version: version 1 means
 `tmeAeadAmeLayout` (README, "The building blocks") with every slot switched
-on and a 32-byte tag. A vault entry has to open before anything else is known,
-so its tier cannot be stored inside it.
+on and a 32-byte tag. A vault record has to open before anything else is
+known, so its tier cannot be stored inside it.
 
 The **chat tier** (layout, tier, tag length) is agreed in CAO1 and stored in
 every CAV1 of that generation.
 
-### 2.2 What exists, and when it is erased
+### 2.3 What exists, and when it is erased
 
 ```text
 value        size  made                              erased
 ───────────  ────  ────────────────────────────────  ──────────────────────────────
-passphrase   var.  typed by the user                 right after Argon2id
-UAK          32    unlocking the app                 when the app locks
+password     var.  typed by the user                 right after Argon2id
+KEK          32    right after Argon2id              right after CAK1 is opened
+DMK          32    opening CAK1                      when the app locks
+UAK          32    derived from the DMK              when the app locks
 TK(n) path   —     the A↔B AME session               the session is closed right
                                                      after CAS is derived; it is
                                                      not needed again until renewal
@@ -175,10 +256,10 @@ CAS(g)       32    chat start / renewal              never stored unwrapped; in
                                                      is open
 K_e          32    when a lane enters epoch e        when the epoch ends or the
                                                      chat closes
-key block    var.  sealing / opening one CAM1        right after that record
+key block    var.  sealing / opening one record      right after that record
 ```
 
-### 2.3 Why the epoch keys are derived and not stored ⌜guide⌟
+### 2.4 Why the epoch keys are derived and not stored ⌜guide⌟
 
 An earlier sketch stored each epoch key wrapped under CAS (`wrap(CAS, K_e)`,
 72 bytes per epoch). With a purely symmetric CAS, that buys nothing:
@@ -195,7 +276,7 @@ delete one epoch for good       yes (delete the wrap)          no, only a genera
 ```
 
 The only gain is deleting single epochs for good. Deleting a whole
-generation does the same job (see 5.6), so the epoch keys are derived.
+generation does the same job (see 4.8), so the epoch keys are derived.
 
 Epochs still exist for two reasons:
 
@@ -203,7 +284,7 @@ Epochs still exist for two reasons:
    taken during the day shows one epoch of one lane, not CAS.
 2. They are the unit the server pages by: "give me epoch 41 of lane X".
 
-The real security reset is the **CAS renewal** (5.5), because only it adds
+The real security reset is the **CAS renewal** (4.5), because only it adds
 fresh KEM secrets.
 
 ## 3. Records: byte layouts ⟡
@@ -303,38 +384,43 @@ kind  name         content
 4     delete       ref (12)  -> asks the server to drop that record and the
                                other user to hide it
 5     seen         count u8 | count × ref (12)
-                   -> "I have read up to here, on these lanes". It is sealed,
-                      so the server cannot fake it. A reader who is told
-                      "seen up to 40" but finds only 38 records knows the
+                   -> "I have read up to here, on these lanes of YOURS". It
+                      is sealed, so the server cannot fake it. A reader who is
+                      told "seen up to 40" but finds only 38 records knows the
                       server is holding two back.
+6     lanes        count u8 | count × lane u32
+                   -> "these are all lanes of MY user in this chat that I
+                      know of, this one included". It is always the FIRST
+                      message on a new lane. See 4.3.
 ```
 
 An attachment is sealed with its own random `fileKey`. A large file then
 never has to be loaded to show the chat, and the server can store it apart.
 
-### 3.3 CAV1 vault entry: header **19 B**
+### 3.3 The vault frame: header **19 B**
 
-One per (user, chatId, gen). The server stores it under exactly those three.
+CAK1, CAV1, CAD1 and CAL1 all use this one frame, so one routine reads them
+all. Only the key, the label and what is inside differ.
 
 ```text
-offset 0     1      3              19          19+T
+offset 0     1      3              19          51
        +-----+------+--------------+-----------+--------------------+
-       | ver | gen  | salt         | tag       | sealed body        |
+       | ver | num  | salt         | tag       | sealed body        |
        | u8  | u16  | 16 B random  | T = 32    |                    |
        +-----+------+--------------+-----------+--------------------+
 
-sealed body:
-       +---------+-----------+-------------+-------------+--------+------------------+
-       | CAS     | epochSize | u16 + chat  | u16 + chat  | tagLen | u16 + peer       |
-       | 32 B    | u16       | layout      | tier        | u8     | handle (UTF-8)   |
-       +---------+-----------+-------------+-------------+--------+------------------+
+record  num means   key from (2.2)        label             stored under
+──────  ──────────  ────────────────────  ────────────────  ──────────────────────
+CAK1    keyGen      master key wrap key   "CHAT-MASTER-v1"  (user)
+CAV1    gen         vault key             "CHAT-VAULT-v1"   (user, chatId, gen)
+CAD1    keyGen      device list key       "CHAT-DEVICES-v1" (user)
+CAL1    keyGen      lane record key       "CHAT-LANE-v1"    (user, chatId, lane)
 ```
 
-The key block comes from `vault key` (2.1). The tag covers the label
-`"CHAT-VAULT-v1"`, the `chatId`, the header and the ciphertext.
-
-The salt makes each rewrite safe. A new passphrase, for example, means every
-CAV1 is sealed again under a new UAK, and each one gets a new salt.
+The tag covers the label, the "stored under" values, the 19-byte header and
+the ciphertext. A record copied into another slot therefore fails to open.
+The salt makes each rewrite safe: every reseal gets a new salt, and so a new
+key block.
 
 ### 3.4 CAU1 user record: fixed **42 B**, unencrypted
 
@@ -347,23 +433,73 @@ offset 0     1           5            9       10                    42
 ```
 
 The Argon2id settings and salt a new device needs BEFORE it can make the
-UAK. Nothing in it is secret. `lanes` here is Argon2's parallelism, not a
+KEK. Nothing in it is secret. `lanes` here is Argon2's parallelism, not a
 chat lane.
 
-### 3.5 CAD1 device list: header **19 B**
+The **client** chooses these values, never the server, and the client has
+fixed lowest values built in. If a server hands out weaker values at login,
+a different KEK comes out, CAK1 does not open, and nothing is lost. At sign-up
+and at a password change, the client writes its own values.
+
+### 3.5 CAK1 wrapped master key: fixed **83 B**
 
 ```text
-       +-----+------+--------------+-----------+------------------------------+
-       | ver | 0    | salt         | tag       | sealed: count u8             |
-       | u8  | u16  | 16 B random  | T = 32    |  | count × (deviceId 16       |
-       |     |      |              |           |  |          | addedMs u64)    |
-       +-----+------+--------------+-----------+------------------------------+
+offset 0     1        3              19          51          83
+       +-----+--------+--------------+-----------+-----------+
+       | ver | keyGen | salt         | tag       | DMK       |
+       | u8  | u16    | 16 B random  | 32 B      | 32 B,     |
+       |     |        |              |           | sealed    |
+       +-----+--------+--------------+-----------+-----------+
 ```
 
-The same frame as CAV1, so one routine reads both. `gen` is always 0, and the
-key comes from `device list key` (2.1).
+`keyGen` counts full key changes, starting at 1. A password change keeps
+`keyGen` and the DMK; only salt, tag and ciphertext change.
 
-### 3.6 CAR1 read pointer: **3 + 12·count B**, unencrypted
+The server holds the new CAK1 BESIDE the old one until the client confirms
+that the new one opens. Only then is the old one dropped. A crash or a lost
+connection in the middle cannot lock the user out.
+
+### 3.6 CAV1 vault entry: **51 B + body**
+
+```text
+sealed body:
+       +---------+-----------+-------------+-------------+--------+------------------+
+       | CAS     | epochSize | u16 + chat  | u16 + chat  | tagLen | u16 + peer       |
+       | 32 B    | u16       | layout      | tier        | u8     | handle (UTF-8)   |
+       +---------+-----------+-------------+-------------+--------+------------------+
+```
+
+### 3.7 CAD1 device list: **51 + 1 + 32·d B**
+
+```text
+sealed body:
+       +----------+-------------------------------------------------+
+       | count u8 | count × ( deviceId 16 | addedMs u64             |
+       |          |           | removedMs u64 )                     |
+       +----------+-------------------------------------------------+
+```
+
+`removedMs` = 0 means the device is still in use. A removed device is
+**marked, never deleted**, so its old lanes stay known as own lanes.
+
+### 3.8 CAL1 lane record: fixed **75 B**
+
+One per own lane: each device writes one the first time it sends into a
+chat. This is how a new device finds the lanes of the user's OLD devices, even
+the lanes of a device that is long gone.
+
+```text
+sealed body:
+       +-------------+------------+
+       | deviceId    | createdMs  |
+       | 16 B        | u64        |
+       +-------------+------------+      51 + 24 = 75 B
+```
+
+The lane number itself is not in the body: it is part of "stored under"
+(user, chatId, lane), and the tag covers it.
+
+### 3.9 CAR1 read pointer: **3 + 12·count B**, unencrypted
 
 ```text
        +-----+--------+------------------------------+
@@ -377,7 +513,7 @@ notifications, so it can read it. What the server learns from it, it learns
 anyway from which records a device fetches. This record is the posting box:
 "new" means every record past the pointer.
 
-### 3.7 CAO1 chat open / CAA1 chat accept (posting box only)
+### 3.10 CAO1 chat open / CAA1 chat accept (posting box only)
 
 These travel as FOMKE messages inside the A↔B AME session. The server never
 stores them past pickup.
@@ -420,6 +556,9 @@ in AMR2, timeouts).
 ### 4.2 Sending one message
 
 ```text
+0. no lane yet in this chat?
+     lane = random u32; the server refuses one already in use -> draw again
+     first CAM1 on it is kind 6 (lanes), uploaded with this device's CAL1
 1. position = (g, myLane, e, i)          i = next index on my lane
 2. save i+1 to disk                      before sealing (3.1)
 3. K_e      = derived once per epoch, kept while the epoch runs
@@ -430,6 +569,10 @@ in AMR2, timeouts).
 8. i = E-1 ?  -> next message starts epoch e+1 at index 0, erase K_e
 ```
 
+A lane is a random number per chat, so the server cannot link one device
+across chats. It does not depend on any key either, so it stays the same
+through a password change and a full key change.
+
 ### 4.3 Reading, and telling own lanes from the other user's
 
 ```text
@@ -437,34 +580,47 @@ for each CAM1 past my read pointer:
   K_e       = XHKDF(CAS(gen), ..., lane, epoch)     cache per (gen, lane, epoch)
   key block = XHKDF(K_e, ..., index, salt)
   open -> body                                      tag wrong -> refuse, report
-
-whose lane is it?
-  my lanes = { XHKDF(UAK, "CHAT-LANE-v1", deviceId, chatId) | deviceId in CAD1 }
-  lane in my lanes  -> written by me (another of my devices)
-  otherwise          -> written by the other user
 ```
 
-Because both users hold CAS, the other user COULD write into one of my
-lanes. I would notice it: the lane is mine, but the record is not in my
-devices' sent history. Between two users, "one of us two wrote this" is
-enough, since each knows what they wrote. A group chat would need more (see
-6, point 4).
-
-A lane is different in every chat, so the server cannot link one device
-across chats. The chance that two lane numbers collide in one chat is about
-1 in 4 billion per pair of devices. The server refuses a lane that the other
-account already wrote to; the device then makes a new `deviceId`.
-
-### 4.4 A new device
+Opening needs no list of lanes at all: the lane number is in every header,
+and CAS is the same for both users. The list is only needed to show who
+wrote a message:
 
 ```text
-passphrase + CAU1 ──Argon2id──▶ UAK
-UAK ──opens──▶ CAD1 ──▶ add my new deviceId, reseal with a new salt, upload
+mine     = every lane with a CAL1 in my vault            (all my devices, ever)
+theirs   = every other lane
+
+cross-checks, against a server that hides one of my CAL1:
+  a lane in "theirs" whose first message (kind 6) names one of MY lanes   -> warn
+  a lane in "theirs" that the other user lists in a `seen` (kind 5)
+    as one of MY lanes                                                    -> warn
+```
+
+Hiding a CAL1 can make my own old messages look as if the other user wrote
+them. The server cannot read or change any of them. The two cross-checks
+catch it as soon as I had a second device, or as soon as the other user has
+read one of the lane's messages.
+
+Because both users hold CAS, the other user COULD start a lane and write
+anything into it. It shows up as THEIR lane, never as mine: "mine" comes
+only from my own vault, which only I can seal. Between two users this is
+enough. A group chat needs more (see 7, point 4).
+
+### 4.4 A new device (the old one is lost)
+
+```text
+userId + password ──▶ fetch CAU1 + CAK1
+password + CAU1 ──Argon2id──▶ KEK ──opens──▶ CAK1 ──▶ DMK ──▶ UAK
+UAK ──opens──▶ CAD1   ──▶ add my new deviceId, reseal with a new salt, upload
 UAK ──opens──▶ every CAV1 ──▶ CAS of every chat and generation
+UAK ──opens──▶ every CAL1 ──▶ which lanes were mine, on every old device
 CAS ──▶ K_e ──▶ every CAM1                       full history, no help needed
 ```
 
-### 4.5 CAS renewal (the security reset)
+Nothing has to be kept on any device. This is also the weak point: anyone
+who holds the server's data and guesses the password does the same (see 5).
+
+### 4.5 CAS renewal (the security reset of one chat)
 
 ```text
 1. A and B run a new AME session (or a rotation with a new KEM exchange)
@@ -475,10 +631,37 @@ CAS ──▶ K_e ──▶ every CAM1                       full history, no he
 
 An attacker who stole CAS(g) reads nothing of `gen+1`. That generation comes
 from fresh KEM secrets the attacker never saw. Suggested triggers: a device
-is removed from CAD1, a passphrase change, or a fixed time (for example 30
+is removed from CAD1, a full key change, or a fixed time (for example 30
 days).
 
-### 4.6 Deleting
+### 4.6 Password change and full key change
+
+```text
+password change (routine)              full key change (after a suspected leak)
+─────────────────────────────────────  ──────────────────────────────────────────
+new password, new userSalt             new password, new userSalt
+same DMK, same keyGen                  NEW random DMK, keyGen + 1 -> new UAK
+write CAU1 + CAK1                      write CAU1 + CAK1
+                                       reseal CAD1, every CAV1, every CAL1
+                                         under the new UAK
+                                       CAS renewal in every chat (4.5)
+1 + 1 records                          2 + 1 + chats + own lanes records,
+                                         plus one renewal per chat
+```
+
+The full key change has to renew every CAS too. An attacker who held the
+old DMK has already opened every old CAV1. Without a renewal they would keep
+reading every new message.
+
+### 4.7 Removing a device
+
+```text
+1. CAD1: set removedMs of that device, reseal
+2. its CAL1 records stay: its old messages still show as mine
+3. CAS renewal in every chat (4.5): the removed device knew every CAS
+```
+
+### 4.8 Deleting
 
 ```text
 delete one message      kind 4 + the server drops that CAM1
@@ -495,19 +678,40 @@ generation. A chat that needs that more often renews CAS more often.
 ```text
 the server ...                          stopped by
 ──────────────────────────────────────  ────────────────────────────────────────
-reads a message                         holds no CAS, no UAK
-changes or moves a record               tag over header + chatId
+reads a message                         holds no CAS, no DMK
+changes or moves a record               tag over header + where it is stored
 drops a record in the middle            gap in the index of that lane
 holds back the newest records           `seen` (kind 5) from the other user
 replays a record                        write-once position; same bytes twice = one
+hides one of my CAL1                    cross-checks in 4.3 (warns; my old
+                                          messages look like the other user's
+                                          until then)
+hands out weak Argon2id settings        the client's built-in lowest values
 learns who writes to whom               ✗ it sees the two accounts of a chat.
-                                          Lanes differ per chat, so devices are
-                                          not linked across chats.
+                                          Lanes are random per chat, so devices
+                                          are not linked across chats.
 learns when and how much                ✗ it sees record times and sizes.
                                           Padding (flags bit 0) blurs the sizes.
-guesses the passphrase from CAU1+CAV1   Argon2id settings in CAU1; a weak
-                                          passphrase stays the weakest point
+guesses the password from CAU1+CAK1     ✗ only the password's strength and
+                                          Argon2id stop it. This is the price of
+                                          "nothing kept on any device".
 ```
+
+The last line is the one that matters most. The server, or anyone who copies
+its data, may guess offline: as often as they like, with nothing to slow them
+down. userId, e-mail and userSalt add nothing here, because the server knows
+all three.
+
+```text
+password                           strength (rough)   offline against Argon2id (1 GiB)
+─────────────────────────────────  ─────────────────  ────────────────────────────────
+a typical password                 30 - 40 bit        falls
+6 words, picked by dice            ~ 77 bit           holds
+```
+
+So the client should only accept passwords of about 77 bit or more, for
+example by suggesting six random words. A chat is as strong as the weaker of
+the two users' passwords: either CAV1 opens the same CAS.
 
 ## 6. Sizes
 
@@ -517,9 +721,10 @@ item                                         bytes (T = 32)     bytes (T = 16)
 one text message, stored                     29 + 32 + 10 + t   29 + 16 + 10 + t
                                              = 71 + t           = 55 + t
 per epoch                                    0                  0
-per chat and user (CAV1, short peer name)    ~ 19 + 32 + 45 + layout + tier
-per user (CAU1)                              42
-per user (CAD1, d devices)                   19 + 32 + 1 + 24·d
+per chat and user (CAV1, short peer name)    ~ 51 + 45 + layout + tier
+per own lane (CAL1)                          75
+per user (CAU1 + CAK1)                       42 + 83 = 125
+per user (CAD1, d devices)                   51 + 1 + 32·d
 read pointer (2 lanes)                       3 + 24 = 27
 ```
 
@@ -552,7 +757,14 @@ asymmetric data stored      archive wrap per epoch       none
    asymmetric again, or one MAC key per reader).
 5. **Asynchronous chat start.** Whether AME's handshake works with hours
    between AMC2 and AMF2 (4.1).
-6. **Where the code goes.** A new module family `src/protocols/chat/` beside
+6. **E-mail in the KEK.** Left out in this draft: it adds no secret (the
+   server knows it), and every e-mail change would mean a new CAK1. If it goes
+   in, it must be trimmed and lower-cased first.
+7. **An optional recovery key.** 32 random bytes shown once as 24 words, mixed
+   into the KEK. The server could then guess nothing, but losing both the
+   words and every device loses the archive. Left out in this draft, as
+   "nothing kept anywhere" was the goal; it could be offered per user.
+8. **Where the code goes.** A new module family `src/protocols/chat/` beside
    `fomke/`, with the records in level 0, derivation and sealing in level 1
    (calling `ame/level1/tier_aead.nim`, the one place that seals), and the
    flows in level 2.

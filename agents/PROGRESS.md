@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Draft: chat archive (one stored copy per message, symmetric keys only)
+Commit Message: chat-archive draft: lane records (CAL1), random lanes, DMK behind a password-made KEK (CAK1)
 
 - docs/chat-archive.md: design draft, nothing implemented. Records CAM1
   (message, 29 B header), CAV1 (vault entry), CAU1, CAD1, CAR1 (read pointer),
@@ -14,6 +14,11 @@ Commit Message: Draft: chat archive (one stored copy per message, symmetric keys
 - Features to implement: src/protocols/chat/ (records level 0, derivation and
   sealing through tier_aead level 1, flows level 2), tests, and the open
   decisions in section 7 of the draft.
+- Lanes: random u32 per chat plus a CAL1 per own lane in the vault. The old
+  derivation from UAK lost every own lane after a full key change, and a
+  removed device lost its lanes (CAD1 now marks, never deletes).
+- Keys: password + userId + userSalt -> Argon2id -> KEK -> opens CAK1 -> DMK
+  (random) -> UAK. A password change reseals one record.
 - Open: does the AME handshake tolerate hours between AMC2 and AMF2 through a
   posting box (cookie lifetime, timeouts)? Not tried.
 
