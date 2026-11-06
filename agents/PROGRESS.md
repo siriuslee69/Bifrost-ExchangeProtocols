@@ -1,13 +1,25 @@
 # Progress
 
-Commit Message: chat-archive draft: lane records (CAL1), random lanes, DMK behind a password-made KEK (CAK1)
+Commit Message: Archive family: password -> login keys -> master key -> sub keys; sealed records; log records of a space
 
-- docs/chat-archive.md: design draft, nothing implemented. Records CAM1
-  (message, 29 B header), CAV1 (vault entry), CAU1, CAD1, CAR1 (read pointer),
-  CAO1/CAA1 (chat open/accept over FOMKE). Key ladder UAK -> CAS -> K_e -> key
-  block, all symmetric; KEMs only inside the AME handshake at chat start and
-  CAS renewal.
+- src/protocols/archive/: types, level0/records (byte layouts), level1/keys
+  (Argon2id login, auth + wrap key, master/sub keys, space secret from the
+  FOMKE tight key, epoch key), level1/sealed (one frame for every stored
+  secret, suite pinned by version), level1/log (one record per message,
+  stored once), level2/account (master key record, space entries).
+- ame/level2/liveness.nim: ping/pong, close a quiet link and erase its keys.
+- Tests: test_archive (18), test_ame_liveness (8).
 
+
+## 2026-11-06 Archive crypto and liveness (Bifrost side of the boxes)
+
+- Split decided with the user: Bifrost = crypto and wire only; Nebel =
+  boxes (vault, posting boxes, shared stores), access rules, sync intervals,
+  the server keeping links open; Geist = storage underneath.
+- The messages of an archived chat do NOT use FOMKE: they are log records
+  under an epoch key from the space secret. So Nebel's planned "FOMKE with N
+  lanes" (account_cloud.md 7.3a) is not needed for archived chats.
+- Open: NFKC is the client's job (no Unicode tables here); README playbook.
 
 ## 2026-11-06 Chat archive draft
 

@@ -2351,6 +2351,47 @@ one tag. They remain as two named layouts in `ame/level1/presets.nim`:
 `presetAmeTier(L)` switches on every slot of the preset layout. The bytes are
 **not** the old formats. Nothing sealed by the old code opens under these.
 
+## Archive: data that is stored, not sent 🗄️
+
+**Definitions**
+
+- `space` := one set of records a fixed group can open: a chat of two
+  users, one mailbox, one password vault.
+- `sealed record` := one value sealed under a key, a label (what it is) and
+  a place (where it is stored). 51 bytes + the value.
+- `log record` := one entry of a space (a message, a mail), sealed ONCE and
+  opened by every member. 29 bytes + tag + the entry.
+
+`src/protocols/archive/` turns keys and bytes into stored bytes and back.
+It holds no database and no server; Nebel's boxes decide who keeps what.
+Only symmetric keys are stored. The whole design, with every byte, is in
+[docs/chat-archive.md](docs/chat-archive.md).
+
+```text
+password ──Argon2id──▶ login secret ──▶ authKey (server)  ──▶ wrapKey
+wrapKey ──opens──▶ master key record ──▶ master key ──▶ sub keys ("vault", ...)
+"vault" ──opens──▶ space entry ──▶ space secret ──▶ epoch key ──▶ log record
+```
+
+```nim
+import bifrost_exchange_protocols
+
+var settings = newArchivePasswordSettings()              # once, at sign-up
+var login = deriveArchiveLogin(passwordBytes, "alice", settings)
+var master = newArchiveMasterKey()
+var stored = sealArchiveMasterKey(login.wrapKey, "alice", 1'u16, master)
+
+# a chat: both members derive the same secret from their FOMKE session
+var id = newArchiveSpaceId()
+var chat = initArchiveSpace(id, deriveArchiveSpaceSecret(session.fomke, id, 1'u16), 1'u16)
+var at = ArchivePosition(gen: 1'u16, lane: newArchiveLane(), epoch: 0, index: 0)
+var record = sealArchiveLog(chat, at, messageBytes)    # store this, once
+var opened = openArchiveLog(chat, record)              # any member, any device
+```
+
+Two rules the caller keeps: the password is Unicode-normalised (NFKC)
+before it comes in, and a device saves its next index BEFORE it seals.
+
 ## Liveness: closing a link that went quiet ⌜guide⌟
 
 **Definitions**
@@ -3359,6 +3400,19 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 (FireSaber pk 1312 / ct 1472; X25519 pk 32 / sender pk 32).
 
 ## Issue Playbook
+
+**Archive**
+
+- **A user with an umlaut in the password is locked out on a new device**:
+  Bifrost does not normalise Unicode (it carries no Unicode tables). The
+  client must apply NFKC to the password before `deriveArchiveLogin`; two
+  keyboards can type "ä" as different bytes. Not fixed inside Bifrost.
+- **"archive Argon2id memory is below the built-in minimum"**: the stored
+  settings (or a server) ask for less than 64 MiB / 3 passes. That is
+  refused on purpose: it would make passwords cheap to guess offline.
+- **Everything rests on the password**: the server holds the sealed master
+  key, so whoever copies the server's data may guess offline. Only the
+  password's strength and Argon2id stop that (docs/chat-archive.md, 5).
 
 **Handshake and PSK**
 

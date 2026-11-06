@@ -24,6 +24,7 @@ import ./protocols/ame as ame
 import ./protocols/fomke/types as fomke_types
 import ./protocols/fomke/level3/ops as fomke_ops
 import ./protocols/chunkyaead as chunkyaead
+import ./protocols/archive as archive
 import ./protocols/dac/build as dac_build
 import ./protocols/dac/types as dac_types
 import ./protocols/dac/level0/transport as dac_transport
@@ -89,6 +90,7 @@ export ame
 export fomke_types
 export fomke_ops
 export chunkyaead
+export archive
 export dac_build
 export dac_types
 export dac_transport

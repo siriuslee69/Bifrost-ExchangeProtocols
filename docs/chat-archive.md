@@ -1,6 +1,6 @@
 # Chat archive (draft) 🗄️
 
-**Status: design draft. Nothing in this file is implemented yet.** Every
+**Status: the crypto is built** (`src/protocols/archive/`, tests in `evaluation/tests/test_archive.nim`); **storage, boxes and sync are Nebel's** (`Nebel-DecentralizedDB/docs/boxes.md`). Every
 byte layout below is a proposal and may still change.
 
 A messenger needs two things that pull in different directions:
@@ -176,37 +176,42 @@ data already holds the DMK. For that case there is the **full key change**
 
 ### 2.2 Every derivation
 
+These are the labels the code uses (`src/protocols/archive/`, Bifrost).
+The code calls the chat a **space** (one chat, one mailbox, one password
+vault), the chatId a **spaceId**, the CAS the **space secret**, and the KEK
+the **wrap key**:
+
 ```text
-KEK         = XHKDF( Argon2id( NFKC(password),
-                               userSalt ‖ userId, settings in CAU1 ),
-                     "CHAT-KEK-v1" )                                     -> 32 B
+login secret = Argon2id( NFKC(password),
+                         userSalt | len(userId) | userId, settings in CAU1 )
+authKey      = XHKDF( login secret, "ARCHIVE-AUTH-KEY-v1" )   -> 32 B, to the
+                                                                 server (hash)
+KEK (wrapKey)= XHKDF( login secret, "ARCHIVE-WRAP-KEY-v1" )   -> 32 B
+                                                   deriveArchiveLogin
 
-DMK         = 32 random bytes, made once at sign-up (and at a full key change)
+DMK          = 32 random bytes, made once at sign-up (and at a full key change)
+                                                   newArchiveMasterKey
+sub key      = XHKDF( DMK, "ARCHIVE-SUB-KEY-v1" | name | keyGen )   -> 32 B
+               names: "vault" (CAV1), "devices" (CAD1), "lanes" (CAL1), ...
+                                                   deriveArchiveSubKey
 
-UAK         = XHKDF( DMK, "CHAT-USER-KEY-v1", keyGen )                   -> 32 B
+CAS(g)       = TK child "ARCHIVE-SPACE-KEY-v1" | chatId | g          -> 32 B
+                                                   deriveArchiveSpaceSecret
+K_e          = XHKDF( CAS(g), "ARCHIVE-EPOCH-KEY-v1"
+                      | chatId | g | lane | e )                     -> 32 B
+                                                   deriveArchiveEpochKey
+key block    = XHKDF( K_e, "ARCHIVE-MESSAGE-KEY-v1"
+                      | chatId | position (12 B) | salt )   (CAM1, sealArchiveLog)
 
-CAS(g)      = XHKDF( TK(n) of the A↔B AME session,
-                     "CHAT-ARCHIVE-KEY-v1", chatId, g )                  -> 32 B
-
-K_e         = XHKDF( CAS(g),
-                     "CHAT-EPOCH-KEY-v1", chatId, g, lane, e )           -> 32 B
-
-key block   = XHKDF( K_e,
-                     "CHAT-MESSAGE-KEY-v1", chatId, g, lane, e,
-                     index, salt )            -> ameTierKeyMaterialLen(L, t) B
-
-master key  = XHKDF( KEK, "CHAT-MASTER-WRAP-v1", keyGen, salt )
-  wrap key                                    -> key block of the vault tier
-
-vault key   = XHKDF( UAK, "CHAT-VAULT-KEY-v1", chatId, g, salt )
-                                              -> key block of the vault tier
-
-device list = XHKDF( UAK, "CHAT-DEVICES-KEY-v1", salt )
-  key                                         -> key block of the vault tier
-
-lane record = XHKDF( UAK, "CHAT-LANE-RECORD-v1", chatId, lane, salt )
-  key                                         -> key block of the vault tier
+key block of = XHKDF( key, "ARCHIVE-RECORD-KEY-v1"
+  any vault           | label | place | num | salt )       (sealArchiveRecord)
+  record
 ```
+
+The UAK of the first drafts is gone: every vault record is sealed directly
+under a sub key of the DMK, and its label and place go into its key block.
+`authKey` is new: it is how the server checks who logs in. The server
+stores only its hash, so it learns nothing that opens CAK1.
 
 Every input carries its own label. No two jobs share a key, the same rule
 that keeps EK and SK apart in FOMKE (README, "Why EK and SK are two keys").
@@ -308,7 +313,7 @@ Total = 29 + T + n      (T is 16, 24 or 32 = tag length of the chat tier)
 The header is unencrypted. The server reads `gen`, `lane`, `epoch`, `index`
 to store and page records. It cannot change them: the tag covers them.
 
-The tag covers: the label `"CHAT-MESSAGE-v1"`, the `chatId`, the whole
+The tag covers: the label `"ARCHIVE-LOG-v1"`, the `chatId`, the whole
 29-byte header, the chat layout, the chat tier, the tag length, and the
 ciphertext. The `chatId` is not in the record; both sides know it. A record
 moved into another chat therefore fails to open.
@@ -409,12 +414,12 @@ offset 0     1      3              19          51
        | u8  | u16  | 16 B random  | T = 32    |                    |
        +-----+------+--------------+-----------+--------------------+
 
-record  num means   key from (2.2)        label             stored under
+record  num means   key from (2.2)        label               place (in the tag)
 ──────  ──────────  ────────────────────  ────────────────  ──────────────────────
-CAK1    keyGen      master key wrap key   "CHAT-MASTER-v1"  (user)
-CAV1    gen         vault key             "CHAT-VAULT-v1"   (user, chatId, gen)
-CAD1    keyGen      device list key       "CHAT-DEVICES-v1" (user)
-CAL1    keyGen      lane record key       "CHAT-LANE-v1"    (user, chatId, lane)
+CAK1    keyGen      wrapKey               "ARCHIVE-MASTER-v1" (userId)
+CAV1    gen         sub key "vault"       "ARCHIVE-SPACE-v1"  (chatId)
+CAD1    keyGen      sub key "devices"     app label         (userId)
+CAL1    keyGen      sub key "lanes"       app label         (chatId | lane)
 ```
 
 The tag covers the label, the "stored under" values, the 19-byte header and
@@ -540,7 +545,7 @@ Both users derive `CAS(gen)` only after CAA1 with `answer = 1`.
  │  CAO1 chatId, gen=1, E, tier ─────────────────────────────────▶    │
  │  ◀──────────────────────────────────────────── CAA1 accept         │
  │                                                                    │
- │  CAS(1) = XHKDF(TK, "CHAT-ARCHIVE-KEY-v1", chatId, 1)  (both sides)│
+ │  CAS(1) = TK child "ARCHIVE-SPACE-KEY-v1" | chatId | 1  (both sides)│
  │  session closed, TK erased                                         │
  │                                                                    │
  │  CAV1 (sealed with UAK_A) ──▶  vault A                             │
@@ -563,7 +568,7 @@ in AMR2, timeouts).
 2. save i+1 to disk                      before sealing (3.1)
 3. K_e      = derived once per epoch, kept while the epoch runs
 4. salt     = 16 random bytes
-5. key block = XHKDF(K_e, "CHAT-MESSAGE-KEY-v1", ..., i, salt)
+5. key block = XHKDF(K_e, "ARCHIVE-MESSAGE-KEY-v1", ..., i, salt)
 6. seal body -> CAM1, erase key block
 7. upload CAM1                           the server refuses a used position
 8. i = E-1 ?  -> next message starts epoch e+1 at index 0, erase K_e
