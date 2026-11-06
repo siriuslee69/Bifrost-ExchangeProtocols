@@ -1,6 +1,23 @@
 # Progress
 
-Commit Message: Control link reports the load of SEVERAL forwarders (sum) and their strongest brake
+Commit Message: Draft: chat archive (one stored copy per message, symmetric keys only)
+
+- docs/chat-archive.md: design draft, nothing implemented. Records CAM1
+  (message, 29 B header), CAV1 (vault entry), CAU1, CAD1, CAR1 (read pointer),
+  CAO1/CAA1 (chat open/accept over FOMKE). Key ladder UAK -> CAS -> K_e -> key
+  block, all symmetric; KEMs only inside the AME handshake at chat start and
+  CAS renewal.
+
+
+## 2026-11-06 Chat archive draft
+
+- Features to implement: src/protocols/chat/ (records level 0, derivation and
+  sealing through tier_aead level 1, flows level 2), tests, and the open
+  decisions in section 7 of the draft.
+- Open: does the AME handshake tolerate hours between AMC2 and AMF2 through a
+  posting box (cookie lifetime, timeouts)? Not tried.
+
+## 2026-11-01 Control link: several forwarders
 
 - tickSuperFastControl(C, forwarded, brake, server, nowMs): a program that runs
   several routes passes the total datagrams of all and the strongest operator
