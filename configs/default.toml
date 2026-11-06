@@ -200,3 +200,11 @@ ameMinPqKems = 0
 # signature keys, and unsigned requests from the peer are denied (AM1A,
 # AM1S and AM1P+S only). Either way the request travels encrypted.
 ameSignedExchanges = false
+# How long a link may stay silent before this side asks "are you still
+# there?" (an AME ping, ame/level2/liveness.nim). Any frame that opens counts
+# as an answer. After ameLivenessMisses pings in a row with no answer, and
+# one more quiet stretch, the link's keys are erased and it is closed:
+#   15000 ms x 3 misses -> a vanished phone is dropped after about 60 s
+# Allowed: quiet 1000 .. 86400000 ms, misses 1 .. 100.
+ameLivenessQuietMs = 15000
+ameLivenessMisses = 3

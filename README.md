@@ -129,6 +129,8 @@ ameMinPqKems                 0         yes: fewest post-quantum KEMs any
 ameSignedExchanges           false     false = requests tagged under the
                                        session secret; true = signed, and
                                        unsigned ones denied (not AM1P)
+ameLivenessQuietMs           15000     yes (1000 .. 86400000), see "Liveness"
+ameLivenessMisses            3         yes (1 .. 100), see "Liveness"
 ```
 
 ## Definitions ✦
@@ -2348,6 +2350,49 @@ one tag. They remain as two named layouts in `ame/level1/presets.nim`:
 
 `presetAmeTier(L)` switches on every slot of the preset layout. The bytes are
 **not** the old formats. Nothing sealed by the old code opens under these.
+
+## Liveness: closing a link that went quiet ⌜guide⌟
+
+**Definitions**
+
+- `quiet` := no frame from the peer has opened for `ameLivenessQuietMs`.
+- `ping` := AME kind `0x09`, sealed by the ratchet; body = probe number
+  (u32). `pong` := kind `0x0A`, the same number back.
+
+A phone that leaves the network never says goodbye, so the other end would
+hold the link's keys for ever. One end (usually the server) asks, and after
+`ameLivenessMisses` unanswered pings it erases the keys:
+
+```text
+  time (s)   0          15         30         45         60
+             |----------|----------|----------|----------|
+             last frame ping 0     ping 1     ping 2     close: clearAmeSession
+             heard                                       (every key erased)
+```
+
+Any frame that opens counts as an answer, so a busy link is never probed.
+A pong is sealed like data: a forged one does not open and counts for
+nothing.
+
+```nim
+var live = initAmeLiveness(nowMs)        # quiet + misses from [runtime.ame]
+
+# every frame from the peer that opened:
+noteAmeHeard(live, nowMs)
+
+# a frame of kind 0x09 / 0x0A came in (alfNone = something else):
+var r = handleAmeLivenessFrame(session, live, acrDac, frame, nowMs)
+if r.reply.len > 0: send(r.reply)        # we were pinged: the pong
+
+# a timer, about once a second:
+var s = stepAmeLiveness(session, live, acrDac, nowMs)
+if s.step == alsProbe: send(s.frame)
+if s.step == alsClose: dropSocket()      # the keys are already erased
+```
+
+Nothing in `ame/level2/liveness.nim` touches a socket. During a half-done
+exchange the session may not send; the ping then waits for the next step and
+is not counted as unanswered.
 
 ## Three relays, side by side ⟡
 

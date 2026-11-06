@@ -93,6 +93,7 @@ import ./ame/level2/carriers as ame_carriers
 import ./ame/level2/route_wire as ame_route_wire
 import ./ame/level2/route_directory as ame_route_directory
 import ./ame/level2/lane_jump as ame_lane_jump
+import ./ame/level2/liveness as ame_liveness
 import ./ame/level3/handshake as ame_handshake
 import ./ame/level3/handshake_wire as ame_handshake_wire
 import ./ame/level3/handshake_transport as ame_handshake_transport
@@ -121,6 +122,7 @@ export ame_carriers
 export ame_route_wire
 export ame_route_directory
 export ame_lane_jump
+export ame_liveness
 export ame_handshake
 export ame_handshake_wire
 export ame_handshake_transport

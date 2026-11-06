@@ -45,6 +45,12 @@ type
       ## the session's own secret (the AM1P way). true: this side signs
       ## every request it sends and denies unsigned ones -- only for
       ## sessions that hold signature keys (AM1A, AM1S, AM1P+S).
+    ameLivenessQuietMs*: uint64
+      ## How long a link may stay silent before this side sends a ping
+      ## (ame/level2/liveness.nim). Any frame that opens resets it.
+    ameLivenessMisses*: int
+      ## How many pings in a row may go unanswered. One more quiet
+      ## stretch after the last one, and the link's keys are erased.
 
 var
   bifrostRuntimeConfig*: BifrostConfig
@@ -69,6 +75,8 @@ proc codeBifrostConfig(): BifrostConfig {.role: configurator.} =
   result.ameLayout = defaultAmeLayout(initAmeKemAlgorithms(
     defaultAmeKemSlots()))
   result.ameInitialTier = fullAmeMaskTier(result.ameLayout)
+  result.ameLivenessQuietMs = 15_000'u64
+  result.ameLivenessMisses = 3
 
 proc fomkePregenerationEnabled*(c: BifrostConfig): bool {.role: parser.} =
   ## c: runtime policy for preparing future message keys ahead of time.
@@ -131,6 +139,11 @@ proc sanitizeBifrostConfig*(c: BifrostConfig): BifrostConfig {.role: parser.} =
     raise newException(ValueError, "Bifrost fomkeMaxJump must be in 1..1048576")
   if c.ameMinPqKems < 0 or c.ameMinPqKems > ameMaxAlgorithmSlots:
     raise newException(ValueError, "Bifrost ameMinPqKems must be in 0..8")
+  if c.ameLivenessQuietMs < 1_000'u64 or c.ameLivenessQuietMs > 86_400_000'u64:
+    raise newException(ValueError,
+      "Bifrost ameLivenessQuietMs must be in 1000..86400000 (1 s .. 1 day)")
+  if c.ameLivenessMisses < 1 or c.ameLivenessMisses > 100:
+    raise newException(ValueError, "Bifrost ameLivenessMisses must be in 1..100")
   discard encodeAmeSuiteLayout(c.ameLayout)
   validateAmeTier(c.ameLayout, c.ameInitialTier)
 
@@ -197,6 +210,8 @@ proc applyConfigKey(c: var BifrostConfig, key, value: string) {.
       decodeConfigHex(value))
   of "ameminpqkems": c.ameMinPqKems = parseInt(value)
   of "amesignedexchanges": c.ameSignedExchanges = parseBool(value)
+  of "amelivenessquietms": c.ameLivenessQuietMs = uint64(parseUInt(value))
+  of "amelivenessmisses": c.ameLivenessMisses = parseInt(value)
   else: raise newException(ValueError, "unknown Bifrost config key: " & key)
 
 proc parseBifrostConfigText*(text: string,

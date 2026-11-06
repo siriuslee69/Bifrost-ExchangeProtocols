@@ -457,7 +457,7 @@ proc sealControlFrame*(S: var AmeSession, kind: AmePacketKind,
   if kind notin {ampkExchangeKeys, ampkExchangeEnvelopes, ampkEpochReady,
       ampkExchangeDeny,
       ampkSessionIdRequest, ampkSessionIdAssign, ampkRoute, ampkJumpAsk,
-      ampkRestriction}:
+      ampkRestriction, ampkPing, ampkPong}:
     raise newException(ValueError, "AME control packet kind is invalid")
   if S.nextAmeSequence == high(uint32):
     raise newException(ValueError, "AME send sequence is exhausted")
