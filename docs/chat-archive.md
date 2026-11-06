@@ -64,9 +64,10 @@ their meaning.
 ## 1. Where everything lives ⟡
 
 ```text
- ┌─ posting box (FOMKE, user ↔ user) ─────────────────────────────────────┐
+ ┌─ posting box (user ↔ user) ────────────────────────────────────────────┐
  │  only at chat start and at CAS renewal:                                 │
- │  AME handshake records, CAO1 (chat open), CAA1 (chat accept)            │
+ │  AME handshake records (KEM exchange, authentication), then             │
+ │  CAO1 (chat open), CAA1 (chat accept), sealed by FOMKE                  │
  │  -> deleted by the server once picked up. Nothing stays.               │
  └─────────────────────────────────────────────────────────────────────────┘
  ┌─ vault of user A (server, only A can open) ────────────────────────────┐
