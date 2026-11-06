@@ -773,3 +773,38 @@ asymmetric data stored      archive wrap per epoch       none
    `fomke/`, with the records in level 0, derivation and sealing in level 1
    (calling `ame/level1/tier_aead.nim`, the one place that seals), and the
    flows in level 2.
+
+## 8. Where each part is built ⟡
+
+Bifrost holds the protocol: every key, every byte layout, and every rule of
+the ORDER of records. It never writes to a disk. It hands out the bytes that
+must be kept, and takes them back. Nebel keeps them (its boxes) and moves
+them between machines.
+
+```text
+job                                   Bifrost (src/protocols/archive/)      Nebel keeps
+────────────────────────────────────  ────────────────────────────────────  ──────────────────
+password -> authKey + wrapKey         deriveArchiveLogin                    CAU1 (settings)
+master key record (CAK1)              sealArchiveMasterKey / open...        the record
+sub keys                              deriveArchiveSubKey                   nothing
+space entry (CAV1)                    sealArchiveSpaceEntry / open...       the record
+device list (CAD1)                    sealArchiveDevices / open...          the record
+lane record (CAL1)                    sealArchiveLaneRecord / open...       the record
+space secret (CAS)                    deriveArchiveSpaceSecret              nothing
+one message (CAM1)                    sealArchiveLog / openArchiveLog       the record
+where the next message goes           nextArchiveSend (mustSave -> state)   the 19-byte state
+restart after a crash                 resumeArchiveSendLane                 hands the state back
+gaps, late, duplicate, held back      noteArchiveRead, archiveHeldBack      nothing (memory)
+whose lane                            archiveLaneOwner, ...LaneList         nothing
+the order a box keeps, who may        --                                    boxes (docs/boxes.md
+  write, push, intervals                                                      in Nebel)
+```
+
+The sending order, with the save that must come first:
+
+```text
+step = nextArchiveSend(lane)
+if step.mustSave:  keep step.state on disk      <- Nebel, BEFORE sealing
+record = sealArchiveLog(space, step.position, body)
+upload record                                    <- Nebel's box: write-once
+```

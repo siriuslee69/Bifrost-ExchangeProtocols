@@ -310,3 +310,137 @@ suite "archive new device":
     check master.ok
     check entry.ok
     check openArchiveLog(entry.space, storedLog).body == pw("from the old phone")
+
+suite "archive sending lane":
+  # {.testKind: tkUnit, covers: "nextArchiveSend".}
+  test "positions count up and roll into the next epoch":
+    var
+      L: ArchiveSendLane = initArchiveSendLane(9'u32, 1'u16, epochSize = 4'u16,
+        reserveStep = 2'u16)
+      seen: seq[(uint32, uint16)] = @[]
+      P: ArchivePosition = default(ArchivePosition)
+      i: int = 0
+    while i < 6:
+      P = nextArchiveSend(L).position
+      seen.add((P.epoch, P.index))
+      i = i + 1
+    check seen == @[(0'u32, 0'u16), (0'u32, 1'u16), (0'u32, 2'u16),
+      (0'u32, 3'u16), (1'u32, 0'u16), (1'u32, 1'u16)]
+    check P.lane == 9'u32 and P.gen == 1'u16
+
+  # {.testKind: tkUnit, covers: "nextArchiveSend".}
+  test "a save is asked for once per reserveStep, before the first of them":
+    var
+      L: ArchiveSendLane = initArchiveSendLane(9'u32, 1'u16, reserveStep = 4'u16)
+      saves: seq[bool] = @[]
+      i: int = 0
+    while i < 9:
+      saves.add(nextArchiveSend(L).mustSave)
+      i = i + 1
+    check saves == @[true, false, false, false, true, false, false, false, true]
+
+  # {.testKind: tkRegression, covers: "resumeArchiveSendLane", pins: "a crash reuses a position".}
+  test "after a crash the lane goes on past everything it may have sealed":
+    var
+      L: ArchiveSendLane = initArchiveSendLane(9'u32, 1'u16, reserveStep = 4'u16)
+      saved: ByteSeq = @[]
+      step: ArchiveSendStep = default(ArchiveSendStep)
+      used: seq[uint64] = @[]
+      i: int = 0
+      back: ArchiveSendLane = default(ArchiveSendLane)
+    while i < 6:
+      step = nextArchiveSend(L)
+      if step.mustSave: saved = step.state
+      used.add(archiveNumberOf(step.position, L.epochSize))
+      i = i + 1
+    check saved.len == archiveSendStateBytes
+    back = resumeArchiveSendLane(saved)
+    check back.lane == 9'u32 and back.gen == 1'u16
+    step = nextArchiveSend(back)
+    check archiveNumberOf(step.position, back.epochSize) == 8'u64
+    check archiveNumberOf(step.position, back.epochSize) notin used
+    check step.mustSave
+
+  # {.testKind: tkUnit, covers: "renewArchiveSendLane".}
+  test "a new generation keeps the lane number and starts at 0":
+    var
+      L: ArchiveSendLane = initArchiveSendLane(9'u32, 1'u16)
+      R: ArchiveSendLane = default(ArchiveSendLane)
+    discard nextArchiveSend(L)
+    R = renewArchiveSendLane(L, 2'u16)
+    check R.lane == 9'u32 and R.gen == 2'u16
+    check nextArchiveSend(R).position == ArchivePosition(gen: 2'u16, lane: 9'u32,
+      epoch: 0'u32, index: 0'u16)
+
+suite "archive reading lane":
+  # {.testKind: tkUnit, covers: "noteArchiveRead".}
+  test "in order, a gap, the late ones, a duplicate":
+    var
+      R: ArchiveReadLane = initArchiveReadLane(5'u32, 1'u16, epochSize = 4'u16)
+      at = proc (n: uint64): ArchivePosition = archivePositionOf(1'u16, 5'u32, n, 4'u16)
+    check noteArchiveRead(R, at(0)) == arsInOrder
+    check noteArchiveRead(R, at(1)) == arsInOrder
+    check noteArchiveRead(R, at(5)) == arsAfterGap
+    check R.missing == @[2'u64, 3, 4]
+    check noteArchiveRead(R, at(3)) == arsLate
+    check R.missing == @[2'u64, 4]
+    check noteArchiveRead(R, at(3)) == arsDuplicate
+    check noteArchiveRead(R, at(1)) == arsDuplicate
+    check noteArchiveRead(R, at(6)) == arsInOrder
+
+  # {.testKind: tkEdgeCase, covers: "noteArchiveRead".}
+  test "a record of another lane or generation is refused":
+    var
+      R: ArchiveReadLane = initArchiveReadLane(5'u32, 1'u16)
+    expect ValueError:
+      discard noteArchiveRead(R, ArchivePosition(gen: 1'u16, lane: 6'u32))
+    expect ValueError:
+      discard noteArchiveRead(R, ArchivePosition(gen: 2'u16, lane: 5'u32))
+
+  # {.testKind: tkUnit, covers: "archiveHeldBack".}
+  test "a member says it saw more than arrived: the rest is owed":
+    var
+      R: ArchiveReadLane = initArchiveReadLane(5'u32, 1'u16, epochSize = 8'u16)
+      at = proc (n: uint64): ArchivePosition = archivePositionOf(1'u16, 5'u32, n, 8'u16)
+    discard noteArchiveRead(R, at(0))
+    discard noteArchiveRead(R, at(2))
+    check archiveHeldBack(R, at(2)) == 1'u64
+    check archiveHeldBack(R, at(4)) == 3'u64
+    check archiveHeldBack(R, at(0)) == 0'u64
+
+suite "archive devices and lanes":
+  # {.testKind: tkUnit, covers: "sealArchiveDevices|openArchiveDevices".}
+  test "the device list keeps removed devices":
+    var
+      K: ByteSeq = deriveArchiveSubKey(newArchiveMasterKey(), archiveDevicesKeyName, 1'u16)
+      D: seq[ArchiveDevice] = @[
+        ArchiveDevice(deviceId: newArchiveDeviceId(), addedMs: 1'u64, removedMs: 0'u64),
+        ArchiveDevice(deviceId: newArchiveDeviceId(), addedMs: 2'u64, removedMs: 9'u64)]
+      A: ByteSeq = sealArchiveDevices(K, "alice", 1'u16, D)
+      back: tuple[ok: bool, devices: seq[ArchiveDevice]] = openArchiveDevices(K, "alice", A)
+    check A.len == 51 + 1 + 64
+    check back.ok
+    check back.devices == D
+    check not openArchiveDevices(K, "bob", A).ok
+
+  # {.testKind: tkIntegration, covers: "sealArchiveLaneRecord|openArchiveLaneRecord|archiveLaneOwner".}
+  test "a new device finds the lanes of an old one; another member cannot fake one":
+    var
+      mine: ByteSeq = deriveArchiveSubKey(newArchiveMasterKey(), archiveLanesKeyName, 1'u16)
+      theirs: ByteSeq = deriveArchiveSubKey(newArchiveMasterKey(), archiveLanesKeyName, 1'u16)
+      space: ByteSeq = newArchiveSpaceId()
+      oldPhone: ByteSeq = newArchiveDeviceId()
+      rec: ByteSeq = sealArchiveLaneRecord(mine, space, 77'u32, 1'u16, oldPhone, 5'u64)
+      forged: ByteSeq = sealArchiveLaneRecord(theirs, space, 88'u32, 1'u16, oldPhone, 5'u64)
+      opened: tuple[ok: bool, deviceId: ByteSeq, createdMs: uint64] =
+        openArchiveLaneRecord(mine, space, 77'u32, rec)
+      own: seq[uint32] = @[]
+    check rec.len == 75
+    check opened.ok and opened.deviceId == oldPhone and opened.createdMs == 5'u64
+    check not openArchiveLaneRecord(mine, space, 78'u32, rec).ok
+    check not openArchiveLaneRecord(mine, space, 88'u32, forged).ok
+    own.add(77'u32)
+    check archiveLaneOwner(own, 77'u32, []) == aloOwn
+    check archiveLaneOwner(own, 88'u32, decodeArchiveLaneList(
+      encodeArchiveLaneList([88'u32]))) == aloPeer
+    check archiveLaneOwner(own, 99'u32, [99'u32, 77'u32]) == aloConflict

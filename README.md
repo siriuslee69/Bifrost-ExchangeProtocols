@@ -2391,6 +2391,11 @@ var opened = openArchiveLog(chat, record)              # any member, any device
 
 Two rules the caller keeps: the password is Unicode-normalised (NFKC)
 before it comes in, and a device saves its next index BEFORE it seals.
+`nextArchiveSend` says when to save: it hands out the 19-byte lane state to
+keep, once every 16 records, before the first of them is sealed. After a
+crash `resumeArchiveSendLane(state)` goes on past every number that may have
+been used. `noteArchiveRead` tells a reader what is in order, missing, late
+or a duplicate.
 
 ## Liveness: closing a link that went quiet ⌜guide⌟
 

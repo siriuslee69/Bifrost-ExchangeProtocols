@@ -1,6 +1,6 @@
 # Progress
 
-Commit Message: Archive family: password -> login keys -> master key -> sub keys; sealed records; log records of a space
+Commit Message: Archive lanes: sending order with reservations, reading order with gaps, device list and lane records
 
 - src/protocols/archive/: types, level0/records (byte layouts), level1/keys
   (Argon2id login, auth + wrap key, master/sub keys, space secret from the
@@ -8,7 +8,11 @@ Commit Message: Archive family: password -> login keys -> master key -> sub keys
   secret, suite pinned by version), level1/log (one record per message,
   stored once), level2/account (master key record, space entries).
 - ame/level2/liveness.nim: ping/pong, close a quiet link and erase its keys.
-- Tests: test_archive (18), test_ame_liveness (8).
+- archive/level2/lanes.nim: nextArchiveSend (position + the 19-byte state to
+  save first), resumeArchiveSendLane, noteArchiveRead (in order, gap, late,
+  duplicate), archiveHeldBack, lane lists, archiveLaneOwner. level2/devices.nim:
+  device list and lane records. No disk anywhere; Nebel keeps the bytes.
+- Tests: test_archive (27), test_ame_liveness (8).
 
 
 ## 2026-11-06 Archive crypto and liveness (Bifrost side of the boxes)

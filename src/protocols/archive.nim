@@ -13,6 +13,9 @@
 ##   archive/level1/sealed        one value sealed under key + label + place
 ##   archive/level1/log           one log record of a space, stored once
 ##   archive/level2/account       the master key record and space entries
+##   archive/level2/devices       device list, "this lane is one of mine"
+##   archive/level2/lanes         the order: reserve, next position, gaps,
+##                                late and duplicate records, whose lane
 ##
 ## No database, no server, no socket: who stores the bytes and who may fetch
 ## them is decided elsewhere (Nebel's boxes). docs/chat-archive.md explains
@@ -24,6 +27,8 @@ import ./archive/level1/keys as archive_keys
 import ./archive/level1/sealed as archive_sealed
 import ./archive/level1/log as archive_log
 import ./archive/level2/account as archive_account
+import ./archive/level2/devices as archive_devices
+import ./archive/level2/lanes as archive_lanes
 
 export archive_types
 export archive_records
@@ -31,3 +36,5 @@ export archive_keys
 export archive_sealed
 export archive_log
 export archive_account
+export archive_devices
+export archive_lanes
