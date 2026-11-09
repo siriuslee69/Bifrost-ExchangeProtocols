@@ -40,6 +40,7 @@
 ## revoking by name instead would burn the name forever.
 
 import ../level1/signatures
+import ../level1/symmetric/blake3
 
 import ../../types
 import ../types
@@ -487,6 +488,46 @@ proc verifyPinnedPeerIdentity*(c: AmeIdentityCertificate,
   result.algorithms = identityAlgorithms(c.signingKeys)
   result.subjectKeyId = c.subject
   result.serial = c.serial
+
+proc ameIdentityKeyId*(K: openArray[AmeIdentitySigningKey]): string {.
+    role: truthBuilder, tag: "ame|cryptoBoundary".} =
+  ## K: the public keys of one identity -> 32 hex characters that name them.
+  ## The same keys give the same text on every machine, and the name a client
+  ## chose plays no part in it.
+  var
+    A: ByteSeq = @[]
+  appendAmeLabel(A, "AME-KEY-ID-v1")
+  for k in K:
+    A.add(uint8(ord(k.algorithm)))
+    appendAmeU32(A, uint32(k.publicKey.len))
+    appendAmeBytes(A, k.publicKey)
+  for b in blake3AmeHash(A, 16):
+    result.add("0123456789abcdef"[int(b shr 4)])
+    result.add("0123456789abcdef"[int(b and 15'u8)])
+
+proc verifyUnknownPeerIdentity*(c: AmeIdentityCertificate,
+    nowUnix: int64): AmePeerTrustResult {.role: parser.} =
+  ## c/nowUnix: a direct identity nobody provisioned (the open door). Only its
+  ## shape and time window are judged here; the caller of this checks next that
+  ## every slot signed the handshake with these very keys.
+  var
+    err: string = ""
+  if c.signingKeys.len == 0:
+    result.err = "peer sent no public keys"
+    return
+  if c.authority.len != 0 or c.authorityProofs.len != 0:
+    result.err = "peer sent a certificate instead of a direct identity"
+    return
+  err = validityError(c, nowUnix)
+  if err.len > 0:
+    result.err = err
+    return
+  result.ok = true
+  result.authority = "open-door"
+  result.algorithms = identityAlgorithms(c.signingKeys)
+  result.subjectKeyId = ameIdentityKeyId(c.signingKeys)
+  result.serial = c.serial
+  result.peerKeys = c.signingKeys
 
 proc verifyAmeIdentityCertificate*(c: AmeIdentityCertificate,
     root: AmeAuthorityRoot, nowUnix: int64,

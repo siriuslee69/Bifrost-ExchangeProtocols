@@ -97,6 +97,11 @@ type
       ## AM1A only.
     expectedPeer*: AmePinnedPeerIdentity
       ## AM1S and AM1P+S.
+    acceptAnyPeer*: bool
+      ## AM1S on a responder only (the open door). Any identity is accepted
+      ## if it proves it holds its own keys, and `peerTrust` says which keys
+      ## they were. The handshake proves WHO, and says nothing about what that
+      ## key may do: that is for the caller to decide.
     sessionKey*: ByteSeq
       ## AM1P / AM1P+S, optional. The 32 bytes the PREVIOUS session with this
       ## peer handed out (`ameSessionKey`). When present it keys the
@@ -262,6 +267,13 @@ proc initAmePinnedAuthentication*(peer: AmePinnedPeerIdentity): AmeAuthenticatio
     raise newException(ValueError, "AME pinned authentication is incomplete")
   result.mode = atmPinnedPeerKey
   result.expectedPeer = peer
+
+proc initAmeOpenDoorAuthentication*(): AmeAuthentication {.
+    role: configurator, tag: "appApi", am1sGate.} =
+  ## A responder that accepts keys it has never seen (sign-up on a public
+  ## server). The client still pins the server, so it knows whom it talks to.
+  result.mode = atmPinnedPeerKey
+  result.acceptAnyPeer = true
 
 proc initAmePskAuthentication*(identifier: string,
     secret: openArray[uint8]): AmeAuthentication {.role: configurator,

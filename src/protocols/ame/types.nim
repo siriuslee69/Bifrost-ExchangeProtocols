@@ -383,6 +383,9 @@ type
     subjectKeyId*: string
     serial*: uint64
     err*: string
+    peerKeys*: seq[AmeIdentitySigningKey]
+      ## Open door only (handshake_authentication.nim): the public keys the
+      ## stranger proved it holds.
 
 # ---- session / connection state (session state) ----
 

@@ -305,6 +305,9 @@ proc certificateHalfVerdict(L: AmeSuiteLayout, t: AmeMaskTier,
   if ameModeUsesAuthority(a.mode):
     result = verifyAmeIdentityCertificate(C, a.root, nowUnix, revokedSerials)
     result.mode = am1a
+  elif a.acceptAnyPeer:
+    result = verifyUnknownPeerIdentity(C, nowUnix)
+    result.mode = am1s
   else:
     result = verifyPinnedPeerIdentity(C, a.expectedPeer, nowUnix)
     result.mode = am1s

@@ -25,6 +25,7 @@ import ./protocols/fomke/types as fomke_types
 import ./protocols/fomke/level3/ops as fomke_ops
 import ./protocols/chunkyaead as chunkyaead
 import ./protocols/archive as archive
+import ./protocols/dump as dump
 import ./protocols/dac/build as dac_build
 import ./protocols/dac/types as dac_types
 import ./protocols/dac/level0/transport as dac_transport
@@ -44,6 +45,7 @@ import ./protocols/relay/super_fast_udp as relay_super_fast_udp
 import ./protocols/relay/super_fast_control as relay_super_fast_control
 import ./protocols/relay/slow_envelope as relay_slow_envelope
 import ./protocols/relay/relay_node as relay_relay_node
+import ./protocols/relay/relay_dump as relay_relay_dump
 import ./protocols/relay/overflow_ring as relay_overflow_ring
 import ./protocols/relay/relay_brake as relay_relay_brake
 import ./protocols/relay/fast_extra_frame as relay_fast_extra_frame
@@ -64,6 +66,7 @@ when dacAdaptiveBuilt:
   export dac_ack_policy, dac_scramble, dac_path_policy
   export dac_package_transfer, dac_link, dac_link_table
 
+export relay_relay_dump
 export relay_super_fast_udp, relay_slow_envelope, relay_relay_node,
   relay_fast_extra_frame, relay_slow_extract_encrypt, relay_restriction,
   relay_relay_brake, relay_super_fast_control,
@@ -91,6 +94,7 @@ export fomke_types
 export fomke_ops
 export chunkyaead
 export archive
+export dump
 export dac_build
 export dac_types
 export dac_transport
