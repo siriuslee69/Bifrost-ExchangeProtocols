@@ -62,7 +62,7 @@ proc openArchiveMasterKey*(wrapKey: openArray[uint8], userId: string,
     return
   result = (true, opened.record.num, opened.record.body)
 
-proc appendSizedArchive(A: var ByteSeq, B: openArray[uint8]) {.role: dataWriter,
+proc appendSizedArchive*(A: var ByteSeq, B: openArray[uint8]) {.role: dataWriter,
     inline.} =
   ## A/B: B with its u16 length in front.
   if B.len > int(high(uint16)):
@@ -70,7 +70,7 @@ proc appendSizedArchive(A: var ByteSeq, B: openArray[uint8]) {.role: dataWriter,
   appendAmeU16(A, uint16(B.len))
   appendAmeBytes(A, B)
 
-proc takeSizedArchive(A: openArray[uint8], o: var int): ByteSeq {.role: parser.} =
+proc takeSizedArchive*(A: openArray[uint8], o: var int): ByteSeq {.role: parser.} =
   ## A/o: one u16-sized field at o; o moves past it. Raises when short.
   var
     n: int = 0

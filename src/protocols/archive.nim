@@ -29,6 +29,12 @@ import ./archive/level1/log as archive_log
 import ./archive/level2/account as archive_account
 import ./archive/level2/devices as archive_devices
 import ./archive/level2/lanes as archive_lanes
+import ./archive/level0/body as archive_body
+import ./archive/level2/openings as archive_openings
+import ./archive/level2/letters as archive_letters
+import ./archive/level2/members as archive_members
+import ./archive/level2/files as archive_files
+import ./archive/level2/login as archive_login
 
 export archive_types
 export archive_records
@@ -38,3 +44,9 @@ export archive_log
 export archive_account
 export archive_devices
 export archive_lanes
+export archive_body
+export archive_openings
+export archive_letters
+export archive_members
+export archive_files
+export archive_login
