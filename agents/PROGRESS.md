@@ -2,6 +2,95 @@
 
 Commit Message: Archive lanes: sending order with reservations, reading order with gaps, device list and lane records
 
+## 2026-11-09 PLAN: what goes where, and why (written before any code)
+
+What was asked: Nebel must be the one tool for data transfer, storage and sync
+between machines, usable by config set as relay, cloud, mail or messenger server
+with end-to-end encryption. Build bottom first: Bifrost, then Geist, then Nebel.
+
+### The three jobs
+
+```text
+  network frames
+       |
+  BIFROST   bytes and keys. No disk, no database.
+       |    Opens frames, then keeps what arrived in the DUMP (a buffer in
+       |    memory) until somebody says "that is safely on disk".
+       |
+  NEBEL     the translator. Wraps Geist calls, puts them in the right order,
+       |    adds the calls in between, so one Nebel object can open, read and
+       |    write across machines. Takes batches from the dump, says WHO is
+       |    asking, hands over the KEYS. No write logic of its own.
+       |
+  GEIST     every read and write. Local only: no socket, no Bifrost.
+            Says yes or no (permissions), checks integrity, encrypts with the
+            key it was handed. Needs only Tyr (crypto) and Eir (compression, ECC).
+```
+
+The test for where a thing belongs:
+
+```text
+  must two machines compute the same bytes or keys?       -> Bifrost
+  could it run on one computer with the cable pulled?     -> Geist
+  does it need to know there is another end at all?       -> Nebel
+```
+
+### Who gets what
+
+```text
+Bifrost
+  B1 dump layer: bounded buffer; offer, grab, settle, give back
+  B2 open door: a handshake that accepts a key it has never seen and says
+     which key it was (sign-up needs this)
+  B3 first contact: the one-sided start, today only in a Nebel test
+  B4 records still missing: chat open and accept, read pointer, message body
+     kinds, file chunks, letters sealed to a public key, member signatures
+  B5 Geist out of Bifrost: restriction_store.nim moves to Nebel
+  B6 SMTP as bytes: command parser, state machines, no socket
+
+Geist
+  G1 boxes: the four modes, item numbers, versions, limits, expiry move here
+     from Nebel. One append-only log per box, so a number and its item are
+     one write and cannot disagree after a crash.
+  G2 permissions: who may do what is decided here, from lists inside the store.
+     The blind store and Nebel's grant table fold into this.
+  G3 accounts: public keys, login check, per-account limits
+  G4 streaming sidecars: large values no longer held whole in memory
+  G5 folder scan: which files changed, without any network
+  G6 presets are built into the program, so one started elsewhere still knows them
+
+Nebel
+  N1 translator: dump -> Geist calls -> settle; every write from the network
+  N2 wrappers: the same object for a box on this machine or on another
+  N3 door: register, login, link becomes the account
+  N4 client and CLI: two people chat through a server
+  N5 files: cloud preset, chunks, folder sync
+  N6 limits: request rate, in front of Geist's own limits
+  N7 second server: copies of the logs, delivery to alice@other-server
+  N8 mail gateway: SMTP in and out, relay and cloud presets
+  fixes: pushes per link (two devices), watchers re-read only when a box changed,
+  expiry actually runs
+```
+
+### Why these lines
+
+- A box write used to be two separate saves in Nebel (the item, then the counter).
+  A crash between them reused a number and a reader lost a message. One log in
+  Geist makes that impossible instead of unlikely.
+- Who-may lists hold account ids, not machine-local names. A name means something
+  only on the machine that pinned it; an account id means the same everywhere,
+  which a second server needs.
+- The dump gives each message up only after Geist confirms the write. A crash
+  between the two means the message is written twice at worst, never lost, and
+  a write with the same stream and number is recognised and skipped.
+- Sealing for users happens on their device, so a server's Geist holds sealed
+  bytes it cannot open. The keys Nebel hands to Geist are for data at rest that
+  the machine itself is allowed to read.
+
+Dropped from the earlier idea: replacing Geist's disk access with network places.
+Nebel now calls Geist the normal way, so Geist needs no change for that.
+
+
 - src/protocols/archive/: types, level0/records (byte layouts), level1/keys
   (Argon2id login, auth + wrap key, master/sub keys, space secret from the
   FOMKE tight key, epoch key), level1/sealed (one frame for every stored
