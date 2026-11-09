@@ -1,6 +1,6 @@
 # Chat archive (draft) 🗄️
 
-**Status: the crypto is built** (`src/protocols/archive/`, tests in `evaluation/tests/test_archive.nim`); **storage, boxes and sync are Nebel's** (`Nebel-DecentralizedDB/docs/boxes.md`). Every
+**Status: the crypto is built** (`src/protocols/archive/`, tests in `evaluation/tests/test_archive.nim` and `test_archive_contact.nim`). **Storage is Geist's, the moving of data Nebel's** (`Nebel-DecentralizedDB/docs/boxes.md`). Every
 byte layout below is a proposal and may still change.
 
 A messenger needs two things that pull in different directions:
@@ -80,8 +80,9 @@ their meaning.
 ```text
  ┌─ posting box (user ↔ user) ────────────────────────────────────────────┐
  │  only at chat start and at CAS renewal:                                 │
- │  AME handshake records (KEM exchange, authentication), then             │
- │  CAO1 (chat open), CAA1 (chat accept), sealed by FOMKE                  │
+ │  one LETTER (level2/letters.nim) holding CAO1 (chat open), sealed to    │
+ │  one of the other user's prekeys; CAA1 (chat accept) comes back the     │
+ │  same way                                                               │
  │  -> deleted by the server once picked up. Nothing stays.               │
  └─────────────────────────────────────────────────────────────────────────┘
  ┌─ vault of user A (server, only A can open) ────────────────────────────┐
@@ -520,12 +521,12 @@ anyway from which records a device fetches. This record is the posting box:
 
 ### 3.10 CAO1 chat open / CAA1 chat accept (posting box only)
 
-These travel as FOMKE messages inside the A↔B AME session. The server never
-stores them past pickup.
+These travel inside a letter (4.1). The server never stores them past pickup.
 
 ```text
 CAO1   ver u8 | chatId 16 | gen u16 | epochSize u16
               | u16 + chat layout | u16 + chat tier | tagLen u8
+              | u8 n | secret (n = 0 for two users, 32 for a group)
 CAA1   ver u8 | chatId 16 | gen u16 | answer u8      (1 = accept, 0 = refuse)
 ```
 
@@ -537,26 +538,25 @@ Both users derive `CAS(gen)` only after CAA1 with `answer = 1`.
 
 ```text
  A                               server                               B
- │  AMC2 hello  ─────────────▶  posting box of B  (waits until B is online)
- │                                                    ─────────────▶  │
- │  ◀─────────────  posting box of A  ◀────────────────  AMS2 hello   │
- │  AMF2 finish ─────────────▶                        ─────────────▶  │
- │      ── the A↔B AME session is up, FOMKE seals what follows ──     │
- │  CAO1 chatId, gen=1, E, tier ─────────────────────────────────▶    │
- │  ◀──────────────────────────────────────────── CAA1 accept         │
+ │                                prekeys of B  ◀── public halves ─── │
+ │  take one prekey ◀──────────── handed out once                      │
+ │  letter: CAO1, sealed to it ─▶ requests of B  ──────────────────▶  │
+ │                                                 B opens it          │
+ │  ◀────────────────  requests of A  ◀─────── letter: CAA1 accept    │
  │                                                                    │
- │  CAS(1) = TK child "ARCHIVE-SPACE-KEY-v1" | chatId | 1  (both sides)│
- │  session closed, TK erased                                         │
+ │  CAS(1) = child "ARCHIVE-SPACE-KEY-v1" | chatId | 1  (both sides)   │
+ │  of the state the letter built; the state is erased after          │
  │                                                                    │
  │  CAV1 (sealed with UAK_A) ──▶  vault A                             │
  │                                vault B  ◀── CAV1 (sealed with UAK_B)
- │                                             + CAR1 (one request)   │
 ```
 
-The handshake needs 1.5 round trips through the posting box, and each one may
-wait for the other user to come online. **Not tried yet:** whether the AME
-handshake as it stands tolerates hours between its records (cookie lifetime
-in AMR2, timeouts).
+Neither side has to be online at the same time as the other. A prekey is used
+once, so one stolen later opens nothing that was already read and deleted.
+
+A letter does not say who wrote it: anyone can seal to a public key. CAO1
+therefore goes inside a signed body (`signArchiveMember`), checked against the
+keys the sender publishes.
 
 ### 4.2 Sending one message
 
@@ -756,12 +756,13 @@ asymmetric data stored      archive wrap per epoch       none
 3. **The read pointer, unencrypted or sealed.** Unencrypted lets the server
    send "unread" counts. Sealed hides read times, but the server then sends
    pushes blind.
-4. **Group chats.** With more than two users, "one of us wrote it" is no
-   longer enough. Every member's lanes would need a key only that member
-   holds, plus a way for the others to check it (a signature, that is,
-   asymmetric again, or one MAC key per reader).
-5. **Asynchronous chat start.** Whether AME's handshake works with hours
-   between AMC2 and AMF2 (4.1).
+4. **Group chats.** Decided: every record of a group carries the writer's
+   signature (`signArchiveMember`, `level2/members.nim`), and CAO1 carries a
+   random secret, sent in one letter per member. The cost is one signature per
+   record. A member who leaves can still read what they had; a renewal (4.5)
+   shuts them out of what comes next.
+5. **Asynchronous chat start.** Decided: prekeys and letters (4.1), not AME
+   through the posting box.
 6. **E-mail in the KEK.** Left out in this draft: it adds no secret (the
    server knows it), and every e-mail change would mean a new CAK1. If it goes
    in, it must be trimmed and lower-cased first.
@@ -769,10 +770,7 @@ asymmetric data stored      archive wrap per epoch       none
    into the KEK. The server could then guess nothing, but losing both the
    words and every device loses the archive. Left out in this draft, as
    "nothing kept anywhere" was the goal; it could be offered per user.
-8. **Where the code goes.** A new module family `src/protocols/chat/` beside
-   `fomke/`, with the records in level 0, derivation and sealing in level 1
-   (calling `ame/level1/tier_aead.nim`, the one place that seals), and the
-   flows in level 2.
+8. **Where the code goes.** Decided: `src/protocols/archive/`.
 
 ## 8. Where each part is built ⟡
 
@@ -792,6 +790,12 @@ device list (CAD1)                    sealArchiveDevices / open...          the 
 lane record (CAL1)                    sealArchiveLaneRecord / open...       the record
 space secret (CAS)                    deriveArchiveSpaceSecret              nothing
 one message (CAM1)                    sealArchiveLog / openArchiveLog       the record
+first contact, sealed to a prekey     sealArchiveLetter / openArchiveLetter the letter
+who wrote it, in a group              signArchiveMember / openArchiveMember the signed record
+what is inside a message              encode... / decodeArchiveBody         nothing
+chat open, answer, read pointer       encode... / decodeArchiveOpening ...  the record
+a file, chunk by chunk                sealArchiveFileChunk, ...Manifest     the chunks
+what a server checks at login         archiveAuthHash, archiveDecoySettings the hash
 where the next message goes           nextArchiveSend (mustSave -> state)   the 19-byte state
 restart after a crash                 resumeArchiveSendLane                 hands the state back
 gaps, late, duplicate, held back      noteArchiveRead, archiveHeldBack      nothing (memory)

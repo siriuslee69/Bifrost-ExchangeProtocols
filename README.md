@@ -2351,6 +2351,21 @@ one tag. They remain as two named layouts in `ame/level1/presets.nim`:
 `presetAmeTier(L)` switches on every slot of the preset layout. The bytes are
 **not** the old formats. Nothing sealed by the old code opens under these.
 
+## Dump: messages waiting for a disk 🗑️
+
+Bifrost keeps nothing on a disk. The dump holds what arrived until the keeper says it is written, so nothing is lost in between.
+
+```nim
+import protocols/dump
+var D = initDumpBuffer()
+discard D.offerDump(DumpRecord(stream: "chat/7", sender: "alice", body: msg))
+var batch = D.grabDump()
+# ... write batch.records to disk ...
+discard D.settleDump(batch.ticket)   # or giveBackDump, when the write failed
+```
+
+Every byte and every crash case: `docs/dump.md`.
+
 ## Archive: data that is stored, not sent 🗄️
 
 **Definitions**

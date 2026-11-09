@@ -1,3 +1,22 @@
+Commit Message: Bifrost side of the plan: dump layer, open door, letters, member signatures, SMTP as bytes; Geist out
+
+## 2026-11-09 Bifrost side built
+
+- src/protocols/dump/ + relay/relay_dump.nim: offer, grab, settle, give back
+  (docs/dump.md). test_dump (13).
+- Open door: initAmeOpenDoorAuthentication, verifyUnknownPeerIdentity,
+  ameIdentityKeyId; AmePeerTrustResult.peerKeys. test_ame_open_door (4).
+- archive/: level0/body (the six message kinds), level2/openings (CAO1, CAA1,
+  CAR1), letters (sealed to a prekey, nobody online), members (signatures for
+  groups), files (chunks and manifest), login (auth hash, decoy settings).
+  test_archive_contact (21). docs/chat-archive.md: 4.1 now uses letters.
+- Geist out of Bifrost: restriction_store.nim moves to Nebel as
+  nebel/restriction_book.nim; submodule and path removed; the test goes through
+  the hooks.
+- smtp/ (commands, server and client state machines, no socket), mail/message
+  (DKIM relaxed forms and header), mail/dns_mx (MX question and answer).
+  test_smtp (20). Not in the umbrella, so programs without mail compile none.
+
 # Progress
 
 Commit Message: Archive lanes: sending order with reservations, reading order with gaps, device list and lane records

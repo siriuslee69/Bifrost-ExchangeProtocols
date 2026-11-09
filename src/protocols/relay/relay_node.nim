@@ -644,8 +644,8 @@ proc attachRestrictionBook*(R: var RelayNode, load: RelayBookLoad,
   ## refused, and the relay keeps its empty book).
   ##
   ## The node itself touches no storage, so a router built from this module
-  ## compiles no database. `restriction_store.attachGeistBook` is the ready
-  ## hook pair for a Geist folder; import that module only where it is wanted.
+  ## compiles no database. Nebel holds the ready hook pair for a Geist folder
+  ## (nebel/restriction_book.nim).
   var
     got: tuple[ok: bool, found: bool, book: RestrictionBook, err: string] =
       (true, false, RestrictionBook(), "")

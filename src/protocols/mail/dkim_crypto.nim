@@ -53,7 +53,7 @@ proc dkimLoadPublicKey*(p: string): DkimKeyResult {.role: truthBuilder,
   var
     clean: string = ""
     raw: string = ""
-    parsed: RsaPublicKeyResult
+    parsed: RsaPublicKeyResult = RsaPublicKeyResult()
   for c in p:
     if c notin {' ', '\t', '\r', '\n'}:
       clean.add(c)
@@ -79,7 +79,7 @@ proc dkimVerifyRsaSha256*(data, signatureB64, publicKeyB64: string): bool {.
   ## publicKeyB64: the DNS `p=` tag value.
   var
     sig: string = ""
-    key: DkimKeyResult
+    key: DkimKeyResult = DkimKeyResult()
   if signatureB64.len == 0 or publicKeyB64.len == 0:
     return false
   key = dkimLoadPublicKey(publicKeyB64)
@@ -99,7 +99,7 @@ proc dkimSignRsaSha256*(data, privateKeyPem: string): DkimSignResult {.
   ## privateKeyPem: PEM text of the signing key, PKCS#1 or PKCS#8.
   var
     parsed: RsaPrivateKeyResult = parseRsaPrivateKeyPem(privateKeyPem)
-    signed: RsaSignResult
+    signed: RsaSignResult = RsaSignResult()
   if not parsed.ok:
     result.err = "DKIM signing key is unusable: " & parsed.err
     return
