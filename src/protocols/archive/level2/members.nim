@@ -60,6 +60,14 @@ proc signArchiveMember*(i: AmeIdentityKey, label: string,
     k = k + 1
   appendAmeBytes(result, sealed)
 
+proc slotHolds(k: AmeIdentitySigningKey, text: openArray[uint8],
+    proof: ByteSeq): bool {.role: parser, inline.} =
+  ## k/text/proof: true when this one proof verifies. Nothing here raises.
+  try:
+    result = verifyAmeMessage(k.algorithm, text, proof, k.publicKey)
+  except CatchableError:
+    result = false
+
 proc verifySlots(K: openArray[AmeIdentitySigningKey], text: openArray[uint8],
     P: openArray[ByteSeq]): bool {.role: parser.} =
   ## K/text/P: true when every key has a proof and every proof verifies.
@@ -67,14 +75,9 @@ proc verifySlots(K: openArray[AmeIdentitySigningKey], text: openArray[uint8],
     i: int = 0
   if K.len == 0 or K.len != P.len:
     return false
-  while i < K.len:
-    try:
-      if not verifyAmeMessage(K[i].algorithm, text, P[i], K[i].publicKey):
-        return false
-    except CatchableError:
-      return false
+  while i < K.len and slotHolds(K[i], text, P[i]):
     i = i + 1
-  result = true
+  result = i == K.len
 
 proc openArchiveMember*(K: openArray[AmeIdentitySigningKey], label: string,
     place, A: openArray[uint8]): tuple[ok: bool, sealed: ByteSeq] {.role: parser,

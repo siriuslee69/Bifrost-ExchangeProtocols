@@ -122,7 +122,7 @@ proc feedSmtpClient*(C: var SmtpClient, bytes: string): SmtpClientStep {.
     r = parseSmtpReply(got.line)
     if not r.ok:
       C.failed(result, "the other server said something that is not SMTP")
-      break
+      return
     C.noteOffer(r.text)
     if not r.more:
       C.onReply(r.code, r.text, result)

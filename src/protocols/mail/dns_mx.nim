@@ -64,9 +64,9 @@ proc readDnsName(A: openArray[uint8], start: int): tuple[name: string, next: int
   while true:
     if o >= A.len:
       raise newException(ValueError, "dns name runs out")
+    if A[o] == 0'u8:
+      break
     if (int(A[o]) and 0xC0) != 0xC0:
-      if A[o] == 0'u8:
-        break
       o = readDnsLabel(A, o, labels)
       continue
     if o + 1 >= A.len or jumps >= dnsMaxPointers:

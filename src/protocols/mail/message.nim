@@ -30,6 +30,18 @@ type
     name*: string
     value*: string
 
+proc addHeaderLine(H: var seq[MailHeader], line: string): bool {.role: parser.} =
+  ## H/line: one line of the headers. False when it is not one, which ends them.
+  var
+    cut: int = line.find(':')
+  if line[0] in {' ', '\t'} and H.len > 0:
+    H[^1].value.add("\r\n" & line)
+    return true
+  if cut <= 0:
+    return false
+  H.add(MailHeader(name: line[0 ..< cut], value: line[cut + 1 .. ^1]))
+  result = true
+
 proc splitMail*(data: string): tuple[headers: seq[MailHeader], body: string] {.
     role: parser, tag: "mail|wire".} =
   ## data: a whole mail, CRLF line ends. A line starting with a blank continues
@@ -37,7 +49,6 @@ proc splitMail*(data: string): tuple[headers: seq[MailHeader], body: string] {.
   var
     i: int = 0
     e: int = 0
-    cut: int = 0
     line: string = ""
   while i < data.len:
     e = data.find("\r\n", i)
@@ -47,13 +58,8 @@ proc splitMail*(data: string): tuple[headers: seq[MailHeader], body: string] {.
     if line.len == 0:
       i = min(data.len, e + 2)
       break
-    if line[0] in {' ', '\t'} and result.headers.len > 0:
-      result.headers[^1].value.add("\r\n" & line)
-    else:
-      cut = line.find(':')
-      if cut <= 0:
-        break
-      result.headers.add(MailHeader(name: line[0 ..< cut], value: line[cut + 1 .. ^1]))
+    if not addHeaderLine(result.headers, line):
+      break
     i = e + 2
   if i < data.len:
     result.body = data[i .. ^1]
@@ -63,12 +69,12 @@ proc squeezeBlanks(s: string): string {.role: sanitizer, inline.} =
   var
     inRun: bool = false
   for c in s:
-    if c in {' ', '\t'}:
-      if not inRun: result.add(' ')
-      inRun = true
-    else:
+    if c notin {' ', '\t'}:
       result.add(c)
       inRun = false
+      continue
+    if not inRun: result.add(' ')
+    inRun = true
 
 proc relaxedHeader*(H: MailHeader): string {.role: sanitizer, tag: "mail".} =
   ## H: one header, relaxed, with CRLF.
