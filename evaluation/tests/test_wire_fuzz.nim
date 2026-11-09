@@ -55,7 +55,7 @@ suite "DAC message fuzz":
       if dacMessageKindFromId(uint8(i)) != dmkUnknown:
         known = known + 1
       i = i + 1
-    check known == 8
+    check known == 12   # the twelve words of DacMessageKind
 
 suite "DAC body decoder fuzz":
   # {.testKind: tkFuzz.}
