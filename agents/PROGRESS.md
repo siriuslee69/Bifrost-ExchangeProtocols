@@ -1,4 +1,12 @@
-Commit Message: Bifrost side of the plan: dump layer, open door, letters, member signatures, SMTP as bytes; Geist out
+Commit Message: SMTP client refuses addresses that could carry a command; example dump_buffer
+
+## 2026-11-11 Review pass
+
+- smtp/level1/client: hostname, sender and every recipient are checked when the
+  client is made; a bad one ends the delivery before a byte is sent (5.1.3).
+  test_smtp "an address that could carry a command never reaches the wire".
+- examples/dump_buffer.nim.
+
 
 ## 2026-11-09 Bifrost side built
 
