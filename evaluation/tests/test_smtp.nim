@@ -140,6 +140,17 @@ suite "client":
     r = C.feedSmtpClient("250 ok\r\n")
     check r.send == "MAIL FROM:<a@b>\r\n"
 
+  # {.testKind: tkRegression, covers: "initSmtpClient|feedSmtpClient", pins: "a recipient with a line end spoke SMTP for us".}
+  test "an address that could carry a command never reaches the wire":
+    var
+      C = initSmtpClient("me", "a@b", @["c@d>\r\nRCPT TO:<victim@x"], "hi", wantTls = false)
+      r = C.feedSmtpClient("220 hello\r\n")
+    check r.done and not r.ok and r.send.len == 0 and r.err.startsWith("5")
+    C = initSmtpClient("me\r\nMAIL", "a@b", @["c@d"], "hi")
+    check C.feedSmtpClient("220 hello\r\n").send.len == 0
+    C = initSmtpClient("me", "a@b", @[], "hi")
+    check C.feedSmtpClient("220 hello\r\n").done
+
   # {.testKind: tkEdgeCase, covers: "stuffSmtpData".}
   test "stuffing, line ends and the final dot":
     check stuffSmtpData(".a\nb") == "..a\r\nb\r\n.\r\n"

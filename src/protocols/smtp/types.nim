@@ -96,6 +96,8 @@ type
       ## give up when the other side does not offer it
     usingTls*: bool
     sawTlsOffer*: bool
+    badInput*: string
+      ## why this mail can never be sent (a bad address); "" when it can
 
   SmtpClientStep* {.role: preparedData, tag: "smtp|types".} = object
     ## What one `feedSmtpClient` produced.

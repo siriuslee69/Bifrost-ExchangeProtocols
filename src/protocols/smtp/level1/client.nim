@@ -26,23 +26,47 @@ import ../level0/lines
 import ./server
 import runePragmas
 
+proc envelopeError(hostname, mailFrom: string, recipients: seq[string]): string {.
+    role: sanitizer, tag: "smtp".} =
+  ## hostname/mailFrom/recipients: "" when every one of them is safe to write into
+  ## a command line. An address holding a line end would otherwise let whoever
+  ## supplied it speak SMTP in this side's name.
+  if hostname.len == 0 or not hostname.allCharsInSet(Letters + Digits + {'.', '-'}):
+    return "the name of this server is not a host name"
+  if mailFrom.len > 0 and not validSmtpAddress(mailFrom):
+    return "the sender address is not an address"
+  if recipients.len == 0:
+    return "a mail needs a recipient"
+  for r in recipients:
+    if not validSmtpAddress(r):
+      return "a recipient address is not an address"
+  result = ""
+
 proc initSmtpClient*(hostname, mailFrom: string, recipients: seq[string],
     message: string, wantTls: bool = true, needTls: bool = false): SmtpClient {.
     role: configurator, tag: "smtp|appApi".} =
   ## hostname: the name this side says in EHLO. mailFrom/recipients/message: the
   ## mail. wantTls: use STARTTLS when offered. needTls: refuse to go on without it.
+  ## Bad addresses are not raised here: the first `feedSmtpClient` ends the delivery
+  ## and says why, before a single byte was sent.
   result.hostname = hostname
   result.mailFrom = mailFrom
   result.recipients = recipients
   result.text = stuffSmtpData(message)
   result.wantTls = wantTls or needTls
   result.needTls = needTls
+  result.badInput = envelopeError(hostname, mailFrom, recipients)
 
 proc failed(C: var SmtpClient, R: var SmtpClientStep, why: string) {.role: actor.} =
   ## C/R/why: the delivery is over and did not work.
   C.phase = scpDone
   R.done = true
   R.err = why
+
+proc giveUp(C: var SmtpClient, why: string): string {.role: actor, inline.} =
+  ## C/why: the delivery is over; hands `why` back for the step.
+  C.phase = scpDone
+  result = why
 
 proc afterEhlo(C: var SmtpClient, R: var SmtpClientStep) {.role: actor.} =
   ## C/R: EHLO was answered: STARTTLS, or go on to the mail itself.
@@ -114,6 +138,9 @@ proc feedSmtpClient*(C: var SmtpClient, bytes: string): SmtpClientStep {.
   var
     got: tuple[ok: bool, line: string] = (false, "")
     r: tuple[ok: bool, code: int, more: bool, text: string] = (false, 0, false, "")
+  if C.badInput.len > 0:
+    C.phase = scpDone
+    return SmtpClientStep(done: true, err: "5.1.3 " & C.badInput)
   C.pending.add(bytes)
   while not result.done and not result.startTls:
     got = takeSmtpLine(C.pending)
@@ -121,8 +148,7 @@ proc feedSmtpClient*(C: var SmtpClient, bytes: string): SmtpClientStep {.
       break
     r = parseSmtpReply(got.line)
     if not r.ok:
-      C.failed(result, "the other server said something that is not SMTP")
-      return
+      return SmtpClientStep(done: true, err: C.giveUp("the other server said something that is not SMTP"))
     C.noteOffer(r.text)
     if not r.more:
       C.onReply(r.code, r.text, result)
