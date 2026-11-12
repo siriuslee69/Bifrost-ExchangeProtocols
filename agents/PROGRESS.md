@@ -52,6 +52,10 @@ roster as FILE (encodeGroupRoster). The protocol module itself touches no disk.
 The test is in the hand-picked `test` task; the example is picked up by the shared
 runExamples; the CLI is wired through cliEntry.
 
+Deferred by the operator (2026-11-13): wiring groupMemberAllowed into the relay
+rmGroup / the archive spaces makes sense but is for next time — it is now an item
+in agents/TODO.md. The primitive stays standalone until then.
+
 ## 2026-11-12 PLAN: the TODO items that need nobody's decision, plus the operator's answers
 
 What was asked: work through agents/TODO.md, follow the Nim conventions, and use

@@ -17,6 +17,13 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: user
   plan: recommended: keep the open start value for now (Nebel's hop daemon and three tests rely on it) and have Nebel's hop config name the claimers; flip the start value to "nobody may claim" in the same commit that moves Nebel's pin.
 
+- [ ] Wire the enrollment trust (protocols/enrollment) into the group systems — the relay rmGroup and/or the archive spaces.
+  why: groupMemberAllowed is a standalone primitive today; the relay GroupBook and the archive spaces still decide membership by identity strings, not by the enroller key + roster. The operator said this makes sense and deferred it (2026-11-13).
+  start: grep -n "groupMemberAllowed" src/protocols/enrollment/level1/roster.nim; grep -n "groupAllows\|setGroup" src/protocols/relay/restriction_group.nim
+  done when: the relay rmGroup and/or an archive space admits members through groupMemberAllowed (roster + enroller), with tests; the standalone primitive stays usable on its own.
+  needs: nobody
+  plan: bottom first. The relay GroupBook keys members by identity STRING while enrollment keys them by ameIdentityKeyId, so the caller must supply each member's public keys — give the relay a roster hook (like the restriction book's load/save) and gate group claims by groupMemberAllowed; then the archive space membership. Keep the protocol modules disk-free: the roster bytes come from the caller. Pick relay-first or archive-first when starting.
+
 - [ ] The little-endian helpers of protocols/byte_codec.nim are also written in Fylgia-Utils (io/byte_utils.nim: appenders only), in Eir (private copies in ten files of its src), and in Nebel and Geist (Nebel's TODO.md, item 2).
   why: Bifrost now has ONE copy; the workspace still has five. A fix in one never reaches the others.
   start: ../Otter-RepoEvaluation/tools/agent_hooks/dup-check.sh --workspace .
