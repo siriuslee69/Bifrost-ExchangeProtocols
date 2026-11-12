@@ -186,9 +186,11 @@ type
   RelayInspect* = proc (identity: string, f: var AmeRouteFrame): bool {.
     closure.}
 
-  ## RelayBookSave: how the restriction book is kept. "" when saved, else why
-  ## not. The application passes one in; the node itself touches no storage.
-  RelayBookSave* = proc (B: RestrictionBook): string {.closure.}
+  ## RelayBookSave: how the restriction book is kept. ok when saved, else err
+  ## says why not. The application passes one in; the node itself touches no
+  ## storage.
+  RelayBookSave* = proc (B: RestrictionBook): tuple[ok: bool, err: string] {.
+    closure.}
 
   ## RelayBookLoad: the saved book, read back.
   RelayBookLoad* = proc (): tuple[ok: bool, found: bool, book: RestrictionBook,
@@ -719,7 +721,7 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
   var
     u: RestrictionUpdate = RestrictionUpdate()
     applied: tuple[ok: bool, err: string] = (ok: true, err: "")
-    e: string = ""
+    saved: tuple[ok: bool, err: string] = (ok: true, err: "")
     prev: RestrictionBook = RestrictionBook()
   result.slot = slot
   if droppedFromEmptySlot(R, slot, result):
@@ -741,12 +743,12 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     result.err = applied.err
     return
   if R.bookSave != nil:
-    e = R.bookSave(R.book)
-    if e.len > 0:
+    saved = R.bookSave(R.book)
+    if not saved.ok:
       R.book = prev
       R.dropped = R.dropped + 1'u32
       result.event = reDropped
-      result.err = e
+      result.err = saved.err
       return
   try:
     queueSend(R, slot, sealRestrictionAck(R.neighbours[slot].session,

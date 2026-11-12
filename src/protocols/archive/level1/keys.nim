@@ -148,8 +148,8 @@ proc deriveArchiveLogin*(password: openArray[uint8], userId: string,
   appendU32Le(salt, uint32(userId.len))
   appendAmeBytes(salt, userId.toOpenArrayByte(0, userId.len - 1))
   secret = runArchiveArgon2(password, salt, S)
-  result.authKey = archiveKey(secret, "ARCHIVE-AUTH-KEY-v1", [])
-  result.wrapKey = archiveKey(secret, "ARCHIVE-WRAP-KEY-v1", [])
+  result.authKey = archiveKey(secret, "ARCHIVE-AUTH-KEY-v1", []) # otter:allow derivation label, not a key
+  result.wrapKey = archiveKey(secret, "ARCHIVE-WRAP-KEY-v1", []) # otter:allow derivation label, not a key
   secureClearAmeBytes(secret)
   secureClearAmeBytes(salt)
 

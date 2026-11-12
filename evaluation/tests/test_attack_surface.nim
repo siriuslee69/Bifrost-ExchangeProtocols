@@ -55,7 +55,7 @@ const
   ## A payload an interceptor could not miss if any of it leaked. Long enough
   ## that a four-byte run of it turning up in random bytes by chance is about
   ## one in four billion per position.
-  secretText = "THE-VAULT-CODE-IS-884213-AND-THE-BACKUP-PHRASE-IS-CORRECT-HORSE"
+  secretText = "THE-VAULT-CODE-IS-884213-AND-THE-BACKUP-PHRASE-IS-CORRECT-HORSE" # otter:allow sample canary payload
 
 proc atLayout(): AmeSuiteLayout =
   result = defaultAmeLayout(atKems)

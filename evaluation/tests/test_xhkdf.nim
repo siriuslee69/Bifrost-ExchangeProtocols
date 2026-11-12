@@ -19,6 +19,8 @@ import ../../src/protocols/fomke/types
 import ../../src/protocols/fomke/level0/xhkdf
 import runePragmas
 
+# otter:vectors — the GB3HKDF reference outputs below are published test vectors, not keys
+
 const
   ikm: array[16, byte] = [1'u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     15, 16]

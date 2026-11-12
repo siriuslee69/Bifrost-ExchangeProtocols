@@ -143,7 +143,7 @@ proc pskPeerTrust*(a: AmeAuthentication, peerId: string): AmePeerTrustResult {.
     return
   result.ok = true
   result.mode = am1p
-  result.authority = "shared-secret"
+  result.authority = "shared-secret" # otter:allow a mode name, not a key
   result.subjectKeyId = a.pskId
 
 ## ╭⟢ the transcript

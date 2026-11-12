@@ -86,7 +86,7 @@ import runePragmas
 import ./chain
 
 const
-  fomkeJumpKeyLabel = "FOMKE-JUMP-KEY-v1"
+  fomkeJumpKeyLabel = "FOMKE-JUMP-KEY-v1" # otter:allow derivation label, not a key
   fomkeJumpTagLabel = "FOMKE-JUMP-v1"
 
 proc jumpKey(S: FomkeState, lane: FomkeLane, number: uint32): ByteSeq {.

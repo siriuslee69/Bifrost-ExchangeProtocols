@@ -468,7 +468,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
   result.lane2Index = S.lane2.nextIndex
   secretRows = collectFomkeUpgradeSecrets(candidate, r, result.generations)
   metadata = buildFomkeUpgradeMetadata(result, S.algorithms, S.layout)
-  epochKey = deriveFomkeTightChild(S, "FOMKE-EPOCH-KEY-v1")
+  epochKey = deriveFomkeTightChild(S, "FOMKE-EPOCH-KEY-v1") # otter:allow derivation label, not a key
   keys = deriveXhkdfInputs(epochKey, secretRows, metadata,
     fomkeEpochKeyBytes + fomkeConfirmKeyBytes, fomkeKdfFor(S, r.targetTier))
   S.pending.active = true

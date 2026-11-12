@@ -7,15 +7,8 @@ An item that is done is removed here and named in PROGRESS.md.
   why: the class room, room share and mail for teaching stand on them; their order across repos is kept in one place, not here.
   start: read ../Vegvisir-TeachingPlan/plan/STATUS.md, then the file above
   done when: that file holds no item for this repo.
-  needs: user (B2 waits for D2, B3 for D3)
-  plan: ../Vegvisir-TeachingPlan/README.md, "How to use this repo": claim one item, do it here, close it there.
-
-- [ ] src/ holds about 39 700 lines of Nim (limit 15 000) and BORDERS.md names no planned cut.
-  why: a repo this size has more than one job, and every reader pays for all of them.
-  start: ../Otter-RepoEvaluation/tools/agent_hooks/repo-check.sh . | grep SIZE
-  done when: BORDERS.md has a `planned cut:` line the user agreed to, or the cut is made.
-  needs: user
-  plan: recommended cuts, bottom first: (1) tls13/ + http/ + smtp/ + mail/ -> a repo of "other people's protocols" (they share no key or frame with AME, and a relay never needs them); (2) clients/ (the Android app and the desktop demo, with its tokens.css, docs/ui-plan.md and test_ui_contrast) -> their own app repo, since a client is never a library (WORKFLOW 2, Def. 2, question 3). AME, FOMKE, DAC, relay, dump and archive stay: they change together. tls13/, http/ and mail/ import protocols/byte_codec.nim: before cut (1) is made, byte_codec moves to Fylgia-Utils (see the item about the little-endian helpers) or the new repo imports it from here.
+  needs: user (B2 waits for D2); B3 is needs: nobody now — D3 answered 2026-11-12
+  plan: ../Vegvisir-TeachingPlan/README.md, "How to use this repo": claim one item, do it here, close it there. B3 (Fjord imports Bifrost's smtp and mail) is ready to claim; its crypto uses Tyr's native Nim protocols, not libsodium/OpenSSL (D3 answer).
 
 - [ ] rmGroup believes a claim from every neighbour unless the operator names the claimers.
   why: on a relay that admits neighbours the operator does not know, the first to say "that device is mine" may reach it, and its real server is refused afterwards.
@@ -23,13 +16,6 @@ An item that is done is removed here and named in PROGRESS.md.
   done when: the user decided the start value.
   needs: user
   plan: recommended: keep the open start value for now (Nebel's hop daemon and three tests rely on it) and have Nebel's hop config name the claimers; flip the start value to "nobody may claim" in the same commit that moves Nebel's pin.
-
-- [ ] The hook types of the restriction book still answer "" for success: RelayBookSave (relay_node.nim) returns a string, and the string is read in feedRelayRestriction.
-  why: the same defect the twelve routines had, one step lower: a hook that forgets to return its error text reads as "saved".
-  start: grep -n "RelayBookSave\|bookSave" src/protocols/relay/relay_node.nim; ../Nebel-DecentralizedDB/src/nebel/restriction_book.nim builds the pair
-  done when: RelayBookSave answers tuple[ok: bool, err: string] (RelayBookLoad already does); test_relay_restriction and Nebel's restriction_book follow.
-  needs: nobody
-  plan: change the type, feedRelayRestriction and the test hooks in one commit; Nebel follows in the pass that moves its Bifrost pin (its TODO.md, the item about the next Bifrost pin).
 
 - [ ] The little-endian helpers of protocols/byte_codec.nim are also written in Fylgia-Utils (io/byte_utils.nim: appenders only), in Eir (private copies in ten files of its src), and in Nebel and Geist (Nebel's TODO.md, item 2).
   why: Bifrost now has ONE copy; the workspace still has five. A fix in one never reaches the others.
@@ -59,9 +45,9 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: nobody
   plan: ask Nebel and Eris (grep their src) before deleting an exported routine; delete the unread chunk-task fields and AmeSession.lastExchangeDenial if nothing reads them.
 
-- [ ] Otter reports 56 SECRETS candidates and 5 EMBEDDED CODE strings, mostly test fixtures and documentation tables.
+- [ ] Otter reports SECRETS candidates and 5 EMBEDDED CODE strings, mostly test fixtures and documentation tables.
   why: a real key would hide among the false alarms.
   start: ../Otter-RepoEvaluation/tools/agent_hooks/otter-gate.sh --force . | grep -A10 "SECRETS\|EMBEDDED"
   done when: every line was looked at; real keys are removed, the rest are built at run time or marked as samples (see Otter's TODO.md, SECRETS item).
   needs: nobody
-  plan: look at evaluation/tests/test_tls13_webpki.nim (four hits on one fixture name) and docs/chat-archive.md:188 first. The two python-looking blocks in dac/types.nim and dac/level3/link.nim are ASCII tables in doc comments.
+  plan: DONE 2026-11-12: every src/ candidate was looked at and marked `# otter:allow` — they are key-DERIVATION LABELS or a mode name, not keys (archive/level1/keys.nim, ame/level3/handshake_transcript.nim, fomke/level1/chain.nim, fomke/level1/jump.nim); test_attack_surface.nim's canary and test_xhkdf.nim's published vectors are marked too. REMAINING: the test fixtures (test_chunkyaead, test_mitm_and_loss, test_tls13_webpki, test_config_exact, tls_test_support, test_smtp, test_transport_ops, lowmem_probe, test_ame_tcp_handshake, test_task_contract, tools/*) and docs/chat-archive.md:188 (derivation labels in a diagram). NOTE: a fixture file that uses `let` must have its `let` turned into `var` blocks first, or nim-check flags the file the moment it is touched (test_chunkyaead was backed out for this reason). The two python-looking EMBEDDED blocks in dac/types.nim and dac/level3/link.nim are ASCII tables in doc comments — say so, do not hide them.

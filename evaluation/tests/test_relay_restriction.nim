@@ -335,10 +335,11 @@ suite "restriction on a relay, all builds":
       load: RelayBookLoad = proc (): tuple[ok: bool, found: bool,
           book: RestrictionBook, err: string] =
         result = (true, saved, kept, "")
-      save: RelayBookSave = proc (B: RestrictionBook): string =
+      save: RelayBookSave = proc (B: RestrictionBook): tuple[ok: bool,
+          err: string] =
         kept = B
         saved = true
-        result = ""
+        result = (ok: true, err: "")
     check n.R.attachRestrictionBook(load, save).ok
     when restrictionGroupBuilt:
       step = n.R.feedRelayFastExtraFrame(n.sNas,
@@ -363,9 +364,10 @@ suite "restriction, limits a neighbour can reach":
       step: RelayStep = default(RelayStep)
       saves: int = 0
       load: RelayBookLoad = nil
-      save: RelayBookSave = proc (B: RestrictionBook): string =
+      save: RelayBookSave = proc (B: RestrictionBook): tuple[ok: bool,
+          err: string] =
         saves = saves + 1
-        result = ""
+        result = (ok: true, err: "")
     when restrictionAllowedBuilt:
       check n.R.attachRestrictionBook(load, save).ok
       step = n.R.feedRelayFastExtraFrame(n.sNas,
@@ -388,6 +390,24 @@ suite "restriction, limits a neighbour can reach":
         restrictionUpdateGapMs)
       check step.event == reAnswered
       check saves == 3
+
+  # {.testKind: tkRegression, covers: "feedRelayRestriction|attachRestrictionBook", pins: "a save hook that forgot its error text read as saved".}
+  test "a save hook that fails rolls the book back and drops the frame":
+    var
+      n: RtNet = rtSetup(120'u8)
+      step: RelayStep = default(RelayStep)
+      load: RelayBookLoad = nil
+      save: RelayBookSave = proc (B: RestrictionBook): tuple[ok: bool,
+          err: string] =
+        result = (ok: false, err: "disk full")
+    when restrictionAllowedBuilt:
+      check n.R.attachRestrictionBook(load, save).ok
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealAllowedUpdate(n.nas.left, acrDac, @[srcOf(rtPhone)]), 1000'u32)
+      check step.event == reDropped
+      check step.err.contains("disk full")
+      ## The change was not kept: the book is back to empty.
+      check n.R.book.reach.len == 0
 
   # {.testKind: tkEdgeCase, covers: "setRelayGroupClaimers|updateRefusal".}
   test "with claimers named, nobody else can claim a device":

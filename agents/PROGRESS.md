@@ -1,4 +1,66 @@
-Commit Message: Twelve routines answer ok/err; one copy of each shared byte helper (protocols/byte_codec.nim); theme tokens and a contrast test for the desktop demo
+Commit Message: Operator decisions recorded (generic protocols and test clients stay); RelayBookSave answers ok/err; the src SECRETS candidates are derivation labels, marked
+
+## 2026-11-12 PLAN: the TODO items that need nobody's decision, plus the operator's answers
+
+What was asked: work through agents/TODO.md, follow the Nim conventions, and use
+Otter to verify and optimise. The operator answered the three open decisions:
+
+```text
+  decision                     the operator's answer (2026-11-12)
+  ---------------------------  -------------------------------------------------
+  where to cut (SIZE)          nothing is cut. The generic protocols (tls13, http,
+                               smtp, mail) stay even though they add lines. The
+                               clients stay too: they are MULTI-DEVICE TEST clients
+                               (connection and transfer tests need several machines
+                               or VMs, not a local test), not a product client.
+                               Mark them as test clients so this is not asked again.
+  rmGroup start value          not answered -> keep the recommendation: open for
+                               now, flip when Nebel names its claimers. Left as a
+                               needs: user item; no code change.
+  teaching B2 / B3             do B3 (Fjord imports Bifrost's smtp and mail). For
+                               crypto use Tyr's native Nim protocols, NOT libsodium.
+```
+
+What was done, and how it was checked (nim-check + Otter + the real tests):
+
+```text
+  done                                     where / proof
+  ---------------------------------------  ----------------------------------------
+  SIZE item closed by the operator's       agents/BORDERS.md now has a `planned cut:
+    decision, not by moving code             none` line + a "clients are test clients"
+                                            section; src/clients/README.md marks the
+                                            folder at the folder itself.
+                                            repo-check.sh . now exits 0 (was SIZE).
+  RelayBookSave answers ok/err             relay/relay_node.nim: the hook type is
+                                            proc(B): tuple[ok, err]; feedRelayRestriction
+                                            reads .ok and rolls the book back on a
+                                            failed save. test_relay_restriction: both
+                                            hooks updated + a NEW regression test
+                                            "a save hook that fails rolls the book back
+                                            and drops the frame". Suite runs green.
+                                            Nebel's TODO (next Bifrost pin) gained step
+                                            (6) for its attachGeistBook save closure.
+  SECRETS: every src/ candidate looked     archive/level1/keys.nim, ame/level3/
+    at and marked                            handshake_transcript.nim, fomke/level1/
+                                            chain.nim, fomke/level1/jump.nim — all are
+                                            derivation LABELS / a mode name, not keys;
+                                            each now carries `# otter:allow`. Also
+                                            test_attack_surface.nim (canary) and
+                                            test_xhkdf.nim (`# otter:vectors`). Otter
+                                            re-measure: those finds no longer reported.
+```
+
+Checked by running: test_relay_restriction, test_xhkdf, test_archive,
+test_attack_surface — all green after the edits. nim-check on every changed .nim
+file: clean. repo-check: clean.
+
+Left in agents/TODO.md, honestly, as still to do (each with its start command):
+the remaining SECRETS test fixtures + docs/chat-archive.md (a fixture file that
+uses `let` needs its `let` turned into `var` blocks first — test_chunkyaead was
+backed out for exactly this reason), the EMBEDDED doc tables, the Otter structural
+items (oversized files, LAYOUT/FAMILIES, roles/dead/config/state/unused), the
+little-endian helpers -> Fylgia-Utils (waits on Nebel's item 2), and B3 (now
+needs: nobody, D3 answered). rmGroup stays a needs: user item, unchanged.
 
 ## 2026-11-12 The open items of agents/TODO.md that needed nobody's decision
 
