@@ -371,6 +371,15 @@ suite "relayFastExtraFrame, one hop":
     step = phoneNode.feedRelayFastExtraFrame(0, onlyFrame(step, sPhone), 0'u32)
     check step.frame.refusal == arrHopsSpent
 
+  # {.testKind: tkRegression, covers: "handleForward", pins: "a sender could write 255 hops and be believed".}
+  test "a forward that claims more hops than a relay honours is cut to the ceiling":
+    step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left, idNas,
+      @[byte 1], 255'u8), 0'u32)
+    check step.event == reForwarded
+    step = nasNode.feedRelayFastExtraFrame(0, onlyFrame(step, sNas), 0'u32)
+    check step.event == reDelivered
+    check step.frame.hopsLeft == ameRouteMaxHops - 1'u8
+
   # {.testKind: tkRegression, covers: "feedRelayFastExtraFrame", pins: "a client could claim any origin".}
   test "a client's own origin claim is overwritten":
     step = R.feedRelayFastExtraFrame(sPhone, sealAmeRouteForward(phone.left, idNas,

@@ -353,3 +353,94 @@ suite "restriction on a relay, all builds":
     check saved
     check back.attachRestrictionBook(load, save) == ""
     check back.book == n.R.book
+
+suite "restriction, limits a neighbour can reach":
+
+  # {.testKind: tkEdgeCase, covers: "updateRefusal|feedRelayControl".}
+  test "one neighbour changes its part at most once per gap":
+    var
+      n: RtNet = rtSetup(100'u8)
+      step: RelayStep = default(RelayStep)
+      saves: int = 0
+      load: RelayBookLoad = nil
+      save: RelayBookSave = proc (B: RestrictionBook): string =
+        saves = saves + 1
+        result = ""
+    when restrictionAllowedBuilt:
+      check n.R.attachRestrictionBook(load, save) == ""
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealAllowedUpdate(n.nas.left, acrDac, @[srcOf(rtPhone)]), 1000'u32)
+      check step.event == reAnswered
+      ## Too soon: dropped, not answered, and above all not written to disk.
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealAllowedUpdate(n.nas.left, acrDac, @[]), 1500'u32)
+      check step.event == reDropped
+      check step.send.len == 0
+      check step.err.contains("too soon")
+      check saves == 1
+      ## Another neighbour has its own clock.
+      step = n.R.feedRelayFastExtraFrame(n.sPhone,
+        sealAllowedUpdate(n.phone.left, acrDac, @[srcOf(rtNas)]), 1500'u32)
+      check step.event == reAnswered
+      ## After the gap the first one may change its part again.
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealAllowedUpdate(n.nas.left, acrDac, @[]), 1000'u32 +
+        restrictionUpdateGapMs)
+      check step.event == reAnswered
+      check saves == 3
+
+  # {.testKind: tkEdgeCase, covers: "setRelayGroupClaimers|updateRefusal".}
+  test "with claimers named, nobody else can claim a device":
+    var
+      n: RtNet = rtSetup(110'u8)
+      step: RelayStep = default(RelayStep)
+    when restrictionGroupBuilt:
+      check n.R.setRelayRestriction(rmGroup) == ""
+      n.R.setRelayGroupClaimers(["nas"])
+      ## The laptop says "the phone is mine": dropped, the book stays empty.
+      step = n.R.feedRelayFastExtraFrame(n.sLaptop,
+        sealGroupUpdate(n.laptop.left, acrDac, @["phone"]), rtNowMs)
+      check step.event == reDropped
+      check step.err.contains("may not claim")
+      check n.R.book.group.links.len == 0
+      ## So the phone's real server can still claim it.
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs)
+      check step.event == reAnswered
+      check n.R.book.group.links.len == 1
+
+  # {.testKind: tkEdgeCase, covers: "ensureReach|setAllowed|setListed".}
+  test "the book keeps a fixed number of connections, then refuses new ones":
+    var
+      B: RestrictionBook = RestrictionBook()
+      i: int = 0
+    while i < restrictionMaxEntries:
+      B.reach.add ReachEntry(identity: "dev" & $i)
+      i = i + 1
+    when restrictionAllowedBuilt:
+      check setAllowed(B, "one-more", @[]).contains("at most")
+      ## One that is already kept can still change its list.
+      check setAllowed(B, "dev7", @[anySource()]) == ""
+    when restrictionListedBuilt:
+      check setListed(B, "one-more", @[], @[]).contains("at most")
+    check B.reach.len == restrictionMaxEntries
+
+  # {.testKind: tkFuzz, covers: "decodeBook".}
+  test "a saved book that claims more than the book may hold is refused":
+    ## version 1 | member count 0xFFFF: more than restrictionMaxEntries.
+    var
+      got = decodeBook([restrictionVersion, 0xFF'u8, 0xFF'u8])
+    check not got.ok
+    check got.err.contains("more than")
+
+  # {.testKind: tkRegression, covers: "decodeRestrictionFrame|foldMapped", pins: "an IPv4 sender seen through an IPv6 socket slipped past an IPv4 rule".}
+  test "a rule sent as an IPv4 address inside an IPv6 one is kept as IPv4":
+    ## version 1, op allowed, one address: family 6, ::ffff:10.0.0.48, port 0
+    var
+      body: ByteSeq = @[restrictionVersion, restrictionOpAllowed, 1'u8, 6'u8,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 10, 0, 0, 48, 0, 0]
+      u: RestrictionUpdate = decodeRestrictionFrame(body)
+    check u.ok
+    check u.rules.allowed.len == 1
+    check u.rules.allowed[0].family == 4'u8
+    check u.rules.allowed[0].v4 == (10'u8, 0'u8, 0'u8, 48'u8)

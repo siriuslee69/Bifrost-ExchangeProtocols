@@ -1,4 +1,55 @@
-Commit Message: SMTP client refuses addresses that could carry a command; example dump_buffer
+Commit Message: Relay hardening: hop ceiling, one form per address, NAS-only answers, limits on the book and the dump
+
+## 2026-11-12 Hardening pass over the three relays, the restriction modes and the dump
+
+Plan (what goes where): everything below is "what two machines must decide the
+same way" or a limit on memory a stranger can spend, so all of it stays in
+Bifrost. Nebel only has to follow two changed calls when it moves its pin
+(written into Nebel's agents/TODO.md).
+
+```text
+  what was wrong                                       where it is fixed
+  ---------------------------------------------------  --------------------------------
+  an IPv4 sender on a socket listening on "::" is      relay/restriction_address.nim
+    written "::ffff:a.b.c.d"; an IPv4 reject rule        foldMapped, in sourceOf and in
+    did not match it -> the list rejected nobody         the wire reader
+  the hop byte is the sender's; 255 was believed       relay_node.handleForward cuts to
+                                                         ameRouteMaxHops (16)
+  blind relay: fromNas took any datagram on a          fromNas(F, source, tag, ...):
+    client's socket as the NAS's                         not the NAS -> `foreign`, dropped
+  blind relay: held datagrams left for the NAS's       drainBuffer addresses them when
+    OLD address after it moved                           they leave
+  blind relay: a VIP datagram held alone was never     tickRelaySuperFastUdp looks at
+    let go by a tick                                     both boxes
+  blind relay: one host could take all 512 places      cfg.maxClientsPerHost (64)
+    from 512 ports
+  blind relay: every datagram from a new address       reapForNewcomer: once a second
+    walked the whole table
+  one neighbour could make the keeper write the        restrictionUpdateGapMs (1 s) per
+    book to disk on every frame                          neighbour
+  the book grew one entry per identity for ever        ensureReach refuses past
+                                                         restrictionMaxEntries; decodeBook
+                                                         refuses counts above it
+  rmGroup: any neighbour could claim any device        setRelayGroupClaimers (opt-in)
+  mayReach copied a neighbour, link keys included,     reads the fields in place
+    on every forward
+  a return note could look alive again after the       one note per origin; age counted
+    32-bit clock wrapped (49.7 days)                     back from now
+  a slow-relay refusal could carry bytes behind it     decodeSlowEnvelope refuses it
+  the dump remembered every stream name for ever       maxStreams (65536), forgetDumpStream
+```
+
+Looked at and left as it is, with the reason: the 8-byte route tag (online
+guessing only, one frame per guess), the same payload bytes on every link of
+the fast relay (documented price, docs/routing.md 8), "routers are believed
+about origins" (documented; mark only routers you run), the blind relay
+following home on a plain reply (the caller's switch in Nebel, now said in
+`noteNasSeen`'s comment).
+
+Tests added: test_relay_super_fast_udp (4), test_relay_restriction (5),
+test_restriction_address (1), test_dump (1), test_relay_fast_extra_frame (1),
+test_relay_slow_extract_encrypt (1 check).
+
 
 ## 2026-11-11 Review pass
 

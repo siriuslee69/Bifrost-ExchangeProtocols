@@ -2587,13 +2587,16 @@ The overflow buffer **covers a reboot, not an outage**. Every datagram in it
 is one the carrier can recover (DAC repair or a repair request), so holding
 more would spend memory on something already recoverable.
 
-The relay follows the NAS to a new address when it reappears.
+The relay follows the NAS to a new address when it reappears. Datagrams held
+while it was away are sent to the NEW address, not to the one noted when they
+were held.
 
 ### The numbers, and why each one is a ceiling
 
 | setting | default | bounds |
 |---|---:|---|
 | `udpForwardMaxClients` | 512 | relay tags an outsider can make the VPS allocate |
+| `udpForwardMaxClientsPerHost` | 64 | relay tags ONE address (any port) may hold; 0 = no limit |
 | `udpForwardClientIdleMs` | 120 000 | how long an unused relay tag stays reserved |
 | `udpForwardNasKeepaliveMs` | 20 000 | how often a quiet NAS is contacted |
 | `udpForwardNasSilentMs` | 60 000 | silence before the NAS counts as away |
@@ -2603,6 +2606,39 @@ The relay follows the NAS to a new address when it reappears.
 Anyone who can send a datagram gets a relay tag, so the table has a top. When
 it is full the **newcomer is refused**. Evicting an existing client would let
 an outsider push out real clients.
+
+One machine can send from many ports, and each port is a new client to the
+relay. So one address holds at most `udpForwardMaxClientsPerHost` relay tags:
+
+```text
+limit 2:   203.0.113.7:4000   203.0.113.7:4001    -> both get a relay tag
+           203.0.113.7:4002                        -> refused: that address is full
+           198.51.100.4:4000                       -> gets a relay tag
+```
+
+64 leaves room for many people behind one shared address (a university, a
+mobile carrier). A sender who forges MANY addresses is not stopped by this;
+the table's top and the VIP list are what remain for that case.
+
+### Who may speak on the sockets toward the NAS
+
+Each relay tag has its own socket toward the NAS, and its port can be guessed.
+`fromNas` therefore takes the address a datagram CAME FROM and passes it on
+only when that is the NAS:
+
+```text
+fromNas(relay, source, tag, bytes, now)
+   source is the NAS        -> sent to the client of that relay tag
+   source is anyone else    -> dropped, counted in `foreign`; not a sign of life
+```
+
+Without the check a stranger could have the relay deliver bytes to a client
+while hiding where they came from, and could make a dead NAS look alive.
+
+`noteNasSeen(relay, address, now)` is the ONE call that moves the NAS. Whoever
+is named there receives every client's datagrams from then on. Call it for a
+frame that authenticated on the control link, or for a reply from the address
+the NAS already has. A plain reply from a new address proves nothing.
 
 A nonsensical setting is refused, not corrected: each one bounds memory an
 outsider can make the process spend.
@@ -3537,6 +3573,20 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   the next router has its own line for the target, visible to THIS router's
   identity. "No route" is deliberately the same answer for "unknown" and
   "not yours".
+- **A restriction update gets no acknowledgement**: one neighbour may change
+  its part of the book once per second. A second update inside that second
+  is dropped (`step.err`: "came too soon"). Send it again after the gap.
+  The same silence, with "may not claim", means the relay named its group
+  claimers (`setRelayGroupClaimers`) and this neighbour is not one of them.
+- **relaySuperFastUDP refuses a client although the table is not full**: its
+  address already holds `udpForwardMaxClientsPerHost` (64) relay tags. Many
+  users behind one shared address can reach that; raise the number, or set
+  it to 0, in `initUdpForwardConfig`.
+- **relaySuperFastUDP: `foreign` keeps counting**: datagrams arrive on the
+  sockets toward the NAS from an address that is not the NAS. Either someone
+  is probing those ports (nothing to do: they are dropped), or the NAS
+  moved and the relay was not told. The relay learns a move only through
+  `noteNasSeen`.
 - **An answer from far away is refused after a while**: the way back exists
   only as a return note, which lives 120 s after the last forward from that
   origin. A target that answers later needs a directory line for the origin

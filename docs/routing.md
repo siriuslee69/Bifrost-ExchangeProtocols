@@ -139,7 +139,9 @@ passed on, lives 120 seconds after the last such forward, and is the only
 way T's answer finds X. At most 256 are kept; the oldest is replaced.
 
 **Def. 8 (hops).** A counter in every forward. A client starts it at 6.
-Each router takes one. At zero the forward is refused.
+Each router takes one. At zero the forward is refused. The sender writes
+the counter, so a router honours at most 16 (`ameRouteMaxHops`): a frame that
+claims 255 goes on with 15.
 
 ## 4. The bytes 🍣
 
@@ -376,10 +378,14 @@ Limits, said plainly:
   name length                     32 bytes
   directory page                  24 entries, about 1 KB of body
   route frame overhead            42 bytes
+  hops                            6 from a client; a claim above 16 is cut
+                                  to 16 at the first router
   route counter                   2^32 - 1 frames per link, then a new
                                   handshake ("AME route counter is exhausted")
   replay window                   64 frames per link side
   return notes                    256, 120 s after the last refresh
+                                  one note per origin: a newer forward from
+                                  the same origin writes over the old note
   frame from an empty slot        dropped, counted in `dropped`
   refusal from a client           dropped
   while a link rotates its epoch  route frames wait, like every other frame

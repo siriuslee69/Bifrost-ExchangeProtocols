@@ -44,6 +44,8 @@ when restrictionListedBuilt:
     if accept.len > restrictionMaxRules or reject.len > restrictionMaxRules:
       return "a list holds at most " & $restrictionMaxRules & " addresses"
     i = ensureReach(B, identity)
+    if i < 0:
+      return "the book holds at most " & $restrictionMaxEntries & " connections"
     B.reach[i].rules.accept = accept
     B.reach[i].rules.reject = reject
     result = ""

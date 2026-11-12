@@ -14,7 +14,7 @@ import runePragmas
 proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
   ## formatUdpAddress: format UDP address.
   var
-    host: string
+    host: string = ""
   host = a.host.strip()
   if host.len >= 2 and host[0] == '[' and host[^1] == ']':
     host = host[1 .. ^2]
@@ -61,7 +61,7 @@ proc collectUdpTargets(R: var seq[ResolvedUdpTarget], aiList: ptr AddrInfo) {.
 proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
   ## h: UDP host literal or hostname whose concrete targets should be tried.
   var
-    clean: string
+    clean: string = ""
     aiList: ptr AddrInfo = nil
   clean = normalizeUdpHost(h)
   if clean.contains(':'):
@@ -85,7 +85,7 @@ proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
 proc parseUdpHostPort(rawInput: string): tuple[ok: bool, host: string, port: uint16] {.role: parser.} =
   ## parseUdpHostPort: parse UDP host port.
   var
-    raw: string
+    raw: string = ""
     idx: int = 0
     endBracket: int = 0
     hostPart: string = ""
@@ -152,7 +152,7 @@ proc wildcardUdpBindHost*(h: string): string {.role: helper.} =
 proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.} =
   ## parseUdpAddress: parse UDP address.
   var
-    p: tuple[ok: bool, host: string, port: uint16]
+    p: tuple[ok: bool, host: string, port: uint16] = (false, "", 0'u16)
   p = parseUdpHostPort(s)
   if not p.ok:
     return
@@ -293,9 +293,9 @@ proc bindUdpShared*(a: UdpAddress, recvBufferBytes: int = 0): tuple[
 proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestrator.} =
   ## connectUdp: connect UDP.
   var
-    host: string
+    host: string = ""
     targets: seq[ResolvedUdpTarget] = @[]
-    sock: Socket
+    sock: Socket = nil
     lastErr: string = ""
   host = normalizeUdpHost(a.host)
   targets = resolvedUdpTargets(host)
@@ -314,7 +314,7 @@ proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestra
 proc sendUdpDatagram*(sock: Socket, bs: ByteSeq) {.role: orchestrator.} =
   ## sendUdpDatagram: send UDP datagram.
   var
-    body: string
+    body: string = ""
   body = bytesToString(bs)
   if body.len == 0:
     return
@@ -323,8 +323,8 @@ proc sendUdpDatagram*(sock: Socket, bs: ByteSeq) {.role: orchestrator.} =
 proc sendUdpDatagram*(sock: Socket, a: UdpAddress, bs: ByteSeq) {.role: orchestrator.} =
   ## sendUdpDatagram: send UDP datagram.
   var
-    body: string
-    host: string
+    body: string = ""
+    host: string = ""
     targets: seq[ResolvedUdpTarget] = @[]
     lastErr: string = ""
   body = bytesToString(bs)
@@ -348,7 +348,7 @@ proc recvUdpDatagram*(sock: Socket, maxBytes: int,
   ## recvUdpDatagram: receive UDP datagram.
   var
     fds: seq[SocketHandle] = @[]
-    body: string
+    body: string = ""
     host: string = ""
     port: Port = Port(0)
     n: int = 0

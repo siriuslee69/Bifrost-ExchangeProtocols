@@ -152,6 +152,6 @@ suite "the NAS is never held back":
     first = fromClient(F, ep("203.0.113.1"), @[byte 1], 1000'u64)
     check first.event == ufeForwarded
     while i < 50:
-      check fromNas(F, first.send[0].tag, @[byte 9], 1001'u64).event ==
+      check fromNas(F, F.nas, first.send[0].tag, @[byte 9], 1001'u64).event ==
         ufeForwarded
       i = i + 1

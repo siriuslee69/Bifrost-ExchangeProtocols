@@ -230,6 +230,7 @@ proc readAddress(A: openArray[uint8], o: var int, a: var SourceAddr): string {.
   if not readU16(A, o, p):
     return "body ends inside a port"
   a.port = uint16(p)
+  a = foldMapped(a)
 
 proc readIdentity(A: openArray[uint8], o: var int,
     L: var seq[string]): string {.role: sanitizer.} =
@@ -448,6 +449,13 @@ proc encodeBook*(B: RestrictionBook): tuple[ok: bool, bytes: ByteSeq,
     i = i + 1
   result.ok = true
 
+proc bookCountError(n: int, what: string): string {.role: sanitizer.} =
+  ## n/what: a count read from a saved book. "" when the book may hold that
+  ## many, else why not. A saved book is a file somebody can edit, so its
+  ## counts get the same ceiling the setters keep.
+  if n > restrictionMaxEntries:
+    result = "book holds more than " & $restrictionMaxEntries & " " & what
+
 proc decodeBook*(A: openArray[uint8]): tuple[ok: bool, book: RestrictionBook,
     err: string] {.role: sanitizer.} =
   ## A: bytes written by encodeBook. Every count is checked against the bytes,
@@ -468,12 +476,15 @@ proc decodeBook*(A: openArray[uint8]): tuple[ok: bool, book: RestrictionBook,
   if not readU16(A, o, n):
     result.err = "book ends before the member count"
     return
+  e = bookCountError(n, "members")
   while i < n and e.len == 0:
     e = readText(A, o, s)
     result.book.group.members.add s
     i = i + 1
   if e.len == 0 and not readU16(A, o, n):
     e = "book ends before the endpoint count"
+  if e.len == 0:
+    e = bookCountError(n, "endpoints")
   i = 0
   while i < n and e.len == 0:
     e = readText(A, o, s)
@@ -481,6 +492,8 @@ proc decodeBook*(A: openArray[uint8]): tuple[ok: bool, book: RestrictionBook,
     i = i + 1
   if e.len == 0 and not readU16(A, o, n):
     e = "book ends before the link count"
+  if e.len == 0:
+    e = bookCountError(n, "links")
   i = 0
   while i < n and e.len == 0:
     if not readU16(A, o, m) or not readU16(A, o, x):
@@ -494,6 +507,8 @@ proc decodeBook*(A: openArray[uint8]): tuple[ok: bool, book: RestrictionBook,
     i = i + 1
   if e.len == 0 and not readU16(A, o, n):
     e = "book ends before the connection count"
+  if e.len == 0:
+    e = bookCountError(n, "connections")
   i = 0
   while i < n and e.len == 0:
     entry = ReachEntry()

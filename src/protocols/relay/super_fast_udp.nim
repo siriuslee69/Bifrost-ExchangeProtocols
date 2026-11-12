@@ -82,6 +82,10 @@ const
     ## How many clients may hold a slot at once. A ceiling, not a target: the
     ## relay is reached by anyone who can send a datagram, so the table has to
     ## have a top or a stranger can grow it until the VPS runs out of memory.
+  udpForwardMaxClientsPerHost* = 64
+    ## How many slots ONE host (one IP address, any port) may hold. Without it a
+    ## single machine opens 512 ports and takes every place. 64 leaves room for
+    ## many people behind one shared address; 0 = no limit per host.
   udpForwardClientIdleMs* = 120_000'u64
     ## A slot with no traffic either way for this long is released, freeing
     ## its tag for somebody else.
@@ -153,6 +157,7 @@ type
   ## UdpForwardConfig: the five numbers that decide how the relay behaves.
   UdpForwardConfig* {.role: configurator.} = object
     maxClients*: int
+    maxClientsPerHost*: int
     clientIdleMs*: uint64
     nasKeepaliveMs*: uint64
     nasSilentMs*: uint64
@@ -212,6 +217,13 @@ type
       ## VIP datagrams held while the NAS is away; they leave before the rest.
     usedSlots*: int
       ## Client slots in use, kept so "is the table full" costs one compare.
+    reaped: bool
+    reapedMs: uint64
+      ## Whether and when idle slots were last freed on behalf of a newcomer
+      ## (`reapForNewcomer`).
+    foreign*: uint64
+      ## Datagrams that arrived on a socket toward the NAS from somebody who is
+      ## not the NAS. Dropped, never passed to a client.
     vipForwarded*: uint64
       ## Datagrams passed because their sender is VIP while it mattered
       ## (a brake, a full table or an absent NAS).
@@ -225,12 +237,15 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     maxDatagramBytes: int = udpForwardMaxDatagramBytes,
     brakePerSecond: array[4, int] = udpForwardBrakePerSecond,
     vipSlots: int = udpForwardVipSlots,
-    vipBufferDatagrams: int = udpForwardVipBufferDatagrams):
+    vipBufferDatagrams: int = udpForwardVipBufferDatagrams,
+    maxClientsPerHost: int = udpForwardMaxClientsPerHost):
     UdpForwardConfig {.role: configurator.} =
   ## Every field refused rather than silently corrected, because each one is a
   ## bound on memory a stranger can cause this process to spend.
   if maxClients <= 0:
     raise newException(ValueError, "UDP forward client table must hold one")
+  if maxClientsPerHost < 0:
+    raise newException(ValueError, "UDP forward per-host limit must not be negative")
   if bufferDatagrams < 0 or bufferBytes < 0:
     raise newException(ValueError, "UDP forward buffer must not be negative")
   if vipSlots < 0 or vipBufferDatagrams < 0:
@@ -241,6 +256,7 @@ proc initUdpForwardConfig*(maxClients: int = udpForwardMaxClients,
     raise newException(ValueError,
       "UDP forward NAS must be given longer to answer than the poke interval")
   result.maxClients = maxClients
+  result.maxClientsPerHost = maxClientsPerHost
   result.clientIdleMs = clientIdleMs
   result.nasKeepaliveMs = nasKeepaliveMs
   result.nasSilentMs = nasSilentMs
@@ -378,8 +394,9 @@ proc isVip(F: RelaySuperFastUdp, client: transport_types.UdpAddress): bool {.
   var
     i: int = 0
   while i < F.cfg.vipSlots:
-    if F.vips[i].host.len > 0 and F.vips[i].host == client.host and
-        (F.vips[i].port == 0'u16 or F.vips[i].port == client.port):
+    if F.vips[i].host.len > 0 and
+        (F.vips[i].port == 0'u16 or F.vips[i].port == client.port) and
+        sameHost(F.vips[i].host, client.host):
       return true
     i = i + 1
 
@@ -396,6 +413,36 @@ proc stalestPlainSlot(F: RelaySuperFastUdp): int {.role: parser,
       result = i
     i = i + 1
 
+proc reapForNewcomer(F: var RelaySuperFastUdp, nowMs: uint64) {.role: actor,
+    tag: "relay|udp".} =
+  ## F/nowMs: free idle places before a newcomer asks for one -- at most once
+  ## a second. A stranger sending from a new address every datagram would
+  ## otherwise make the relay walk its whole table for each of them.
+  if F.reaped and nowMs >= F.reapedMs and nowMs - F.reapedMs < 1000'u64:
+    return
+  F.reaped = true
+  F.reapedMs = nowMs
+  discard reapIdleSlots(F, nowMs)
+
+proc hostIsFull(F: RelaySuperFastUdp, host: string): bool {.role: parser,
+    tag: "relay|udp".} =
+  ## F/host: true when that host already holds `cfg.maxClientsPerHost` places
+  ## (counted over every port). Only asked when a NEW place would be opened.
+  ##
+  ##   limit 2:  203.0.113.7:4000  203.0.113.7:4001   -> both get a place
+  ##             203.0.113.7:4002                      -> refused: host is full
+  ##             198.51.100.4:4000                     -> gets a place
+  var
+    i: int = 0
+    n: int = 0
+  if F.cfg.maxClientsPerHost == 0:
+    return false
+  while i < F.slots.len:
+    if F.slots[i].inUse and F.slots[i].client.host == host:
+      n = n + 1
+    i = i + 1
+  result = n >= F.cfg.maxClientsPerHost
+
 proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     nowMs: uint64, vip: bool = false): int {.role: actor, tag: "relay|udp".} =
   ## F/client/nowMs: the client's slot, opening one if this is the first time
@@ -410,7 +457,11 @@ proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
   if result >= 0:
     F.slots[result].lastSeenMs = nowMs
     return
-  discard reapIdleSlots(F, nowMs)
+  reapForNewcomer(F, nowMs)
+  if not vip and F.usedSlots >= F.cfg.maxClients:
+    return -1
+  if not vip and hostIsFull(F, client.host):
+    return -1
   result = freeSlotIndex(F)
   if result < 0 and vip:
     result = stalestPlainSlot(F)
@@ -427,12 +478,19 @@ proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
 proc drainBuffer(F: var RelaySuperFastUdp, S: var UdpForwardStep) {.role: actor,
     tag: "relay|udp".} =
   ## F/S: everything held for the NAS: the VIP box first, then the rest, each
-  ## in the order it arrived.
+  ## in the order it arrived. Each datagram is addressed NOW, to where the NAS
+  ## is at this moment: it may have come back at a new address, and the one
+  ## noted when the datagram was held would be a hole.
+  var
+    first: int = S.send.len
   while F.vipBuffer.len > 0:
     S.send.add(F.vipBuffer.popFirst())
   while F.buffer.len > 0:
     S.send.add(F.buffer.popFirst())
   F.bufferBytes = 0
+  while first < S.send.len:
+    S.send[first].peer = F.nas
+    first = first + 1
 
 proc noteNasSeen*(F: var RelaySuperFastUdp, nas: transport_types.UdpAddress,
     nowMs: uint64): UdpForwardStep {.role: actor, tag: "appApi|relay|udp".} =
@@ -442,8 +500,15 @@ proc noteNasSeen*(F: var RelaySuperFastUdp, nas: transport_types.UdpAddress,
   ## relay follows the NAS rather than insisting on the address it was
   ## configured with. Anything held while it was away is drained here, in the
   ## order it arrived.
+  ##
+  ## WHOEVER IS NAMED HERE GETS EVERY CLIENT'S DATAGRAMS FROM NOW ON. Call it
+  ## only for a sign of life the caller can trust: a frame that authenticated
+  ## on the control link (super_fast_control.nim), or a reply from the address
+  ## the NAS already has. A plain reply from a NEW address proves nothing --
+  ## following it lets any stranger take the NAS's place (the content stays
+  ## sealed, but nothing arrives any more).
   result.event = ufeNone
-  if nas.host != F.nas.host or nas.port != F.nas.port:
+  if nas.port != F.nas.port or not sameHost(nas.host, F.nas.host):
     F.nas = nas
     result.event = ufeNasChanged
   F.nasSeenMs = nowMs
@@ -614,11 +679,18 @@ proc slotForTag(F: RelaySuperFastUdp, tag: uint32): int {.role: parser,
       return i
     i = i + 1
 
-proc fromNas*(F: var RelaySuperFastUdp, tag: uint32,
-    payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
+proc fromNas*(F: var RelaySuperFastUdp, source: transport_types.UdpAddress,
+    tag: uint32, payload: openArray[uint8], nowMs: uint64): UdpForwardStep {.
     role: orchestrator, tag: "appApi|relay|udp".} =
-  ## F/tag/payload/nowMs: one datagram back from the NAS, on the socket that
-  ## belongs to `tag`.
+  ## F/source/tag/payload/nowMs: one datagram that arrived on the socket that
+  ## belongs to `tag`, and the address it came from.
+  ##
+  ## Only the NAS may speak on those sockets. Their ports can be guessed, so
+  ## without this check anyone could (1) have the relay pass bytes on to a
+  ## client while hiding where they came from, and (2) make a dead NAS look
+  ## alive, so nothing is held for it. A datagram from anywhere else is
+  ## counted in `foreign` and dropped. When the NAS moves, `noteNasSeen` is
+  ## what tells the relay -- never a datagram on a client's socket.
   ##
   ## An answer whose slot has already been released is dropped rather than
   ## guessed at. Sending it to whoever happens to hold the tag next would
@@ -626,6 +698,12 @@ proc fromNas*(F: var RelaySuperFastUdp, tag: uint32,
   var
     slot: int = 0
     item: UdpForwardOut = default(UdpForwardOut)
+  if source.port != F.nas.port or not sameHost(source.host, F.nas.host):
+    F.foreign = F.foreign + 1'u64
+    result.event = ufeDropped
+    result.dropped = 1
+    result.err = "UDP forward answer is not from the NAS"
+    return
   F.nasSeenMs = nowMs
   F.nasStarted = true
   if payload.len == 0 or payload.len > F.cfg.maxDatagramBytes:
@@ -677,7 +755,7 @@ proc tickRelaySuperFastUdp*(F: var RelaySuperFastUdp, nowMs: uint64,
   result.dropped = reapIdleSlots(F, nowMs)
   if result.dropped > 0:
     result.event = ufeDropped
-  if F.buffer.len > 0 and not nasIsAway(F, nowMs):
+  if F.buffer.len + F.vipBuffer.len > 0 and not nasIsAway(F, nowMs):
     drainBuffer(F, result)
     result.event = ufeForwarded
   if keepalive.len == 0 or not keepaliveDue(F, nowMs):

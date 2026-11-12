@@ -32,8 +32,8 @@ type
     next: ptr LocalhostDacPeerEntry
 
 var
-  dacPeerRegistryLock: Lock
-  dacLocalhostPeerRegistry: ptr LocalhostDacPeerEntry
+  dacPeerRegistryLock: Lock = default(Lock)
+  dacLocalhostPeerRegistry: ptr LocalhostDacPeerEntry = nil
 
 initLock(dacPeerRegistryLock)
 
@@ -47,7 +47,7 @@ proc dacLocalPort*(sock: DacSocket): tuple[ok: bool, port: uint16] {.
   ## Public because binding to port 0 is the normal way to take an ephemeral
   ## port, and the caller then has no other way to learn which one it got.
   var
-    bound: tuple[host: string, port: Port]
+    bound: tuple[host: string, port: Port] = ("", Port(0))
   try:
     bound = sock.getLocalAddr()
     result.ok = true
@@ -59,8 +59,8 @@ proc dacSocketHasPeer(sock: DacSocket): bool {.role: helper.} =
   ## sock: DAC socket whose connected-peer state distinguishes connected sockets
   ## from the unconnected localhost fanout sockets tracked here.
   var
-    peerHost: string
-    peerPort: Port
+    peerHost: string = ""
+    peerPort: Port = Port(0)
   try:
     (peerHost, peerPort) = sock.getPeerAddr()
     discard peerHost
@@ -105,7 +105,7 @@ proc rememberLocalhostDacPeer(sock: DacSocket, port: uint16) {.
   var
     node: ptr LocalhostDacPeerEntry = nil
     key: int = dacPeerSockKey(sock)
-    localPort: tuple[ok: bool, port: uint16]
+    localPort: tuple[ok: bool, port: uint16] = (false, 0'u16)
   localPort = dacLocalPort(sock)
   if not localPort.ok:
     raise newException(IOError,
@@ -149,7 +149,7 @@ proc lookupLocalhostDacPeer(sock: DacSocket): tuple[ok: bool, port: uint16] {.
   var
     key: int = dacPeerSockKey(sock)
     found: tuple[node, prev: ptr LocalhostDacPeerEntry] = (node: nil, prev: nil)
-    localPort: tuple[ok: bool, port: uint16]
+    localPort: tuple[ok: bool, port: uint16] = (false, 0'u16)
     hasPeer: bool = false
   localPort = dacLocalPort(sock)
   hasPeer = dacSocketHasPeer(sock)
@@ -197,8 +197,8 @@ proc parseDacAddress*(s: string): tuple[ok: bool, a: DacAddress] {.
     role: parser.} =
   ## s: `dac://host:port` or `host:port`.
   var
-    raw: string
-    parsed: tuple[ok: bool, a: transport_types.UdpAddress]
+    raw: string = ""
+    parsed: tuple[ok: bool, a: transport_types.UdpAddress] = (false, default(transport_types.UdpAddress))
   raw = s.strip()
   if raw.find("://") >= 0 and not raw.startsWith("dac://"):
     return
@@ -255,7 +255,7 @@ proc pinLocalhostDacPeer*(sock: DacSocket, a: DacAddress,
   ## a: concrete peer endpoint that authenticated on the loopback socket.
   ## timeoutMs: backend connect/setup timeout for pinning the socket.
   var
-    peer: tuple[ok: bool, port: uint16]
+    peer: tuple[ok: bool, port: uint16] = (false, 0'u16)
   peer = lookupLocalhostDacPeer(sock)
   if not peer.ok:
     return
@@ -266,7 +266,7 @@ proc sendDacFrameBytes*(sock: DacSocket, bs: ByteSeq) {.role: orchestrator.} =
   ## sock: DAC endpoint handle.
   ## bs: complete encoded DAC frame bytes.
   var
-    peer: tuple[ok: bool, port: uint16]
+    peer: tuple[ok: bool, port: uint16] = (false, 0'u16)
   peer = lookupLocalhostDacPeer(sock)
   if peer.ok:
     sendDacFrameBytes(sock, initDacAddress("localhost", peer.port), bs)
@@ -312,7 +312,7 @@ proc recvDacFrameBytes*(sock: DacSocket, maxBytes: int,
   ## maxBytes: maximum encoded DAC frame size to receive.
   ## timeoutMs: receive timeout.
   var
-    r: transport_types.UdpDatagramResult
+    r: transport_types.UdpDatagramResult = default(transport_types.UdpDatagramResult)
   r = udp_ops.recvUdpDatagram(sock, maxBytes, timeoutMs)
   result.ok = r.ok
   result.payload = r.payload

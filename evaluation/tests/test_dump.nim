@@ -138,3 +138,22 @@ suite "records":
   test "cursors go to bytes and back":
     var C = @[(stream: "a", settled: 7'u64), (stream: "b", settled: 0'u64)]
     check decodeDumpCursors(encodeDumpCursors(C)) == C
+
+suite "the dump, streams":
+  # {.testKind: tkEdgeCase, covers: "offerDump|forgetDumpStream".}
+  test "the number of remembered streams has a ceiling, and a way back under it":
+    var D = initDumpBuffer(maxStreams = 2)
+    check D.offerDump(rec("a", 1)).state == doTaken
+    check D.offerDump(rec("b", 1)).state == doTaken
+    ## A third name is one too many: nothing is thrown out for it.
+    check D.offerDump(rec("c", 1)).state == doFull
+    ## A stream that is known still takes its next record.
+    check D.offerDump(rec("a", 2)).state == doTaken
+    ## A stream with a record still here cannot be forgotten.
+    check not D.forgetDumpStream("b")
+    var b = D.grabDump()
+    check D.settleDump(b.ticket)
+    check D.forgetDumpStream("b")
+    check D.offerDump(rec("c", 1)).state == doTaken
+    ## Forgetting what was never known changes nothing and is fine.
+    check D.forgetDumpStream("never")

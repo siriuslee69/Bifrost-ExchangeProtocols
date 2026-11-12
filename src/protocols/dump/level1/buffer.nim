@@ -31,9 +31,13 @@ import runePragmas
 import var_invariants
 
 proc initDumpBuffer*(maxRecords: int = dumpDefaultMaxRecords,
-    maxBytes: int = dumpDefaultMaxBytes): DumpBuffer {.role: configurator,
-    tag: "dump|appApi", needs: maxRecords > 0 and maxBytes > 0.} =
+    maxBytes: int = dumpDefaultMaxBytes,
+    maxStreams: int = dumpDefaultMaxStreams): DumpBuffer {.role: configurator,
+    tag: "dump|appApi",
+    needs: maxRecords > 0 and maxBytes > 0 and maxStreams > 0.} =
   ## maxRecords/maxBytes: the most it holds. Both are ceilings, not reservations.
+  ## maxStreams: the most streams it remembers (see `forgetDumpStream`).
+  result.maxStreams = maxStreams
   result.maxRecords = maxRecords
   result.maxBytes = maxBytes
   result.waiting = initDeque[DumpRecord]()
@@ -60,6 +64,8 @@ proc offerDump*(D: var DumpBuffer, R: DumpRecord): DumpOffered {.role: actor,
   if R.stream.len == 0 or R.stream.len > dumpNameMax or
       R.sender.len > dumpNameMax or R.body.len > D.maxBytes:
     return DumpOffered(state: doRefused)
+  if not D.lines.hasKey(R.stream) and D.lines.len >= D.maxStreams:
+    return DumpOffered(state: doFull)
   if T.number == 0'u64:
     T.number = max(D.lineOf(R.stream).nextAuto, D.lineOf(R.stream).settled + 1'u64)
   result.number = T.number
@@ -157,6 +163,20 @@ proc restoreDumpCursor*(D: var DumpBuffer, stream: string, settled: uint64) {.
   D.lineOf(stream).settled = max(D.lineOf(stream).settled, settled)
   D.lineOf(stream).nextAuto = max(D.lineOf(stream).nextAuto, settled + 1'u64)
   D.lineOf(stream).closeGaps()
+
+proc forgetDumpStream*(D: var DumpBuffer, stream: string): bool {.role: actor,
+    tag: "dump|appApi".} =
+  ## D/stream: stop remembering a stream that will not be fed again (a sender
+  ## that left for good), so its place is free for another. False, and nothing
+  ## changes, while one of its records is still waiting or in somebody's hands.
+  ## After this the dump no longer knows which of its numbers are on disk: the
+  ## keeper gives that back with `restoreDumpCursor` if the stream returns.
+  if not D.lines.hasKey(stream):
+    return true
+  if D.lines[stream].held.len > 0:
+    return false
+  D.lines.del(stream)
+  result = true
 
 proc dumpWaiting*(D: DumpBuffer): int {.role: parser, inline, tag: "dump".} =
   ## D: records not handed out yet.

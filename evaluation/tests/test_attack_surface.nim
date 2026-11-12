@@ -456,7 +456,7 @@ suite "attacks through the relay":
     ## An answer meant for the FIRST client arrives now. It must not be
     ## delivered to the second, and it is not -- the slot it belonged to is
     ## gone, so the datagram dies here.
-    late = fromNas(F, tag, @[byte 9, 9], 50_100'u64)
+    late = fromNas(F, F.nas, tag, @[byte 9, 9], 50_100'u64)
     check late.event == ufeForwarded
     check late.send[0].peer == initUdpAddress("203.0.113.8", 40000'u16)
     ## NOTE what that just said: the tag WAS reused, so this answer did reach

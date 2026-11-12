@@ -33,7 +33,8 @@ Def. 4 (ticket)   names one batch that was handed out.
 ```nim
 import protocols/dump
 
-var D = initDumpBuffer(maxRecords = 4096, maxBytes = 64 * 1024 * 1024)
+var D = initDumpBuffer(maxRecords = 4096, maxBytes = 64 * 1024 * 1024,
+  maxStreams = 65536)
 discard D.offerDump(DumpRecord(stream: "chat/7", sender: "alice", body: msg))
 
 var batch = D.grabDump()
@@ -50,8 +51,16 @@ doTaken             it waits now                        nothing
 doDuplicate         seen before: waiting, out, or       nothing, it arrived
                     settled
 doFull              no room. Nothing was thrown out     slow down, send again
+                    (records, bytes, or a NEW stream
+                    name past `maxStreams`)
 doRefused           it can never fit                    give up
 ```
+
+The dump remembers every stream it was fed, so that a number seen before is
+recognised. Stream names come from the feeder (one per sender on a relay), so
+their count has a ceiling too: `maxStreams`. When a sender is gone for good,
+`forgetDumpStream(D, "relay/30")` frees its place; it answers false while one
+of that stream's records is still waiting.
 
 `dumpBrakeLevel` turns how full the dump is into 0 to 3, the same words a relay's
 brake already speaks.

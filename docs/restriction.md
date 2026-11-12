@@ -72,6 +72,19 @@ Text forms accepted when the operator writes a list:
   any    *                    any host (family 0)
 ```
 
+One address has ONE form. A socket that listens for both families reports an
+IPv4 sender as an IPv4 address written inside an IPv6 one. Both spellings are
+folded to the same four bytes, in every list and for every sender, so a rule
+written as IPv4 names that sender however the socket spells it:
+
+```text
+  ::ffff:203.0.113.9   ->  family 4, (203, 0, 113, 9)
+  203.0.113.9          ->  family 4, (203, 0, 113, 9)      the same entry
+```
+
+(ﾉ◕ヮ◕)ﾉ Before this fold a `reject 203.0.113.9` did not match that machine on
+a relay listening on `::`: the list rejected nobody.
+
 A relay prints an address back in full IPv6 form, so an operator can compare
 two addresses by eye: `2001:0db8:0000:0000:0000:0000:0000:0001`. With a port,
 IPv6 goes in brackets, as in `[2001:0db8:0000:0000:0000:0000:0000:0001]:47656`,
@@ -99,6 +112,20 @@ device already linked elsewhere is refused. A server that claims again
 replaces only its own links.
 
 Memory: a member is one name and a link is two small numbers.
+
+Who may claim. By default every neighbour may send a claim, and the first
+claim for a device wins. On a relay whose neighbours are not all yours, name
+the servers; a claim from anyone else is dropped:
+
+```nim
+relay.setRelayGroupClaimers(["nas", "cam-server"])
+```
+
+```text
+  claimers = []         laptop claims "phone"  -> laptop may reach the phone,
+                        and the phone's real server is refused afterwards
+  claimers = ["nas"]    laptop claims "phone"  -> dropped: "may not claim"
+```
 
 ### 2.3 rmListed: accept and reject lists of addresses
 
@@ -293,5 +320,12 @@ Tests, one file per row:
 - Group, listed and allowed name devices by identity (the pinned name the
   handshake proved). A device that reconnects under the same identity keeps
   its entries.
+- One neighbour changes its part at most once per second
+  (`restrictionUpdateGapMs`). An update inside the gap is dropped without an
+  acknowledgement and without a write to disk; the device sends it again.
+- The book keeps at most 4096 connections, members and endpoints
+  (`restrictionMaxEntries`). A new connection past that is refused; one that
+  is already kept can still change its lists. A saved book that claims more
+  is refused when it is read back.
 - Nothing here removes a device from the relay. Restrictions decide who may
   talk to whom; who may connect at all is decided by the handshake and its pins.

@@ -39,5 +39,7 @@ when restrictionAllowedBuilt:
     if allowed.len > restrictionMaxRules:
       return "an allowed list holds at most " & $restrictionMaxRules & " addresses"
     i = ensureReach(B, identity)
+    if i < 0:
+      return "the book holds at most " & $restrictionMaxEntries & " connections"
     B.reach[i].rules.allowed = allowed
     result = ""

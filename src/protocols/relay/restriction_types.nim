@@ -52,6 +52,9 @@ const
   restrictionMaxEntries*: int = 4096
     ## Most members, or endpoints, or reach entries one book keeps.
   restrictionMaxIdentity*: int = 255
+  restrictionUpdateGapMs*: uint32 = 1000'u32
+    ## The shortest time between two updates one neighbour may make. Each
+    ## update is a write to the keeper's disk, so it has a rate.
   restrictionAnswerDefaultMs*: uint32 = 1000'u32
     ## Default gap between two answers to one restricted neighbour. 0 means
     ## never answer. See RelayNode.restrictionAnswerMs.
@@ -139,7 +142,11 @@ proc findReach*(B: RestrictionBook, identity: string): int {.role: parser.} =
 
 proc ensureReach*(B: var RestrictionBook, identity: string): int {.role: actor.} =
   ## B/identity: the index of that connection's entry, made empty when new.
+  ## -1 when the book already keeps `restrictionMaxEntries` connections: a
+  ## relay that admits strangers must not grow one entry per stranger for ever.
   result = findReach(B, identity)
+  if result < 0 and B.reach.len >= restrictionMaxEntries:
+    return -1
   if result < 0:
     B.reach.add ReachEntry(identity: identity)
     result = B.reach.len - 1

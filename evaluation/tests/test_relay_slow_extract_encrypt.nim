@@ -61,6 +61,12 @@ suite "the slow envelope":
     bad[5] = 0x00'u8
     check decodeSlowEnvelope(bad).err ==
       "relay envelope refusal names no reason"
+    ## A refusal is exactly its 22 bytes; one with bytes behind it is refused,
+    ## as the ART frame's refusal is.
+    bad = good
+    bad.add(0x55'u8)
+    check decodeSlowEnvelope(bad).err ==
+      "relay envelope refusal carries a payload"
 
 suite "relaySlowExtractEncrypt, one hop":
   setup:

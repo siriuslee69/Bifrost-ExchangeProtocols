@@ -80,6 +80,9 @@ const
   ameRouteDefaultHops* = 6'u8
     ## Routers a forward may still pass when a client sends it. Each router
     ## takes one; at zero it is refused.
+  ameRouteMaxHops* = 16'u8
+    ## The most hops a relay honours. The hop byte is written by the sender,
+    ## so a frame that claims more (up to 255) is treated as having this many.
 
 proc isAmeRouteFrame*(A: openArray[uint8]): bool {.role: parser,
     tag: "appApi".} =

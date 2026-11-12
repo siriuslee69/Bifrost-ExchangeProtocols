@@ -36,6 +36,9 @@ const
     ## longest stream or sender name, in bytes
   dumpDefaultMaxRecords* = 4096
   dumpDefaultMaxBytes* = 64 * 1024 * 1024
+  dumpDefaultMaxStreams* = 65536
+    ## streams the dump remembers at once. Each costs a few dozen bytes for as
+    ## long as it is remembered, and a feeder may name as many as it likes.
   dumpMaxAhead* = 4096
     ## settled numbers remembered above a gap, per stream
 
@@ -91,6 +94,8 @@ type
     ## The whole dump of one program.
     maxRecords*: int
     maxBytes*: int
+    maxStreams*: int
+      ## most streams remembered; a record for one more is answered doFull
     bytes*: int
       ## bytes of every record not settled yet
     count*: int

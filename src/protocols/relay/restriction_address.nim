@@ -15,6 +15,15 @@
 ## so an IPv4 entry carries no unused IPv6 bytes. A list of them is a seq of
 ## fixed-width records, the smallest form that stays a plain sequence.
 ##
+## ONE FORM PER ADDRESS. A socket that listens on "::" for both families
+## reports an IPv4 sender as "::ffff:203.0.113.9" (an IPv4 address written
+## inside an IPv6 one). Left alone, that sender would be family 6 and a rule
+## "203.0.113.9" would be family 4: the same machine, and no match -- a
+## reject list that rejects nobody. So every address is folded on the way in:
+##
+##   ::ffff:203.0.113.9   ->  family 4, (203, 0, 113, 9)     `foldMapped`
+##   203.0.113.9          ->  family 4, (203, 0, 113, 9)
+##
 ## Def. 1: a text address is written as dotted quad for IPv4 and as the usual
 ##   colon form for IPv6, with "::" for one run of zero groups. An IPv6 address
 ##   with an IPv4 tail (::ffff:10.0.0.1) is accepted.
@@ -141,6 +150,22 @@ proc parseIpv6*(s: string): tuple[ok: bool, ip: Ipv6] {.role: sanitizer.} =
     k = k + 1
   result.ok = true
 
+proc foldMapped*(a: SourceAddr): SourceAddr {.role: sanitizer.} =
+  ## a: any address. An IPv6 address that only wraps an IPv4 one
+  ## (ten zero bytes, ff ff, then the four IPv4 bytes) comes back as that IPv4
+  ## address; everything else comes back unchanged.
+  var
+    i: int = 0
+  result = a
+  if a.family != 6'u8 or a.v6[10] != 0xFF'u8 or a.v6[11] != 0xFF'u8:
+    return
+  while i < 10:
+    if a.v6[i] != 0'u8:
+      return
+    i = i + 1
+  result = SourceAddr(family: 4, port: a.port,
+    v4: (a.v6[12], a.v6[13], a.v6[14], a.v6[15]))
+
 proc sourceOf*(host: string, port: uint16): tuple[ok: bool, src: SourceAddr,
     err: string] {.role: sanitizer.} =
   ## host/port: a rule or neighbour address as text. The text "*" is any host.
@@ -154,7 +179,7 @@ proc sourceOf*(host: string, port: uint16): tuple[ok: bool, src: SourceAddr,
     if not v6.ok:
       result.err = "not an IPv6 address: " & host
       return
-    result.src = SourceAddr(family: 6, port: port, v6: v6.ip)
+    result.src = foldMapped(SourceAddr(family: 6, port: port, v6: v6.ip))
     result.ok = true
     return
   var v4 = parseIpv4(host)
@@ -163,6 +188,19 @@ proc sourceOf*(host: string, port: uint16): tuple[ok: bool, src: SourceAddr,
     return
   result.src = SourceAddr(family: 4, port: port, v4: v4.ip)
   result.ok = true
+
+proc sameHost*(a, b: string): bool {.role: parser.} =
+  ## a/b: two hosts as text. True when they are the same text, or the same
+  ## address spelled two ways ("203.0.113.9" and "::ffff:203.0.113.9").
+  ## Equal text is answered at once; the addresses are only read when it differs.
+  var
+    x: tuple[ok: bool, src: SourceAddr, err: string] = (false, SourceAddr(family: 0), "")
+    y: tuple[ok: bool, src: SourceAddr, err: string] = (false, SourceAddr(family: 0), "")
+  if a == b:
+    return true
+  x = sourceOf(a, 0'u16)
+  y = sourceOf(b, 0'u16)
+  result = x.ok and y.ok and x.src.family != 0'u8 and x.src == y.src
 
 proc sourceOfAddress*(a: transport_types.UdpAddress): tuple[ok: bool,
     src: SourceAddr, err: string] {.role: sanitizer.} =

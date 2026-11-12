@@ -57,7 +57,7 @@ suite "UDP forward":
       client: transport_types.UdpAddress = ep("203.0.113.7", 40000'u16)
       out1: UdpForwardStep = fromClient(F, client, @[byte 9], 1000'u64)
       back: UdpForwardStep = default(UdpForwardStep)
-    back = fromNas(F, out1.send[0].tag, @[byte 8, 8], 1100'u64)
+    back = fromNas(F, F.nas, out1.send[0].tag, @[byte 8, 8], 1100'u64)
     check back.event == ufeForwarded
     check back.send.len == 1
     check back.send[0].peer == client
@@ -92,7 +92,7 @@ suite "UDP forward":
       late: UdpForwardStep = default(UdpForwardStep)
     discard tickRelaySuperFastUdp(F, 100_000'u64)
     check udpForwardClients(F) == 0
-    late = fromNas(F, tag, @[byte 5], 100_100'u64)
+    late = fromNas(F, F.nas, tag, @[byte 5], 100_100'u64)
     check late.event == ufeDropped
     check late.send.len == 0
     check late.err == "UDP forward answer has no client"
@@ -143,7 +143,7 @@ suite "UDP forward":
     ## The NAS has to have been heard from at least once before it can count
     ## as away. A relay starting up beside a booting NAS would otherwise
     ## buffer everything until the first reply.
-    discard fromNas(F, 0'u32, @[byte 1], 1000'u64)
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 1000'u64)
     step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 7], 1000'u64)
     check step.event == ufeForwarded
     step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 7], 200_000'u64)
@@ -160,7 +160,7 @@ suite "UDP forward":
       F: RelaySuperFastUdp = relay(initUdpForwardConfig(bufferDatagrams = 4))
       step: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
-    discard fromNas(F, 0'u32, @[byte 1], 1000'u64)
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 1000'u64)
     while i < 4:
       step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte uint8(i)],
         200_000'u64)
@@ -181,7 +181,7 @@ suite "UDP forward":
       F: RelaySuperFastUdp = relay()
       back: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
-    discard fromNas(F, 0'u32, @[byte 1], 1000'u64)
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 1000'u64)
     while i < 3:
       discard fromClient(F, ep("203.0.113.7", 40000'u16), @[byte uint8(i)],
         200_000'u64)
@@ -265,3 +265,112 @@ suite "UDP forward":
         nasSilentMs = 10_000'u64)
     expect ValueError:
       discard initRelaySuperFastUdp(ep("", 0'u16))
+
+suite "UDP forward, hardening":
+  # {.testKind: tkRegression, covers: "fromNas", pins: "anyone could speak on a client's socket toward the NAS".}
+  test "a datagram on a client's socket that is not from the NAS goes nowhere":
+    var
+      F: RelaySuperFastUdp = relay()
+      out1: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
+        @[byte 9], 1000'u64)
+      back: UdpForwardStep = fromNas(F, ep("198.51.100.66", 9000'u16),
+        out1.send[0].tag, @[byte 6, 6, 6], 1100'u64)
+    check back.event == ufeDropped
+    check back.send.len == 0
+    check F.foreign == 1'u64
+    ## And it is not a sign of life: the NAS has still never been heard.
+    check not F.nasStarted
+    ## The same host from another port is not the NAS either.
+    back = fromNas(F, ep("10.0.0.2", 9001'u16), out1.send[0].tag, @[byte 6],
+      1200'u64)
+    check back.event == ufeDropped
+    check F.foreign == 2'u64
+
+  # {.testKind: tkRegression, covers: "drainBuffer|noteNasSeen", pins: "held datagrams left for the NAS's old address".}
+  test "what was held leaves for where the NAS is NOW":
+    var
+      F: RelaySuperFastUdp = relay()
+      moved: transport_types.UdpAddress = ep("10.0.0.99", 9100'u16)
+      back: UdpForwardStep = default(UdpForwardStep)
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 1000'u64)
+    discard fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 1], 200_000'u64)
+    discard fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 2], 200_001'u64)
+    check udpForwardBuffered(F) == 2
+    back = noteNasSeen(F, moved, 200_100'u64)
+    check back.event == ufeNasChanged
+    check back.send.len == 2
+    check back.send[0].peer == moved
+    check back.send[1].peer == moved
+
+  # {.testKind: tkRegression, covers: "tickRelaySuperFastUdp", pins: "a VIP datagram held alone was never let go by a tick".}
+  test "a tick lets VIP datagrams go, also when nothing else is held":
+    var
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(
+        nasKeepaliveMs = 1000'u64, nasSilentMs = 2000'u64))
+      step: UdpForwardStep = default(UdpForwardStep)
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 0'u64)
+    step = fromClient(F, ep("198.51.100.1", 40000'u16), @[byte 7], 10_000'u64)
+    check step.event == ufeBuffered
+    check udpForwardBuffered(F) == 1
+    ## The NAS answers some client: it is back. The next tick empties the box.
+    discard fromNas(F, F.nas, 0'u32, @[byte 1], 10_500'u64)
+    step = tickRelaySuperFastUdp(F, 10_600'u64)
+    check step.send.len == 1
+    check step.send[0].payload == @[byte 7]
+    check udpForwardBuffered(F) == 0
+
+  # {.testKind: tkEdgeCase, covers: "hostIsFull|slotForClient".}
+  test "one host cannot take every place by opening many ports":
+    var
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(maxClients = 8,
+        maxClientsPerHost = 2))
+      step: UdpForwardStep = default(UdpForwardStep)
+    check fromClient(F, ep("203.0.113.7", 4000'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    check fromClient(F, ep("203.0.113.7", 4001'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    step = fromClient(F, ep("203.0.113.7", 4002'u16), @[byte 1], 1000'u64)
+    check step.event == ufeDropped
+    check udpForwardClients(F) == 2
+    ## The ports it already holds go on working, and so does everyone else.
+    check fromClient(F, ep("203.0.113.7", 4000'u16), @[byte 2],
+      1001'u64).event == ufeForwarded
+    check fromClient(F, ep("198.51.100.4", 4000'u16), @[byte 1],
+      1001'u64).event == ufeForwarded
+    ## 0 turns the limit off; a negative one is refused.
+    F = relay(initUdpForwardConfig(maxClients = 8, maxClientsPerHost = 0))
+    check fromClient(F, ep("203.0.113.7", 4000'u16), @[byte 1], 1'u64).event ==
+      ufeForwarded
+    check fromClient(F, ep("203.0.113.7", 4001'u16), @[byte 1], 1'u64).event ==
+      ufeForwarded
+    check fromClient(F, ep("203.0.113.7", 4002'u16), @[byte 1], 1'u64).event ==
+      ufeForwarded
+    expect ValueError:
+      discard initUdpForwardConfig(maxClientsPerHost = -1)
+
+  # {.testKind: tkEdgeCase, covers: "sameHost|fromNas|isVip".}
+  test "the NAS and a VIP are known by address, however the socket spells it":
+    ## A socket listening for IPv4 and IPv6 at once writes 10.0.0.2 as
+    ## ::ffff:10.0.0.2. That is still the NAS, and still the VIP.
+    var
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(
+        nasKeepaliveMs = 1000'u64, nasSilentMs = 2000'u64))
+      out1: UdpForwardStep = fromClient(F, ep("203.0.113.7", 40000'u16),
+        @[byte 9], 1000'u64)
+      back: UdpForwardStep = fromNas(F, ep("::ffff:10.0.0.2", 9000'u16),
+        out1.send[0].tag, @[byte 8], 1100'u64)
+    check back.event == ufeForwarded
+    check F.foreign == 0'u64
+    ## Told the same address in its other spelling, the NAS has not moved.
+    check noteNasSeen(F, ep("::ffff:10.0.0.2", 9000'u16), 1200'u64).event ==
+      ufeNone
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    back = fromClient(F, ep("::ffff:198.51.100.1", 40000'u16), @[byte 7],
+      20_000'u64)
+    check back.event == ufeBuffered
+    check tickRelaySuperFastUdp(F, 20_001'u64).send.len == 0
+    discard fromNas(F, F.nas, out1.send[0].tag, @[byte 1], 20_100'u64)
+    back = tickRelaySuperFastUdp(F, 20_200'u64)
+    check back.send.len == 1
+    check back.send[0].payload == @[byte 7]

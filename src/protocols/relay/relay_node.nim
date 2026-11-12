@@ -156,6 +156,10 @@ type
       ## said it will not follow (relay_brake.nim has the bits)
     brakeMs*: uint32
       ## when the order was last sent; it is repeated to keep it alive
+    updated*: bool
+      ## true once this neighbour changed its part of the restriction book
+    updatedMs*: uint32
+      ## when; its next change waits restrictionUpdateGapMs
 
   ## RelayTarget: one directory line (Def. 1).
   ## via: 0 for a target that connects to THIS node itself, otherwise the
@@ -214,6 +218,9 @@ type
       ## frame inside the gap is dropped without an answer. 0 never answers.
     bookSave: RelayBookSave
       ## Where the book is kept. nil keeps it in memory only.
+    groupClaimers: seq[string]
+      ## rmGroup: the identities that may claim members (the servers). Empty
+      ## lets every neighbour claim. See `setRelayGroupClaimers`.
     overflow: OverflowRing[RelaySend]
       ## Frames that could not leave this turn (the budget was spent), oldest
       ## first; a fixed-width ring (overflow_ring.nim).
@@ -430,15 +437,17 @@ proc findLiveReturn(R: RelayNode, origin: uint64, nowMs: uint32): int {.
 proc mayReach(R: RelayNode, slot: int, target: uint64,
     nowMs: uint32): bool {.role: parser.} =
   ## R/slot/target/nowMs: Def. 3, for the neighbour in `slot`.
+  ## The neighbour is read in place: a copy would carry its link keys along.
   var
-    p: RelayNeighbour = R.neighbours[slot]
     local: int = findRelayNeighbour(R, target)
     back: int = findLiveReturn(R, target, nowMs)
-  if p.router or lineVisible(R, target, p.identity):
+  if R.neighbours[slot].router or
+      lineVisible(R, target, R.neighbours[slot].identity):
     return true
-  if local >= 0 and lineVisible(R, p.id, R.neighbours[local].identity):
+  if local >= 0 and lineVisible(R, R.neighbours[slot].id,
+      R.neighbours[local].identity):
     return true
-  result = back >= 0 and R.returns[back].reached == p.id
+  result = back >= 0 and R.returns[back].reached == R.neighbours[slot].id
 
 proc nextRelaySlot(R: RelayNode, target: uint64, nowMs: uint32): int {.
     role: parser.} =
@@ -455,22 +464,35 @@ proc nextRelaySlot(R: RelayNode, target: uint64, nowMs: uint32): int {.
   if back >= 0:
     return findRelayNeighbour(R, R.returns[back].via)
 
-proc oldestReturn(R: RelayNode): int {.role: parser.} =
-  ## R: index of the return note refreshed longest ago.
+proc oldestReturn(R: RelayNode, nowMs: uint32): int {.role: parser.} =
+  ## R/nowMs: index of the return note refreshed longest ago. Age is counted
+  ## back from now, so it stays right when the 32-bit clock starts again at 0
+  ## (every 49.7 days).
   var
     i: int = 1
   result = 0
   while i < R.returns.len:
-    if R.returns[i].lastMs < R.returns[result].lastMs:
+    if nowMs - R.returns[i].lastMs > nowMs - R.returns[result].lastMs:
       result = i
+    i = i + 1
+
+proc sameOriginReturn(R: RelayNode, origin: uint64): int {.role: parser.} =
+  ## R/origin: index of the note for that origin, live or expired, or -1.
+  var
+    i: int = 0
+  result = -1
+  while i < R.returns.len:
+    if R.returns[i].origin == origin:
+      return i
     i = i + 1
 
 proc noteReturn(R: var RelayNode, origin, via, reached: uint64,
     nowMs: uint32) {.role: actor.} =
   ## R: node that remembers "origin wrote from behind relay `via` to
-  ## `reached`".
+  ## `reached`". One note per origin: an expired note of the same origin is
+  ## written over, never left beside the new one.
   var
-    i: int = findLiveReturn(R, origin, nowMs)
+    i: int = sameOriginReturn(R, origin)
     note: RelayReturn = RelayReturn(origin: origin, via: via,
       reached: reached, lastMs: nowMs)
   if i >= 0:
@@ -479,7 +501,7 @@ proc noteReturn(R: var RelayNode, origin, via, reached: uint64,
   if R.returns.len < relayReturnCapacity:
     R.returns.add(note)
     return
-  R.returns[oldestReturn(R)] = note
+  R.returns[oldestReturn(R, nowMs)] = note
 
 ## ------------------------- sealing per kind -------------------------
 
@@ -657,11 +679,41 @@ proc attachRestrictionBook*(R: var RelayNode, load: RelayBookLoad,
     R.book = got.book
   R.bookSave = save
 
+proc setRelayGroupClaimers*(R: var RelayNode,
+    identities: openArray[string]) {.role: configurator, tag: "appApi".} =
+  ## R/identities: in rmGroup, the only neighbours whose claim "these devices
+  ## are mine" is believed -- the servers. Everyone else's group update is
+  ## dropped. An empty list (the start value) believes every neighbour:
+  ##
+  ##   claimers = []        mallory claims "alice"  -> mallory may reach alice,
+  ##                        and alice's real server is refused afterwards
+  ##   claimers = ["nas"]   mallory claims "alice"  -> dropped
+  ##
+  ## So a relay that admits neighbours the operator does not know by name
+  ## should always name its servers here.
+  R.groupClaimers = @identities
+
+proc updateRefusal(R: var RelayNode, slot: int, u: RestrictionUpdate,
+    nowMs: uint32): string {.role: actor.} =
+  ## R/slot/u/nowMs: why this neighbour's update is not even looked at, or "".
+  ## Two reasons: it changed its part less than restrictionUpdateGapMs ago
+  ## (each change is a write to disk), or it claims group members without
+  ## being one of the named claimers. An accepted update starts the gap.
+  if R.neighbours[slot].updated and
+      nowMs - R.neighbours[slot].updatedMs < restrictionUpdateGapMs:
+    return "restriction update came too soon after the last one"
+  if u.op == restrictionOpGroup and R.groupClaimers.len > 0 and
+      R.neighbours[slot].identity notin R.groupClaimers:
+    return "this neighbour may not claim group members"
+  R.neighbours[slot].updated = true
+  R.neighbours[slot].updatedMs = nowMs
+
 proc feedRelayRestriction(R: var RelayNode, slot: int,
-    frame: openArray[uint8]): RelayStep {.role: orchestrator.} =
+    frame: openArray[uint8], nowMs: uint32): RelayStep {.role: orchestrator.} =
   ## R/slot/frame: a neighbour's restriction update (kind 0x17) on its own link.
   ## It is applied to that neighbour's part of the book and acknowledged.
-  ## Nothing reaches the application.
+  ## Nothing reaches the application. nowMs: the caller's clock (the gap
+  ## between two updates of one neighbour is counted by it).
   var
     u: RestrictionUpdate = RestrictionUpdate()
     e: string = ""
@@ -671,7 +723,9 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     return
   u = openRestrictionFrame(R.neighbours[slot].session,
     R.neighbours[slot].carrier, frame)
-  if not u.ok:
+  if u.ok:
+    u.err = updateRefusal(R, slot, u, nowMs)
+  if not u.ok or u.err.len > 0:
     R.dropped = R.dropped + 1'u32
     result.event = reDropped
     result.err = u.err
@@ -701,12 +755,12 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     result.err = exc.msg
 
 proc feedRelayControl*(R: var RelayNode, slot: int,
-    frame: openArray[uint8]): RelayStep {.role: orchestrator.} =
+    frame: openArray[uint8], nowMs: uint32): RelayStep {.role: orchestrator.} =
   ## R/slot/frame: a control frame from a neighbour: a directory question
   ## (kind 0x14) or a restriction update (kind 0x17). Told apart by the clear
-  ## AME header. Both feed procs call this on their own.
+  ## AME header. Both feed procs call this on their own. nowMs: their clock.
   if isRestrictionFrame(frame):
-    return feedRelayRestriction(R, slot, frame)
+    return feedRelayRestriction(R, slot, frame, nowMs)
   return feedRelayAsk(R, slot, frame)
 
 ## ---------------------------- forwarding ----------------------------
@@ -784,6 +838,7 @@ proc handleForward(R: var RelayNode, slot: int, nowMs: uint32,
     refuseTo(R, slot, step.frame.target, step.frame.origin, arrHopsSpent,
       step)
     return
+  step.frame.hopsLeft = min(step.frame.hopsLeft, ameRouteMaxHops)
   if not mayReach(R, slot, step.frame.target, nowMs) or
       not inspectAllows(R, slot, step):
     refuseTo(R, slot, step.frame.target, step.frame.origin, arrNoRoute, step)

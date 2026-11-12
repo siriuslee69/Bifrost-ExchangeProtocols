@@ -72,7 +72,7 @@ suite "UDP forward brake":
     first = fromClient(F, client(1), @[byte 1], 1000'u64)
     check first.event == ufeForwarded
     check fromClient(F, client(1), @[byte 1], 1001'u64).event == ufeDropped
-    back = fromNas(F, first.send[0].tag, @[byte 2], 1002'u64)
+    back = fromNas(F, F.nas, first.send[0].tag, @[byte 2], 1002'u64)
     check back.event == ufeForwarded
 
   # {.testKind: tkEdgeCase, covers: "initUdpForwardConfig".}

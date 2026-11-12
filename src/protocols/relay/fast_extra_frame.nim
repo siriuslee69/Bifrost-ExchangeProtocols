@@ -70,7 +70,7 @@ proc feedRelayFastExtraFrame*(R: var RelayFastExtraFrame, slot: int,
   if not isAmeRouteFrame(frame):
     if isDacControlFrame(frame):
       return feedRelayBrake(R, slot, frame)
-    return feedRelayControl(R, slot, frame)
+    return feedRelayControl(R, slot, frame, nowMs)
   result = feedOpenedRelayFrame(R, slot,
     openAmeRouteFrame(R.neighbours[slot].session, frame), nowMs)
 

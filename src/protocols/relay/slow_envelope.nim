@@ -85,6 +85,8 @@ proc decodeSlowEnvelope*(A: openArray[uint8]): AmeRouteFrame {.role: parser.} =
   if result.kind == arkForward:
     result.hopsLeft = A[5]
     result.payload = @(A.toOpenArray(relaySlowOverhead, A.high))
+  if result.kind == arkRefuse and A.len != relaySlowOverhead:
+    return AmeRouteFrame(err: "relay envelope refusal carries a payload")
   if result.kind == arkRefuse and A[5] in {1'u8 .. 3'u8}:
     result.refusal = AmeRouteRefusal(A[5])
   if result.kind == arkRefuse and result.refusal == arrNone:

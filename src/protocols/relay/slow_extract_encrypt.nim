@@ -78,7 +78,7 @@ proc feedRelaySlowExtractEncrypt*(R: var RelaySlowExtractEncrypt, slot: int,
   if isDacControlFrame(frame):
     return feedRelayBrake(R, slot, frame)
   if isAmeRouteControl(frame):
-    return feedRelayControl(R, slot, frame)
+    return feedRelayControl(R, slot, frame, nowMs)
   result = feedOpenedRelayFrame(R, slot, openSlowFrame(
     R.neighbours[slot].session, R.neighbours[slot].carrier, frame), nowMs)
 

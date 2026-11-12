@@ -137,3 +137,22 @@ suite "matching":
     check not sourceMatches(v4, v6)
     check not sourceMatches(v6, v4)
     check sourceMatches(anySource(), v6)
+
+suite "one form per address":
+  # {.testKind: tkRegression, covers: "foldMapped|sourceOf|sourceMatches", pins: "an IPv4 sender seen through an IPv6 socket slipped past an IPv4 rule".}
+  test "an IPv4 address inside an IPv6 one is that IPv4 address":
+    var
+      plain = sourceOf("203.0.113.9", 0'u16)
+      seen = sourceOf("::ffff:203.0.113.9", 40000'u16)
+      real6 = sourceOf("2001:db8::1", 0'u16)
+    check plain.ok and seen.ok and real6.ok
+    check seen.src.family == 4'u8
+    check seen.src.v4 == (203'u8, 0'u8, 113'u8, 9'u8)
+    check seen.src.port == 40000'u16
+    ## The rule an operator writes as IPv4 now names the sender, however the
+    ## socket spells it.
+    check sourceMatches(plain.src, seen.src)
+    ## A real IPv6 address is left alone.
+    check real6.src.family == 6'u8
+    check foldMapped(real6.src) == real6.src
+    check not sourceMatches(plain.src, real6.src)
