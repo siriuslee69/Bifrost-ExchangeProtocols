@@ -68,7 +68,7 @@ proc feedLossReport(R: var AmeDacRelay, slot: int) =
   ## fed straight into the loop so the test does not depend on a live peer
   ## having measured it.
   var
-    stats: DacPathStats
+    stats: DacPathStats = default(DacPathStats)
   stats.lossPpm = 90_000'u32
   stats.rttMs = 400'u16
   stats.jitterMs = 200'u16
@@ -84,7 +84,7 @@ suite "AME DAC relay admission":
       R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 5'u64,
         capacity = 4)
       admitted = admitAmeDacPeer(R, keyA(), P.a, 0'u32)
-      step: AmeDacRelayStep
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
     check admitted.ok
     check admitted.slot >= 0
     check ameDacRelayLive(R) == 1
@@ -133,8 +133,8 @@ suite "AME DAC relay transfer":
       sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 1'u64)
       receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 2'u64)
       payload: ByteSeq = rampBytes(12_000)
-      out1: AmeDacRelayStep
-      step: AmeDacRelayStep
+      out1: AmeDacRelayStep = default(AmeDacRelayStep)
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
       done: bool = false
       i: int = 0
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
@@ -156,9 +156,9 @@ suite "AME DAC relay transfer":
       P = peerSessions()
       sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 1'u64)
       receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 2'u64)
-      out1: AmeDacRelayStep
-      tampered: ByteSeq
-      step: AmeDacRelayStep
+      out1: AmeDacRelayStep = default(AmeDacRelayStep)
+      tampered: ByteSeq = default(ByteSeq)
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
       i: int = 0
       refused: int = 0
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
@@ -179,7 +179,7 @@ suite "AME DAC relay transfer":
     var
       P = peerSessions()
       R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscBadSignal), 3'u64)
-      step: AmeDacRelayStep
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
       i: int = 0
       broke: bool = false
     discard admitAmeDacPeer(R, keyA(), P.b, 0'u32)
@@ -209,7 +209,7 @@ suite "AME DAC relay transfer":
       toReceiver: seq[ByteSeq] = @[]
       toSender: seq[ByteSeq] = @[]
       steps: seq[AmeDacRelayStep] = @[]
-      step: AmeDacRelayStep
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
       nowMs: uint32 = 0'u32
       done: bool = false
       tick: int = 0
@@ -295,7 +295,7 @@ suite "every word DAC has is a word the loop acts on":
     var
       handled: int = 0
       total: int = 0
-      k: DacMessageKind
+      k: DacMessageKind = default(DacMessageKind)
     for k in DacMessageKind:
       total = total + 1
       if dacLinkHandlesKind(k):
@@ -317,9 +317,9 @@ suite "secure package over the relay":
       sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
       receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64)
       plaintext: ByteSeq = rampBytes(9_000)
-      out1: AmeDacRelayStep
-      step: AmeDacRelayStep
-      restored: AmeSecurePackageResult
+      out1: AmeDacRelayStep = default(AmeDacRelayStep)
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
       done: bool = false
       i: int = 0
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
@@ -342,8 +342,8 @@ suite "secure package over the relay":
       P = peerSessions()
       sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
       plaintext: ByteSeq = rampBytes(4_000)
-      relayed: AmeDacRelayStep
-      stored: AmeSecurePackagePlan
+      relayed: AmeDacRelayStep = default(AmeDacRelayStep)
+      stored: AmeSecurePackagePlan = default(AmeSecurePackagePlan)
       relayedBytes: int = 0
       i: int = 0
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
@@ -369,8 +369,8 @@ suite "secure package over the relay":
         plaintext, dacDefaultsFor(dscCleanLan))
       incoming: DacPackageReceiver = initDacPackageReceiver(
         stored.package.manifest)
-      restored: AmeSecurePackageResult
-      wrong: AmeSecurePackageResult
+      restored: AmeSecurePackageResult = default(AmeSecurePackageResult)
+      wrong: AmeSecurePackageResult = default(AmeSecurePackageResult)
       i: int = 0
     while i < stored.package.chunks.len:
       acceptDacPackageChunk(incoming, stored.package.chunks[i])
@@ -388,8 +388,8 @@ suite "secure package over the relay":
   test "an incomplete relay step cannot be opened as a package":
     var
       P = peerSessions()
-      step: AmeDacRelayStep
-      got: AmeSecurePackageResult
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
+      got: AmeSecurePackageResult = default(AmeSecurePackageResult)
     step.kind = adrProgress
     got = openAmeSecurePackageStep(1'u64, step)
     check not got.ok
@@ -403,8 +403,8 @@ suite "DAC path reports move a lane without being asked to":
       sender: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 1'u64)
       receiver: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscCleanLan), 2'u64)
       payload: ByteSeq = rampBytes(9_000)
-      out1: AmeDacRelayStep
-      step: AmeDacRelayStep
+      out1: AmeDacRelayStep = default(AmeDacRelayStep)
+      step: AmeDacRelayStep = default(AmeDacRelayStep)
       replied: int = 0
       i: int = 0
     discard admitAmeDacPeer(sender, keyB(), P.a, 0'u32)
@@ -425,7 +425,7 @@ suite "DAC path reports move a lane without being asked to":
       P = peerSessions()
       R: AmeDacRelay = initAmeDacRelay(dacDefaultsFor(dscSameRoom), 7'u64)
       slot: int = 0
-      before: DacPathLane
+      before: DacPathLane = default(DacPathLane)
     discard admitAmeDacPeer(R, keyA(), P.a, 0'u32)
     slot = ameDacPeerSlot(R, keyA())
     before = R.table.slots[slot].link.defaults.pathLane
