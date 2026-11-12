@@ -55,6 +55,7 @@ import ../level0/bytes
 import ./wire
 import ./seal_open
 import ./epochs
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -150,7 +151,7 @@ proc sealAmePing*(S: var AmeSession, carrier: AmeCarrier,
   var
     body: ByteSeq = @[]
   requireAmeMaySend(S, ampkPing)
-  appendAmeU32(body, number)
+  appendU32Le(body, number)
   result = sealControlFrame(S, ampkPing, carrier, body)
 
 proc sealAmePong(S: var AmeSession, carrier: AmeCarrier,
@@ -158,7 +159,7 @@ proc sealAmePong(S: var AmeSession, carrier: AmeCarrier,
   ## S/carrier/number: the answer to ping `number`.
   var
     body: ByteSeq = @[]
-  appendAmeU32(body, number)
+  appendU32Le(body, number)
   result = sealControlFrame(S, ampkPong, carrier, body)
 
 proc openLivenessBody(S: var AmeSession, frame: openArray[uint8],

@@ -23,7 +23,7 @@ proc dilithiumVariant(a: AmeSignatureAlgorithm):
 proc dilithiumAmeKeypair*(a: AmeSignatureAlgorithm,
     seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: Dilithium slot, and optional fixed randomness.
-  assignAmeSigKeypair(tyr_dilithium.dilithiumTyrKeypair(dilithiumVariant(a),
+  assignAmeKeypair(tyr_dilithium.dilithiumTyrKeypair(dilithiumVariant(a),
     @seed))
 
 proc dilithiumAmeSign*(a: AmeSignatureAlgorithm,

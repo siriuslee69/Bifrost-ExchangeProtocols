@@ -32,6 +32,7 @@ import ../../ame/level1/suites
 import ../types
 import ../level1/keys
 import ../level1/sealed
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -67,7 +68,7 @@ proc appendSizedArchive*(A: var ByteSeq, B: openArray[uint8]) {.role: dataWriter
   ## A/B: B with its u16 length in front.
   if B.len > int(high(uint16)):
     raise newException(ValueError, "archive field is longer than 65535 bytes")
-  appendAmeU16(A, uint16(B.len))
+  appendU16Le(A, uint16(B.len))
   appendAmeBytes(A, B)
 
 proc takeSizedArchive*(A: openArray[uint8], o: var int): ByteSeq {.role: parser.} =
@@ -86,7 +87,7 @@ proc encodeArchiveSpace*(S: ArchiveSpace, meta: openArray[uint8]): ByteSeq {.
     role: dataWriter, tag: "archive|wire".} =
   ## S/meta: Def. 1.
   appendAmeBytes(result, S.secret)
-  appendAmeU16(result, S.epochSize)
+  appendU16Le(result, S.epochSize)
   appendSizedArchive(result, encodeAmeSuiteLayout(S.layout))
   appendSizedArchive(result, encodeAmeMaskTier(S.tier))
   result.add(uint8(ord(S.tagLen)))

@@ -43,6 +43,7 @@
 import ../../types
 import ../../ame/level0/bytes
 import ../types
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -64,8 +65,8 @@ proc encodeArchiveSettings*(S: ArchivePasswordSettings): ByteSeq {.
   if S.userSalt.len != archiveKeyBytes:
     raise newException(ValueError, "archive userSalt must be 32 bytes")
   result.add(archiveRecordVersion)
-  appendAmeU32(result, S.memoryKiB)
-  appendAmeU32(result, S.passes)
+  appendU32Le(result, S.memoryKiB)
+  appendU32Le(result, S.passes)
   result.add(S.parallelism)
   appendAmeBytes(result, S.userSalt)
 
@@ -86,7 +87,7 @@ proc encodeArchiveRecordHeader*(num: uint16, salt: openArray[uint8]): ByteSeq {.
   if salt.len != archiveSaltBytes:
     raise newException(ValueError, "archive salt must be 16 bytes")
   result.add(archiveRecordVersion)
-  appendAmeU16(result, num)
+  appendU16Le(result, num)
   appendAmeBytes(result, salt)
 
 proc archiveRecordNum*(A: openArray[uint8]): uint16 {.role: parser,
@@ -101,10 +102,10 @@ proc archiveRecordNum*(A: openArray[uint8]): uint16 {.role: parser,
 proc encodeArchivePosition*(P: ArchivePosition): ByteSeq {.role: dataWriter,
     tag: "archive|wire", gives: result.len == archivePositionBytes.} =
   ## P: Def. 4.
-  appendAmeU32(result, P.lane)
-  appendAmeU16(result, P.gen)
-  appendAmeU32(result, P.epoch)
-  appendAmeU16(result, P.index)
+  appendU32Le(result, P.lane)
+  appendU16Le(result, P.gen)
+  appendU32Le(result, P.epoch)
+  appendU16Le(result, P.index)
 
 proc decodeArchivePosition*(A: openArray[uint8]): ArchivePosition {.
     role: parser, tag: "archive|wire".} =
@@ -123,10 +124,10 @@ proc encodeArchiveLogHeader*(P: ArchivePosition,
   if salt.len != archiveSaltBytes:
     raise newException(ValueError, "archive salt must be 16 bytes")
   result.add(archiveRecordVersion)
-  appendAmeU16(result, P.gen)
-  appendAmeU32(result, P.lane)
-  appendAmeU32(result, P.epoch)
-  appendAmeU16(result, P.index)
+  appendU16Le(result, P.gen)
+  appendU32Le(result, P.lane)
+  appendU32Le(result, P.epoch)
+  appendU16Le(result, P.index)
   appendAmeBytes(result, salt)
 
 proc decodeArchiveLogRecord*(A: openArray[uint8],

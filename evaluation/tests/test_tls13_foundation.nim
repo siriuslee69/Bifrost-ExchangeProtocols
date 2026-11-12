@@ -11,6 +11,7 @@ import tyr/kems/x25519
 
 import ../../src/protocols/types
 import ../../src/protocols/tls13
+import ../../src/protocols/byte_codec
 
 const
   fixtureCertificate = """-----BEGIN CERTIFICATE-----
@@ -30,9 +31,9 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "record codec supports partial input and one complete record":
     var
-      r: Tls13Record
+      r: Tls13Record = default(Tls13Record)
       A: seq[byte] = @[]
-      d: Tls13RecordResult
+      d: Tls13RecordResult = default(Tls13RecordResult)
     r.contentType = tctHandshake
     r.legacyVersion = tls13LegacyRecordVersion
     r.fragment = @[byte 1, 2, 3]
@@ -47,9 +48,9 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "handshake codec preserves exact transcript bytes":
     var
-      h: Tls13Handshake
+      h: Tls13Handshake = default(Tls13Handshake)
       A: seq[byte] = @[]
-      d: Tls13HandshakeResult
+      d: Tls13HandshakeResult = default(Tls13HandshakeResult)
     h.messageType = thtClientHello
     h.body = @[byte 3, 3, 0, 1]
     A = encodeTls13Handshake(h)
@@ -67,9 +68,9 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "encrypted record roundtrip authenticates header content and padding":
     var
-      W, R: Tls13TrafficKeys
-      record: Tls13Record
-      opened: Tls13OpenResult
+      W, R: Tls13TrafficKeys = default(Tls13TrafficKeys)
+      record: Tls13Record = default(Tls13Record)
+      opened: Tls13OpenResult = default(Tls13OpenResult)
       i: int = 0
     while i < W.key.len:
       W.key[i] = byte(i)
@@ -98,11 +99,11 @@ suite "TLS 1.3 foundation":
       shared: seq[byte] = newSeq[byte](32)
       helloHash: Sha256Digest = sha256Hash([byte 1, 2, 3])
       finishedHash: Sha256Digest = sha256Hash([byte 4, 5, 6])
-      H: Tls13HandshakeSecrets
-      A: Tls13ApplicationSecrets
-      clientKeys, serverKeys: Tls13TrafficKeys
-      finishedKey: Tls13Secret
-      updated: Tls13Secret
+      H: Tls13HandshakeSecrets = default(Tls13HandshakeSecrets)
+      A: Tls13ApplicationSecrets = default(Tls13ApplicationSecrets)
+      clientKeys, serverKeys: Tls13TrafficKeys = default(Tls13TrafficKeys)
+      finishedKey: Tls13Secret = default(Tls13Secret)
+      updated: Tls13Secret = default(Tls13Secret)
       i: int = 0
     while i < shared.len:
       shared[i] = byte(i + 1)
@@ -124,11 +125,11 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "narrow client and server hello codecs preserve required profile":
     var
-      C: Tls13ClientHello
-      S: Tls13ServerHello
+      C: Tls13ClientHello = default(Tls13ClientHello)
+      S: Tls13ServerHello = default(Tls13ServerHello)
       clientBody, serverBody: ByteSeq = @[]
-      clientParsed: Tls13ClientHelloResult
-      serverParsed: Tls13ServerHelloResult
+      clientParsed: Tls13ClientHelloResult = default(Tls13ClientHelloResult)
+      serverParsed: Tls13ServerHelloResult = default(Tls13ServerHelloResult)
       i: int = 0
     C.serverName = "example.com"
     C.alpn = @["http/1.1"]
@@ -157,9 +158,9 @@ suite "TLS 1.3 foundation":
   test "transcript Finished and CertificateVerify are role bound":
     var
       T: Tls13Transcript = initTls13Transcript()
-      H: Sha256Digest
-      traffic: Tls13Secret
-      finished0, finished1: Tls13Secret
+      H: Sha256Digest = default(Sha256Digest)
+      traffic: Tls13Secret = default(Tls13Secret)
+      finished0, finished1: Tls13Secret = default(Tls13Secret)
       kp = ed25519TyrKeypair()
       sig: ByteSeq = @[]
     T.appendTls13Transcript([byte 1, 0, 0, 0])
@@ -167,7 +168,7 @@ suite "TLS 1.3 foundation":
     traffic = initTls13EarlySecret([byte 7, 8, 9])
     finished0 = tls13FinishedVerifyData(traffic, H)
     finished1 = tls13FinishedVerifyData(traffic, H)
-    check constantTimeFinishedEqual(finished0, finished1)
+    check constantTimeEqual(finished0, finished1)
     sig = signTls13CertificateVerify(kp.secretKey, true, H)
     check verifyTls13CertificateVerify(kp.publicKey, sig, true, H)
     check not verifyTls13CertificateVerify(kp.publicKey, sig, false, H)
@@ -178,12 +179,12 @@ suite "TLS 1.3 foundation":
       var
         certPem: PemReadResult = readPemBlock(fixtureCertificate, "CERTIFICATE")
         key = parseEd25519PrivateKeyPem(fixturePrivateKey)
-        keypair: Ed25519Keypair
-        C: Tls13ControlledConfig
-        R: Tls13ControlledResult
-        clientWrite, serverRead, serverWrite, clientRead: Tls13TrafficKeys
-        record: Tls13Record
-        opened: Tls13OpenResult
+        keypair: Ed25519Keypair = default(Ed25519Keypair)
+        C: Tls13ControlledConfig = default(Tls13ControlledConfig)
+        R: Tls13ControlledResult = default(Tls13ControlledResult)
+        clientWrite, serverRead, serverWrite, clientRead: Tls13TrafficKeys = default(Tls13TrafficKeys)
+        record: Tls13Record = default(Tls13Record)
+        opened: Tls13OpenResult = default(Tls13OpenResult)
       check certPem.ok
       check key.ok
       keypair = ed25519TyrKeypairFromSeed(key.seed)
@@ -221,24 +222,24 @@ suite "TLS 1.3 foundation":
       var
         certPem: PemReadResult = readPemBlock(fixtureCertificate, "CERTIFICATE")
         key = parseEd25519PrivateKeyPem(fixturePrivateKey)
-        signingKeypair: Ed25519Keypair
-        clientKeypair: X25519TyrKeypair
-        clientHello: Tls13ClientHello
+        signingKeypair: Ed25519Keypair = default(Ed25519Keypair)
+        clientKeypair: X25519TyrKeypair = default(X25519TyrKeypair)
+        clientHello: Tls13ClientHello = default(Tls13ClientHello)
         clientHelloMessage, clientHelloRecord: ByteSeq = @[]
-        serverConfig: Tls13ServerConfig
-        server: Tls13ServerSession
-        output: Tls13ServerOutput
-        recordResult: Tls13RecordResult
-        handshakeResult: Tls13HandshakeResult
-        serverHelloResult: Tls13ServerHelloResult
+        serverConfig: Tls13ServerConfig = default(Tls13ServerConfig)
+        server: Tls13ServerSession = default(Tls13ServerSession)
+        output: Tls13ServerOutput = default(Tls13ServerOutput)
+        recordResult: Tls13RecordResult = default(Tls13RecordResult)
+        handshakeResult: Tls13HandshakeResult = default(Tls13HandshakeResult)
+        serverHelloResult: Tls13ServerHelloResult = default(Tls13ServerHelloResult)
         transcript: Tls13Transcript = initTls13Transcript()
         shared: ByteSeq = @[]
-        handshakeSecrets: Tls13HandshakeSecrets
-        applicationSecrets: Tls13ApplicationSecrets
-        serverHandshakeKeys, clientHandshakeKeys: Tls13TrafficKeys
-        clientApplicationKeys, serverApplicationKeys: Tls13TrafficKeys
-        opened: Tls13OpenResult
-        transcriptHash: Sha256Digest
+        handshakeSecrets: Tls13HandshakeSecrets = default(Tls13HandshakeSecrets)
+        applicationSecrets: Tls13ApplicationSecrets = default(Tls13ApplicationSecrets)
+        serverHandshakeKeys, clientHandshakeKeys: Tls13TrafficKeys = default(Tls13TrafficKeys)
+        clientApplicationKeys, serverApplicationKeys: Tls13TrafficKeys = default(Tls13TrafficKeys)
+        opened: Tls13OpenResult = default(Tls13OpenResult)
+        transcriptHash: Sha256Digest = default(Sha256Digest)
         clientFinished, wire: ByteSeq = @[]
         events: seq[ByteSeq] = @[]
         i: int = 0
@@ -291,7 +292,7 @@ suite "TLS 1.3 foundation":
         check handshakeResult.ok
         if handshakeResult.message.messageType == thtFinished:
           transcriptHash = transcript.tls13TranscriptHash()
-          check constantTimeFinishedEqual(handshakeResult.message.body,
+          check constantTimeEqual(handshakeResult.message.body,
             tls13FinishedVerifyData(handshakeSecrets.serverHandshakeTraffic,
             transcriptHash))
         transcript.appendTls13Transcript(handshakeResult.message.encoded)
@@ -352,11 +353,11 @@ suite "TLS 1.3 foundation":
         key = parseEd25519PrivateKeyPem(fixturePrivateKey)
         signingKeypair: Ed25519Keypair = ed25519TyrKeypairFromSeed(key.seed)
         otherKeypair: Ed25519Keypair = ed25519TyrKeypair()
-        clientHello: Tls13ClientHello
-        serverConfig: Tls13ServerConfig
-        server: Tls13ServerSession
-        output: Tls13ServerOutput
-        recordResult: Tls13RecordResult
+        clientHello: Tls13ClientHello = default(Tls13ClientHello)
+        serverConfig: Tls13ServerConfig = default(Tls13ServerConfig)
+        server: Tls13ServerSession = default(Tls13ServerSession)
+        output: Tls13ServerOutput = default(Tls13ServerOutput)
+        recordResult: Tls13RecordResult = default(Tls13RecordResult)
         wire: ByteSeq = @[]
       check certPem.ok
       check key.ok
@@ -386,12 +387,12 @@ suite "TLS 1.3 foundation":
       certPem: PemReadResult = readPemBlock(fixtureCertificate, "CERTIFICATE")
       key = parseEd25519PrivateKeyPem(fixturePrivateKey)
       signingKeypair: Ed25519Keypair = ed25519TyrKeypairFromSeed(key.seed)
-      clientConfig: Tls13ClientConfig
-      serverConfig: Tls13ServerConfig
-      client: Tls13ClientSession
-      server: Tls13ServerSession
-      clientOutput: Tls13ClientOutput
-      serverOutput: Tls13ServerOutput
+      clientConfig: Tls13ClientConfig = default(Tls13ClientConfig)
+      serverConfig: Tls13ServerConfig = default(Tls13ServerConfig)
+      client: Tls13ClientSession = default(Tls13ClientSession)
+      server: Tls13ServerSession = default(Tls13ServerSession)
+      clientOutput: Tls13ClientOutput = default(Tls13ClientOutput)
+      serverOutput: Tls13ServerOutput = default(Tls13ServerOutput)
       clientHello, serverFlight, wire: ByteSeq = @[]
       i: int = 0
     check certPem.ok
@@ -486,8 +487,8 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "connection decrypts application data and detects clean shutdown":
     var
-      sender, receiver: Tls13Connection
-      K: Tls13TrafficKeys
+      sender, receiver: Tls13Connection = default(Tls13Connection)
+      K: Tls13TrafficKeys = default(Tls13TrafficKeys)
       wire: ByteSeq = @[]
       E: seq[Tls13Event] = @[]
       i: int = 0
@@ -517,8 +518,8 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "connection decrypts and reassembles protected handshake fragments":
     var
-      sender, receiver: Tls13Connection
-      K: Tls13TrafficKeys
+      sender, receiver: Tls13Connection = default(Tls13Connection)
+      K: Tls13TrafficKeys = default(Tls13TrafficKeys)
       h: ByteSeq = encodeTls13Handshake(Tls13Handshake(
         messageType: thtEncryptedExtensions, body: @[byte 0, 0]))
       wire0, wire1: ByteSeq = @[]
@@ -550,8 +551,8 @@ suite "TLS 1.3 foundation":
   # {.testKind: tkIntegration.}
   test "post-handshake KeyUpdate rotates both traffic directions":
     var
-      sender, receiver: Tls13Connection
-      S: Tls13Secret
+      sender, receiver: Tls13Connection = default(Tls13Connection)
+      S: Tls13Secret = default(Tls13Secret)
       wire: ByteSeq = @[]
       E: seq[Tls13Event] = @[]
       i: int = 0

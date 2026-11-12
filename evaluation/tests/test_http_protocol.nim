@@ -8,11 +8,12 @@
 
 import std/[unittest, strutils]
 import protocols/http
+import ../../src/protocols/byte_codec
 import runePragmas
 
 proc bytesOf(s: string): seq[byte] =
   ## s: text to feed the parser as raw transport bytes.
-  toHttpBytes(s)
+  stringToBytes(s)
 
 proc parseOne(s: string): HttpFeedResult =
   ## s: whole request text to push through a fresh parser in one go.
@@ -133,7 +134,7 @@ suite "http request parsing":
     check not a.complete
     check b.ok
     check b.complete
-    check fromHttpBytes(P.request.body) == "hello world"
+    check bytesToString(P.request.body) == "hello world"
 
   # {.testKind: tkUnit.}
   test "chunked bodies decode across feed boundaries":
@@ -145,7 +146,7 @@ suite "http request parsing":
     check a.ok
     check b.ok
     check b.complete
-    check fromHttpBytes(P.request.body) == "hello world"
+    check bytesToString(P.request.body) == "hello world"
 
   # {.testKind: tkEdgeCase.}
   test "HTTP/1.1 without Host is refused":
@@ -281,20 +282,20 @@ suite "http chunked codec":
     var
       D: ChunkedDecoder = initChunkedDecoder()
       wire: seq[byte] = @[]
-      r: ChunkedFeedResult
-    wire.add(encodeChunk(toHttpBytes("hello ")))
-    wire.add(encodeChunk(toHttpBytes("world")))
+      r: ChunkedFeedResult = default(ChunkedFeedResult)
+    wire.add(encodeChunk(stringToBytes("hello ")))
+    wire.add(encodeChunk(stringToBytes("world")))
     wire.add(encodeLastChunk())
     r = feedChunked(D, wire, 1024)
     check r.ok
     check r.done
-    check fromHttpBytes(r.data) == "hello world"
+    check bytesToString(r.data) == "hello world"
 
   # {.testKind: tkUnit.}
   test "the decoder enforces the size cap mid-stream":
     var
       D: ChunkedDecoder = initChunkedDecoder()
-      r = feedChunked(D, toHttpBytes("10\r\n0123456789abcdef\r\n0\r\n\r\n"), 4)
+      r = feedChunked(D, stringToBytes("10\r\n0123456789abcdef\r\n0\r\n\r\n"), 4)
     check not r.ok
 
 suite "http response writing":
@@ -305,7 +306,7 @@ suite "http response writing":
       head: string = ""
     R.headers.addHeader("Content-Length", "999")
     R.headers.addHeader("Transfer-Encoding", "chunked")
-    head = fromHttpBytes(encodeResponseHead(R, hv11, true, 2, false, false))
+    head = bytesToString(encodeResponseHead(R, hv11, true, 2, false, false))
     check head.contains("Content-Length: 2\r\n")
     check not head.contains("999")
     check not head.contains("Transfer-Encoding")
@@ -313,7 +314,7 @@ suite "http response writing":
   # {.testKind: tkUnit.}
   test "statuses that forbid a body get no Content-Length":
     var
-      head = fromHttpBytes(encodeResponseHead(newHttpResponse(204), hv11,
+      head = bytesToString(encodeResponseHead(newHttpResponse(204), hv11,
         true, 0, false, false))
     check not head.contains("Content-Length")
     check head.startsWith("HTTP/1.1 204 No Content\r\n")
@@ -324,7 +325,7 @@ suite "http response writing":
       R: HttpResponse = textResponse(200, "hi")
       head: string = ""
     R.headers.addHeader("X-Evil", "a\r\nX-Admin: yes")
-    head = fromHttpBytes(encodeResponseHead(R, hv11, true, 2, false, false))
+    head = bytesToString(encodeResponseHead(R, hv11, true, 2, false, false))
     check not head.contains("X-Admin")
 
 suite "http connection state machine":
@@ -335,7 +336,7 @@ suite "http connection state machine":
       first = feedHttpConnection(C, bytesOf(
         "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: y\r\n\r\n"))
       rest: seq[byte] = @[]
-      second: HttpFeedOutcome
+      second: HttpFeedOutcome = default(HttpFeedOutcome)
       whole: seq[byte] = bytesOf(
         "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: y\r\n\r\n")
     check first.events.len == 1
@@ -357,7 +358,7 @@ suite "http connection state machine":
         "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"))
       wire: string = ""
     check o.events[0].kind == hekRequest
-    wire = fromHttpBytes(respondHttpConnection(C, textResponse(200, "bye")))
+    wire = bytesToString(respondHttpConnection(C, textResponse(200, "bye")))
     check wire.contains("Connection: close")
     check C.httpConnectionShouldClose()
 
@@ -393,7 +394,7 @@ suite "http connection state machine":
       C: HttpServerConnection = initHttpServerConnection()
       wire: string = ""
     discard feedHttpConnection(C, bytesOf("HEAD /x HTTP/1.1\r\nHost: x\r\n\r\n"))
-    wire = fromHttpBytes(respondHttpConnection(C, textResponse(200, "body")))
+    wire = bytesToString(respondHttpConnection(C, textResponse(200, "body")))
     check wire.contains("Content-Length: 4")
     check not wire.contains("body")
 
@@ -407,7 +408,7 @@ suite "http connection state machine":
     check o.events.len == 2
     check o.events[0].kind == hekContinue
     check o.events[1].kind == hekRequest
-    check fromHttpBytes(respondHttpInterim(C, o.events[0].response)) ==
+    check bytesToString(respondHttpInterim(C, o.events[0].response)) ==
       "HTTP/1.1 100 Continue\r\n\r\n"
 
   # {.testKind: tkEdgeCase.}
@@ -426,7 +427,7 @@ suite "http connection state machine":
   test "the per-connection request budget retires the connection":
     var
       L: HttpServerLimits = defaultHttpServerLimits()
-      C: HttpServerConnection
+      C: HttpServerConnection = default(HttpServerConnection)
     L.maxRequestsPerConnection = 1
     C = initHttpServerConnection(L)
     discard feedHttpConnection(C, bytesOf("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
@@ -439,12 +440,12 @@ suite "http connection state machine":
       C: HttpServerConnection = initHttpServerConnection()
       wire: string = ""
     discard feedHttpConnection(C, bytesOf("GET /s HTTP/1.1\r\nHost: x\r\n\r\n"))
-    wire = fromHttpBytes(beginHttpStreamResponse(C, newHttpResponse(200)))
+    wire = bytesToString(beginHttpStreamResponse(C, newHttpResponse(200)))
     check wire.contains("Transfer-Encoding: chunked")
     check not wire.contains("Content-Length")
-    wire = fromHttpBytes(streamHttpChunk(C, toHttpBytes("abc")))
+    wire = bytesToString(streamHttpChunk(C, stringToBytes("abc")))
     check wire == "3\r\nabc\r\n"
-    check fromHttpBytes(endHttpStreamResponse(C)) == "0\r\n\r\n"
+    check bytesToString(endHttpStreamResponse(C)) == "0\r\n\r\n"
     check not C.httpConnectionShouldClose()
 
 suite "streaming a body whose size is already known":
@@ -459,7 +460,7 @@ suite "streaming a body whose size is already known":
         "GET /big HTTP/1.1\r\nHost: x\r\n\r\n"))
       head: string = ""
     check fed.events.len == 1
-    head = fromHttpBytes(beginHttpFixedResponse(C, newHttpResponse(200),
+    head = bytesToString(beginHttpFixedResponse(C, newHttpResponse(200),
       1048576'i64))
     check head.contains("HTTP/1.1 200")
     check head.contains("Content-Length: 1048576")

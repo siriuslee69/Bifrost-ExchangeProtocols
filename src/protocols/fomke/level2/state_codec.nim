@@ -11,6 +11,7 @@ import ../types
 import ../level0/xhkdf
 import ../level1/chain
 import ./wire
+import ../../byte_codec
 import runePragmas
 
 const
@@ -132,14 +133,14 @@ proc appendStateField(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: append one bounded length-prefixed byte field.
   if uint64(B.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE state field exceeds its limit")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc appendStateSkipped(A: var ByteSeq, K: FomkeSkippedKey) {.
     role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## A/K: append one skipped message key record.
-  appendAmeU32(A, K.epoch)
-  appendAmeU64(A, K.index)
+  appendU32Le(A, K.epoch)
+  appendU64Le(A, K.index)
   A.add(uint8(ord(K.lane)))
   appendStateField(A, K.keyMaterial)
 
@@ -160,7 +161,7 @@ proc appendStateChain(A: var ByteSeq, C: FomkeChainState) {.
     role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## A/C: append one directional chain key and next index.
   appendStateField(A, C.chainKey)
-  appendAmeU64(A, C.nextIndex)
+  appendU64Le(A, C.nextIndex)
 
 proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
     tag: "appApi|codecBoundary|cryptoBoundary|fomke|write".} =
@@ -175,7 +176,7 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
   result.add(fomkeStateVersion)
   result.add(uint8(ord(S.role)))
   result.add(uint8(ord(S.tagLen)))
-  appendAmeU32(result, S.epoch)
+  appendU32Le(result, S.epoch)
   algorithms = encodeAmeKemAlgorithms(S.algorithms)
   appendStateField(result, algorithms)
   appendStateField(result, encodeAmeSuiteLayout(S.layout))
@@ -183,20 +184,20 @@ proc encodeFomkeState*(S: FomkeState): ByteSeq {.role: dataWriter,
   appendStateChain(result, S.lane1)
   appendStateChain(result, S.lane2)
   appendStateField(result, S.tightKey)
-  appendAmeU32(result, S.reorderWindow)
-  appendAmeU32(result, S.reorderCeiling)
-  appendAmeU32(result, S.orderedRun)
+  appendU32Le(result, S.reorderWindow)
+  appendU32Le(result, S.reorderCeiling)
+  appendU32Le(result, S.orderedRun)
   result.add(uint8(ord(S.kdf.mode)))
-  appendAmeU32(result, S.kdf.rounds)
-  appendAmeU64(result, S.kdf.blockIndex)
-  appendAmeU32(result, S.kdf.memoryBlocks)
+  appendU32Le(result, S.kdf.rounds)
+  appendU64Le(result, S.kdf.blockIndex)
+  appendU32Le(result, S.kdf.memoryBlocks)
   result.add(xhkdfBranchMask(S.kdf.branches))
-  appendAmeU32(result, uint32(S.skipped.len))
+  appendU32Le(result, uint32(S.skipped.len))
   while i < S.skipped.len:
     appendStateSkipped(result, S.skipped[i])
     i = i + 1
-  appendAmeU32(result, S.sendJumps)
-  appendAmeU32(result, S.recvJumps)
+  appendU32Le(result, S.sendJumps)
+  appendU32Le(result, S.recvJumps)
   result.add(if S.pending.active: 1'u8 else: 0'u8)
   if S.pending.active:
     commit = encodeFomkeUpgradeCommit(S.pending.commit)

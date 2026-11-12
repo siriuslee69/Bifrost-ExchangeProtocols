@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ./body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -216,7 +217,7 @@ proc encodeDacAckRange*(a: DacAckRange): ByteSeq {.role: helper.} =
     raise newException(ValueError, "DAC ACK range count exceeds u8")
   if a.gapMap.len > dacAckMaxGapBytes:
     raise newException(ValueError, "DAC ACK gap bitmap exceeds u8")
-  appendDacU32(result, a.ackBase)
+  appendU32Le(result, a.ackBase)
   result.add(uint8(a.ranges.len))
   result.add(uint8(a.gapMap.len))
   result.add(a.commitCount)
@@ -224,8 +225,8 @@ proc encodeDacAckRange*(a: DacAckRange): ByteSeq {.role: helper.} =
     result.add(a.gapMap)
     return
   while i < a.ranges.len:
-    appendDacU32(result, a.ranges[i].startSeq)
-    appendDacU16(result, a.ranges[i].count)
+    appendU32Le(result, a.ranges[i].startSeq)
+    appendU16Le(result, a.ranges[i].count)
     i = i + 1
 
 proc decodeDacAckRange*(A: openArray[uint8]): DacAckRange {.role: parser.} =
@@ -244,13 +245,13 @@ proc decodeDacAckRange*(A: openArray[uint8]): DacAckRange {.role: parser.} =
   if gapBytes > 0:
     if A.len != dacAckRangeHeaderLen + gapBytes:
       raise newException(ValueError, "DAC ACK gap bitmap length mismatch")
-    return initDacAckGapMap(readDacU32(A, 0), A[6],
+    return initDacAckGapMap(readU32Le(A, 0), A[6],
       copyDacSpan(A, dacAckRangeHeaderLen, gapBytes))
   if A.len != dacAckRangeHeaderLen + (rangeCount * dacAckRangeEntryLen):
     raise newException(ValueError, "DAC ACK range body length mismatch")
-  result = initDacAckRange(readDacU32(A, 0), A[6])
+  result = initDacAckRange(readU32Le(A, 0), A[6])
   while i < rangeCount:
-    addDacAckRange(result, initDacAckRangeEntry(readDacU32(A, offset),
-      readDacU16(A, offset + 4)))
+    addDacAckRange(result, initDacAckRangeEntry(readU32Le(A, offset),
+      readU16Le(A, offset + 4)))
     offset = offset + dacAckRangeEntryLen
     i = i + 1

@@ -13,6 +13,7 @@ import ../level0/bytes
 import ./exchange_paths
 import ./secret_stack
 import ./suites
+import ../../byte_codec
 import runePragmas
 
 proc deriveKdfLayer(a: AmeKdfAlgorithm, seed: openArray[byte],
@@ -22,7 +23,7 @@ proc deriveKdfLayer(a: AmeKdfAlgorithm, seed: openArray[byte],
     layerSeed: ByteSeq = @[]
   appendAmeLabel(layerSeed, "AME-KDF-LAYER-v1")
   layerSeed.add(uint8(ord(a)))
-  appendAmeU32(layerSeed, uint32(seed.len))
+  appendU32Le(layerSeed, uint32(seed.len))
   appendAmeBytes(layerSeed, seed)
   result = ameKdfBytes(a, layerSeed, outLen)
   secureClearAmeBytes(layerSeed)
@@ -45,10 +46,10 @@ proc deriveAmeKey*(S: AmeExchangeState, L: AmeSuiteLayout, t: AmeMaskTier,
     raise newException(ValueError, "AME tier selected an unavailable KEM secret")
   layoutBytes = encodeAmeSuiteLayout(L)
   appendAmeLabel(seed, "AME-MASK-TIER-KEY-v2")
-  appendAmeU32(seed, uint32(layoutBytes.len))
+  appendU32Le(seed, uint32(layoutBytes.len))
   appendAmeBytes(seed, layoutBytes)
   appendAmeBytes(seed, encodeAmeMaskTier(t))
-  appendAmeU32(seed, uint32(context.len))
+  appendU32Le(seed, uint32(context.len))
   appendAmeBytes(seed, context)
   appendAmeBytes(seed, buildAmeExchangeSeed(S, t.masks.kem))
   result = newSeq[uint8](outLen)
@@ -85,12 +86,12 @@ proc deriveAmeStorageKey*(L: AmeSuiteLayout, t: AmeMaskTier,
   validateAmeTier(L, t)
   layoutBytes = encodeAmeSuiteLayout(L)
   appendAmeLabel(seed, "AME-STORAGE-KEY-v1")
-  appendAmeU32(seed, uint32(layoutBytes.len))
+  appendU32Le(seed, uint32(layoutBytes.len))
   appendAmeBytes(seed, layoutBytes)
   appendAmeBytes(seed, encodeAmeMaskTier(t))
-  appendAmeU32(seed, uint32(rootKey.len))
+  appendU32Le(seed, uint32(rootKey.len))
   appendAmeBytes(seed, rootKey)
-  appendAmeU32(seed, uint32(context.len))
+  appendU32Le(seed, uint32(context.len))
   appendAmeBytes(seed, context)
   result = newSeq[uint8](outLen)
   while i < int(L.kdfs.length):
@@ -110,7 +111,7 @@ proc deriveAmeLayerKey*(S: AmeExchangeState, L: AmeSuiteLayout,
   var
     C: ByteSeq = @[]
   appendAmeLabel(C, label)
-  appendAmeU32(C, uint32(context.len))
+  appendU32Le(C, uint32(context.len))
   appendAmeBytes(C, context)
   result = deriveAmeKey(S, L, t, outLen, C)
 

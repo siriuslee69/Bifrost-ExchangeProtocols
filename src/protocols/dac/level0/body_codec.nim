@@ -6,29 +6,6 @@ import ../../types
 import ../types
 import runePragmas
 
-proc appendDacU16*(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint16 to append.
-  dst.add(uint8(v and 0xff'u16))
-  dst.add(uint8((v shr 8) and 0xff'u16))
-
-proc appendDacU32*(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint32 to append.
-  dst.add(uint8(v and 0xff'u32))
-  dst.add(uint8((v shr 8) and 0xff'u32))
-  dst.add(uint8((v shr 16) and 0xff'u32))
-  dst.add(uint8((v shr 24) and 0xff'u32))
-
-proc appendDacU64*(dst: var ByteSeq, v: uint64) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint64 to append.
-  var
-    i: int = 0
-  while i < 8:
-    dst.add(uint8((v shr (8 * i)) and 0xff'u64))
-    i = i + 1
-
 proc appendDacBytes*(dst: var ByteSeq, A: openArray[uint8]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## A: byte range to append.
@@ -44,26 +21,6 @@ proc appendDacZeroBytes*(dst: var ByteSeq, count: int) {.role: dataWriter.} =
     raise newException(ValueError, "DAC zero-pad count must not be negative")
   while i < count:
     dst.add(0'u8)
-    i = i + 1
-
-proc readDacU16*(A: openArray[uint8], o: int): uint16 {.role: parser.} =
-  ## A: source bytes.
-  ## o: byte offset.
-  result = uint16(A[o]) or (uint16(A[o + 1]) shl 8)
-
-proc readDacU32*(A: openArray[uint8], o: int): uint32 {.role: parser.} =
-  ## A: source bytes.
-  ## o: byte offset.
-  result = uint32(A[o]) or (uint32(A[o + 1]) shl 8) or
-    (uint32(A[o + 2]) shl 16) or (uint32(A[o + 3]) shl 24)
-
-proc readDacU64*(A: openArray[uint8], o: int): uint64 {.role: parser.} =
-  ## A: source bytes.
-  ## o: byte offset.
-  var
-    i: int = 0
-  while i < 8:
-    result = result or (uint64(A[o + i]) shl (8 * i))
     i = i + 1
 
 proc copyDacSpan*(A: openArray[uint8], offset, count: int): ByteSeq {.role: helper.} =

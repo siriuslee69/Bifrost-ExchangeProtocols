@@ -95,24 +95,6 @@ type
     remote*: UdpAddress
     err*: string
 
-proc bytesToString*(bs: ByteSeq): string {.role: truthBuilder.} =
-  ## bytesToString: build bytes to string.
-  var
-    i: int = 0
-  result = newString(bs.len)
-  while i < bs.len:
-    result[i] = char(bs[i])
-    i.inc
-
-proc stringToBytes*(s: string): ByteSeq {.role: truthBuilder.} =
-  ## stringToBytes: build string to bytes.
-  var
-    i: int = 0
-  result = newSeq[uint8](s.len)
-  while i < s.len:
-    result[i] = uint8(ord(s[i]))
-    i.inc
-
 proc defaultTlsConfig*(): TlsConfig {.role: configurator.} =
   ## defaultTlsConfig: build the default TLS config.
   result.enabled = false

@@ -4,6 +4,7 @@ const body = document.getElementById("message-body");
 const sendButton = document.getElementById("send-button");
 const statusPill = document.getElementById("status-pill");
 const localAddress = document.getElementById("local-address");
+const maxRows = 240; // a peer on the network can send for ever: the oldest rows leave
 let hasMessages = false;
 
 function bridgeFunction() {
@@ -38,6 +39,7 @@ function addMessage(event) {
   content.textContent = event.body;
   row.append(meta, content);
   messages.append(row);
+  while (messages.children.length > maxRows) messages.firstElementChild.remove();
   messages.scrollTop = messages.scrollHeight;
 }
 

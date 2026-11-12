@@ -30,6 +30,7 @@ import ../../fomke/types
 import ../../fomke/level1/chain
 import ../../config
 import ../../dac/types
+import ../../byte_codec
 import runePragmas
 
 const
@@ -262,10 +263,10 @@ proc ameEpochKeyContext*(E: AmeEpochKeySet, sessionId: uint64,
   if E.epochId == 0'u32 or sessionId == 0'u64:
     raise newException(ValueError, "AME traffic key context is incomplete")
   appendAmeLabel(result, "AME-TRAFFIC-CONTEXT-v1")
-  appendAmeU64(result, sessionId)
-  appendAmeU32(result, E.epochId)
+  appendU64Le(result, sessionId)
+  appendU32Le(result, E.epochId)
   result.add(uint8(ord(direction)))
-  appendAmeU32(result, uint32(E.transcriptSalt.len))
+  appendU32Le(result, uint32(E.transcriptSalt.len))
   appendAmeBytes(result, E.transcriptSalt)
 
 ## ╭⟢ the message ratchet
@@ -358,24 +359,10 @@ proc ameFomkeSendCacheNeedsRefill*(S: AmeSession): bool {.role: parser,
   result = S.fomkePregenerationEnabled and
     not S.fomke.pending.active and remaining <= threshold
 
-proc clearSignatureSecretKeys(K: var seq[ByteSeq]) {.
-    role: actor.} =
-  ## K: complete identity signature private-key stack to erase.
-  var
-    i: int = 0
-  while i < K.len:
-    secureClearAmeBytes(K[i])
-    i = i + 1
-  K.setLen(0)
-
 proc clearPendingExchange(P: var AmePendingExchange) {.
     role: actor.} =
   ## P: outgoing exchange whose private keys are cleared.
-  var
-    i: int = 0
-  while i < P.secretKeys.len:
-    secureClearAmeBytes(P.secretKeys[i])
-    i = i + 1
+  clearSecretRows(P.secretKeys)
   P = default(AmePendingExchange)
 
 proc clearEpoch(E: var AmeEpochKeySet) {.role: actor.} =
@@ -389,7 +376,7 @@ proc clearAmeSession*(S: var AmeSession) {.role: actor,
   ## S: current, retiring, pending AME, and FOMKE secrets to erase.
   clearEpoch(S.auth.current)
   clearEpoch(S.auth.retiring)
-  clearSignatureSecretKeys(S.auth.localSignatureSecretKeys)
+  clearSecretRows(S.auth.localSignatureSecretKeys)
   S.auth.peerSignaturePublicKeys.setLen(0)
   clearPendingExchange(S.pendingExchange)
   clearEpoch(S.pendingIncoming.candidate)
@@ -538,11 +525,11 @@ proc transitionTranscriptSalt(E: AmeEpochKeySet, o: AmeExchangeOffer,
   var
     transcript: ByteSeq = @[]
   appendAmeLabel(transcript, "AME-EPOCH-TRANSITION-v1")
-  appendAmeU32(transcript, uint32(E.transcriptSalt.len))
+  appendU32Le(transcript, uint32(E.transcriptSalt.len))
   appendAmeBytes(transcript, E.transcriptSalt)
-  appendAmeU32(transcript, uint32(encodeAmeExchangeOffer(o).len))
+  appendU32Le(transcript, uint32(encodeAmeExchangeOffer(o).len))
   appendAmeBytes(transcript, encodeAmeExchangeOffer(o))
-  appendAmeU32(transcript, uint32(encodeAmeExchangeReply(r).len))
+  appendU32Le(transcript, uint32(encodeAmeExchangeReply(r).len))
   appendAmeBytes(transcript, encodeAmeExchangeReply(r))
   result = hashAmeTier(E.layout, r.request.targetTier, transcript, 32)
 

@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -30,15 +31,15 @@ proc initDacPackageChunk*(packageId: uint64, groupId: uint32,
 
 proc encodeDacPackageChunk*(c: DacPackageChunk): ByteSeq {.role: helper.} =
   ## c: package chunk body to encode.
-  appendDacU64(result, c.packageId)
-  appendDacU32(result, c.groupId)
-  appendDacU16(result, c.chunkId)
-  appendDacU32(result, c.offset)
+  appendU64Le(result, c.packageId)
+  appendU32Le(result, c.groupId)
+  appendU16Le(result, c.chunkId)
+  appendU32Le(result, c.offset)
   appendDacBytes(result, c.payload)
 
 proc decodeDacPackageChunk*(A: openArray[uint8]): DacPackageChunk {.role: parser.} =
   ## A: package chunk body bytes.
   if A.len < dacPackageChunkHeaderLen:
     raise newException(ValueError, "DAC package chunk body too short")
-  result = initDacPackageChunk(readDacU64(A, 0), readDacU32(A, 8),
-    readDacU16(A, 12), readDacU32(A, 14), copyDacSpan(A, 18, A.len - 18))
+  result = initDacPackageChunk(readU64Le(A, 0), readU32Le(A, 8),
+    readU16Le(A, 12), readU32Le(A, 14), copyDacSpan(A, 18, A.len - 18))

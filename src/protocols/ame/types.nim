@@ -655,3 +655,11 @@ type
     total*: uint16
     entries*: seq[AmeRouteEntry]
     err*: string
+
+template assignAmeKeypair*(call: untyped) {.role: helper.} =
+  ## call: a Tyr keypair call whose public/secret pair fills `result`.
+  ## The one template for every KEM and every signature slot: their key-pair
+  ## objects both hold `publicKey` and `secretKey`.
+  var k = call
+  result.publicKey = k.publicKey
+  result.secretKey = k.secretKey

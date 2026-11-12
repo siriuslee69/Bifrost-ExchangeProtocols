@@ -28,6 +28,7 @@ import ../types
 import ../level1/keys
 import ../level1/sealed
 import ./account
+import ../../byte_codec
 import runePragmas
 
 const
@@ -49,7 +50,7 @@ proc chunkPlace(fileId: openArray[uint8], index: uint64): ByteSeq {.
     role: helper, inline.} =
   ## fileId/index: Def. 1.
   appendAmeBytes(result, fileId)
-  appendAmeU64(result, index)
+  appendU64Le(result, index)
 
 proc sealArchiveFileChunk*(fileKey, fileId: openArray[uint8], index: uint64,
     plain: openArray[uint8]): ByteSeq {.role: encryptor,
@@ -73,9 +74,9 @@ proc openArchiveFileChunk*(fileKey, fileId: openArray[uint8], index: uint64,
 proc encodeManifest(M: ArchiveFileManifest): ByteSeq {.role: dataWriter.} =
   ## M: Def. 2.
   result.add(archiveRecordVersion)
-  appendAmeU64(result, M.size)
-  appendAmeU32(result, M.chunkBytes)
-  appendAmeU64(result, M.chunks)
+  appendU64Le(result, M.size)
+  appendU32Le(result, M.chunkBytes)
+  appendU64Le(result, M.chunks)
   appendAmeBytes(result, M.hash)
   appendSizedArchive(result, toBytesArchive(M.name))
 
@@ -86,10 +87,10 @@ proc decodeManifest(A: openArray[uint8]): ArchiveFileManifest {.role: parser.} =
     name: ByteSeq = @[]
   if A.len < o or A[0] != archiveRecordVersion:
     raise newException(ValueError, "archive file manifest is short")
-  result.size = readAmeU64(A, 1)
+  result.size = readU64Le(A, 1)
   result.chunkBytes = uint32(A[9]) or (uint32(A[10]) shl 8) or
     (uint32(A[11]) shl 16) or (uint32(A[12]) shl 24)
-  result.chunks = readAmeU64(A, 13)
+  result.chunks = readU64Le(A, 13)
   result.hash = @(A.toOpenArray(21, o - 1))
   name = takeSizedArchive(A, o)
   result.name = newString(name.len)

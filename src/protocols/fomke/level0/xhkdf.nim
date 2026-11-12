@@ -42,6 +42,7 @@ import ../../ame/level0/bytes
 import ../../ame/level1/exchange_paths
 import ../../ame/level1/symmetric
 import ../types
+import ../../byte_codec
 import runePragmas
 
 when aspGimli in ameSymBuilt:
@@ -132,7 +133,7 @@ proc appendXhkdfField(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: destination and one length-framed byte field.
   if uint64(B.len) > uint64(high(uint32)):
     raise newException(ValueError, "XHKDF input field exceeds u32")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc xhkdfBranchSeed(label: string, material: openArray[uint8],
@@ -140,8 +141,8 @@ proc xhkdfBranchSeed(label: string, material: openArray[uint8],
     tag: "fomke|kdf".} =
   ## label/material/blockIndex/round: the framed input every branch hashes.
   appendAmeLabel(result, label)
-  appendAmeU64(result, blockIndex)
-  appendAmeU32(result, round)
+  appendU64Le(result, blockIndex)
+  appendU32Le(result, round)
   appendXhkdfField(result, material)
 
 proc deriveXhkdfBranch(b: XhkdfBranch, key, material: openArray[uint8],
@@ -169,8 +170,8 @@ proc deriveXhkdfBranch(b: XhkdfBranch, key, material: openArray[uint8],
     when aspGimli in ameSymBuilt:
       seed = xhkdfBranchSeed("GB3-GIMLI-v1", material, blockIndex, round)
       appendAmeLabel(nonce, "GB3-GIMLI-NONCE-v1")
-      appendAmeU64(nonce, blockIndex)
-      appendAmeU32(nonce, round)
+      appendU64Le(nonce, blockIndex)
+      appendU32Le(nonce, round)
       result = tyr_gimli.gimliXof(key, nonce, seed, xhkdfBlockBytes)
     else:
       raise newException(ValueError, "XHKDF Gimli branch is not built")
@@ -222,11 +223,11 @@ proc xhkdfMemoryAddress(base: openArray[uint8], pass, position,
     seed: ByteSeq = @[]
     digest: ByteSeq = @[]
   appendAmeLabel(seed, "GB3-MEMORY-ADDRESS-v1")
-  appendAmeU32(seed, pass)
-  appendAmeU32(seed, position)
-  appendAmeU32(seed, count)
-  appendAmeU32(seed, uint32(base.len))
-  appendAmeU32(seed, uint32(base.len))
+  appendU32Le(seed, pass)
+  appendU32Le(seed, position)
+  appendU32Le(seed, count)
+  appendU32Le(seed, uint32(base.len))
+  appendU32Le(seed, uint32(base.len))
   digest = tyr_blake3.blake3Hash(seed, 8)
   result = int(readXhkdfU64(digest) mod uint64(count))
   secureClearAmeBytes(digest)
@@ -258,8 +259,8 @@ proc mixXhkdfMemoryPass(M: var seq[ByteSeq], base: openArray[uint8],
     secureClearAmeBytes(material)
     material = @[]
     appendAmeLabel(material, "GB3-MEMORY-MIX-v1")
-    appendAmeU32(material, pass)
-    appendAmeU32(material, i)
+    appendU32Le(material, pass)
+    appendU32Le(material, i)
     appendXhkdfField(material, M[int(i)])
     appendXhkdfField(material, M[previous])
     appendXhkdfField(material, M[reference])
@@ -268,16 +269,6 @@ proc mixXhkdfMemoryPass(M: var seq[ByteSeq], base: openArray[uint8],
     M[int(i)] = mixed
     i = i + 1'u32
   secureClearAmeBytes(material)
-
-proc clearXhkdfMemory(M: var seq[ByteSeq]) {.role: actor,
-    tag: "cryptoBoundary|fomke|kdf".} =
-  ## M: secret memory blocks overwritten before release.
-  var
-    i: int = 0
-  while i < M.len:
-    secureClearAmeBytes(M[i])
-    i = i + 1
-  M.setLen(0)
 
 proc appendXhkdfOutput(resultBytes: var ByteSeq, outputChunk: openArray[uint8],
     wanted: int) {.role: dataWriter, tag: "fomke|kdf".} =
@@ -314,9 +305,9 @@ proc buildXhkdfInput(ikm, salt, info: openArray[uint8],
   ## share an output; the pair itself adds nothing and keeps its old bytes.
   appendAmeLabel(result, "BIFROST-GB3HKDF-v1")
   result.add(uint8(ord(c.mode)))
-  appendAmeU32(result, c.rounds)
-  appendAmeU64(result, c.blockIndex)
-  appendAmeU32(result, c.memoryBlocks)
+  appendU32Le(result, c.rounds)
+  appendU64Le(result, c.blockIndex)
+  appendU32Le(result, c.memoryBlocks)
   if c.branches != xhkdfLegacyBranches:
     appendAmeLabel(result, "XHKDF-BRANCHES-v1")
     result.add(xhkdfBranchMask(c.branches))
@@ -357,7 +348,7 @@ proc deriveXhkdfMemory(base: openArray[uint8], outLen: int,
     pass = pass + 1'u32
   while result.len < outLen:
     if high(uint64) - c.blockIndex < outputBlock:
-      clearXhkdfMemory(M)
+      clearSecretRows(M)
       raise newException(ValueError, "XHKDF block index is exhausted")
     reference = xhkdfMemoryAddress(base, uint32(outputBlock and
       uint64(high(uint32))), uint32(c.blockIndex mod uint64(c.memoryBlocks)),
@@ -365,7 +356,7 @@ proc deriveXhkdfMemory(base: openArray[uint8], outLen: int,
     secureClearAmeBytes(material)
     material = @[]
     appendAmeLabel(material, "GB3-MEMORY-OUTPUT-v1")
-    appendAmeU64(material, c.blockIndex + outputBlock)
+    appendU64Le(material, c.blockIndex + outputBlock)
     appendXhkdfField(material, M[reference])
     outputChunk = deriveXhkdfSequentialBlock(material, c.blockIndex + outputBlock,
       1'u32, c.branches)
@@ -373,7 +364,7 @@ proc deriveXhkdfMemory(base: openArray[uint8], outLen: int,
     secureClearAmeBytes(outputChunk)
     outputBlock = outputBlock + 1'u64
   secureClearAmeBytes(material)
-  clearXhkdfMemory(M)
+  clearSecretRows(M)
 
 proc deriveXhkdf*(ikm, salt, info: openArray[uint8], outLen: int,
     c: XhkdfConfig = initXhkdfConfig()): ByteSeq {.role: truthBuilder,
@@ -404,7 +395,7 @@ proc deriveXhkdfInputs*(chainKey: openArray[uint8],
     i: int = 0
   appendAmeLabel(ikm, "GB3-MULTI-INPUT-v1")
   appendXhkdfField(ikm, chainKey)
-  appendAmeU32(ikm, uint32(S.len))
+  appendU32Le(ikm, uint32(S.len))
   while i < S.len:
     if S[i].len == 0:
       secureClearAmeBytes(ikm)

@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ./body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -39,13 +40,13 @@ proc dacShouldEnterLossyPath*(s: DacPathStats): bool {.role: parser.} =
 
 proc encodeDacPathStats*(s: DacPathStats): ByteSeq {.role: helper.} =
   ## s: path stats body to encode.
-  appendDacU32(result, s.lossPpm)
-  appendDacU16(result, s.rttMs)
-  appendDacU16(result, s.jitterMs)
-  appendDacU16(result, s.reorderDepth)
-  appendDacU16(result, s.mtuHint)
-  appendDacU16(result, s.queueMs)
-  appendDacU16(result, s.creditHint)
+  appendU32Le(result, s.lossPpm)
+  appendU16Le(result, s.rttMs)
+  appendU16Le(result, s.jitterMs)
+  appendU16Le(result, s.reorderDepth)
+  appendU16Le(result, s.mtuHint)
+  appendU16Le(result, s.queueMs)
+  appendU16Le(result, s.creditHint)
   appendDacZeroBytes(result, 8)
 
 proc decodeDacPathStats*(A: openArray[uint8]): DacPathStats {.role: parser.} =
@@ -54,6 +55,6 @@ proc decodeDacPathStats*(A: openArray[uint8]): DacPathStats {.role: parser.} =
     raise newException(ValueError, "DAC path stats body length mismatch")
   if not rangeIsZero(A, 16, 8):
     raise newException(ValueError, "DAC path stats reserved bytes mismatch")
-  result = initDacPathStats(readDacU32(A, 0), readDacU16(A, 4),
-    readDacU16(A, 6), readDacU16(A, 8), readDacU16(A, 10),
-    readDacU16(A, 12), readDacU16(A, 14))
+  result = initDacPathStats(readU32Le(A, 0), readU16Le(A, 4),
+    readU16Le(A, 6), readU16Le(A, 8), readU16Le(A, 10),
+    readU16Le(A, 12), readU16Le(A, 14))

@@ -20,9 +20,9 @@ proc ed25519AmeKeypair*(a: AmeSignatureAlgorithm,
   ## a/seed: the Ed25519 slot, and optional fixed randomness.
   requireEd25519Slot(a)
   if seed.len == 0:
-    assignAmeSigKeypair(tyr_ed25519.ed25519TyrKeypair())
+    assignAmeKeypair(tyr_ed25519.ed25519TyrKeypair())
   else:
-    assignAmeSigKeypair(tyr_ed25519.ed25519TyrKeypairFromSeed(seed))
+    assignAmeKeypair(tyr_ed25519.ed25519TyrKeypairFromSeed(seed))
 
 proc ed25519AmeSign*(a: AmeSignatureAlgorithm,
     msg, secretKey: openArray[byte]): ByteSeq {.role: encryptor.} =

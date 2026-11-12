@@ -6,6 +6,7 @@ import ../../types
 import ../types
 import ../level0/defaults
 import ../level0/body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -21,16 +22,6 @@ const
 | u16      | u8       | 32 byte | u64      | u8       |
 +----------+----------+----------+----------+----------+
 """
-
-proc digestIsZero(digest: array[32, uint8]): bool {.role: parser.} =
-  ## digest: package digest bytes.
-  var
-    i: int = 0
-  result = true
-  while i < digest.len:
-    if digest[i] != 0'u8:
-      return false
-    i = i + 1
 
 proc dacChunkCount(totalLen: uint64, chunkBytes: uint16): uint16 {.role: math.} =
   ## totalLen: total package bytes.
@@ -58,7 +49,7 @@ proc initDacPackageManifest*(packageId: uint64, c: DacTransferClass,
     groupSize: uint32 = 0'u32
   if not validateDacDefaults(d):
     raise newException(ValueError, "DAC defaults are invalid")
-  if digestIsZero(digest):
+  if isAllZero(digest):
     raise newException(ValueError, "DAC manifest digest must not be all zero")
   groupSize = uint32(d.dataShards) + uint32(d.parityShards)
   if groupSize == 0'u32 or groupSize > uint32(high(uint16)):
@@ -79,7 +70,7 @@ proc validateDacPackageManifest*(m: DacPackageManifest): bool {.role: parser.} =
   ## m: decoded or caller-built manifest to validate before use.
   var
     expectedChunks: uint16 = 0'u16
-  if digestIsZero(m.digest):
+  if isAllZero(m.digest):
     return false
   if m.chunkBytes == 0'u16 or m.groupSize == 0'u16:
     return false
@@ -97,36 +88,36 @@ proc encodeDacPackageManifest*(m: DacPackageManifest): ByteSeq {.role: helper.} 
   ## m: package manifest body to encode.
   if not validateDacPackageManifest(m):
     raise newException(ValueError, "DAC package manifest is invalid")
-  appendDacU64(result, m.packageId)
+  appendU64Le(result, m.packageId)
   result.add(uint8(ord(m.transferClass)))
-  appendDacU16(result, m.chunkBytes)
-  appendDacU16(result, m.dataCount)
-  appendDacU16(result, m.parityCount)
-  appendDacU16(result, m.groupSize)
+  appendU16Le(result, m.chunkBytes)
+  appendU16Le(result, m.dataCount)
+  appendU16Le(result, m.parityCount)
+  appendU16Le(result, m.groupSize)
   result.add(uint8(ord(m.repairMode)))
   appendDacBytes(result, m.digest)
-  appendDacU64(result, m.totalLen)
+  appendU64Le(result, m.totalLen)
   result.add(m.nameLen)
 
 proc decodeDacPackageManifest*(A: openArray[uint8]): DacPackageManifest {.role: parser.} =
   ## A: package manifest body bytes.
   var
-    digest: array[32, uint8]
+    digest: array[32, uint8] = default(array[32, uint8])
     i: int = 0
   if A.len != dacPackageManifestLen:
     raise newException(ValueError, "DAC package manifest body length mismatch")
   while i < digest.len:
     digest[i] = A[18 + i]
     i = i + 1
-  result.packageId = readDacU64(A, 0)
+  result.packageId = readU64Le(A, 0)
   result.transferClass = dacTransferClassFromId(A[8])
-  result.chunkBytes = readDacU16(A, 9)
-  result.dataCount = readDacU16(A, 11)
-  result.parityCount = readDacU16(A, 13)
-  result.groupSize = readDacU16(A, 15)
+  result.chunkBytes = readU16Le(A, 9)
+  result.dataCount = readU16Le(A, 11)
+  result.parityCount = readU16Le(A, 13)
+  result.groupSize = readU16Le(A, 15)
   result.repairMode = dacRepairModeFromId(A[17])
   result.digest = digest
-  result.totalLen = readDacU64(A, 50)
+  result.totalLen = readU64Le(A, 50)
   result.nameLen = A[58]
   if not validateDacPackageManifest(result):
     raise newException(ValueError, "DAC package manifest is invalid")

@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -34,9 +35,9 @@ proc encodeDacParityShard*(s: DacParityShard): ByteSeq {.role: helper.} =
   ## s: parity shard body to encode.
   if s.repairMode == drmNone:
     raise newException(ValueError, "DAC parity shard must declare a repair mode")
-  appendDacU64(result, s.packageId)
-  appendDacU32(result, s.groupId)
-  appendDacU16(result, s.shardId)
+  appendU64Le(result, s.packageId)
+  appendU32Le(result, s.groupId)
+  appendU16Le(result, s.shardId)
   result.add(uint8(ord(s.repairMode)))
   appendDacBytes(result, s.payload)
 
@@ -44,8 +45,8 @@ proc decodeDacParityShard*(A: openArray[uint8]): DacParityShard {.role: parser.}
   ## A: parity shard body bytes.
   if A.len < dacParityShardHeaderLen:
     raise newException(ValueError, "DAC parity shard body too short")
-  result = initDacParityShard(readDacU64(A, 0), readDacU32(A, 8),
-    readDacU16(A, 12), dacRepairModeFromId(A[14]),
+  result = initDacParityShard(readU64Le(A, 0), readU32Le(A, 8),
+    readU16Le(A, 12), dacRepairModeFromId(A[14]),
     copyDacSpan(A, 15, A.len - 15))
   if result.repairMode == drmNone:
     raise newException(ValueError, "DAC parity shard must declare a repair mode")

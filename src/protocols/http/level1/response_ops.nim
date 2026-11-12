@@ -23,6 +23,7 @@ import std/times
 import ../../types
 import ../types
 import ../level0/header_ops
+import ../../byte_codec
 import runePragmas
 
 proc httpReasonPhrase*(s: int): string {.role: parser,
@@ -105,7 +106,7 @@ proc appendStatusLine(B: var ByteSeq; v: HttpVersion; s: int;
   t.add(' ')
   t.add(if reason.len > 0: reason else: httpReasonPhrase(s))
   t.add("\r\n")
-  B.add(toHttpBytes(t))
+  B.add(stringToBytes(t))
 
 proc appendHeaderLine(B: var ByteSeq; n: string; v: string) {.
     role: dataWriter, tag: "protocol|write".} =
@@ -121,7 +122,7 @@ proc appendHeaderLine(B: var ByteSeq; n: string; v: string) {.
   t.add(": ")
   t.add(v)
   t.add("\r\n")
-  B.add(toHttpBytes(t))
+  B.add(stringToBytes(t))
 
 proc encodeResponseHead*(R: HttpResponse; v: HttpVersion; keepAlive: bool;
     bodyLen: int64; chunked: bool; headOnly: bool): ByteSeq {.
@@ -158,7 +159,7 @@ proc encodeResponseHead*(R: HttpResponse; v: HttpVersion; keepAlive: bool;
     appendHeaderLine(result, "Content-Length", $bodyLen)
   appendHeaderLine(result, "Connection",
     if keepAlive: "keep-alive" else: "close")
-  result.add(toHttpBytes("\r\n"))
+  result.add(stringToBytes("\r\n"))
 
 proc newHttpResponse*(status: int; body: ByteSeq = @[];
     contentType: string = ""): HttpResponse {.role: truthBuilder,
@@ -174,7 +175,7 @@ proc textResponse*(status: int; s: string;
     contentType: string = "text/plain; charset=utf-8"): HttpResponse {.
     role: truthBuilder, tag: "protocol|write".} =
   ## status/s/contentType: status code, text body, media type.
-  result = newHttpResponse(status, toHttpBytes(s), contentType)
+  result = newHttpResponse(status, stringToBytes(s), contentType)
 
 proc errorResponse*(status: int; detail: string = ""): HttpResponse {.
     role: truthBuilder, tag: "protocol|write".} =

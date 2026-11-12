@@ -8,6 +8,7 @@ import tyr/kems/x25519
 
 import ../types
 import ./[types, codec, hello, key_schedule, transcript, handshake_messages]
+import ../byte_codec
 import runePragmas
 
 type
@@ -57,25 +58,25 @@ proc runControlledTls13Handshake*(C: Tls13ControlledConfig):
     tag: "tls|orchestrator|cryptoBoundary".} =
   ## C: deterministic controlled-profile credentials, identity, and X25519 seeds.
   var
-    clientKp, serverKp: X25519TyrKeypair
-    clientHello: Tls13ClientHello
-    serverHello: Tls13ServerHello
+    clientKp, serverKp: X25519TyrKeypair = default(X25519TyrKeypair)
+    clientHello: Tls13ClientHello = default(Tls13ClientHello)
+    serverHello: Tls13ServerHello = default(Tls13ServerHello)
     clientHelloBody, serverHelloBody: ByteSeq = @[]
     clientHelloMsg, serverHelloMsg: ByteSeq = @[]
     eeMsg, certMsg, cvMsg, serverFinishedMsg, clientFinishedMsg: ByteSeq = @[]
     sharedClient, sharedServer: ByteSeq = @[]
-    clientTranscript, serverTranscript: Tls13Transcript
+    clientTranscript, serverTranscript: Tls13Transcript = default(Tls13Transcript)
     helloHash, beforeCvHash, beforeServerFinishedHash, afterServerFinishedHash,
-      beforeClientFinishedHash: Sha256Digest
-    Hc, Hs: Tls13HandshakeSecrets
-    Ac, As: Tls13ApplicationSecrets
-    certParsed, rootParsed: X509ReadResult
-    certPolicy: X509VerifyResult
-    certFlight: Tls13CertificateMessage
-    certDecoded: tuple[ok: bool, message: Tls13CertificateMessage, err: string]
-    cvDecoded: tuple[ok: bool, signature: ByteSeq, scheme: uint16, err: string]
-    eeDecoded: tuple[ok: bool, alpn, err: string]
-    parsed: Tls13HandshakeResult
+      beforeClientFinishedHash: Sha256Digest = default(Sha256Digest)
+    Hc, Hs: Tls13HandshakeSecrets = default(Tls13HandshakeSecrets)
+    Ac, As: Tls13ApplicationSecrets = default(Tls13ApplicationSecrets)
+    certParsed, rootParsed: X509ReadResult = default(X509ReadResult)
+    certPolicy: X509VerifyResult = default(X509VerifyResult)
+    certFlight: Tls13CertificateMessage = default(Tls13CertificateMessage)
+    certDecoded: tuple[ok: bool, message: Tls13CertificateMessage, err: string] = default(tuple[ok: bool, message: Tls13CertificateMessage, err: string])
+    cvDecoded: tuple[ok: bool, signature: ByteSeq, scheme: uint16, err: string] = default(tuple[ok: bool, signature: ByteSeq, scheme: uint16, err: string])
+    eeDecoded: tuple[ok: bool, alpn, err: string] = default(tuple[ok: bool, alpn, err: string])
+    parsed: Tls13HandshakeResult = default(Tls13HandshakeResult)
     signature, serverVerify, clientVerify: ByteSeq = @[]
     i: int = 0
   result.clientState = thsStart
@@ -167,7 +168,7 @@ proc runControlledTls13Handshake*(C: Tls13ControlledConfig):
   serverTranscript.appendTls13Transcript(serverFinishedMsg)
   parsed = decodeTls13Handshake(serverFinishedMsg)
   beforeServerFinishedHash = clientTranscript.tls13TranscriptHash()
-  if not parsed.ok or not constantTimeFinishedEqual(parsed.message.body,
+  if not parsed.ok or not constantTimeEqual(parsed.message.body,
       tls13FinishedVerifyData(Hc.serverHandshakeTraffic,
       beforeServerFinishedHash)):
     result.failHandshake("client rejected server Finished")
@@ -187,7 +188,7 @@ proc runControlledTls13Handshake*(C: Tls13ControlledConfig):
   clientTranscript.appendTls13Transcript(clientFinishedMsg)
   parsed = decodeTls13Handshake(clientFinishedMsg)
   beforeClientFinishedHash = serverTranscript.tls13TranscriptHash()
-  if not parsed.ok or not constantTimeFinishedEqual(parsed.message.body,
+  if not parsed.ok or not constantTimeEqual(parsed.message.body,
       tls13FinishedVerifyData(Hs.clientHandshakeTraffic,
       beforeClientFinishedHash)):
     result.failHandshake("server rejected client Finished")

@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -54,11 +55,11 @@ proc encodeDacRepairHint*(h: DacRepairHint): ByteSeq {.role: helper.} =
   ## h: repair hint body to encode.
   if h.gapMap.len == 0:
     raise newException(ValueError, "DAC repair hint gap map must not be empty")
-  appendDacU64(result, h.packageId)
-  appendDacU32(result, h.groupId)
-  appendDacU16(result, h.missingCount)
-  appendDacU16(result, h.corruptCount)
-  appendDacU16(result, h.wantedCount)
+  appendU64Le(result, h.packageId)
+  appendU32Le(result, h.groupId)
+  appendU16Le(result, h.missingCount)
+  appendU16Le(result, h.corruptCount)
+  appendU16Le(result, h.wantedCount)
   appendDacBytes(result, h.gapMap)
   result.add(uint8(ord(h.repairMode)))
   result.add(uint8(ord(h.reason)))
@@ -73,7 +74,7 @@ proc decodeDacRepairHint*(A: openArray[uint8]): DacRepairHint {.role: parser.} =
   if not rangeIsZero(A, A.len - 4, 4):
     raise newException(ValueError, "DAC repair hint reserved bytes mismatch")
   gapLen = A.len - dacRepairHintFixedLen
-  result = initDacRepairHint(readDacU64(A, 0), readDacU32(A, 8),
-    readDacU16(A, 12), readDacU16(A, 14), readDacU16(A, 16),
+  result = initDacRepairHint(readU64Le(A, 0), readU32Le(A, 8),
+    readU16Le(A, 12), readU16Le(A, 14), readU16Le(A, 16),
     copyDacSpan(A, 18, gapLen), dacRepairModeFromId(A[18 + gapLen]),
     dacRepairReasonFromId(A[19 + gapLen]))

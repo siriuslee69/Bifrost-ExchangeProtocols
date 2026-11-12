@@ -69,6 +69,7 @@ import ../types
 import ../level0/bytes
 import ../level1/route_block
 import ./seal_open
+import ../../byte_codec
 import runePragmas
 
 const
@@ -131,8 +132,8 @@ proc sealRouteWire(S: var AmeSession, kind: AmeRouteKind, fifth: uint8,
   result.add(ameRouteVersion)
   result.add(uint8(ord(kind)))
   result.add(fifth)
-  appendAmeU64(result, S.sessionId)
-  appendAmeU32(result, counter)
+  appendU64Le(result, S.sessionId)
+  appendU32Le(result, counter)
   appendAmeBytes(result, sealAmeRouteBlock(S.routeKeySend, nonce, target,
     origin))
   appendAmeBytes(result, payload)
@@ -165,7 +166,7 @@ proc routeHeaderError(S: AmeSession, A: openArray[uint8]): string {.
     return "not an AME route frame"
   if A[4] != uint8(ord(arkForward)) and A[4] != uint8(ord(arkRefuse)):
     return "AME route kind is unknown"
-  if not acceptsSessionId(S, readAmeU64(A, 6)):
+  if not acceptsSessionId(S, readU64Le(A, 6)):
     return "AME route frame belongs to another session"
   if A[4] == uint8(ord(arkRefuse)) and A.len != ameRouteOverhead:
     return "AME route refusal carries a payload"

@@ -1,0 +1,137 @@
+/* ------------------------------------------------------------------------
+   Tokens <- every colour of the desktop demo, defined ONCE
+   ------------------------------------------------------------------------
+   app.css never types a colour. It names one of these, so a theme switch
+   changes the whole page and nothing stays white on white.
+
+   Two themes, both define EVERY role:
+
+     dark    the default
+     light   when the system asks for it (prefers-color-scheme: light)
+
+   The roles (UI.md, section 6) and what this page uses them for:
+
+     role             used on
+     ---------------  --------------------------------------------------
+     bg               the window: a gradient from corner to corner
+     panel            the floating boxes, a little see-through
+     elev             what would float above a panel (none yet)
+     text             what is read
+     muted            what is read second: times, hints
+     faint            what is hardly read: the placeholders
+     glue             soft backgrounds, the thin one-sided lines, shadow
+     separator        the long straight lines
+     recommendation   the one loud thing: the send button
+     tiny             small marks: the status text, the corner glyphs
+     active           the chosen or running thing: cursor line, scroll bar
+     good warn bad    a state: live, acknowledged, failed
+
+   --on-fill is the `text` colour for text that stands ON a recommendation or
+   active fill. Check a change with: nimble test (test_ui_contrast).
+   ------------------------------------------------------------------------ */
+
+:root {
+  /* bg */
+  --bg-1: #192b36;
+  --bg-2: #101821;
+  --bg-3: #07090e;
+  --bg-tint-a: rgba(109, 199, 221, 0.18);
+  --bg-tint-b: rgba(214, 86, 156, 0.15);
+  --bg-glow-a: #6dc7dd;
+  --bg-glow-b: #d6569c;
+
+  /* panel, elev */
+  --panel: rgba(14, 21, 29, 0.72);
+  --elev: rgba(9, 15, 22, 0.9);
+
+  /* text, muted, faint */
+  --text: #f4f7fb;
+  --muted: #a4afbc;
+  --faint: #8793a0;
+
+  /* separator */
+  --separator: rgba(169, 182, 194, 0.18);
+
+  /* glue: soft backgrounds, one-sided lines, shadow */
+  --glue-sheen: rgba(109, 199, 221, 0.04);
+  --glue-grid-a: rgba(167, 251, 255, 0.09);
+  --glue-grid-b: rgba(167, 251, 255, 0.07);
+  --glue-bar: rgba(6, 11, 17, 0.38);
+  --glue-status: rgba(109, 199, 221, 0.08);
+  --glue-in: rgba(109, 199, 221, 0.12);
+  --glue-out: rgba(214, 86, 156, 0.13);
+  --glue-ack: rgba(255, 209, 120, 0.07);
+  --glue-bad: rgba(255, 123, 138, 0.08);
+  --glue-line-a: rgba(109, 199, 221, 0.55);
+  --glue-line-b: rgba(214, 86, 156, 0.5);
+  --glue-a: #6dc7dd;
+  --glue-b: #d6569c;
+  --shadow: rgba(0, 0, 0, 0.32);
+  --glow-brand: rgba(167, 251, 255, 0.42);
+
+  /* recommendation, tiny, active */
+  --recommendation: #a7fbff;
+  --on-fill: #071018;
+  --tiny: #a7fbff;
+  --tiny-b: #ff9ed3;
+  --active: #6dc7dd;
+
+  /* good, warn, bad */
+  --good: #5cd68f;
+  --warn: #ffd178;
+  --bad: #ff7b8a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* bg */
+    --bg-1: #e9f2f6;
+    --bg-2: #dce8ee;
+    --bg-3: #cddbe4;
+    --bg-tint-a: rgba(11, 111, 134, 0.14);
+    --bg-tint-b: rgba(179, 38, 120, 0.1);
+    --bg-glow-a: #6dc7dd;
+    --bg-glow-b: #e58ab8;
+
+    /* panel, elev */
+    --panel: rgba(255, 255, 255, 0.72);
+    --elev: rgba(255, 255, 255, 0.92);
+
+    /* text, muted, faint */
+    --text: #0e1a24;
+    --muted: #44525e;
+    --faint: #5d6a76;
+
+    /* separator */
+    --separator: rgba(14, 26, 36, 0.16);
+
+    /* glue: soft backgrounds, one-sided lines, shadow */
+    --glue-sheen: rgba(11, 111, 134, 0.05);
+    --glue-grid-a: rgba(11, 111, 134, 0.1);
+    --glue-grid-b: rgba(11, 111, 134, 0.08);
+    --glue-bar: rgba(255, 255, 255, 0.45);
+    --glue-status: rgba(11, 111, 134, 0.1);
+    --glue-in: rgba(11, 111, 134, 0.1);
+    --glue-out: rgba(179, 38, 120, 0.1);
+    --glue-ack: rgba(138, 90, 0, 0.1);
+    --glue-bad: rgba(179, 38, 30, 0.09);
+    --glue-line-a: rgba(11, 111, 134, 0.55);
+    --glue-line-b: rgba(179, 38, 120, 0.5);
+    --glue-a: #0b6f86;
+    --glue-b: #b32678;
+    --shadow: rgba(14, 26, 36, 0.18);
+    --glow-brand: rgba(11, 111, 134, 0.35);
+
+    /* recommendation, tiny, active */
+    --recommendation: #0b6f86;
+    --on-fill: #ffffff;
+    --tiny: #0b6f86;
+    --tiny-b: #9b1f66;
+    --active: #0b6f86;
+
+    /* good, warn, bad */
+    --good: #1b6e3f;
+    --warn: #8a5a00;
+    --bad: #b3261e;
+  }
+}

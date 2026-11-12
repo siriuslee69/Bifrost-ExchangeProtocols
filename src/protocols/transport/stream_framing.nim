@@ -4,19 +4,12 @@
 
 import ../types
 import ./types
+import ../byte_codec
 import runePragmas
 
 const
   defaultStreamFrameBytes* = 16_777_216'u32
   streamFrameHeaderLen* = 4
-
-proc appendStreamU32(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian frame length.
-  dst.add(uint8(v and 0xff'u32))
-  dst.add(uint8((v shr 8) and 0xff'u32))
-  dst.add(uint8((v shr 16) and 0xff'u32))
-  dst.add(uint8((v shr 24) and 0xff'u32))
 
 proc readStreamU32(A: openArray[uint8], offset: int): uint32 {.role: parser.} =
   ## A: source byte buffer.
@@ -46,7 +39,7 @@ proc encodeProtocolStreamFrame*(payload: openArray[uint8],
     raise newException(ValueError, "stream frame payload exceeds uint32 length")
   if uint64(payload.len) > uint64(maxFrameBytes):
     raise newException(ValueError, "stream frame payload exceeds maximum")
-  appendStreamU32(result, uint32(payload.len))
+  appendU32Le(result, uint32(payload.len))
   for b in payload:
     result.add(b)
 
@@ -86,7 +79,7 @@ proc decodeProtocolStreamFrames*(A: openArray[uint8],
   ## maxFrameBytes: maximum accepted payload length.
   var
     offset: int = 0
-    one: ProtocolStreamFrameResult
+    one: ProtocolStreamFrameResult = default(ProtocolStreamFrameResult)
   result.ok = true
   result.frames = @[]
   while offset < A.len:

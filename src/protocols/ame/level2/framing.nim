@@ -26,6 +26,7 @@ import ./session
 import ../../fomke/types
 import ../../fomke/level1/chain
 import ../../fomke/level2/wire
+import ../../byte_codec
 import runePragmas
 import ./seal_open
 import ./requests
@@ -92,8 +93,8 @@ proc encodeExchangeDeny(requestId, baseEpoch: uint32,
   ## requestId/baseEpoch/reason: the refused request and why.
   var
     text: string = reason[0 ..< min(reason.len, ameDenyReasonMax)]
-  appendAmeU32(result, requestId)
-  appendAmeU32(result, baseEpoch)
+  appendU32Le(result, requestId)
+  appendU32Le(result, baseEpoch)
   result.add(uint8(text.len and 0xff))
   result.add(uint8(text.len shr 8))
   for c in text:
@@ -154,12 +155,12 @@ proc encodeEpochReady(requestId, epochId: uint32, targetTier: AmeMaskTier,
   var
     encoded: ByteSeq = @[]
     tierBytes: ByteSeq = encodeAmeMaskTier(targetTier)
-  appendAmeU32(result, requestId)
-  appendAmeU32(result, epochId)
+  appendU32Le(result, requestId)
+  appendU32Le(result, epochId)
   appendAmeBytes(result, tierBytes)
   if fomkeCommit.confirmationTag.len != 0:
     encoded = encodeFomkeUpgradeCommit(fomkeCommit)
-  appendAmeU32(result, uint32(encoded.len))
+  appendU32Le(result, uint32(encoded.len))
   appendAmeBytes(result, encoded)
 
 proc controlFrameKind(S: AmeSession, frame: openArray[uint8]): AmePacketKind {.
@@ -443,10 +444,10 @@ proc deriveAmeSessionIdCandidate*(S: AmeSession,
     digest: ByteSeq = @[]
     i: int = 0
   appendAmeLabel(seed, "AME-SESSION-ID-v1")
-  appendAmeU64(seed, S.auth.sessionId)
-  appendAmeU32(seed, S.auth.current.epochId)
-  appendAmeU32(seed, attempt)
-  appendAmeU64(seed, S.sessionId)
+  appendU64Le(seed, S.auth.sessionId)
+  appendU32Le(seed, S.auth.current.epochId)
+  appendU32Le(seed, attempt)
+  appendU64Le(seed, S.sessionId)
   digest = blake3AmeMac(S.headerKeySend, seed, 16)
   while i < 8:
     result = result or (uint64(digest[i]) shl (8 * i))
@@ -495,7 +496,7 @@ proc answerAmeSessionIdRotation*(S: var AmeSession, frame: openArray[uint8],
     raise newException(ValueError, opened.err)
   if next == 0'u64:
     next = deriveAmeSessionIdCandidate(S)
-  appendAmeU64(body, next)
+  appendU64Le(body, next)
   result = sealControlFrame(S, ampkSessionIdAssign, carrier, body)
   adoptAmeSessionId(S, next)
 

@@ -24,9 +24,9 @@ proc falconAmeKeypair*(a: AmeSignatureAlgorithm,
     seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: Falcon slot, and optional fixed randomness.
   if seed.len == 0:
-    assignAmeSigKeypair(tyr_falcon.falconTyrKeypair(falconVariant(a)))
+    assignAmeKeypair(tyr_falcon.falconTyrKeypair(falconVariant(a)))
   else:
-    assignAmeSigKeypair(tyr_falcon.falconTyrKeypair(falconVariant(a), seed))
+    assignAmeKeypair(tyr_falcon.falconTyrKeypair(falconVariant(a), seed))
 
 proc falconAmeSign*(a: AmeSignatureAlgorithm,
     msg, secretKey: openArray[byte]): ByteSeq {.role: encryptor.} =

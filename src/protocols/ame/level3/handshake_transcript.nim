@@ -58,6 +58,7 @@ import ../level1/tier_aead
 import ./handshake_authentication
 import ./handshake_records
 import ../../fomke/level0/xhkdf
+import ../../byte_codec
 import runePragmas
 
 proc requireAmePsk(a: AmeAuthentication) {.role: parser, inline,
@@ -129,7 +130,7 @@ proc verifyAmePskTranscript*(a: AmeAuthentication, d: AmePskProofDirection,
     tag: "cryptoBoundary|validation".} =
   ## a/d/transcript/proof: constant-time check of one directional proof.
   var expected: ByteSeq = amePskTranscriptProof(a, d, transcript)
-  result = constantTimeEqualAme(expected, proof)
+  result = constantTimeEqual(expected, proof)
   secureClearAmeBytes(expected)
 
 proc pskPeerTrust*(a: AmeAuthentication, peerId: string): AmePeerTrustResult {.
@@ -160,7 +161,7 @@ proc clientHelloClearSubject*(h: AmeClientHello): ByteSeq {.
   ## of it can be edited in flight -- not the mode, not the salt, not the
   ## next-secret flag.
   appendAmeLabel(result, "AME-CLIENT-HELLO-CLEAR-v1")
-  appendAmeU64(result, h.sessionId)
+  appendU64Le(result, h.sessionId)
   result.add(uint8(ord(h.mode)))
   appendHandshakeBytes(result, h.nonce)
   appendHandshakeBytes(result, encodeAmeSuiteLayout(h.layout))
@@ -342,15 +343,6 @@ proc secretRows*(A: AmeKemAlgorithms, mask: uint8,
     i = i + 1
   if used != S.len:
     raise newException(ValueError, "AME handshake KEM secret count mismatch")
-
-proc clearSecretRows*(S: var seq[ByteSeq]) {.role: actor.} =
-  ## S: framed secret rows erased once they have been consumed.
-  var
-    i: int = 0
-  while i < S.len:
-    secureClearAmeBytes(S[i])
-    i = i + 1
-  S.setLen(0)
 
 proc appendBinderRow*(R: var seq[ByteSeq], a: AmeAuthentication) {.
     role: dataWriter, tag: "cryptoBoundary|kdf".} =

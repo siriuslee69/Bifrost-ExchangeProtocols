@@ -1,32 +1,65 @@
-Commit Message: One answer shape for the relay routines, one copy of each shared helper, catalog out of the test names
+Commit Message: Twelve routines answer ok/err; one copy of each shared byte helper (protocols/byte_codec.nim); theme tokens and a contrast test for the desktop demo
 
-## 2026-11-12 PLAN: the open items of agents/TODO.md that need nobody's decision
+## 2026-11-12 The open items of agents/TODO.md that needed nobody's decision
 
-Everything below stays in Bifrost: it is a change of how Bifrost's own routines
-answer and where Bifrost's own helpers stand. Nebel follows two changed calls
-when it moves its pin (its agents/TODO.md names the order).
+Plan (what goes where): all of it is Bifrost's own business, so all of it stays in
+Bifrost. Nebel follows four changed calls when it moves its pin (its
+agents/TODO.md lists the call sites).
 
 ```text
-  item                                   what will exist                           where
-  -------------------------------------  ----------------------------------------  ---------------------------
-  eight routines answer "" for success   they answer tuple[ok: bool, err: string]  relay/*, ame/level3/
-                                         (the three set* of the restriction book
-                                          too: same defect, indented in `when`,
-                                          so repo-check could not see them)
-  twin routine bodies                    ONE copy each, in the lowest module both  protocols/types or
-                                         callers already import                    ame/level0/bytes
-  test_otter_catalog is not a test       evaluation/tests/otter_catalog.nim. It    evaluation/tests/
-                                         must STAY below evaluation/tests/:
-                                         Otter's window walks that folder for
-                                         the `otterUiTest` marker, so the TODO's
-                                         "evaluation/otter_catalog.nim" would
-                                         have emptied the window
-  desktop demo types 20 colours          tokens.css with the UI.md 6 roles; two    src/clients/desktop/web/
-                                         labels go, the placeholders stay
+  what was wrong                                      where it is fixed
+  --------------------------------------------------  -------------------------------------
+  twelve exported routines answered "" for success    they answer tuple[ok: bool, err: string]:
+    (nine were listed; setListed, setAllowed and        setRelayRestriction, attachRestriction-
+     setGroup sit indented inside `when`, and           Book, checkRestrictionMode, applyRestric-
+     setSuperFastBrake has its signature on two          tionUpdate, setListed, setAllowed,
+     lines, so repo-check never saw them)                setGroup, fromServerControl, addSuper-
+                                                         FastVip, setSuperFastRestriction,
+                                                         setSuperFastBrake, openAmeHelloOffer
+  the same byte helper written 2 to 5 times            protocols/byte_codec.nim (new, depends on
+                                                         types.nim only): appendU16/32/64Le,
+                                                         readU16/32/64Le, stringToBytes,
+                                                         bytesToString, readText, isAllZero,
+                                                         constantTimeEqual (replaces
+                                                         four copies, all secret compares)
+  secret rows wiped by four identical routines         clearSecretRows, ame/level0/bytes.nim
+  one key-pair template in two files                   assignAmeKeypair, ame/types.nim
+  host text and dual-stack code in tcp_ops and udp_ops transport/host_literal.nim (new)
+  failClient and failServer (14 lines each)            tls13/session_failure.nim (new):
+                                                         failTls13Handshake
+  test_otter_catalog.nim is not a test                 evaluation/tests/otter_catalog.nim. It
+                                                         stays below evaluation/tests/: Otter's
+                                                         window walks that folder for the
+                                                         `otterUiTest` marker, so the TODO's
+                                                         "evaluation/otter_catalog.nim" would
+                                                         have emptied the window
+  the desktop demo typed 20 colours, two labels        tokens.css (dark + light, every UI.md 6
+    twice                                                role), app.css names tokens only, the two
+                                                         labels are gone, :focus-visible twins
+                                                         for the :hover rules, docs/ui-plan.md,
+                                                         evaluation/tests/test_ui_contrast.nim
+  the page's message list grew without end             maxRows = 240 in app.js (the 240 in
+                                                         app.nim only capped the unfetched events)
 ```
 
-Not done here, because they need the user: the repo split (SIZE), the start value of
-`rmGroup` claimers, B2 (browser build) and B3 (Fjord's SMTP) of the teaching plan.
+What was checked: `nimble test` ran twice; the second run came after every change except
+the last three (the HTTP twin and two unused imports): exit 0, 920 checks, 0 failed.
+Then test_http_protocol, test_dac_wire, test_dac_link, test_tls13_foundation,
+test_tls13_socket_server and test_ui_contrast alone after those last edits: all pass.
+`nimble buildWebui` builds the desktop demo. The contrast test was shown to FAIL when a
+light-theme token was weakened (and the file restored). Otter's discoverOtterUiTests
+finds all five catalog entries at the new file name. Both themes were rendered once in
+headless Chrome with sample rows. Not looked at: the running window (nimble runWebui
+was not started: it opens a window and a listener on every interface), hover and focus by
+eye, Tab order, compact mode.
+
+Decisions on the way: the single copy of the byte helpers lives in Bifrost, not in
+Fylgia-Utils (Bifrost's src imports no Fylgia module, Fylgia has no readers, and its own
+`ByteSeq` would make every file ambiguous); agents/TODO.md has the item. Dependencies stay
+one way: byte_codec imports only types.nim.
+
+Open (needs your decision): where to cut this repo (39 700 lines of Nim, limit 15 000)? Recommended: tls13 + http + smtp + mail go to a repo of other people's protocols, clients/ goes to an app repo (agents/TODO.md, item 2).
+Open (needs your decision): should rmGroup keep believing every neighbour's claim until Nebel names its claimers? Recommended: yes for now, flip the start value in the commit that moves Nebel's pin (agents/TODO.md, item 3).
 
 ## 2026-11-12 Hardening pass over the three relays, the restriction modes and the dump
 

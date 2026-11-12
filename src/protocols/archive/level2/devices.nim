@@ -33,6 +33,7 @@ import ../../ame/level0/bytes
 import ../types
 import ../level1/keys
 import ../level1/sealed
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -55,8 +56,8 @@ proc encodeArchiveDevices*(D: openArray[ArchiveDevice]): ByteSeq {.
     if d.deviceId.len != archiveDeviceIdBytes:
       raise newException(ValueError, "archive deviceId must be 16 bytes")
     appendAmeBytes(result, d.deviceId)
-    appendAmeU64(result, d.addedMs)
-    appendAmeU64(result, d.removedMs)
+    appendU64Le(result, d.addedMs)
+    appendU64Le(result, d.removedMs)
 
 proc decodeArchiveDevices*(A: openArray[uint8]): seq[ArchiveDevice] {.
     role: parser, tag: "archive|wire".} =
@@ -68,7 +69,7 @@ proc decodeArchiveDevices*(A: openArray[uint8]): seq[ArchiveDevice] {.
     raise newException(ValueError, "archive device list is malformed")
   while i < int(A[0]):
     result.add(ArchiveDevice(deviceId: @(A.toOpenArray(o, o + 15)),
-      addedMs: readAmeU64(A, o + 16), removedMs: readAmeU64(A, o + 24)))
+      addedMs: readU64Le(A, o + 16), removedMs: readU64Le(A, o + 24)))
     o = o + archiveDeviceEntryBytes
     i = i + 1
 
@@ -98,7 +99,7 @@ proc archiveLanePlace(spaceId: openArray[uint8], lane: uint32): ByteSeq {.
     role: helper, inline.} =
   ## spaceId/lane: where a lane record is stored, bound into its tag.
   result = @spaceId
-  appendAmeU32(result, lane)
+  appendU32Le(result, lane)
 
 proc sealArchiveLaneRecord*(lanesKey, spaceId: openArray[uint8], lane: uint32,
     keyGen: uint16, deviceId: openArray[uint8], createdMs: uint64): ByteSeq {.
@@ -107,7 +108,7 @@ proc sealArchiveLaneRecord*(lanesKey, spaceId: openArray[uint8], lane: uint32,
   ## lanesKey: sub key "lanes". The rest: Def. 2 and where it is stored.
   var
     body: ByteSeq = @deviceId
-  appendAmeU64(body, createdMs)
+  appendU64Le(body, createdMs)
   result = sealArchiveRecord(lanesKey, archiveLaneLabel,
     archiveLanePlace(spaceId, lane), keyGen, body)
 
@@ -122,4 +123,4 @@ proc openArchiveLaneRecord*(lanesKey, spaceId: openArray[uint8], lane: uint32,
     archiveLanePlace(spaceId, lane), A)
   if not opened.ok or opened.record.body.len != 24:
     return
-  result = (true, opened.record.body[0 .. 15], readAmeU64(opened.record.body, 16))
+  result = (true, opened.record.body[0 .. 15], readU64Le(opened.record.body, 16))

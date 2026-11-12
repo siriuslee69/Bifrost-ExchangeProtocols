@@ -13,6 +13,7 @@ import ../../dac/types
 import ../../dac/level2/package_transfer
 import ../../dac/level3/link_table
 import ./dac_relay
+import ../../byte_codec
 import runePragmas
 
 const
@@ -54,8 +55,8 @@ proc securePackageAad(packageId: uint64, epochId: uint32,
     compression: AmeCompressionPolicy): ByteSeq {.role: truthBuilder.} =
   ## packageId/epochId/compression: package identity bound to AME authentication.
   appendAmeLabel(result, "AME-SECURE-PACKAGE-v2")
-  appendAmeU64(result, packageId)
-  appendAmeU32(result, epochId)
+  appendU64Le(result, packageId)
+  appendU32Le(result, epochId)
   result.add(uint8(ord(compression.algorithm)))
   result.add(uint8(ord(effectiveAmePadding(compression))))
 
@@ -76,10 +77,10 @@ proc encodeSecurePackage(epochId: uint32, nonce: openArray[uint8],
     raise newException(ValueError, "secure-package tag length mismatch")
   appendAmeBytes(result, ameSecurePackageMagic)
   result.add(ameSecurePackageVersion)
-  appendAmeU32(result, epochId)
-  appendAmeU16(result, uint16(nonce.len))
+  appendU32Le(result, epochId)
+  appendU16Le(result, uint16(nonce.len))
   result.add(uint8(ord(tagLen)))
-  appendAmeU32(result, uint32(m.payload.len))
+  appendU32Le(result, uint32(m.payload.len))
   appendAmeBytes(result, nonce)
   appendAmeBytes(result, m.authTag)
   appendAmeBytes(result, m.payload)
@@ -131,7 +132,7 @@ proc planAmeSecurePackage*(a: AmeAuthPackage, packageId: uint64,
   ## identity, application bytes, DAC policy, compression, and resource limits.
   var
     compressed: ByteSeq = encodeAmeCompressed(plaintext, compression)
-    sealed: tuple[message: AmeProtectedMessage, nonce: ByteSeq]
+    sealed: tuple[message: AmeProtectedMessage, nonce: ByteSeq] = default(tuple[message: AmeProtectedMessage, nonce: ByteSeq])
     wire: ByteSeq = @[]
     keyContext: ByteSeq = @[]
   requireAmeAuth(a)

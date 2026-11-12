@@ -48,6 +48,7 @@ import ../ame/level0/bytes
 import ../ame/level2/wire
 import ../ame/level2/seal_open
 import ../ame/level2/route_wire
+import ../byte_codec
 import runePragmas
 import ./restriction
 
@@ -66,8 +67,8 @@ proc encodeSlowEnvelope*(kind: AmeRouteKind, fifth: uint8,
   result.add(relaySlowVersion)
   result.add(uint8(ord(kind)))
   result.add(fifth)
-  appendAmeU64(result, target)
-  appendAmeU64(result, origin)
+  appendU64Le(result, target)
+  appendU64Le(result, origin)
   appendAmeBytes(result, payload)
 
 proc decodeSlowEnvelope*(A: openArray[uint8]): AmeRouteFrame {.role: parser.} =
@@ -80,8 +81,8 @@ proc decodeSlowEnvelope*(A: openArray[uint8]): AmeRouteFrame {.role: parser.} =
   if A[4] != uint8(ord(arkForward)) and A[4] != uint8(ord(arkRefuse)):
     return AmeRouteFrame(err: "relay envelope kind is unknown")
   result.kind = AmeRouteKind(A[4])
-  result.target = readAmeU64(A, 6)
-  result.origin = readAmeU64(A, 14)
+  result.target = readU64Le(A, 6)
+  result.origin = readU64Le(A, 14)
   if result.kind == arkForward:
     result.hopsLeft = A[5]
     result.payload = @(A.toOpenArray(relaySlowOverhead, A.high))

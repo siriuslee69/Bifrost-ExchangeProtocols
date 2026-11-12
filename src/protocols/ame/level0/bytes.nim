@@ -5,6 +5,7 @@
 import tyr/helpers/secure_memory as tyr_secure_memory
 
 import ../../types
+import var_invariants
 import runePragmas
 
 proc appendAmeBytes*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
@@ -13,46 +14,11 @@ proc appendAmeBytes*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.
   for b in src:
     dst.add(b)
 
-proc appendAmeU16*(dst: var ByteSeq, v: uint16) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint16 to append.
-  dst.add(uint8(v and 0xff'u16))
-  dst.add(uint8((v shr 8) and 0xff'u16))
-
-proc appendAmeU32*(dst: var ByteSeq, v: uint32) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint32 to append.
-  dst.add(uint8(v and 0xff'u32))
-  dst.add(uint8((v shr 8) and 0xff'u32))
-  dst.add(uint8((v shr 16) and 0xff'u32))
-  dst.add(uint8((v shr 24) and 0xff'u32))
-
-proc appendAmeU64*(dst: var ByteSeq, v: uint64) {.role: dataWriter.} =
-  ## dst: destination byte sequence.
-  ## v: little-endian uint64 to append.
-  var
-    i: int = 0
-  while i < 8:
-    dst.add(uint8((v shr (8 * i)) and 0xff'u64))
-    i = i + 1
-
 proc appendAmeLabel*(dst: var ByteSeq, label: string) {.role: dataWriter.} =
   ## dst: destination byte sequence.
   ## label: ASCII label bytes to append.
   for ch in label:
     dst.add(uint8(ord(ch)))
-
-proc readAmeU16*(A: openArray[uint8], o: int): uint16 {.role: parser.} =
-  ## A/o: source bytes and the offset of a little-endian uint16.
-  result = uint16(A[o]) or (uint16(A[o + 1]) shl 8)
-
-proc readAmeU64*(A: openArray[uint8], o: int): uint64 {.role: parser.} =
-  ## A/o: source bytes and the offset of a little-endian uint64.
-  var
-    i: int = 0
-  while i < 8:
-    result = result or (uint64(A[o + i]) shl (8 * i))
-    i = i + 1
 
 proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   ## dst: destination byte sequence.
@@ -64,19 +30,6 @@ proc xorAmeInto*(dst: var ByteSeq, src: openArray[byte]) {.role: dataWriter.} =
   while i < dst.len:
     dst[i] = dst[i] xor src[i]
     i = i + 1
-
-proc constantTimeEqualAme*(a, b: openArray[byte]): bool {.role: helper.} =
-  ## a: first byte sequence.
-  ## b: second byte sequence.
-  var
-    acc: uint8 = 0
-    i: int = 0
-  if a.len != b.len:
-    return false
-  while i < a.len:
-    acc = acc or (a[i] xor b[i])
-    i = i + 1
-  result = acc == 0'u8
 
 proc checkedAmeWireLen*(v: uint32, maximum: uint32,
     what: string): int {.role: parser.} =
@@ -99,3 +52,18 @@ proc secureClearAmeBytes*(A: var ByteSeq) {.role: actor.} =
   ## A: secret bytes overwritten before their storage is released.
   tyr_secure_memory.secureClearBytes(A)
   A.setLen(0)
+
+proc clearSecretRows*(S: var seq[ByteSeq]) {.role: actor,
+    gives: S.len == 0.} =
+  ## S: secret rows (keys, shared secrets, memory blocks). Every row is
+  ## overwritten, then the list itself is emptied. The one routine every
+  ## handshake, FOMKE and epoch erase goes through:
+  ##
+  ##   before   S = [ row0 | row1 | row2 ]        three secrets in memory
+  ##   after    S = [ ]                           each row overwritten first
+  var
+    i: int = 0
+  while i < S.len:
+    secureClearAmeBytes(S[i])
+    i = i + 1
+  S.setLen(0)

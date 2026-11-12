@@ -74,6 +74,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./derivation
+import ../../byte_codec
 import runePragmas
 
 const
@@ -151,8 +152,8 @@ proc sealAmeRouteBlock*(key, nonce: openArray[uint8],
     plain: ByteSeq = @[]
     c: uint8 = 0
     i: int = 0
-  appendAmeU64(plain, target)
-  appendAmeU64(plain, origin)
+  appendU64Le(plain, target)
+  appendU64Le(plain, origin)
   result = newSeq[uint8](ameRouteBlockLen)
   while i < ameRouteIdsLen:
     c = stateByte(G, i) xor plain[i]
@@ -192,9 +193,9 @@ proc openAmeRouteBlock*(key, nonce: openArray[uint8],
     tag[i] = stateByte(G, i)
     i = i + 1
   G = default(Gimli_Block)
-  if constantTimeEqualAme(tag, A.toOpenArray(ameRouteIdsLen,
+  if constantTimeEqual(tag, A.toOpenArray(ameRouteIdsLen,
       ameRouteBlockLen - 1)):
     result.ok = true
-    result.target = readAmeU64(plain, 0)
-    result.origin = readAmeU64(plain, 8)
+    result.target = readU64Le(plain, 0)
+    result.origin = readU64Le(plain, 8)
   secureClearAmeBytes(plain)

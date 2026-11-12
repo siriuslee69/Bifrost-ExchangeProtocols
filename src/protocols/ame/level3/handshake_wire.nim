@@ -61,6 +61,7 @@ import ../level0/bytes
 import ../level1/exchange_paths
 import ../level1/suites
 import ../level1/padding
+import ../../byte_codec
 import runePragmas
 
 const
@@ -113,7 +114,7 @@ proc appendSmallField(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: append one field whose length fits a u16 by construction.
   if uint64(B.len) > uint64(ameHandshakeSmallMax):
     raise newException(ValueError, "AME handshake field exceeds its limit")
-  appendAmeU16(A, uint16(B.len))
+  appendU16Le(A, uint16(B.len))
   appendAmeBytes(A, B)
 
 proc readFixed(A: openArray[uint8], cursor: var int, n: int): ByteSeq {.
@@ -139,7 +140,7 @@ proc appendLargeField(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: append one field that a post-quantum key may legitimately fill.
   if uint64(B.len) > uint64(ameHandshakeFieldMax):
     raise newException(ValueError, "AME handshake field exceeds its limit")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc requireHandshakeHeader(A: openArray[uint8], magic: array[3, uint8],
@@ -166,7 +167,7 @@ proc encodeAmeClientHello*(h: AmeClientHello): ByteSeq {.role: dataWriter,
   if uint64(h.cookie.len) > uint64(ameCookieMax):
     raise newException(ValueError, "AME client hello cookie is too large")
   appendRecordHeader(result, ameClientHelloMagic)
-  appendAmeU64(result, h.sessionId)
+  appendU64Le(result, h.sessionId)
   result.add(uint8(ord(h.mode)))
   appendAmeBytes(result, h.nonce)
   appendSmallField(result, encodeAmeSuiteLayout(h.layout))
@@ -254,7 +255,7 @@ proc encodeAmeHelloRetry*(r: AmeHelloRetry): ByteSeq {.role: dataWriter,
       uint64(r.cookie.len) > uint64(ameCookieMax):
     raise newException(ValueError, "AME hello retry is incomplete")
   appendRecordHeader(result, ameHelloRetryMagic)
-  appendAmeU64(result, r.sessionId)
+  appendU64Le(result, r.sessionId)
   appendSmallField(result, r.cookie)
 
 proc decodeAmeHelloRetry*(A: openArray[uint8]): AmeHelloRetry {.role: parser,

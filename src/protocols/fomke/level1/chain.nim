@@ -27,6 +27,7 @@ import ../../ame/level1/suites
 import ../../ame/level1/tier_aead
 import ../types
 import ../level0/xhkdf
+import ../../byte_codec
 import runePragmas
 import ./chain_send
 
@@ -367,10 +368,10 @@ proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
   var
     i: int = 0
   appendAmeLabel(result, "FOMKE-UPGRADE-COMMIT-v4")
-  appendAmeU32(result, c.requestId)
-  appendAmeU32(result, c.baseEpoch)
-  appendAmeU32(result, c.targetEpoch)
-  appendAmeU32(result, c.targetTier.tierId)
+  appendU32Le(result, c.requestId)
+  appendU32Le(result, c.baseEpoch)
+  appendU32Le(result, c.targetEpoch)
+  appendU32Le(result, c.targetTier.tierId)
   result.add(c.targetTier.masks.kem)
   result.add(c.targetTier.masks.cipher)
   result.add(c.targetTier.masks.mac)
@@ -378,12 +379,12 @@ proc buildFomkeUpgradeMetadata(c: FomkeUpgradeCommit,
   result.add(c.targetTier.masks.signature)
   result.add(c.targetTier.masks.kdf)
   result.add(c.exchangeMask)
-  appendAmeU64(result, c.lane1Index)
-  appendAmeU64(result, c.lane2Index)
+  appendU64Le(result, c.lane1Index)
+  appendU64Le(result, c.lane2Index)
   appendFomkeField(result, encodeAmeKemAlgorithms(A))
   appendFomkeField(result, encodeAmeSuiteLayout(L))
   while i < ameMaxAlgorithmSlots:
-    appendAmeU32(result, c.generations[i])
+    appendU32Le(result, c.generations[i])
     i = i + 1
 
 proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
@@ -403,20 +404,10 @@ proc collectFomkeUpgradeSecrets(E: AmeExchangeState, r: AmeExchangeRequest,
       row = @[]
       row.add(uint8(i))
       row.add(uint8(ord(E.algorithms.algorithms[i])))
-      appendAmeU32(row, E.generation[i])
+      appendU32Le(row, E.generation[i])
       appendFomkeField(row, E.stackedSecrets[i])
       result.add(row)
     i = i + 1
-
-proc clearFomkeSecretRows(S: var seq[ByteSeq]) {.role: actor,
-    tag: "cryptoBoundary|exchange|fomke".} =
-  ## S: temporary framed secret rows erased after derivation.
-  var
-    i: int = 0
-  while i < S.len:
-    secureClearAmeBytes(S[i])
-    i = i + 1
-  S.setLen(0)
 
 proc fomkeKdfFor(S: FomkeState, t: AmeMaskTier): XhkdfConfig {.
     role: parser, tag: "fomke|kdf".} =
@@ -491,7 +482,7 @@ proc prepareFomkeUpgrade*(S: var FomkeState, requestId,
     xhkdfBlockBytes)
   S.pending.commit.confirmationTag = copyFomkeBytes(result.confirmationTag)
   secureClearAmeBytes(metadata)
-  clearFomkeSecretRows(secretRows)
+  clearSecretRows(secretRows)
   secureClearAmeBytes(keys)
   secureClearAmeBytes(confirmKey)
   secureClearAmeBytes(confirmInfo)
@@ -511,7 +502,7 @@ proc fomkeUpgradeCommitsEqual*(a, b: FomkeUpgradeCommit): bool {.
     if a.generations[i] != b.generations[i]:
       return false
     i = i + 1
-  result = constantTimeEqualAme(a.confirmationTag, b.confirmationTag)
+  result = constantTimeEqual(a.confirmationTag, b.confirmationTag)
 
 proc validateFomkeUpgrade*(S: FomkeState, c: FomkeUpgradeCommit) {.
     role: parser, tag: "appApi|exchange|fomke|validation".} =

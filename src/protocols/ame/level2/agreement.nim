@@ -7,6 +7,7 @@ import ../types
 import ../level0/bytes
 import ../level1/suites
 import ../level1/path_triggers
+import ../../byte_codec
 import runePragmas
 
 proc readAgreementU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
@@ -59,8 +60,8 @@ proc encodeAmeAgreementProposal*(p: AmeAgreementProposal): ByteSeq {.
   var
     layout: ByteSeq = encodeAmeSuiteLayout(p.layout)
     tier: ByteSeq = encodeAmeMaskTier(p.initialTier)
-  appendAmeU32(result, p.proposalId)
-  appendAmeU32(result, uint32(layout.len))
+  appendU32Le(result, p.proposalId)
+  appendU32Le(result, uint32(layout.len))
   appendAmeBytes(result, layout)
   appendAmeBytes(result, tier)
 
@@ -91,10 +92,10 @@ proc encodeAmeAgreementDecision*(d: AmeAgreementDecision): ByteSeq {.
   if not d.accepted and d.reason.len == 0:
     raise newException(ValueError, "AME rejected decision requires a reason")
   requireAmeU32Len(d.reason.len, "agreement reason")
-  appendAmeU32(result, d.proposalId)
+  appendU32Le(result, d.proposalId)
   result.add(if d.accepted: 1'u8 else: 0'u8)
   appendAmeBytes(result, d.selectionHash)
-  appendAmeU32(result, uint32(d.reason.len))
+  appendU32Le(result, uint32(d.reason.len))
   for c in d.reason:
     result.add(uint8(ord(c)))
 

@@ -7,8 +7,10 @@ when not defined(windows):
   import std/posix
 
 import ../types
+import ../byte_codec
 import ./types
 import ./socket_write
+import ./host_literal
 import runePragmas
 
 proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
@@ -40,12 +42,6 @@ proc addResolvedUdpTarget(order: var seq[ResolvedUdpTarget], host: string,
     i = i + 1
   order.add(ResolvedUdpTarget(host: host, domain: d))
 
-proc normalizeUdpHost(h: string): string {.role: parser.} =
-  ## normalizeUdpHost: normalize UDP host.
-  result = h.strip()
-  if result.len >= 2 and result[0] == '[' and result[^1] == ']':
-    result = result[1 .. ^2]
-
 proc collectUdpTargets(R: var seq[ResolvedUdpTarget], aiList: ptr AddrInfo) {.
     role: truthBuilder.} =
   ## R/aiList: every address the resolver returned, in a family we know.
@@ -55,7 +51,7 @@ proc collectUdpTargets(R: var seq[ResolvedUdpTarget], aiList: ptr AddrInfo) {.
   while it != nil:
     known = toKnownDomain(it.ai_family)
     if known.isSome and known.get() != AF_UNSPEC:
-      addResolvedUdpTarget(R, normalizeUdpHost(getAddrString(it.ai_addr)), known.get())
+      addResolvedUdpTarget(R, normalizeHostLiteral(getAddrString(it.ai_addr)), known.get())
     it = it.ai_next
 
 proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
@@ -63,7 +59,7 @@ proc resolvedUdpTargets(h: string): seq[ResolvedUdpTarget] {.role: helper.} =
   var
     clean: string = ""
     aiList: ptr AddrInfo = nil
-  clean = normalizeUdpHost(h)
+  clean = normalizeHostLiteral(h)
   if clean.contains(':'):
     result.add(ResolvedUdpTarget(host: clean, domain: AF_INET6))
     return
@@ -120,7 +116,7 @@ proc parseUdpHostPort(rawInput: string): tuple[ok: bool, host: string, port: uin
     if raw.find(':') != idx:
       return
 
-  hostPart = normalizeUdpHost(hostPart)
+  hostPart = normalizeHostLiteral(hostPart)
   if hostPart.len == 0:
     return
   try:
@@ -159,18 +155,6 @@ proc parseUdpAddress*(s: string): tuple[ok: bool, a: UdpAddress] {.role: parser.
   result.a.host = p.host
   result.a.port = p.port
   result.ok = true
-
-proc maybeEnableDualStackWildcard(sock: Socket, host: string) {.role: helper.} =
-  ## sock: IPv6 listener candidate whose wildcard bind may need dual-stack mode.
-  ## host: normalized bind host literal.
-  if host != "::":
-    return
-  when not defined(windows):
-    try:
-      setSockOptInt(sock.getFd(), int(toInt(IPPROTO_IPV6)), int(posix.IPV6_V6ONLY),
-        0)
-    except CatchableError:
-      discard
 
 proc setUdpReceiveBuffer*(sock: Socket, bytes: int): bool {.role: actor.} =
   ## sock: an already-bound UDP socket.
@@ -214,7 +198,7 @@ proc bindUdp*(a: UdpAddress, recvBufferBytes: int = 0): Socket {.
   ## for its default. See `setUdpReceiveBuffer` for why a server wants more.
   var
     host: string = ""
-  host = normalizeUdpHost(a.host)
+  host = normalizeHostLiteral(a.host)
   result = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
   result.setSockOpt(OptReuseAddr, true)
   maybeEnableDualStackWildcard(result, host)
@@ -228,7 +212,7 @@ proc udpPortInUse*(a: UdpAddress): bool {.role: parser.} =
   ## bind to report. Port 0 asks the system for any free port, so it is never
   ## taken. The probe is closed again at once.
   var
-    host: string = normalizeUdpHost(a.host)
+    host: string = normalizeHostLiteral(a.host)
     probe: Socket = nil
     code: int = 0
   if a.port == 0'u16:
@@ -268,7 +252,7 @@ proc bindUdpShared*(a: UdpAddress, recvBufferBytes: int = 0): tuple[
   ## Windows has no per-client split: there it only allows the second bind,
   ## and which socket gets a datagram is up to the system.
   var
-    host: string = normalizeUdpHost(a.host)
+    host: string = normalizeHostLiteral(a.host)
     taken: bool = udpPortInUse(a)
   result.sock = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
   result.sock.setSockOpt(OptReuseAddr, true)
@@ -297,7 +281,7 @@ proc connectUdp*(a: UdpAddress, timeoutMs: int = 4000): Socket {.role: orchestra
     targets: seq[ResolvedUdpTarget] = @[]
     sock: Socket = nil
     lastErr: string = ""
-  host = normalizeUdpHost(a.host)
+  host = normalizeHostLiteral(a.host)
   targets = resolvedUdpTargets(host)
   for target in targets:
     sock = newSocket(target.domain, SOCK_DGRAM, IPPROTO_UDP)
@@ -330,7 +314,7 @@ proc sendUdpDatagram*(sock: Socket, a: UdpAddress, bs: ByteSeq) {.role: orchestr
   body = bytesToString(bs)
   if body.len == 0:
     return
-  host = normalizeUdpHost(a.host)
+  host = normalizeHostLiteral(a.host)
   targets = resolvedUdpTargets(host)
   for target in targets:
     try:

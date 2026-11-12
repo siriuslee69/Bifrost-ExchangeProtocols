@@ -50,6 +50,7 @@ import ./exchange_paths
 import ../../types
 import ../types
 import ../level0/bytes
+import ../../byte_codec
 import runePragmas
 
 proc ameCipherNonceLen*(a: AmeCipherAlgorithm): int {.role: helper,
@@ -132,7 +133,7 @@ proc normalizeMac(A: openArray[byte], wanted: int): ByteSeq {.role: helper,
   if A.len == wanted:
     return @A
   appendAmeLabel(seed, "AME-MAC-NORMALIZE-v1")
-  appendAmeU32(seed, uint32(A.len))
+  appendU32Le(seed, uint32(A.len))
   appendAmeBytes(seed, A)
   result = blake3AmeHash(seed, wanted)
 
@@ -154,11 +155,11 @@ proc ameTierAuthInput*(L: AmeSuiteLayout, t: AmeMaskTier, tagLen: AmeAuthTagLen,
   appendAmeBytes(result, encodeAmeSuiteLayout(L))
   appendAmeBytes(result, encodeAmeMaskTier(t))
   result.add(uint8(ord(tagLen)))
-  appendAmeU32(result, uint32(aad.len))
+  appendU32Le(result, uint32(aad.len))
   appendAmeBytes(result, aad)
-  appendAmeU32(result, uint32(nonce.len))
+  appendU32Le(result, uint32(nonce.len))
   appendAmeBytes(result, nonce)
-  appendAmeU32(result, uint32(cipher.len))
+  appendU32Le(result, uint32(cipher.len))
   appendAmeBytes(result, cipher)
 
 proc ameTierCrypt*(L: AmeSuiteLayout, t: AmeMaskTier,
@@ -263,7 +264,7 @@ proc openAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier, material,
   authInput = ameTierAuthInput(L, t, tagLen, nonce, aad, ciphertext)
   expected = ameTierTag(L, t, material, authInput, tagLen)
   secureClearAmeBytes(authInput)
-  if not constantTimeEqualAme(expected, authTag):
+  if not constantTimeEqual(expected, authTag):
     secureClearAmeBytes(nonce)
     secureClearAmeBytes(expected)
     return

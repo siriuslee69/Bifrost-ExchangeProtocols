@@ -39,19 +39,6 @@ proc tls13FinishedVerifyData*(trafficSecret: openArray[byte],
   var key: Tls13Secret = deriveTls13FinishedKey(trafficSecret)
   result = hmacSha256(key, transcriptHash)
 
-proc constantTimeFinishedEqual*(A, B: openArray[byte]): bool {.role: helper,
-    tag: "tls|cryptoBoundary".} =
-  ## A/B: received and expected Finished verify_data.
-  var
-    diff: uint = if A.len == B.len: 0'u else: 1'u
-    i: int = 0
-    b: byte = 0
-  while i < A.len:
-    b = if i < B.len: B[i] else: 0'u8
-    diff = diff or uint(A[i] xor b)
-    i = i + 1
-  result = diff == 0'u
-
 proc tls13CertificateVerifyInput*(server: bool,
     transcriptHash: openArray[byte]): ByteSeq {.role: truthBuilder,
     tag: "tls|cryptoBoundary".} =

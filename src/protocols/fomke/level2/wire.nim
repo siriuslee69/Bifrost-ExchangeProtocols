@@ -36,6 +36,7 @@ import ../../types
 import ../../ame/types
 import ../../ame/level0/bytes
 import ../types
+import ../../byte_codec
 import runePragmas
 
 const
@@ -110,8 +111,8 @@ proc encodeFomkeMessage*(m: FomkeMessage): ByteSeq {.role: dataWriter,
   if m.epoch == 0'u32 or m.authTag.len != int(ord(m.tagLen)) or
       uint64(m.ciphertext.len) > uint64(fomkeMaxCiphertextBytes):
     raise newException(ValueError, "FOMKE message is invalid")
-  appendAmeU32(result, m.epoch)
-  appendAmeU64(result, m.index)
+  appendU32Le(result, m.epoch)
+  appendU64Le(result, m.index)
   result.add(uint8(ord(m.senderLane)))
   appendAmeBytes(result, m.authTag)
   appendAmeBytes(result, m.ciphertext)
@@ -151,10 +152,10 @@ proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
     result.add(fomkeUpgradeMagic[i])
     i = i + 1
   result.add(fomkeUpgradeVersion)
-  appendAmeU32(result, c.requestId)
-  appendAmeU32(result, c.baseEpoch)
-  appendAmeU32(result, c.targetEpoch)
-  appendAmeU32(result, c.targetTier.tierId)
+  appendU32Le(result, c.requestId)
+  appendU32Le(result, c.baseEpoch)
+  appendU32Le(result, c.targetEpoch)
+  appendU32Le(result, c.targetTier.tierId)
   result.add(c.targetTier.masks.kem)
   result.add(c.targetTier.masks.cipher)
   result.add(c.targetTier.masks.mac)
@@ -162,11 +163,11 @@ proc encodeFomkeUpgradeCommit*(c: FomkeUpgradeCommit): ByteSeq {.
   result.add(c.targetTier.masks.signature)
   result.add(c.targetTier.masks.kdf)
   result.add(c.exchangeMask)
-  appendAmeU64(result, c.lane1Index)
-  appendAmeU64(result, c.lane2Index)
+  appendU64Le(result, c.lane1Index)
+  appendU64Le(result, c.lane2Index)
   i = 0
   while i < ameMaxAlgorithmSlots:
-    appendAmeU32(result, c.generations[i])
+    appendU32Le(result, c.generations[i])
     i = i + 1
   result.add(uint8(c.confirmationTag.len))
   appendAmeBytes(result, c.confirmationTag)

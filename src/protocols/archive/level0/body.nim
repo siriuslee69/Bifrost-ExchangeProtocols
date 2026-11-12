@@ -34,6 +34,7 @@ import ../../types
 import ../../ame/level0/bytes
 import ../types
 import ./records
+import ../../byte_codec
 import runePragmas
 
 const
@@ -82,7 +83,7 @@ proc textOfBytes(A: openArray[uint8]): string {.role: helper.} =
 proc appendSizedText(A: var ByteSeq, s: string) {.role: dataWriter, inline.} =
   ## A/s: s with its u16 length in front.
   requireAmeU16Len(s.len, "archive text field")
-  appendAmeU16(A, uint16(s.len))
+  appendU16Le(A, uint16(s.len))
   appendAmeBytes(A, textBytesOf(s))
 
 proc takeSizedText(A: openArray[uint8], o: var int): string {.role: parser.} =
@@ -91,7 +92,7 @@ proc takeSizedText(A: openArray[uint8], o: var int): string {.role: parser.} =
     n: int = 0
   if o + 2 > A.len:
     raise newException(ValueError, "archive body is short")
-  n = int(readAmeU16(A, o))
+  n = int(readU16Le(A, o))
   if o + 2 + n > A.len:
     raise newException(ValueError, "archive body is short")
   result = textOfBytes(A.toOpenArray(o + 2, o + 2 + n - 1))
@@ -108,7 +109,7 @@ proc appendBodyContent(A: var ByteSeq, B: ArchiveBody) {.role: dataWriter.} =
       raise newException(ValueError, "archive attachment needs a file id and key")
     appendAmeBytes(A, B.file.fileId)
     appendAmeBytes(A, B.file.fileKey)
-    appendAmeU64(A, B.file.size)
+    appendU64Le(A, B.file.size)
     appendSizedText(A, B.file.name)
     appendSizedText(A, B.file.media)
   of abkEdit:
@@ -125,7 +126,7 @@ proc appendBodyContent(A: var ByteSeq, B: ArchiveBody) {.role: dataWriter.} =
     if B.lanes.len > 255:
       raise newException(ValueError, "archive lane list holds at most 255")
     A.add(uint8(B.lanes.len))
-    for l in B.lanes: appendAmeU32(A, l)
+    for l in B.lanes: appendU32Le(A, l)
 
 proc encodeArchiveBody*(B: ArchiveBody, padded: bool = true): ByteSeq {.
     role: dataWriter, tag: "archive|wire".} =
@@ -134,7 +135,7 @@ proc encodeArchiveBody*(B: ArchiveBody, padded: bool = true): ByteSeq {.
     fill: int = 0
     i: int = 0
   result.add(uint8(ord(B.kind)))
-  appendAmeU64(result, B.timeMs)
+  appendU64Le(result, B.timeMs)
   result.add(if padded: 1'u8 else: 0'u8)
   appendBodyContent(result, B)
   if not padded:
@@ -165,7 +166,7 @@ proc readAttachment(C: openArray[uint8]): ArchiveAttachment {.role: parser.} =
     raise newException(ValueError, "archive body is short")
   result.fileId = @(C.toOpenArray(0, archiveFileIdBytes - 1))
   result.fileKey = @(C.toOpenArray(archiveFileIdBytes, o - 9))
-  result.size = readAmeU64(C, o - 8)
+  result.size = readU64Le(C, o - 8)
   result.name = takeSizedText(C, o)
   result.media = takeSizedText(C, o)
 
@@ -212,5 +213,5 @@ proc decodeArchiveBody*(A: openArray[uint8]): ArchiveBody {.role: parser,
       int(A[0]) > ord(high(ArchiveBodyKind)):
     raise newException(ValueError, "archive body has an unknown kind")
   result.kind = ArchiveBodyKind(A[0])
-  result.timeMs = readAmeU64(A, 1)
+  result.timeMs = readU64Le(A, 1)
   readBodyContent(result, A.toOpenArray(archiveBodyHeaderBytes, bodyEnd(A) - 1))

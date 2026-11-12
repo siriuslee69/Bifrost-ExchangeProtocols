@@ -7,6 +7,7 @@ import ../types
 import ../level0/bytes
 import ./padding
 import ./algorithms
+import ../../byte_codec
 import runePragmas
 
 const
@@ -205,7 +206,7 @@ proc appendExchangeTier(A: var ByteSeq, t: AmeMaskTier) {.
     role: dataWriter.} =
   ## A/t: destination and compact stable target-tier fields.
   requireExchangeTierShape(t)
-  appendAmeU32(A, t.tierId)
+  appendU32Le(A, t.tierId)
   A.add(t.masks.kem)
   A.add(t.masks.cipher)
   A.add(t.masks.mac)
@@ -272,7 +273,7 @@ proc generateAmeExchangeKeys*(A: AmeKemAlgorithms,
   ## A/r: immutable slots and exact fresh exchanges receiving keypairs.
   var
     i: int = 0
-    keypair: AmeKemKeypair
+    keypair: AmeKemKeypair = default(AmeKemKeypair)
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   result.request = r
   while i < int(A.length):
@@ -296,8 +297,8 @@ proc sealAmeExchange*(A: AmeKemAlgorithms, r: AmeExchangeRequest,
   var
     i: int = 0
     j: int = 0
-    env: AmeKemCipher
-    wire: AmeKemEnvelope
+    env: AmeKemCipher = default(AmeKemCipher)
+    wire: AmeKemEnvelope = default(AmeKemEnvelope)
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   if publicKeys.len != selectedAlgorithmCount(r):
     raise newException(ValueError, "AME exchange public-key count mismatch")
@@ -319,7 +320,7 @@ proc openAmeExchange*(A: AmeKemAlgorithms, r: AmeExchangeRequest,
   var
     i: int = 0
     j: int = 0
-    env: AmeKemCipher
+    env: AmeKemCipher = default(AmeKemCipher)
     n: int = selectedAlgorithmCount(r)
   discard initAmeExchangeRequest(A, r.targetTier, r.exchangeMask)
   if E.len != n or secretKeys.len != n:
@@ -342,7 +343,7 @@ proc initAmeExchangeState*(A: AmeKemAlgorithms): AmeExchangeState {.
 proc appendPathBytes(A: var ByteSeq, B: openArray[uint8]) {.
     role: dataWriter.} =
   ## A/B: destination and length-framed bytes.
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
@@ -362,12 +363,12 @@ proc encodeAmeExchangeRequest*(r: AmeExchangeRequest): ByteSeq {.
 proc encodeAmeExchangeOfferCore(o: AmeExchangeOffer): ByteSeq {.
     role: truthBuilder.} =
   ## o: canonical wire transaction and KEM public keys without proof fields.
-  appendAmeU32(result, o.requestId)
-  appendAmeU32(result, o.baseEpochId)
+  appendU32Le(result, o.requestId)
+  appendU32Le(result, o.baseEpochId)
   appendPathBytes(result, encodeAmeExchangeRequest(o.request))
   if o.publicKeys.len != selectedAlgorithmCount(o.request):
     raise newException(ValueError, "AME exchange offer public-key count mismatch")
-  appendAmeU32(result, uint32(o.publicKeys.len))
+  appendU32Le(result, uint32(o.publicKeys.len))
   for key in o.publicKeys:
     appendPathBytes(result, key)
 
@@ -397,12 +398,12 @@ proc encodeAmeExchangeReplySubject*(o: AmeExchangeOffer,
     raise newException(ValueError, "AME exchange reply transaction mismatch")
   appendAmeLabel(result, "AME-KEM-REPLY-v1")
   appendPathBytes(result, encodeAmeExchangeOfferSubject(o))
-  appendAmeU32(result, r.requestId)
-  appendAmeU32(result, r.baseEpochId)
+  appendU32Le(result, r.requestId)
+  appendU32Le(result, r.baseEpochId)
   appendPathBytes(result, encodeAmeExchangeRequest(r.request))
   if r.envelopes.len != selectedAlgorithmCount(r.request):
     raise newException(ValueError, "AME exchange reply envelope count mismatch")
-  appendAmeU32(result, uint32(r.envelopes.len))
+  appendU32Le(result, uint32(r.envelopes.len))
   for envelope in r.envelopes:
     appendPathBytes(result, envelope.ciphertext)
     appendPathBytes(result, envelope.senderPublicKey)
@@ -421,7 +422,7 @@ proc encodeAmeExchangeOffer*(o: AmeExchangeOffer): ByteSeq {.
     role: dataWriter.} =
   ## o: canonical offer bytes authenticated by handshake or current epoch.
   result = encodeAmeExchangeOfferCore(o)
-  appendAmeU32(result, uint32(o.signatures.len))
+  appendU32Le(result, uint32(o.signatures.len))
   for signature in o.signatures:
     appendPathBytes(result, signature)
 
@@ -538,17 +539,17 @@ proc decodeAmeExchangeOffer*(A: AmeKemAlgorithms, current: uint8,
 proc encodeAmeExchangeReply*(r: AmeExchangeReply): ByteSeq {.
     role: dataWriter.} =
   ## r: canonical exchange reply bytes carrying the exact target tier again.
-  appendAmeU32(result, r.requestId)
-  appendAmeU32(result, r.baseEpochId)
+  appendU32Le(result, r.requestId)
+  appendU32Le(result, r.baseEpochId)
   appendPathBytes(result, encodeAmeExchangeRequest(r.request))
   if r.requestId == 0'u32 or
       r.envelopes.len != selectedAlgorithmCount(r.request):
     raise newException(ValueError, "AME exchange reply is invalid")
-  appendAmeU32(result, uint32(r.envelopes.len))
+  appendU32Le(result, uint32(r.envelopes.len))
   for envelope in r.envelopes:
     appendPathBytes(result, envelope.ciphertext)
     appendPathBytes(result, envelope.senderPublicKey)
-  appendAmeU32(result, uint32(r.signatures.len))
+  appendU32Le(result, uint32(r.signatures.len))
   for signature in r.signatures:
     appendPathBytes(result, signature)
 
@@ -559,7 +560,7 @@ proc decodeAmeExchangeReply*(A: AmeKemAlgorithms, current: uint8,
     cursor: int = 0
     count: int = 0
     requestBytes: ByteSeq = @[]
-    envelope: AmeKemEnvelope
+    envelope: AmeKemEnvelope = default(AmeKemEnvelope)
   result.requestId = readPathU32(B, cursor, "exchange reply id")
   result.baseEpochId = readPathU32(B, cursor, "exchange reply base epoch")
   requestBytes = readPathBytes(B, cursor, "exchange reply request")

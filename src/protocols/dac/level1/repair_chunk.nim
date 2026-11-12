@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ../level0/body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -32,9 +33,9 @@ proc initDacRepairChunk*(packageId: uint64, groupId: uint32,
 
 proc encodeDacRepairChunk*(c: DacRepairChunk): ByteSeq {.role: helper.} =
   ## c: repair chunk body to encode.
-  appendDacU64(result, c.packageId)
-  appendDacU32(result, c.groupId)
-  appendDacU16(result, c.chunkId)
+  appendU64Le(result, c.packageId)
+  appendU32Le(result, c.groupId)
+  appendU16Le(result, c.chunkId)
   result.add(uint8(ord(c.source)))
   appendDacBytes(result, c.payload)
 
@@ -42,6 +43,6 @@ proc decodeDacRepairChunk*(A: openArray[uint8]): DacRepairChunk {.role: parser.}
   ## A: repair chunk body bytes.
   if A.len < dacRepairChunkHeaderLen:
     raise newException(ValueError, "DAC repair chunk body too short")
-  result = initDacRepairChunk(readDacU64(A, 0), readDacU32(A, 8),
-    readDacU16(A, 12), dacRepairSourceFromId(A[14]),
+  result = initDacRepairChunk(readU64Le(A, 0), readU32Le(A, 8),
+    readU16Le(A, 12), dacRepairSourceFromId(A[14]),
     copyDacSpan(A, 15, A.len - 15))

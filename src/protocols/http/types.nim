@@ -141,30 +141,6 @@ type
     hpeInvalidHost,
     hpeInvalidTarget
 
-proc toHttpBytes*(s: string): ByteSeq {.role: helper,
-    tag: "protocol|codecBoundary".} =
-  ## s: text to copy into a byte sequence.
-  ##
-  ## An explicit copy rather than a cast: `string` and `seq[byte]` happen
-  ## to share a layout today, but relying on that turns a future runtime
-  ## change into silent memory corruption.
-  var
-    i: int = 0
-  result = newSeq[byte](s.len)
-  while i < s.len:
-    result[i] = byte(s[i])
-    i = i + 1
-
-proc fromHttpBytes*(A: openArray[byte]): string {.role: helper,
-    tag: "protocol|codecBoundary".} =
-  ## A: bytes to copy into text.
-  var
-    i: int = 0
-  result = newString(A.len)
-  while i < A.len:
-    result[i] = char(A[i])
-    i = i + 1
-
 proc httpStatusForParseError*(e: HttpParseError): int {.role: parser,
     tag: "protocol|validation".} =
   ## e: parser failure to translate into a response status code.

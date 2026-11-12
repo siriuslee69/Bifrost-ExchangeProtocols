@@ -47,6 +47,7 @@ import ../types
 import ../level0/bytes
 import ../level1/suites
 import ../level1/exchange_paths
+import ../../byte_codec
 import runePragmas
 
 const
@@ -101,14 +102,14 @@ proc appendHandshakeString*(A: var ByteSeq, s: string) {.
     role: dataWriter.} =
   ## A/s: destination and length-framed UTF-8 identity text.
   requireAmeU32Len(s.len, "handshake string")
-  appendAmeU32(A, uint32(s.len))
+  appendU32Le(A, uint32(s.len))
   appendAmeLabel(A, s)
 
 proc appendHandshakeBytes*(A: var ByteSeq, B: openArray[uint8]) {.
     role: dataWriter.} =
   ## A/B: destination and length-framed bytes.
   requireAmeU32Len(B.len, "handshake bytes")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc appendHandshakeProofs*(A: var ByteSeq, P: openArray[ByteSeq]) {.
@@ -117,14 +118,14 @@ proc appendHandshakeProofs*(A: var ByteSeq, P: openArray[ByteSeq]) {.
   var
     i: int = 0
   requireAmeU32Len(P.len, "handshake proof count")
-  appendAmeU32(A, uint32(P.len))
+  appendU32Le(A, uint32(P.len))
   while i < P.len:
     appendHandshakeBytes(A, P[i])
     i = i + 1
 
 proc appendHandshakeI64*(A: var ByteSeq, v: int64) {.role: dataWriter.} =
   ## A/v: destination and two's-complement little-endian timestamp.
-  appendAmeU64(A, cast[uint64](v))
+  appendU64Le(A, cast[uint64](v))
 
 proc appendIdentitySigningKeys(A: var ByteSeq,
     K: openArray[AmeIdentitySigningKey]) {.role: dataWriter.} =
@@ -380,7 +381,7 @@ proc certificateSubject*(c: AmeIdentityCertificate): ByteSeq {.
   ## different certificates can produce the same bytes to sign.
   appendAmeLabel(result, "AME-CERTIFICATE-v3")
   result.add(ameCertificateVersion)
-  appendAmeU64(result, c.serial)
+  appendU64Le(result, c.serial)
   appendHandshakeString(result, c.authority)
   appendHandshakeString(result, c.subject)
   appendIdentitySigningKeys(result, c.signingKeys)
@@ -439,7 +440,7 @@ proc identityKeysEqual*(A, B: openArray[AmeIdentitySigningKey]): bool {.
   result = true
   while i < A.len:
     if A[i].algorithm != B[i].algorithm or
-        not constantTimeEqualAme(A[i].publicKey, B[i].publicKey):
+        not constantTimeEqual(A[i].publicKey, B[i].publicKey):
       result = false
     i = i + 1
 
@@ -499,7 +500,7 @@ proc ameIdentityKeyId*(K: openArray[AmeIdentitySigningKey]): string {.
   appendAmeLabel(A, "AME-KEY-ID-v1")
   for k in K:
     A.add(uint8(ord(k.algorithm)))
-    appendAmeU32(A, uint32(k.publicKey.len))
+    appendU32Le(A, uint32(k.publicKey.len))
     appendAmeBytes(A, k.publicKey)
   for b in blake3AmeHash(A, 16):
     result.add("0123456789abcdef"[int(b shr 4)])

@@ -77,6 +77,7 @@ import ./handshake_cookie
 import ./handshake_records
 import ./handshake_transcript
 import ./handshake_hello
+import ../../byte_codec
 import runePragmas
 
 ## A caller reaches for one import and gets the whole handshake: the identity
@@ -532,7 +533,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
   transcript = handshakeTranscript(S.clientHello, S.serverHello)
   expected = hashAmeTier(S.clientHello.layout, S.clientHello.initialTier,
     transcript, 32)
-  if not constantTimeEqualAme(body.transcriptHash, expected):
+  if not constantTimeEqual(body.transcriptHash, expected):
     result.err = "client finish transcript does not match"
     return
   result.peerTrust = judgeClientBlock(S, a, body, nowUnix, revokedSerials)
@@ -554,26 +555,15 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
 proc clearAmeClientHandshake*(S: var AmeClientHandshake) {.
     role: actor.} =
   ## S: initial KEM private keys and retained public handshake state to erase.
-  var
-    i: int = 0
-  while i < S.secretKeys.len:
-    secureClearAmeBytes(S.secretKeys[i])
-    i = i + 1
+  clearSecretRows(S.secretKeys)
   S = default(AmeClientHandshake)
 
 proc clearAmeServerHandshake*(S: var AmeServerHandshake) {.
     role: actor.} =
   ## S: initial shared secrets, copied local identity keys, and the copy of
   ## the authentication (shared secret, session key) to erase.
-  var
-    i: int = 0
-  while i < S.sharedSecrets.len:
-    secureClearAmeBytes(S.sharedSecrets[i])
-    i = i + 1
-  i = 0
-  while i < S.localSignatureSecretKeys.len:
-    secureClearAmeBytes(S.localSignatureSecretKeys[i])
-    i = i + 1
+  clearSecretRows(S.sharedSecrets)
+  clearSecretRows(S.localSignatureSecretKeys)
   clearAmeAuthentication(S.authentication)
   S = default(AmeServerHandshake)
 

@@ -7,9 +7,11 @@ when not defined(windows):
   import std/posix
 
 import ../types
+import ../byte_codec
 import ./types
 import ./tls_ops
 import ./socket_write
+import ./host_literal
 import runePragmas
 
 const
@@ -32,16 +34,10 @@ proc decodeLen32*(s: string): uint32 {.role: parser.} =
     (uint32(uint8(s[2])) shl 16) or
     (uint32(uint8(s[3])) shl 24)
 
-proc normalizeHostLiteral(h: string): string {.role: parser.} =
-  ## normalizeHostLiteral: normalize host literal.
-  result = h.strip()
-  if result.len >= 2 and result[0] == '[' and result[^1] == ']':
-    result = result[1 .. ^2]
-
 proc isIpv6Host(h: string): bool {.role: helper.} =
   ## isIpv6Host: build is ipv 6 host.
   var
-    clean: string
+    clean: string = ""
   clean = normalizeHostLiteral(h)
   result = clean.contains(':')
 
@@ -77,7 +73,7 @@ proc collectTcpTargets(R: var seq[ResolvedTcpTarget], aiList: ptr AddrInfo) {.
 proc resolvedTcpTargets(h: string): seq[ResolvedTcpTarget] {.role: helper.} =
   ## h: TCP host literal or hostname whose concrete targets should be tried.
   var
-    clean: string
+    clean: string = ""
     aiList: ptr AddrInfo = nil
   clean = normalizeHostLiteral(h)
   if isIpv6Host(clean):
@@ -101,35 +97,23 @@ proc resolvedTcpTargets(h: string): seq[ResolvedTcpTarget] {.role: helper.} =
 proc formatHostPort(h: string, p: uint16): string {.role: helper.} =
   ## formatHostPort: format host port.
   var
-    clean: string
+    clean: string = ""
   clean = normalizeHostLiteral(h)
   if isIpv6Host(clean):
     result = "[" & clean & "]:" & $p
   else:
     result = clean & ":" & $p
 
-proc maybeEnableDualStackWildcard(sock: Socket, host: string) {.role: helper.} =
-  ## sock: IPv6 listener candidate whose wildcard bind may need dual-stack mode.
-  ## host: normalized bind host literal.
-  if host != "::":
-    return
-  when not defined(windows):
-    try:
-      setSockOptInt(sock.getFd(), int(toInt(IPPROTO_IPV6)), int(posix.IPV6_V6ONLY),
-        0)
-    except CatchableError:
-      discard
-
 proc parseHostPort(rawInput: string, scheme: string):
     tuple[ok: bool, host: string, port: uint16] {.role: parser.} =
   ## parseHostPort: parse host port.
   var
-    raw: string
-    idx: int
-    endBracket: int
-    hostPart: string
-    portRaw: string
-    p: int
+    raw: string = ""
+    idx: int = 0
+    endBracket: int = 0
+    hostPart: string = ""
+    portRaw: string = ""
+    p: int = 0
   raw = rawInput.strip()
   if raw.len == 0:
     return
@@ -189,7 +173,8 @@ proc formatTcpAddress*(a: TcpAddress): string {.role: truthBuilder.} =
 proc parseTcpAddress*(s: string): tuple[ok: bool, a: TcpAddress] {.role: parser.} =
   ## parseTcpAddress: parse TCP address.
   var
-    p: tuple[ok: bool, host: string, port: uint16]
+    p: tuple[ok: bool, host: string, port: uint16] =
+      (ok: false, host: "", port: 0'u16)
   p = parseHostPort(s, "tcp://")
   if not p.ok:
     return
@@ -249,10 +234,11 @@ proc recvTcpFrame*(sock: Socket, timeoutMs: int,
     maxFrameBytes: uint32 = maxTcpFrameBytes): TcpFrameResult {.role: orchestrator.} =
   ## recvTcpFrame: receive TCP frame.
   var
-    head: string
-    body: string
-    n: uint32
-    exact: tuple[ok: bool, data: string, err: string]
+    head: string = ""
+    body: string = ""
+    n: uint32 = 0'u32
+    exact: tuple[ok: bool, data: string, err: string] =
+      (ok: false, data: "", err: "")
   exact = recvExact(sock, 4, timeoutMs)
   if not exact.ok:
     result.ok = false
@@ -302,7 +288,7 @@ proc connectTcp*(a: TcpAddress, timeoutMs: int,
     t: TlsConfig = defaultTlsConfig()): Socket {.role: orchestrator.} =
   ## connectTcp: connect TCP.
   var
-    host: string
+    host: string = ""
     targets: seq[ResolvedTcpTarget] = @[]
     lastErr: string = ""
   host = normalizeHostLiteral(a.host)
@@ -323,7 +309,7 @@ proc connectTcp*(e: TcpEndpoint, timeoutMs: int): Socket {.role: orchestrator.} 
 proc listenTcp*(a: TcpAddress): Socket {.role: orchestrator.} =
   ## listenTcp: listen TCP.
   var
-    host: string
+    host: string = ""
   host = normalizeHostLiteral(a.host)
   result = newSocket(tcpDomainForHost(host), SOCK_STREAM, IPPROTO_TCP)
   result.setSockOpt(OptReuseAddr, true)
@@ -339,7 +325,7 @@ proc acceptTcpClient*(sock: Socket,
     t: TlsConfig = defaultTlsConfig()): Socket {.role: orchestrator.} =
   ## acceptTcpClient: accept TCP client.
   var
-    c: owned(Socket)
+    c: owned(Socket) = nil
   sock.accept(c)
   result = c
   if t.enabled:

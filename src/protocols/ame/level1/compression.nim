@@ -8,6 +8,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./padding
+import ../../byte_codec
 import runePragmas
 
 const
@@ -103,8 +104,8 @@ proc encodeAmeCompressed*(A: openArray[uint8],
   appendAmeBytes(result, ameCompressionMagic)
   result.add(uint8(ord(algorithm)))
   result.add(uint8(ord(padding)))
-  appendAmeU32(result, uint32(source.len))
-  appendAmeU32(result, uint32(encoded.len))
+  appendU32Le(result, uint32(source.len))
+  appendU32Le(result, uint32(encoded.len))
   appendAmeBytes(result, encoded)
   ## Padding goes on the OUTSIDE of the whole envelope, header included, so
   ## the caller who encrypts this sees one length that is a whole number of

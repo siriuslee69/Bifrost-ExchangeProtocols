@@ -46,6 +46,7 @@ import ../../ame/level1/tier_aead
 import ../types
 import ../level0/records
 import ./keys
+import ../../byte_codec
 import runePragmas
 
 const
@@ -73,9 +74,9 @@ proc archiveRecordAad(label: string, place, header: openArray[uint8]): ByteSeq {
     role: helper, tag: "archive|cryptoBoundary".} =
   ## label/place/header: what the tag binds besides the ciphertext.
   appendAmeLabel(result, "ARCHIVE-RECORD-v1")
-  appendAmeU32(result, uint32(label.len))
+  appendU32Le(result, uint32(label.len))
   appendAmeBytes(result, toBytesArchive(label))
-  appendAmeU32(result, uint32(place.len))
+  appendU32Le(result, uint32(place.len))
   appendAmeBytes(result, place)
   appendAmeBytes(result, header)
 
@@ -86,7 +87,7 @@ proc archiveRecordBlock(key: openArray[uint8], label: string,
   ## key/label/place/num/salt/L/t: Def. 4, the key block of one record.
   var
     n: ByteSeq = @[]
-  appendAmeU16(n, num)
+  appendU16Le(n, num)
   result = deriveArchiveBlock(key, "ARCHIVE-RECORD-KEY-v1",
     [toBytesArchive(label), @place, n, @salt], ameTierKeyMaterialLen(L, t))
 

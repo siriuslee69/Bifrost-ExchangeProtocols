@@ -33,6 +33,7 @@ import ../types
 import ../level0/bytes
 import ./exchange_paths
 import ./suites
+import ../../byte_codec
 import runePragmas
 
 proc carryAmeStack(L: AmeSuiteLayout, t: AmeMaskTier,
@@ -56,7 +57,7 @@ proc carryAmeStack(L: AmeSuiteLayout, t: AmeMaskTier,
   if previous.len == 0:
     return
   appendAmeLabel(seed, "AME-SECRET-STACK-CARRY-v1")
-  appendAmeU32(seed, uint32(previous.len))
+  appendU32Le(seed, uint32(previous.len))
   appendAmeBytes(seed, previous)
   result = hashAmeTier(L, t, seed, ameProtectionKeyLen)
   secureClearAmeBytes(seed)
@@ -111,14 +112,14 @@ proc stackAmeSecret*(L: AmeSuiteLayout, t: AmeMaskTier,
   if fresh.len == 0:
     raise newException(ValueError, "AME exchange shared secret is empty")
   appendAmeLabel(seed, "AME-SECRET-STACK-v1")
-  appendAmeU32(seed, uint32(carried.len))
+  appendU32Le(seed, uint32(carried.len))
   appendAmeBytes(seed, carried)
-  appendAmeU32(seed, uint32(binder.len))
+  appendU32Le(seed, uint32(binder.len))
   appendAmeBytes(seed, binder)
   seed.add(uint8(slot))
   seed.add(uint8(ord(algorithm)))
-  appendAmeU32(seed, generation)
-  appendAmeU32(seed, uint32(fresh.len))
+  appendU32Le(seed, generation)
+  appendU32Le(seed, uint32(fresh.len))
   appendAmeBytes(seed, fresh)
   result = hashAmeTier(L, t, seed, ameProtectionKeyLen)
   secureClearAmeBytes(seed)
@@ -174,8 +175,8 @@ proc appendSeedSlot(B: var ByteSeq, S: AmeExchangeState, i: int) {.
     raise newException(ValueError, "AME selected KEM secret is unavailable")
   B.add(uint8(i))
   B.add(uint8(ord(S.algorithms[i])))
-  appendAmeU32(B, S.generation[i])
-  appendAmeU32(B, uint32(S.stackedSecrets[i].len))
+  appendU32Le(B, S.generation[i])
+  appendU32Le(B, uint32(S.stackedSecrets[i].len))
   appendAmeBytes(B, S.stackedSecrets[i])
 
 proc buildAmeExchangeSeed*(S: AmeExchangeState,

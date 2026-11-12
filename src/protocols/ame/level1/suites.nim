@@ -14,6 +14,7 @@ import ../types
 import ../level0/bytes
 import ./exchange_paths
 import ./algorithms
+import ../../byte_codec
 import runePragmas
 
 template requirePathLength(n: int, what: string) {.role: parser.} =
@@ -388,7 +389,7 @@ proc encodeAmeMaskTier*(t: AmeMaskTier): ByteSeq {.role: dataWriter.} =
   if t.tierId == 0'u32:
     raise newException(ValueError, "AME tier id must be positive")
   result.add(1'u8)
-  appendAmeU32(result, t.tierId)
+  appendU32Le(result, t.tierId)
   result.add(t.masks.kem)
   result.add(t.masks.cipher)
   result.add(t.masks.mac)
@@ -454,7 +455,7 @@ proc hashAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,
   appendAmeLabel(seed, "AME-HASH-TIER-v2")
   appendAmeBytes(seed, encodeAmeSuiteLayout(L))
   appendAmeBytes(seed, encodeAmeMaskTier(t))
-  appendAmeU32(seed, uint32(A.len))
+  appendU32Le(seed, uint32(A.len))
   appendAmeBytes(seed, A)
   result = newSeq[byte](outLen)
   while i < int(L.hashes.length):
@@ -484,7 +485,7 @@ proc signatureSubject(L: AmeSuiteLayout, t: AmeMaskTier,
   appendAmeLabel(result, "AME-SIGNATURE-TIER-v2")
   appendAmeBytes(result, encodeAmeSuiteLayout(L))
   appendAmeBytes(result, encodeAmeMaskTier(t))
-  appendAmeU32(result, uint32(msg.len))
+  appendU32Le(result, uint32(msg.len))
   appendAmeBytes(result, msg)
 
 proc signAmeTier*(L: AmeSuiteLayout, t: AmeMaskTier,

@@ -5,6 +5,7 @@
 import ../../types
 import ../types
 import ./body_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -18,16 +19,6 @@ const
 +----------+----------+----------+----------+----------+
 """
 
-proc dacCommitDigestIsZero(digest: array[32, uint8]): bool {.role: parser.} =
-  ## digest: package digest bytes.
-  var
-    i: int = 0
-  result = true
-  while i < digest.len:
-    if digest[i] != 0'u8:
-      return false
-    i = i + 1
-
 proc initDacPackageCommit*(packageId: uint64, digest: array[32, uint8],
     dataCount, repairCount: uint16,
     status: DacCommitStatus): DacPackageCommit {.role: configurator.} =
@@ -36,7 +27,7 @@ proc initDacPackageCommit*(packageId: uint64, digest: array[32, uint8],
   ## dataCount/repairCount: data and repair chunks used.
   ## status: final package status.
   if status in {dcsCommitted, dcsCommittedWithRepair} and
-      dacCommitDigestIsZero(digest):
+      isAllZero(digest):
     raise newException(ValueError, "DAC committed digest must not be all zero")
   result.packageId = packageId
   result.digest = digest
@@ -46,21 +37,21 @@ proc initDacPackageCommit*(packageId: uint64, digest: array[32, uint8],
 
 proc encodeDacPackageCommit*(c: DacPackageCommit): ByteSeq {.role: helper.} =
   ## c: package commit body to encode.
-  appendDacU64(result, c.packageId)
+  appendU64Le(result, c.packageId)
   appendDacBytes(result, c.digest)
-  appendDacU16(result, c.dataCount)
-  appendDacU16(result, c.repairCount)
+  appendU16Le(result, c.dataCount)
+  appendU16Le(result, c.repairCount)
   result.add(uint8(ord(c.status)))
 
 proc decodeDacPackageCommit*(A: openArray[uint8]): DacPackageCommit {.role: parser.} =
   ## A: package commit body bytes.
   var
-    digest: array[32, uint8]
+    digest: array[32, uint8] = default(array[32, uint8])
     i: int = 0
   if A.len != dacPackageCommitLen:
     raise newException(ValueError, "DAC package commit body length mismatch")
   while i < digest.len:
     digest[i] = A[8 + i]
     i = i + 1
-  result = initDacPackageCommit(readDacU64(A, 0), digest, readDacU16(A, 40),
-    readDacU16(A, 42), dacCommitStatusFromId(A[44]))
+  result = initDacPackageCommit(readU64Le(A, 0), digest, readU16Le(A, 40),
+    readU16Le(A, 42), dacCommitStatusFromId(A[44]))

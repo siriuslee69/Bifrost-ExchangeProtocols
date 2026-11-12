@@ -54,6 +54,7 @@
 import ../../types
 import ../../ame/level0/bytes
 import ../types
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -92,11 +93,11 @@ proc encodeArchiveSendLane*(L: ArchiveSendLane): ByteSeq {.role: dataWriter,
     tag: "archive|wire", gives: result.len == archiveSendStateBytes.} =
   ## L: Def. 1. What the caller keeps on disk for this lane.
   result.add(archiveRecordVersion)
-  appendAmeU32(result, L.lane)
-  appendAmeU16(result, L.gen)
-  appendAmeU16(result, L.epochSize)
-  appendAmeU64(result, L.reservedUntil)
-  appendAmeU16(result, L.reserveStep)
+  appendU32Le(result, L.lane)
+  appendU16Le(result, L.gen)
+  appendU16Le(result, L.epochSize)
+  appendU64Le(result, L.reservedUntil)
+  appendU16Le(result, L.reserveStep)
 
 proc resumeArchiveSendLane*(A: openArray[uint8]): ArchiveSendLane {.
     role: parser, tag: "archive|appApi|wire".} =
@@ -106,10 +107,10 @@ proc resumeArchiveSendLane*(A: openArray[uint8]): ArchiveSendLane {.
     raise newException(ValueError, "archive lane state is malformed")
   result.lane = uint32(A[1]) or (uint32(A[2]) shl 8) or (uint32(A[3]) shl 16) or
     (uint32(A[4]) shl 24)
-  result.gen = readAmeU16(A, 5)
-  result.epochSize = readAmeU16(A, 7)
-  result.reservedUntil = readAmeU64(A, 9)
-  result.reserveStep = readAmeU16(A, 17)
+  result.gen = readU16Le(A, 5)
+  result.epochSize = readU16Le(A, 7)
+  result.reservedUntil = readU64Le(A, 9)
+  result.reserveStep = readU16Le(A, 17)
   result.next = result.reservedUntil
   if result.epochSize == 0'u16 or result.reserveStep == 0'u16:
     raise newException(ValueError, "archive lane state is malformed")
@@ -217,7 +218,7 @@ proc encodeArchiveLaneList*(A: openArray[uint32]): ByteSeq {.role: dataWriter,
   ##   count u8 | count × lane u32
   result.add(uint8(A.len))
   for l in A:
-    appendAmeU32(result, l)
+    appendU32Le(result, l)
 
 proc decodeArchiveLaneList*(A: openArray[uint8]): seq[uint32] {.role: parser,
     tag: "archive|wire".} =

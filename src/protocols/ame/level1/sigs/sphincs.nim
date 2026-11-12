@@ -21,7 +21,7 @@ proc sphincsVariant(a: AmeSignatureAlgorithm): tyr_sphincs.SphincsVariant {.
 proc sphincsAmeKeypair*(a: AmeSignatureAlgorithm,
     seed: openArray[byte] = []): AmeSigKeypair {.role: truthBuilder.} =
   ## a/seed: SPHINCS+ slot, and optional fixed randomness.
-  assignAmeSigKeypair(tyr_sphincs.sphincsTyrKeypair(sphincsVariant(a), @seed))
+  assignAmeKeypair(tyr_sphincs.sphincsTyrKeypair(sphincsVariant(a), @seed))
 
 proc sphincsAmeSign*(a: AmeSignatureAlgorithm,
     msg, secretKey: openArray[byte]): ByteSeq {.role: encryptor.} =

@@ -14,7 +14,8 @@ import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./[types, codec, connection, hello, key_schedule, transcript,
-  handshake_messages, alerts]
+  handshake_messages, alerts, session_failure]
+import ../byte_codec
 import runePragmas
 
 type
@@ -61,14 +62,14 @@ proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
     role: truthBuilder, tag: "tls|transport".} =
   ## C: server certificate chain, Ed25519 key, and supported ALPN identifiers.
   var
-    R: X509ReadResult
-    leaf: X509Certificate
+    R: X509ReadResult = default(X509ReadResult)
+    leaf: X509Certificate = default(X509Certificate)
     publicKey: ByteSeq = @[]
     i: int = 0
-    rsaParsed: RsaPrivateKeyResult
-    ecParsed: P256PublicKeyResult
-    derived: P256AffinePoint
-    scalar: BigInt
+    rsaParsed: RsaPrivateKeyResult = default(RsaPrivateKeyResult)
+    ecParsed: P256PublicKeyResult = default(P256PublicKeyResult)
+    derived: P256AffinePoint = default(P256AffinePoint)
+    scalar: BigInt = default(BigInt)
   if C.certificateChainDer.len == 0:
     raise newException(ValueError, "TLS server certificate chain is empty")
   while i < C.certificateChainDer.len:
@@ -167,18 +168,8 @@ proc failServer(S: var Tls13ServerSession, O: var Tls13ServerOutput,
     tag: "tls|validation|cryptoBoundary".} =
   S.state = tssFailed
   O.err = e
-  try:
-    if not S.connection.tls13WriteKeysInstalled():
-      O.outbound.add(encodeTls13PlainAlert(talFatal, tls13AlertForError(e)))
-    else:
-      O.outbound.add(S.connection.encodeTls13Protected(tctAlert,
-        [byte 2, byte(ord(tls13AlertForError(e)))]))
-  except CatchableError:
-    discard
-  secureClearBytes(S.x25519SecretKey)
-  clearTls13HandshakeSecrets(S.handshakeSecrets)
-  clearTls13ApplicationSecrets(S.applicationSecrets)
-  S.connection.clearTls13ConnectionSecrets()
+  failTls13Handshake(S.connection, O.outbound, S.x25519SecretKey,
+    S.handshakeSecrets, S.applicationSecrets, e)
 
 proc random32(): array[32, byte] {.role: dataFetcher,
     tag: "tls|cryptoBoundary".} =
@@ -195,14 +186,16 @@ proc emitServerFlight(S: var Tls13ServerSession, H: Tls13ClientHello,
     encodedClientHello: openArray[byte], O: var Tls13ServerOutput) {.
     role: orchestrator, tag: "tls|cryptoBoundary".} =
   var
-    kp: X25519TyrKeypair
-    SH: Tls13ServerHello
+    kp: X25519TyrKeypair = default(X25519TyrKeypair)
+    SH: Tls13ServerHello = default(Tls13ServerHello)
     serverHelloBody, serverHelloMessage, ee, cert, cv, finished: ByteSeq = @[]
     shared: ByteSeq = @[]
-    helloHash, transcriptHash: Sha256Digest
-    certificateMessage: Tls13CertificateMessage
+    helloHash, transcriptHash: Sha256Digest = default(Sha256Digest)
+    certificateMessage: Tls13CertificateMessage =
+      default(Tls13CertificateMessage)
     signature: ByteSeq = @[]
-    serverHandshakeKeys, clientHandshakeKeys: Tls13TrafficKeys
+    serverHandshakeKeys, clientHandshakeKeys: Tls13TrafficKeys =
+      default(Tls13TrafficKeys)
     scheme: uint16 = 0
     i: int = 0
   S.transcript.appendTls13Transcript(encodedClientHello)
@@ -285,7 +278,7 @@ proc acceptClientFinished(S: var Tls13ServerSession, H: Tls13Handshake,
     expected: Tls13Secret = tls13FinishedVerifyData(
       S.handshakeSecrets.clientHandshakeTraffic, transcriptHash)
   if H.messageType != thtFinished or
-      not constantTimeFinishedEqual(H.body, expected):
+      not constantTimeEqual(H.body, expected):
     S.failServer(O, "TLS client Finished is invalid")
     return
   S.transcript.appendTls13Transcript(H.encoded)

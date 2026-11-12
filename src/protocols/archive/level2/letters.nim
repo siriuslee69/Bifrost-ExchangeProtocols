@@ -52,6 +52,7 @@ import ../types
 import ../level1/keys
 import ../level1/sealed
 import ./account
+import ../../byte_codec
 import runePragmas
 
 const
@@ -115,7 +116,7 @@ proc publicOf*(P: ArchivePrekey): ArchivePrekeyPublic {.role: parser,
 proc encodeArchivePrekeyPublic*(P: ArchivePrekeyPublic): ByteSeq {.
     role: dataWriter, tag: "archive|wire".} =
   ## P: prekeyId u32 | slots u8 | slots x u16 + public key.
-  appendAmeU32(result, P.id)
+  appendU32Le(result, P.id)
   result.add(uint8(P.publicKeys.len))
   for k in P.publicKeys:
     appendSizedArchive(result, k)
@@ -144,7 +145,7 @@ proc encodeArchivePrekey*(P: ArchivePrekey): ByteSeq {.role: dataWriter,
     tag: "archive|wire".} =
   ## P: both halves, for sealing into the owner's vault:
   ## prekeyId u32 | slots u8 | slots x (u16 + public | u16 + secret).
-  appendAmeU32(result, P.id)
+  appendU32Le(result, P.id)
   result.add(uint8(P.keys.len))
   for k in P.keys:
     appendSizedArchive(result, k.publicKey)
@@ -174,7 +175,7 @@ proc letterContext(fromName, toName: string, id: uint32,
   appendAmeLabel(result, "ARCHIVE-LETTER-START-v1")
   appendSizedArchive(result, toBytesArchive(fromName))
   appendSizedArchive(result, toBytesArchive(toName))
-  appendAmeU32(result, id)
+  appendU32Le(result, id)
   for x in E:
     appendSizedArchive(result, x.ciphertext)
     appendSizedArchive(result, x.senderPublicKey)
@@ -211,7 +212,7 @@ proc sealArchiveLetter*(P: ArchivePrekeyPublic, fromName, toName: string,
     toName, P.id, E))
   key = letterKey(result.state)
   result.letter.add(archiveRecordVersion)
-  appendAmeU32(result.letter, P.id)
+  appendU32Le(result.letter, P.id)
   result.letter.add(uint8(E.len))
   for x in E:
     appendSizedArchive(result.letter, x.ciphertext)

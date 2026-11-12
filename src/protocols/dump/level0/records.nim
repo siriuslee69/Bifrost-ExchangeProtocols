@@ -26,12 +26,13 @@
 import ../../types
 import ../../ame/level0/bytes
 import ../types
+import ../../byte_codec
 import runePragmas
 
 proc appendDumpName(A: var ByteSeq, s: string) {.role: dataWriter, inline.} =
   ## A/s: s with its u16 length in front.
   requireAmeU16Len(s.len, "dump name")
-  appendAmeU16(A, uint16(s.len))
+  appendU16Le(A, uint16(s.len))
   appendAmeBytes(A, toOpenArrayByte(s, 0, s.len - 1))
 
 proc takeDumpName(A: openArray[uint8], o: var int): string {.role: parser.} =
@@ -40,7 +41,7 @@ proc takeDumpName(A: openArray[uint8], o: var int): string {.role: parser.} =
     n: int = 0
   if o + 2 > A.len:
     raise newException(ValueError, "dump record is short")
-  n = int(readAmeU16(A, o))
+  n = int(readU16Le(A, o))
   if n > dumpNameMax or o + 2 + n > A.len:
     raise newException(ValueError, "dump record is short")
   result = newString(n)
@@ -52,7 +53,7 @@ proc takeDumpU64(A: openArray[uint8], o: var int): uint64 {.role: parser.} =
   ## A/o: a u64 at o; o moves past it. Raises when it runs out.
   if o + 8 > A.len:
     raise newException(ValueError, "dump record is short")
-  result = readAmeU64(A, o)
+  result = readU64Le(A, o)
   o = o + 8
 
 proc encodeDumpRecord*(R: DumpRecord): ByteSeq {.role: dataWriter,
@@ -60,11 +61,11 @@ proc encodeDumpRecord*(R: DumpRecord): ByteSeq {.role: dataWriter,
   ## R: Def. 1.
   result.add(dumpRecordVersion)
   appendDumpName(result, R.stream)
-  appendAmeU64(result, R.number)
-  appendAmeU64(result, R.atMs)
+  appendU64Le(result, R.number)
+  appendU64Le(result, R.atMs)
   appendDumpName(result, R.sender)
   requireAmeU32Len(R.body.len, "dump body")
-  appendAmeU32(result, uint32(R.body.len))
+  appendU32Le(result, uint32(R.body.len))
   appendAmeBytes(result, R.body)
 
 proc decodeDumpRecord*(A: openArray[uint8], o: var int): DumpRecord {.
@@ -92,10 +93,10 @@ proc encodeDumpCursors*(C: openArray[tuple[stream: string,
     settled: uint64]]): ByteSeq {.role: dataWriter, tag: "dump|wire".} =
   ## C: Def. 2.
   requireAmeU16Len(C.len, "dump cursor count")
-  appendAmeU16(result, uint16(C.len))
+  appendU16Le(result, uint16(C.len))
   for x in C:
     appendDumpName(result, x.stream)
-    appendAmeU64(result, x.settled)
+    appendU64Le(result, x.settled)
 
 proc decodeDumpCursors*(A: openArray[uint8]): seq[tuple[stream: string,
     settled: uint64]] {.role: parser, tag: "dump|wire".} =
@@ -107,7 +108,7 @@ proc decodeDumpCursors*(A: openArray[uint8]): seq[tuple[stream: string,
     name: string = ""
   if A.len < 2:
     raise newException(ValueError, "dump cursors are short")
-  n = int(readAmeU16(A, 0))
+  n = int(readU16Le(A, 0))
   while i < n:
     name = takeDumpName(A, o)
     result.add((name, takeDumpU64(A, o)))

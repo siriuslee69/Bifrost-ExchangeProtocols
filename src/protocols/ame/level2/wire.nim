@@ -62,6 +62,7 @@
 import ../../types
 import ../types
 import ../level0/bytes
+import ../../byte_codec
 import runePragmas
 
 proc readU32(A: openArray[uint8], o: int): uint32 {.role: parser.} =
@@ -117,10 +118,10 @@ proc encodeAmeFrameHeader*(h: AmeFrameHeader): ByteSeq {.
   result.add(h.formatVersion)
   result.add(uint8(ord(h.packetKind)))
   result.add(uint8(ord(h.messageClass)) or h.flags)
-  appendAmeU64(result, h.sessionId)
-  appendAmeU32(result, h.rootLaneId)
-  appendAmeU32(result, h.laneId)
-  appendAmeU32(result, h.sequence)
+  appendU64Le(result, h.sessionId)
+  appendU32Le(result, h.rootLaneId)
+  appendU32Le(result, h.laneId)
+  appendU32Le(result, h.sequence)
 
 proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
     role: parser.} =
@@ -146,7 +147,7 @@ proc decodeAmeFrameHeader*(A: openArray[uint8]): AmeFrameHeader {.
   ## byte that set a flag bit this build does not know.
   result.messageClass = AmeMessageClass(A[5] and ameFrameClassMask)
   result.flags = A[5] and not ameFrameClassMask
-  result.sessionId = readAmeU64(A, 6)
+  result.sessionId = readU64Le(A, 6)
   result.rootLaneId = readU32(A, 14)
   result.laneId = readU32(A, 18)
   result.sequence = readU32(A, 22)

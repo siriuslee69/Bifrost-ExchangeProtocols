@@ -8,6 +8,7 @@ import tyr/helpers/secure_memory
 
 import ../types
 import ./types
+import ../byte_codec
 import runePragmas
 
 type
@@ -45,25 +46,13 @@ proc buildPoly1305Input(aad, ciphertext: openArray[byte]): ByteSeq {.
   appendLe64(result, uint64(aad.len))
   appendLe64(result, uint64(ciphertext.len))
 
-proc constantTimeTagEqual(A, B: openArray[byte]): bool {.role: helper,
-    tag: "tls|cryptoBoundary".} =
-  ## A/B: fixed-size authentication tags.
-  var
-    diff: uint = if A.len == B.len: 0'u else: 1'u
-    i: int = 0
-    b: byte = 0
-  while i < A.len:
-    b = if i < B.len: B[i] else: 0'u8
-    diff = diff or uint(A[i] xor b)
-    i = i + 1
-  result = diff == 0'u
-
 proc derivePoly1305Key(key, nonce: openArray[byte]):
     array[poly1305KeyBytes, byte] {.role: truthBuilder,
     tag: "tls|cryptoBoundary".} =
   ## key/nonce: ChaCha20 traffic key and per-record nonce.
   var
-    keyBlock: array[chacha20BlockSize, byte]
+    keyBlock: array[chacha20BlockSize, byte] =
+      default(array[chacha20BlockSize, byte])
     i: int = 0
   defer:
     secureClearBytes(keyBlock)
@@ -77,7 +66,8 @@ proc sealTls13Aead(key, nonce, plaintext, aad: openArray[byte]):
     tag: "tls|cryptoBoundary".} =
   ## key/nonce/plaintext/aad: private TLS RFC 8439 composition inputs.
   var
-    oneTimeKey: array[poly1305KeyBytes, byte]
+    oneTimeKey: array[poly1305KeyBytes, byte] =
+      default(array[poly1305KeyBytes, byte])
     macInput: ByteSeq = @[]
   defer:
     secureClearBytes(oneTimeKey)
@@ -92,8 +82,10 @@ proc openTls13Aead(key, nonce, ciphertext, tag,
     tag: "tls|cryptoBoundary".} =
   ## key/nonce/ciphertext/tag/aad: private TLS RFC 8439 composition inputs.
   var
-    oneTimeKey: array[poly1305KeyBytes, byte]
-    expected: array[poly1305TagBytes, byte]
+    oneTimeKey: array[poly1305KeyBytes, byte] =
+      default(array[poly1305KeyBytes, byte])
+    expected: array[poly1305TagBytes, byte] =
+      default(array[poly1305TagBytes, byte])
     macInput: ByteSeq = @[]
   defer:
     secureClearBytes(oneTimeKey)
@@ -104,7 +96,7 @@ proc openTls13Aead(key, nonce, ciphertext, tag,
   oneTimeKey = derivePoly1305Key(key, nonce)
   macInput = buildPoly1305Input(aad, ciphertext)
   expected = poly1305Mac(oneTimeKey, macInput)
-  if not constantTimeTagEqual(expected, tag):
+  if not constantTimeEqual(expected, tag):
     return
   result.plaintext = chacha20Xor(key, nonce, 1'u32, ciphertext)
   result.ok = true
@@ -159,8 +151,8 @@ proc sealTls13Record*(T: var Tls13TrafficKeys, t: Tls13ContentType,
   ## T/t/content/paddingLen: write keys, inner type, plaintext, and zero padding.
   var
     inner, aad: ByteSeq = @[]
-    nonce: array[tls13AeadIvLen, byte]
-    sealed: Tls13AeadSeal
+    nonce: array[tls13AeadIvLen, byte] = default(array[tls13AeadIvLen, byte])
+    sealed: Tls13AeadSeal = default(Tls13AeadSeal)
   if t notin {tctAlert, tctHandshake, tctApplicationData}:
     raise newException(ValueError, "TLS inner content type is invalid")
   if paddingLen < 0 or content.len + 1 + paddingLen > tls13PlaintextLimit:
@@ -184,10 +176,10 @@ proc openTls13Record*(T: var Tls13TrafficKeys,
     tag: "tls|cryptoBoundary|packet".} =
   ## T/r: read keys and received TLSCiphertext record.
   var
-    nonce: array[tls13AeadIvLen, byte]
+    nonce: array[tls13AeadIvLen, byte] = default(array[tls13AeadIvLen, byte])
     aad, ciphertext: ByteSeq = @[]
-    tag: array[tls13AeadTagLen, byte]
-    opened: Tls13AeadOpen
+    tag: array[tls13AeadTagLen, byte] = default(array[tls13AeadTagLen, byte])
+    opened: Tls13AeadOpen = default(Tls13AeadOpen)
     n, i: int = 0
   if r.contentType != tctApplicationData or
       r.legacyVersion != tls13LegacyRecordVersion:

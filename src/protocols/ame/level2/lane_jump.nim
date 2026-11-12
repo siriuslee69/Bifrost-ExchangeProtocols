@@ -59,6 +59,7 @@ import ../../fomke/level1/chain
 import ../../fomke/level1/jump
 import ./wire
 import ./seal_open
+import ../../byte_codec
 import runePragmas
 
 const
@@ -83,15 +84,15 @@ proc sealAmeJumpAsk*(S: var AmeSession, carrier: AmeCarrier): ByteSeq {.
   ## jump came back.
   var
     body: ByteSeq = @[]
-  appendAmeU64(body, inboundIndex(S))
+  appendU64Le(body, inboundIndex(S))
   result = sealControlFrame(S, ampkJumpAsk, carrier, body)
 
 proc encodeJumpBody(J: FomkeJump): ByteSeq {.role: dataWriter.} =
   ## J: Def. 2, without the header.
-  appendAmeU32(result, J.epoch)
+  appendU32Le(result, J.epoch)
   result.add(uint8(ord(J.lane)))
-  appendAmeU32(result, J.number)
-  appendAmeU64(result, J.index)
+  appendU32Le(result, J.number)
+  appendU64Le(result, J.index)
   appendAmeBytes(result, J.tag)
 
 proc decodeJumpBody(A: openArray[uint8]): FomkeJump {.role: parser.} =
@@ -103,7 +104,7 @@ proc decodeJumpBody(A: openArray[uint8]): FomkeJump {.role: parser.} =
   result.epoch = readU32(A, 0)
   result.lane = FomkeLane(A[4])
   result.number = readU32(A, 5)
-  result.index = readAmeU64(A, 9)
+  result.index = readU64Le(A, 9)
   result.tag = @(A.toOpenArray(17, ameJumpBodyLen - 1))
 
 proc sealAmeJump*(S: var AmeSession, carrier: AmeCarrier): ByteSeq {.

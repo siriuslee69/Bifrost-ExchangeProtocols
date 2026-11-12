@@ -6,6 +6,7 @@ import std/os
 when compileOption("threads"):
   import std/locks
 
+import ../../byte_codec
 import ../level0/types
 import ../level0/memory_ops
 import ../level1/nonce_ops
@@ -70,7 +71,7 @@ proc loadU64Le(bs: openArray[uint8], o: int): uint64 {.role: parser,
 proc encodeHeader(h: ChunkHeader): array[chunkHeaderLen, uint8] {.
     role: dataWriter, tag: "chunkyAead|codecBoundary".} =
   var
-    bs: array[chunkHeaderLen, uint8]
+    bs: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     o: int = 0
     i: int = 0
   i = 0
@@ -98,7 +99,7 @@ proc encodeHeader(h: ChunkHeader): array[chunkHeaderLen, uint8] {.
 proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
     role: parser, tag: "chunkyAead|codecBoundary|parsing".} =
   var
-    h: ChunkHeader
+    h: ChunkHeader = default(ChunkHeader)
     o: int = 0
     i: int = 0
   i = 0
@@ -149,7 +150,7 @@ when chunkyThreaded:
 proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
     tag: "chunkyAead|codecBoundary|write".} =
   var
-    bs: array[chunkHeaderLen, uint8]
+    bs: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     wrote: int = 0
   bs = encodeHeader(h)
   wrote = f.writeBuffer(addr bs[0], bs.len)
@@ -159,7 +160,7 @@ proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
 proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
     a: ChunkyAlgo, t: uint16): ChunkHeader {.role: truthBuilder,
     tag: "chunkyAead|codecBoundary".} =
-  var h: ChunkHeader
+  var h: ChunkHeader = default(ChunkHeader)
   h.magic = chunkyMagic
   h.version = chunkyVersion
   h.algo = a
@@ -246,7 +247,7 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
 proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
     tag: "chunkyAead|codecBoundary|read".} =
   var
-    bs: array[chunkHeaderLen, uint8]
+    bs: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     readBytes: int = 0
   readBytes = f.readBuffer(addr bs[0], bs.len)
   if readBytes != bs.len:
@@ -268,15 +269,6 @@ proc requireChunkHeader(h: ChunkHeader, t: ChunkDecryptTask) {.role: parser,
     raise newException(ValueError, "chunk index mismatch")
   if h.nonce != deriveChunkNonce(t.baseNonce, t.chunkIndex):
     raise newException(ValueError, "chunk nonce mismatch")
-
-proc constantTimeEqual(a, b: openArray[uint8]): bool {.role: helper,
-    tag: "chunkyAead|cryptoBoundary|validation".} =
-  if a.len != b.len:
-    return false
-  var diff: uint8 = 0
-  for i in 0 ..< a.len:
-    diff = diff or (a[i] xor b[i])
-  diff == 0
 
 proc decryptChunkBody(t: ChunkDecryptTask, h: ChunkHeader,
     st: var ChunkCryptoState, fIn, fOut: var File) {.role: decryptor,
@@ -501,11 +493,13 @@ proc buildChunkName(bs: string, i: int): string {.role: helper,
 
 proc resolveOutputDir(i, o: string, opt: ChunkyOptions): string {.
     role: configurator, tag: "chunkyAead".} =
+  var
+    parts: tuple[dir, name, ext: string] = (dir: "", name: "", ext: "")
   if o.len > 0:
     return o
   if opt.outputDir.len > 0:
     return opt.outputDir
-  let parts = splitFile(i)
+  parts = splitFile(i)
   result = joinPath(parts.dir, parts.name & ".chunks")
 
 proc resolveTagLen(opt: ChunkyOptions, s: ChunkyCipherState): uint16 {.

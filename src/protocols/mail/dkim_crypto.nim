@@ -16,6 +16,7 @@ import std/[base64, strutils]
 import tyr/certs/rsa
 import tyr/hashes/sha256
 
+import ../byte_codec
 import runePragmas
 
 type
@@ -29,23 +30,10 @@ type
     key*: RsaPublicKey
     err*: string
 
-proc toBytes(s: string): seq[byte] {.role: helper, tag: "cryptoBoundary".} =
-  ## s: text or octet string to view as bytes.
-  result = newSeq[byte](s.len)
-  for i, c in s:
-    result[i] = byte(c)
-
-proc toStr(b: openArray[byte]): string {.role: helper,
-    tag: "cryptoBoundary".} =
-  ## b: octets to view as a string.
-  result = newString(b.len)
-  for i, v in b:
-    result[i] = char(v)
-
 proc dkimSha256*(s: string): string {.role: math, tag: "cryptoBoundary".} =
   ## s: data to hash.
   ## Returns the raw 32-byte SHA-256 digest, used for the DKIM `bh=` tag.
-  result = toStr(sha256Hash(toBytes(s)))
+  result = bytesToString(sha256Hash(stringToBytes(s)))
 
 proc dkimLoadPublicKey*(p: string): DkimKeyResult {.role: truthBuilder,
     tag: "cryptoBoundary|validation".} =
@@ -65,7 +53,7 @@ proc dkimLoadPublicKey*(p: string): DkimKeyResult {.role: truthBuilder,
   except CatchableError:
     result.err = "DKIM public key is not valid base64"
     return
-  parsed = parseRsaSpki(toBytes(raw))
+  parsed = parseRsaSpki(stringToBytes(raw))
   if not parsed.ok:
     result.err = "DKIM public key is unusable: " & parsed.err
     return
@@ -91,7 +79,7 @@ proc dkimVerifyRsaSha256*(data, signatureB64, publicKeyB64: string): bool {.
     return false
   if sig.len == 0:
     return false
-  result = rsaVerifyPkcs1v15Sha256(key.key, toBytes(data), toBytes(sig))
+  result = rsaVerifyPkcs1v15Sha256(key.key, stringToBytes(data), stringToBytes(sig))
 
 proc dkimSignRsaSha256*(data, privateKeyPem: string): DkimSignResult {.
     role: actor, tag: "cryptoBoundary".} =
@@ -103,9 +91,9 @@ proc dkimSignRsaSha256*(data, privateKeyPem: string): DkimSignResult {.
   if not parsed.ok:
     result.err = "DKIM signing key is unusable: " & parsed.err
     return
-  signed = rsaSignPkcs1v15Sha256(parsed.key, toBytes(data))
+  signed = rsaSignPkcs1v15Sha256(parsed.key, stringToBytes(data))
   if not signed.ok:
     result.err = signed.err
     return
-  result.signature = toStr(signed.signature)
+  result.signature = bytesToString(signed.signature)
   result.ok = true

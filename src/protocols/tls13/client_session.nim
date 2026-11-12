@@ -12,7 +12,8 @@ import tyr/signatures/ecdsa_p256
 
 import ../types
 import ./[types, codec, connection, hello, key_schedule, transcript,
-  handshake_messages, alerts]
+  handshake_messages, alerts, session_failure]
+import ../byte_codec
 import runePragmas
 
 type
@@ -95,7 +96,7 @@ proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
   ## C: pinned root or trust anchors, expected identity, ALPN list, time, and
   ## optional test seed.
   var
-    R: X509ReadResult
+    R: X509ReadResult = default(X509ReadResult)
     added: string = ""
     i: int = 0
   if C.x25519Seed.len notin {0, 32}:
@@ -134,8 +135,8 @@ proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
     role: dataWriter, tag: "tls|transport|cryptoBoundary".} =
   ## S: fresh client session whose encoded ClientHello is returned.
   var
-    kp: X25519TyrKeypair
-    H: Tls13ClientHello
+    kp: X25519TyrKeypair = default(X25519TyrKeypair)
+    H: Tls13ClientHello = default(Tls13ClientHello)
     message: ByteSeq = @[]
   if S.state != tcsStart:
     raise newException(IOError, "TLS client session has already started")
@@ -159,18 +160,8 @@ proc failClient(S: var Tls13ClientSession, O: var Tls13ClientOutput,
     tag: "tls|validation|cryptoBoundary".} =
   S.state = tcsFailed
   O.err = e
-  try:
-    if not S.connection.tls13WriteKeysInstalled():
-      O.outbound.add(encodeTls13PlainAlert(talFatal, tls13AlertForError(e)))
-    else:
-      O.outbound.add(S.connection.encodeTls13Protected(tctAlert,
-        [byte 2, byte(ord(tls13AlertForError(e)))]))
-  except CatchableError:
-    discard
-  secureClearBytes(S.x25519SecretKey)
-  clearTls13HandshakeSecrets(S.handshakeSecrets)
-  clearTls13ApplicationSecrets(S.applicationSecrets)
-  S.connection.clearTls13ConnectionSecrets()
+  failTls13Handshake(S.connection, O.outbound, S.x25519SecretKey,
+    S.handshakeSecrets, S.applicationSecrets, e)
 
 proc acceptServerHello(S: var Tls13ClientSession, H: Tls13Handshake,
     O: var Tls13ClientOutput) {.role: actor,
@@ -178,7 +169,7 @@ proc acceptServerHello(S: var Tls13ClientSession, H: Tls13Handshake,
   var
     R: Tls13ServerHelloResult = decodeTls13ServerHello(H.body)
     shared: ByteSeq = @[]
-    transcriptHash: Sha256Digest
+    transcriptHash: Sha256Digest = default(Sha256Digest)
   defer:
     secureClearBytes(shared)
   if not R.ok:
@@ -332,7 +323,7 @@ proc acceptServerFinished(S: var Tls13ClientSession, H: Tls13Handshake,
     expected: Tls13Secret = tls13FinishedVerifyData(
       S.handshakeSecrets.serverHandshakeTraffic, transcriptHash)
     finished: ByteSeq = @[]
-  if not constantTimeFinishedEqual(H.body, expected):
+  if not constantTimeEqual(H.body, expected):
     S.failClient(O, "TLS server Finished is invalid")
     return
   S.transcript.appendTls13Transcript(H.encoded)

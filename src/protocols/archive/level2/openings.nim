@@ -35,6 +35,7 @@ import ../../ame/level1/suites
 import ../types
 import ../level0/records
 import ./account
+import ../../byte_codec
 import runePragmas
 
 proc encodeArchiveOpening*(S: ArchiveSpace, carrySecret: bool): ByteSeq {.
@@ -42,8 +43,8 @@ proc encodeArchiveOpening*(S: ArchiveSpace, carrySecret: bool): ByteSeq {.
   ## S: the space. carrySecret: Def. 1, true for a group.
   result.add(archiveRecordVersion)
   appendAmeBytes(result, S.spaceId)
-  appendAmeU16(result, S.gen)
-  appendAmeU16(result, S.epochSize)
+  appendU16Le(result, S.gen)
+  appendU16Le(result, S.epochSize)
   appendSizedArchive(result, encodeAmeSuiteLayout(S.layout))
   appendSizedArchive(result, encodeAmeMaskTier(S.tier))
   result.add(uint8(ord(S.tagLen)))
@@ -69,8 +70,8 @@ proc decodeArchiveOpening*(A: openArray[uint8]): tuple[space: ArchiveSpace,
   if A.len < o or A[0] != archiveRecordVersion:
     raise newException(ValueError, "archive opening is short")
   result.space.spaceId = @(A.toOpenArray(1, 16))
-  result.space.gen = readAmeU16(A, 17)
-  result.space.epochSize = readAmeU16(A, 19)
+  result.space.gen = readU16Le(A, 17)
+  result.space.epochSize = readU16Le(A, 19)
   if result.space.epochSize == 0'u16:
     raise newException(ValueError, "archive epoch size must be at least 1")
   result.space.layout = decodeAmeSuiteLayout(takeSizedArchive(A, o))
@@ -91,7 +92,7 @@ proc encodeArchiveAnswer*(spaceId: openArray[uint8], gen: uint16,
   ## spaceId/gen/accept: Def. 2, 20 bytes.
   result.add(archiveRecordVersion)
   appendAmeBytes(result, spaceId)
-  appendAmeU16(result, gen)
+  appendU16Le(result, gen)
   result.add(if accept: 1'u8 else: 0'u8)
 
 proc decodeArchiveAnswer*(A: openArray[uint8]): tuple[spaceId: ByteSeq,
@@ -100,7 +101,7 @@ proc decodeArchiveAnswer*(A: openArray[uint8]): tuple[spaceId: ByteSeq,
   if A.len != 20 or A[0] != archiveRecordVersion or A[19] > 1'u8:
     raise newException(ValueError, "archive answer is malformed")
   result.spaceId = @(A.toOpenArray(1, 16))
-  result.gen = readAmeU16(A, 17)
+  result.gen = readU16Le(A, 17)
   result.accept = A[19] == 1'u8
 
 proc encodeArchiveReadPointer*(P: openArray[ArchivePosition]): ByteSeq {.
@@ -108,7 +109,7 @@ proc encodeArchiveReadPointer*(P: openArray[ArchivePosition]): ByteSeq {.
   ## P: the last position read, one per lane. Def. 3.
   requireAmeU16Len(P.len, "archive read pointer")
   result.add(archiveRecordVersion)
-  appendAmeU16(result, uint16(P.len))
+  appendU16Le(result, uint16(P.len))
   for x in P:
     appendAmeBytes(result, encodeArchivePosition(x))
 
@@ -121,7 +122,7 @@ proc decodeArchiveReadPointer*(A: openArray[uint8]): seq[ArchivePosition] {.
     o: int = 3
   if A.len < 3 or A[0] != archiveRecordVersion:
     raise newException(ValueError, "archive read pointer is short")
-  n = int(readAmeU16(A, 1))
+  n = int(readU16Le(A, 1))
   if A.len != 3 + n * archivePositionBytes:
     raise newException(ValueError, "archive read pointer has the wrong size")
   while i < n:

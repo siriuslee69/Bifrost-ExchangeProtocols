@@ -81,6 +81,7 @@ import tyr/hashes/blake3 as tyr_blake3
 import ../../types
 import ../../ame/level0/bytes
 import ../types
+import ../../byte_codec
 import runePragmas
 import ./chain
 
@@ -93,7 +94,7 @@ proc jumpKey(S: FomkeState, lane: FomkeLane, number: uint32): ByteSeq {.
   ## S/lane/number: JK(number) for that lane, a child of the tight key.
   var
     extra: ByteSeq = @[uint8(ord(lane))]
-  appendAmeU32(extra, number)
+  appendU32Le(extra, number)
   result = deriveFomkeTightChild(S, fomkeJumpKeyLabel, extra)
 
 proc jumpTag(key: openArray[uint8], J: FomkeJump,
@@ -103,10 +104,10 @@ proc jumpTag(key: openArray[uint8], J: FomkeJump,
   var
     input: ByteSeq = @[]
   appendAmeLabel(input, fomkeJumpTagLabel)
-  appendAmeU32(input, J.epoch)
+  appendU32Le(input, J.epoch)
   input.add(uint8(ord(J.lane)))
-  appendAmeU32(input, J.number)
-  appendAmeU64(input, J.index)
+  appendU32Le(input, J.number)
+  appendU64Le(input, J.index)
   appendFomkeField(input, aad)
   result = tyr_blake3.blake3KeyedHash(key, input, fomkeJumpTagBytes)
 
@@ -215,7 +216,7 @@ proc openFomkeJump*(S: var FomkeState, J: FomkeJump,
     key = jumpKey(S, J.lane, J.number)
     expected = jumpTag(key, J, aad)
     secureClearAmeBytes(key)
-    if not constantTimeEqualAme(expected, J.tag):
+    if not constantTimeEqual(expected, J.tag):
       result.err = "FOMKE jump did not authenticate"
       return
     C = laneChain(S, J.lane)

@@ -44,6 +44,7 @@ import ../../fomke/types
 import ../../fomke/level0/xhkdf
 import ../../fomke/level1/chain_send
 import ../types
+import ../../byte_codec
 import runePragmas
 import var_invariants
 
@@ -86,7 +87,7 @@ proc archiveLabelInfo(label: string, fields: openArray[ByteSeq]): ByteSeq {.
   ## so two different splits of the same bytes never give the same input.
   appendAmeLabel(result, label)
   for f in fields:
-    appendAmeU32(result, uint32(f.len))
+    appendU32Le(result, uint32(f.len))
     appendAmeBytes(result, f)
 
 proc archiveKey(ikm: openArray[uint8], label: string,
@@ -109,11 +110,11 @@ proc archiveText(A: openArray[uint8]): string {.role: helper, inline.} =
 
 proc u16Bytes(v: uint16): ByteSeq {.role: helper, inline.} =
   ## v: two bytes, little-endian.
-  appendAmeU16(result, v)
+  appendU16Le(result, v)
 
 proc u32Bytes(v: uint32): ByteSeq {.role: helper, inline.} =
   ## v: four bytes, little-endian.
-  appendAmeU32(result, v)
+  appendU32Le(result, v)
 
 proc runArchiveArgon2(password, salt: openArray[uint8],
     S: ArchivePasswordSettings): ByteSeq {.role: math,
@@ -144,7 +145,7 @@ proc deriveArchiveLogin*(password: openArray[uint8], userId: string,
   if validateUtf8(archiveText(password)) != -1:
     raise newException(ValueError, "archive password is not valid UTF-8")
   appendAmeBytes(salt, S.userSalt)
-  appendAmeU32(salt, uint32(userId.len))
+  appendU32Le(salt, uint32(userId.len))
   appendAmeBytes(salt, userId.toOpenArrayByte(0, userId.len - 1))
   secret = runArchiveArgon2(password, salt, S)
   result.authKey = archiveKey(secret, "ARCHIVE-AUTH-KEY-v1", [])
@@ -186,7 +187,7 @@ proc deriveArchiveSpaceSecret*(S: FomkeState, spaceId: openArray[uint8],
   var
     extra: ByteSeq = @[]
   appendAmeBytes(extra, spaceId)
-  appendAmeU16(extra, gen)
+  appendU16Le(extra, gen)
   result = deriveFomkeTightChild(S, "ARCHIVE-SPACE-KEY-v1", extra)
 
 proc deriveArchiveEpochKey*(spaceId, secret: openArray[uint8], gen: uint16,

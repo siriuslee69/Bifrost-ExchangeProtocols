@@ -14,6 +14,7 @@
 import std/[net, options, times]
 
 import ../types
+import ../byte_codec
 
 import ../transport/socket_write
 import ../transport/socket_read
@@ -43,19 +44,13 @@ proc initTls13SocketSession*(): Tls13SocketSession {.role: truthBuilder,
   result.active = false
   result.closed = false
 
-proc toStr(b: openArray[byte]): string {.role: helper, tag: "tls".} =
-  ## b: bytes to view as a string.
-  result = newString(b.len)
-  for i, v in b:
-    result[i] = char(v)
-
 proc sendAll(sock: var Socket, data: openArray[byte]): bool {.role: dataWriter,
     tag: "tls|transport|write".} =
   ## sock/data: connected socket and record bytes to write.
   if data.len == 0:
     return true
   try:
-    writeAllSocket(sock, toStr(data))   # std send loops forever on EPIPE
+    writeAllSocket(sock, bytesToString(data))   # std send loops forever on EPIPE
     result = true
   except CatchableError:
     result = false
@@ -83,12 +78,6 @@ proc readChunk(sock: var Socket, timeoutMs: int): tuple[ok: bool, data: string] 
   except CatchableError:
     result = (ok: false, data: "")
 
-proc toBytes(s: string): ByteSeq {.role: helper, tag: "tls".} =
-  ## s: string to view as bytes.
-  result = newSeq[byte](s.len)
-  for i, c in s:
-    result[i] = byte(c)
-
 proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
     cfg: Tls13ServerConfig,
     timeoutMs: int = tls13SocketHandshakeTimeoutMs): Tls13SocketResult {.
@@ -101,8 +90,8 @@ proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
   ## Drives the handshake to completion, then leaves the session ready for
   ## line-oriented application traffic.
   var
-    O: Tls13ServerOutput
-    chunk: tuple[ok: bool, data: string]
+    O: Tls13ServerOutput = default(Tls13ServerOutput)
+    chunk: tuple[ok: bool, data: string] = (ok: false, data: "")
     deadline: float = epochTime() + float(timeoutMs) / 1000.0
   try:
     S.session = initTls13ServerSession(cfg)
@@ -118,7 +107,7 @@ proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
     if not chunk.ok:
       result.err = "TLS peer closed during the handshake"
       return
-    O = feedTls13Server(S.session, toBytes(chunk.data))
+    O = feedTls13Server(S.session, stringToBytes(chunk.data))
     when defined(tls13SocketDebug):
       echo "   [drv] read ", chunk.data.len, " bytes, outbound=",
         O.outbound.len, " err=", O.err, " connected=", O.connected
@@ -132,7 +121,7 @@ proc startTls13ServerSocket*(sock: var Socket, S: var Tls13SocketSession,
       result.err = "TLS peer closed during the handshake"
       return
     for entry in O.applicationData:
-      S.plaintext.add(toStr(entry))
+      S.plaintext.add(bytesToString(entry))
     if O.connected:
       S.active = true
       result.ok = true
@@ -157,17 +146,17 @@ proc pumpPlaintext(sock: var Socket, S: var Tls13SocketSession,
   ## Reads one ciphertext chunk and appends whatever plaintext it yields.
   var
     chunk: tuple[ok: bool, data: string] = readChunk(sock, timeoutMs)
-    O: Tls13ServerOutput
+    O: Tls13ServerOutput = default(Tls13ServerOutput)
   if not chunk.ok:
     return false
-  O = feedTls13Server(S.session, toBytes(chunk.data))
+  O = feedTls13Server(S.session, stringToBytes(chunk.data))
   if not flushOutbound(sock, O):
     return false
   if O.err.len > 0:
     S.closed = true
     return false
   for entry in O.applicationData:
-    S.plaintext.add(toStr(entry))
+    S.plaintext.add(bytesToString(entry))
   if O.closed:
     S.closed = true
   result = true
@@ -184,7 +173,8 @@ proc tls13SocketReadLine*(sock: var Socket, S: var Tls13SocketSession,
   ## timeoutMs: per-read timeout; zero blocks indefinitely.
   ## maxLineLength: refuse a line longer than this; zero disables the bound.
   ## Returns one CRLF-terminated line without its terminator.
-  var buffered: Option[string]
+  var
+    buffered: Option[string] = none(string)
   if not tls13SocketActive(S):
     return none(string)
   while true:
@@ -209,7 +199,7 @@ proc tls13SocketWriteLine*(sock: var Socket, S: var Tls13SocketSession,
     return false
   try:
     result = sendAll(sock, encodeTls13ServerApplication(S.session,
-      toBytes(line & "\r\n")))
+      stringToBytes(line & "\r\n")))
   except CatchableError:
     result = false
 

@@ -5,11 +5,15 @@
 ```text
 src/protocols
 ├── types.nim
+├── byte_codec.nim   <- the ONE copy of the byte helpers every protocol shares:
+│                       little-endian write and read, text <-> bytes, all-zero
+│                       check, constant-time compare. Depends on types.nim only.
 ├── config.nim
 ├── transport/
 │   ├── types.nim
 │   ├── protocols.nim
 │   ├── stream_framing.nim
+│   ├── host_literal.nim   <- host text as TCP and UDP both read it
 │   ├── tcp_ops.nim
 │   ├── udp_ops.nim
 │   ├── socket_write.nim   <- every byte out, or an error (std send loops on EPIPE)
@@ -20,7 +24,8 @@ src/protocols
 ├── ame.nim      <- the one public AME surface, and the two build flags
 ├── ame/
 │   ├── types.nim
-│   ├── level0/  <- bits, bytes, protocol descriptor
+│   ├── level0/  <- bits, bytes (xor, wipe secret rows, wire-length checks),
+│   │                protocol descriptor
 │   ├── level1/  <- algorithms, paths, suites, derivation, the secret stack,
 │   │                triggers, compression, header protection, the
 │   │                Gimli route block (route_block.nim), and tier_aead: the one
@@ -59,8 +64,8 @@ src/protocols
 │                    assembles loop + peers + crypto
 ├── dac/
 │   ├── types.nim
-│   ├── level0/  <- transport, message-kind ids, body codecs (with the LE helpers), and
-│   │                the path-profile table
+│   ├── level0/  <- transport, message-kind ids, body codecs (the LE helpers
+│   │                are in protocols/byte_codec.nim), and the path-profile table
 │   ├── level1/  <- DAC message bodies, the self-inferred ACK/repair pacing,
 │   │                what the receiver measures (path_meter), and what it does
 │   │                about a peer's report (path_policy)

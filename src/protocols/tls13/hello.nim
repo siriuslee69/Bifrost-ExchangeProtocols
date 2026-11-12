@@ -6,6 +6,7 @@ import std/strutils
 
 import ../types
 import ./codec
+import ../byte_codec
 import runePragmas
 
 const
@@ -261,17 +262,6 @@ proc encodeTls13ServerHello*(H: Tls13ServerHello): ByteSeq {.role: dataWriter,
 ## deep. Each extension is now its own step, returning the error string it
 ## would have returned in place -- empty meaning "this one was fine".
 
-proc readHelloText(A: openArray[byte], at, n: int): string {.inline,
-    role: parser, tag: "tls|read".} =
-  ## A/at/n: `n` bytes read out as text. Used for the two extensions that
-  ## carry names rather than numbers.
-  var
-    i: int = 0
-  result = newString(n)
-  while i < n:
-    result[i] = char(A[at + i])
-    i = i + 1
-
 proc vectorContainsU16(A: openArray[byte], start, n: int,
     wanted: uint16): bool {.role: parser, tag: "tls|read".} =
   var
@@ -320,7 +310,7 @@ proc parseSniExt(A: openArray[byte], dataStart, dataEnd: int,
   nameLen = int(n)
   if dataStart + 5 + nameLen != dataEnd:
     return "TLS SNI hostname length is invalid"
-  name = readHelloText(A, dataStart + 5, nameLen)
+  name = readText(A, dataStart + 5, nameLen)
   if not validHelloHost(name):
     return "TLS SNI hostname is invalid"
   serverName = name.toLowerAscii()
@@ -341,7 +331,7 @@ proc parseAlpnExt(A: openArray[byte], dataStart, dataEnd: int,
     p = p + 1
     if nameLen == 0 or p + nameLen > dataEnd:
       return "TLS ALPN identifier is invalid"
-    alpn.add(readHelloText(A, p, nameLen))
+    alpn.add(readText(A, p, nameLen))
     p = p + nameLen
 
 proc clientOnlyExtensionError(kind: uint16): string {.role: parser,

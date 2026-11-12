@@ -39,6 +39,7 @@ import ../../types
 import ../types
 import ../level0/bytes
 import ./seal_open
+import ../../byte_codec
 import runePragmas
 
 const
@@ -62,7 +63,7 @@ proc encodeRouteDirectory(D: AmeRouteDirectory): ByteSeq {.
     role: dataWriter.} =
   ## D: one question or one page of answer, as plaintext (Def. 1).
   result = @[uint8(ord(D.kind))]
-  appendAmeU16(result, D.start)
+  appendU16Le(result, D.start)
   if D.kind == araAsk:
     return
   if D.kind != araDirectory:
@@ -71,11 +72,11 @@ proc encodeRouteDirectory(D: AmeRouteDirectory): ByteSeq {.
     raise newException(ValueError, "AME route directory page is too long")
   if int(D.start) + D.entries.len > int(D.total):
     raise newException(ValueError, "AME route directory page passes its total")
-  appendAmeU16(result, D.total)
+  appendU16Le(result, D.total)
   result.add(uint8(D.entries.len))
   for e in D.entries:
     requireRouteName(e.name)
-    appendAmeU64(result, e.id)
+    appendU64Le(result, e.id)
     result.add(uint8(e.name.len))
     appendAmeLabel(result, e.name)
 
@@ -91,15 +92,6 @@ proc sealAmeRouteAsk*(S: var AmeSession, carrier: AmeCarrier,
   result = sealAmeRouteDirectory(S, carrier,
     AmeRouteDirectory(kind: araAsk, start: start))
 
-proc readRouteName(A: openArray[uint8], o, n: int): string {.role: parser.} =
-  ## A/o/n: n name bytes starting at offset o, already length-checked.
-  var
-    i: int = 0
-  result = newString(n)
-  while i < n:
-    result[i] = char(A[o + i])
-    i = i + 1
-
 proc decodeRouteEntries(A: openArray[uint8],
     D: var AmeRouteDirectory) {.role: parser.} =
   ## A: whole plaintext, kind byte first. D: filled with the page.
@@ -109,18 +101,18 @@ proc decodeRouteEntries(A: openArray[uint8],
     nameLen: int = 0
     e: AmeRouteEntry = default(AmeRouteEntry)
   requireRouteLen(A.len, 6, "directory")
-  D.total = readAmeU16(A, 3)
+  D.total = readU16Le(A, 3)
   count = int(A[5])
   if count > ameRoutePageEntries or int(D.start) + count > int(D.total):
     raise newException(ValueError, "AME route directory page is invalid")
   while D.entries.len < count:
     requireRouteLen(A.len, o + 9, "directory entry")
-    e.id = readAmeU64(A, o)
+    e.id = readU64Le(A, o)
     nameLen = int(A[o + 8])
     if nameLen > ameRouteNameMax:
       raise newException(ValueError, "AME route name is longer than 32 bytes")
     requireRouteLen(A.len, o + 9 + nameLen, "directory name")
-    e.name = readRouteName(A, o + 9, nameLen)
+    e.name = readText(A, o + 9, nameLen)
     D.entries.add(e)
     o = o + 9 + nameLen
   if o != A.len:
@@ -130,7 +122,7 @@ proc decodeRouteDirectory(A: openArray[uint8]): AmeRouteDirectory {.
     role: parser, tag: "ame|parsing|wire".} =
   ## A: opened plaintext of one kind-0x14 frame.
   requireRouteLen(A.len, 3, "directory message")
-  result.start = readAmeU16(A, 1)
+  result.start = readU16Le(A, 1)
   case A[0]
   of uint8(ord(araAsk)):
     result.kind = araAsk

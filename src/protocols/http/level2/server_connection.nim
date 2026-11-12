@@ -31,6 +31,7 @@
 import ../../types
 import ../types
 import ../level1/[request_parser, response_ops, chunked_ops]
+import ../../byte_codec
 import runePragmas
 
 type
@@ -114,8 +115,8 @@ proc feedHttpConnection*(C: HttpServerConnection;
   ## requests therefore surface as several events from one feed.
   var
     i: int = 0
-    step: HttpFeedResult
-    ev: HttpEvent
+    step: HttpFeedResult = default(HttpFeedResult)
+    ev: HttpEvent = default(HttpEvent)
   result.events = @[]
   result.consumed = 0
   if C.state in {hcsClosing, hcsClosed, hcsUpgraded}:
@@ -197,7 +198,7 @@ proc respondHttpInterim*(C: HttpServerConnection;
   var
     t: string = ""
   t = "HTTP/1.1 " & $R.status & " " & httpReasonPhrase(R.status) & "\r\n\r\n"
-  result = toHttpBytes(t)
+  result = stringToBytes(t)
 
 proc beginHttpStreamResponse*(C: HttpServerConnection;
     R: HttpResponse): ByteSeq {.role: dataWriter,

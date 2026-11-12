@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bifrost LAN</title>
   <script src="/webui.js"></script>
+  <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
 </head>
 <body>
@@ -24,8 +25,8 @@
   <aside class="edge-panel left-panel glass">
     <span class="edge-glyph">N</span>
     <div class="edge-copy">
-      <label for="peer-host">PEER</label>
-      <input id="peer-host" value="" placeholder="peer ip" autocomplete="off" />
+      <input id="peer-host" value="" placeholder="peer ip" autocomplete="off"
+        title="The address of the machine that receives your messages" aria-label="peer ip" />
       <small>TCP :48371</small>
     </div>
   </aside>
@@ -33,8 +34,7 @@
   <aside class="edge-panel right-panel glass">
     <span class="edge-glyph magenta">S</span>
     <div class="edge-copy">
-      <label>STATE</label>
-      <strong id="local-address">0.0.0.0:48371</strong>
+      <strong id="local-address" title="This machine's address, where replies arrive">0.0.0.0:48371</strong>
       <small>direct local network</small>
     </div>
   </aside>
@@ -58,7 +58,8 @@
 
   <footer class="composer glass">
     <button id="clear-button" class="icon-button" title="Clear local message view">X</button>
-    <textarea id="message-body" rows="1" placeholder="write a direct message"></textarea>
+    <textarea id="message-body" rows="1" placeholder="write a direct message"
+      aria-label="message"></textarea>
     <button id="send-button" class="send-button"><span>SEND</span><b>&gt;</b></button>
   </footer>
 

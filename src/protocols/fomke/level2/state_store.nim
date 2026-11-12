@@ -14,6 +14,7 @@ import ../../ame/level1/tier_aead
 import ../../ame/level2/protection
 import ../level1/chain
 import ./state_codec
+import ../../byte_codec
 import runePragmas
 
 const
@@ -32,7 +33,7 @@ proc appendCheckpointField(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: append one bounded checkpoint field.
   if uint64(B.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE checkpoint field exceeds its limit")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc buildCheckpointKeyInfo(context: openArray[uint8]): ByteSeq {.
@@ -46,7 +47,7 @@ proc buildCheckpointAad(counter: uint64,
     tag: "cryptoBoundary|fomke".} =
   ## counter/context: authenticated monotonic version and session identity.
   appendAmeLabel(result, "FOMKE-CHECKPOINT-AAD-v1")
-  appendAmeU64(result, counter)
+  appendU64Le(result, counter)
   appendCheckpointField(result, context)
 
 proc checkpointStringToBytes(s: string): ByteSeq {.role: helper,
@@ -72,7 +73,7 @@ proc flushCheckpointFile(path: string, A: openArray[uint8]) {.
     role: dataWriter, tag: "cryptoBoundary|fomke|write".} =
   ## path/A: write, flush, and close one temporary checkpoint file.
   var
-    f: File
+    f: File = default(File)
     written: int = 0
   if not open(f, path, fmWrite):
     raise newException(IOError, "cannot open FOMKE checkpoint temporary file")
@@ -142,9 +143,9 @@ proc encodeCheckpointEnvelope(counter: uint64, nonce: openArray[uint8],
       uint64(sealed.payload.len) > uint64(fomkeMaxStateBytes):
     raise newException(ValueError, "FOMKE checkpoint envelope is invalid")
   appendAmeBytes(result, fomkeCheckpointMagic)
-  appendAmeU16(result, fomkeCheckpointVersion)
-  appendAmeU64(result, counter)
-  appendAmeU32(result, uint32(sealed.payload.len))
+  appendU16Le(result, fomkeCheckpointVersion)
+  appendU64Le(result, counter)
+  appendU32Le(result, uint32(sealed.payload.len))
   appendAmeBytes(result, nonce)
   appendAmeBytes(result, sealed.authTag)
   appendAmeBytes(result, sealed.payload)
@@ -210,7 +211,7 @@ proc saveFomkeCheckpoint*(basePath: string, S: FomkeState,
     aad: ByteSeq = @[]
     nonce: ByteSeq = @[]
     envelope: ByteSeq = @[]
-    sealed: AmeProtectedMessage
+    sealed: AmeProtectedMessage = default(AmeProtectedMessage)
     slot: int = 0
   try:
     requireCheckpointInputs(basePath, storageKey, context)
@@ -245,10 +246,11 @@ proc openCheckpointSlot(path: string, storageKey, context: openArray[uint8],
   var
     fileBytes: ByteSeq = @[]
     decoded: tuple[counter: uint64, nonce: ByteSeq,
-      sealed: AmeProtectedMessage]
+      sealed: AmeProtectedMessage] = (counter: 0'u64, nonce: @[],
+      sealed: default(AmeProtectedMessage))
     keyInfo: ByteSeq = @[]
     aad: ByteSeq = @[]
-    opened: tuple[ok: bool, payload: ByteSeq]
+    opened: tuple[ok: bool, payload: ByteSeq] = default(tuple[ok: bool, payload: ByteSeq])
   if not fileExists(path):
     result.err = "checkpoint slot is missing"
     return
@@ -286,8 +288,8 @@ proc loadFomkeCheckpoint*(basePath: string, storageKey: openArray[uint8],
   ## configured the session; naming it wrong reads as a failed
   ## authentication, not as a different-but-valid file.
   var
-    first: FomkeCheckpoint
-    second: FomkeCheckpoint
+    first: FomkeCheckpoint = default(FomkeCheckpoint)
+    second: FomkeCheckpoint = default(FomkeCheckpoint)
   try:
     requireCheckpointInputs(basePath, storageKey, context)
     first = openCheckpointSlot(checkpointSlotPath(basePath, 0), storageKey,
@@ -320,8 +322,8 @@ proc sealFomkeMessageDurable*(S: var FomkeState, basePath: string,
     tag: "appApi|cryptoBoundary|fomke|write".} =
   ## S/checkpointCounter: advance only after the new state reaches disk.
   var
-    pending: FomkeState
-    saved: tuple[ok: bool, err: string]
+    pending: FomkeState = default(FomkeState)
+    saved: tuple[ok: bool, err: string] = default(tuple[ok: bool, err: string])
     nextCounter: uint64 = 0'u64
   if checkpointCounter == high(uint64):
     result.err = "FOMKE checkpoint counter is exhausted"
@@ -352,9 +354,9 @@ proc openFomkeMessageDurable*(S: var FomkeState, basePath: string,
     tag: "appApi|cryptoBoundary|fomke|write".} =
   ## S/checkpointCounter: accept only after the authenticated state reaches disk.
   var
-    pending: FomkeState
-    opened: FomkeOpenResult
-    saved: tuple[ok: bool, err: string]
+    pending: FomkeState = default(FomkeState)
+    opened: FomkeOpenResult = default(FomkeOpenResult)
+    saved: tuple[ok: bool, err: string] = default(tuple[ok: bool, err: string])
     nextCounter: uint64 = 0'u64
   if checkpointCounter == high(uint64):
     result.err = "FOMKE checkpoint counter is exhausted"

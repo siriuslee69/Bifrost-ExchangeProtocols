@@ -45,6 +45,7 @@ import ../types
 import ../level0/bytes
 import ../level1/symmetric
 import ./handshake_identity
+import ../../byte_codec
 import runePragmas
 
 const
@@ -89,7 +90,7 @@ proc cookieSubject(peerId: openArray[uint8], issuedAtUnix: int64,
   appendAmeLabel(result, "AME-COOKIE-v2")
   appendHandshakeBytes(result, peerId)
   appendHandshakeI64(result, issuedAtUnix)
-  appendAmeU64(result, sessionId)
+  appendU64Le(result, sessionId)
 
 proc issueAmeCookie*(secret: AmeCookieSecret, peerId: openArray[uint8],
     nowUnix: int64, sessionId: uint64): ByteSeq {.role: truthBuilder,
@@ -139,6 +140,6 @@ proc ameCookieValid*(secret: AmeCookieSecret, peerId: openArray[uint8],
     return
   subject = cookieSubject(peerId, issuedAtUnix, sessionId)
   expected = ameMacTag(amaBlake3, secret.key, subject, 32)
-  result = constantTimeEqualAme(expected, cookie[8 .. 39])
+  result = constantTimeEqual(expected, cookie[8 .. 39])
   secureClearAmeBytes(subject)
   secureClearAmeBytes(expected)

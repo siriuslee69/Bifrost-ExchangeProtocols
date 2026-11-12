@@ -65,6 +65,7 @@ import ../../ame/level1/suites
 import ../../ame/level1/tier_aead
 import ../types
 import ../level0/xhkdf
+import ../../byte_codec
 import runePragmas
 
 const
@@ -114,7 +115,7 @@ proc appendFomkeField*(A: var ByteSeq, B: openArray[uint8]) {.
   ## A/B: destination and one length-framed field.
   if uint64(B.len) > uint64(high(uint32)):
     raise newException(ValueError, "FOMKE field exceeds u32")
-  appendAmeU32(A, uint32(B.len))
+  appendU32Le(A, uint32(B.len))
   appendAmeBytes(A, B)
 
 proc buildFomkeEpochInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
@@ -124,7 +125,7 @@ proc buildFomkeEpochInfo(A: AmeKemAlgorithms, L: AmeSuiteLayout,
   ## A/L/t/epoch/context: KEM path, slot layout, active slots, epoch, and
   ## the handshake transcript the caller binds in.
   appendAmeLabel(result, "FOMKE-EPOCH-KEYS-v4")
-  appendAmeU32(result, epoch)
+  appendU32Le(result, epoch)
   appendFomkeField(result, encodeAmeKemAlgorithms(A))
   appendFomkeField(result, encodeAmeSuiteLayout(L))
   appendFomkeField(result, encodeAmeMaskTier(t))
@@ -206,7 +207,7 @@ proc deriveFomkeTightChild*(S: FomkeState, label: string,
   if S.tightKey.len != fomkeTightKeyBytes:
     raise newException(ValueError, "FOMKE tight key is invalid")
   appendAmeLabel(info, label)
-  appendAmeU32(info, S.epoch)
+  appendU32Le(info, S.epoch)
   appendFomkeField(info, extra)
   result = deriveXhkdf(S.tightKey, @[], info, fomkeTightKeyBytes, S.kdf)
   secureClearAmeBytes(info)
@@ -295,7 +296,7 @@ proc initFomkeFromAme*(E: AmeExchangeState, L: AmeSuiteLayout,
       row = @[]
       row.add(uint8(i))
       row.add(uint8(ord(E.algorithms.algorithms[i])))
-      appendAmeU32(row, E.generation[i])
+      appendU32Le(row, E.generation[i])
       appendFomkeField(row, E.stackedSecrets[i])
       secrets.add(row)
     i = i + 1
@@ -308,8 +309,8 @@ proc buildFomkeBlockInfo(lane: FomkeLane, epoch: uint32,
   ## lane/epoch/index: exact directional chain block identity.
   appendAmeLabel(result, "FOMKE-CHAIN-BLOCK-v2")
   result.add(uint8(ord(lane)))
-  appendAmeU32(result, epoch)
-  appendAmeU64(result, index)
+  appendU32Le(result, epoch)
+  appendU64Le(result, index)
 
 proc deriveFomkeChainBlock(C: FomkeChainState, lane: FomkeLane,
     epoch: uint32, c: XhkdfConfig): FomkeChainBlock {.role: truthBuilder,
@@ -379,8 +380,8 @@ proc deriveFomkeMessageMaterial*(S: FomkeState, mk: openArray[uint8],
   appendAmeLabel(info, "FOMKE-MESSAGE-KEYS-v1")
   appendFomkeField(info, encodeAmeSuiteLayout(S.layout))
   appendFomkeField(info, encodeAmeMaskTier(S.tier))
-  appendAmeU32(info, epoch)
-  appendAmeU64(info, index)
+  appendU32Le(info, epoch)
+  appendU64Le(info, index)
   info.add(uint8(ord(lane)))
   result = deriveXhkdf(mk, @[], info,
     ameTierKeyMaterialLen(S.layout, S.tier), S.kdf)
@@ -513,7 +514,7 @@ proc fomkeSendCacheMatches*(S: FomkeState, C: FomkeSendCache): bool {.
   result = C.epoch == S.epoch and C.lane == lane and
     C.nextIndex == chain.nextIndex and
     C.chainKey.len == fomkeChainKeyBytes and
-    constantTimeEqualAme(C.chainKey, chain.chainKey)
+    constantTimeEqual(C.chainKey, chain.chainKey)
 
 proc buildFomkeMessageAad*(S: FomkeState, epoch: uint32, index: uint64,
     lane: FomkeLane, aad: openArray[uint8]): ByteSeq {.
@@ -522,8 +523,8 @@ proc buildFomkeMessageAad*(S: FomkeState, epoch: uint32, index: uint64,
   ## The message position is authenticated even though it also travels in
   ## the clear header, so a header field cannot be edited in flight.
   appendAmeLabel(result, "FOMKE-MESSAGE-AAD-v2")
-  appendAmeU32(result, epoch)
-  appendAmeU64(result, index)
+  appendU32Le(result, epoch)
+  appendU64Le(result, index)
   result.add(uint8(ord(lane)))
   result.add(uint8(ord(S.tagLen)))
   appendFomkeField(result, aad)

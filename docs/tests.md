@@ -450,6 +450,12 @@ Android
   -> AME public descriptor parsing and compact discovery beacon roundtrip
   -> AME secret summary redaction
   -> AME secret bundle export requires explicit debug/provisioning approval
+
+Desktop demo colours (test_ui_contrast)
+  -> every text reaches 4.5 to 1 on what it stands on, in the dark theme and
+     in the light theme, measured over all three stops of the gradient
+  -> each theme defines every role the other defines
+  -> app.css types no colour: it only names the tokens of tokens.css
 ```
 
 ## Rule
