@@ -8,6 +8,9 @@ const
     "buildAndroid", "installAndroid"]
   extraArtifacts: array[3, string] = ["/app/build/", ".android-sdk/",
     ".android-home/"]
+  ## The operator CLI for group enrollment (the only CLI; the desktop and
+  ## Android nodes under src/clients are multi-device test harnesses).
+  cliEntry: string = "src/clients/cli/enrollment.nim"
   LibsodiumTaskShellEnv = "BIFROST_NIMBLE_IN_NIX_SHELL"
   LibsodiumLibNames = [
     "libsodium.so",
@@ -522,6 +525,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_ame_liveness.nim", @["-r"])
     runNim("c", "evaluation/tests/test_archive.nim", @["-r"])
     runNim("c", "evaluation/tests/test_archive_contact.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_group_enrollment.nim", @["-r"])
     runNim("c", "evaluation/tests/test_smtp.nim", @["-r"])
     runNim("c", "evaluation/tests/test_dump.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_open_door.nim", @["-r"])

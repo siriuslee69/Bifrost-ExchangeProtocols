@@ -28,6 +28,7 @@ examples/ame_sender_receiver
 examples/ame_ghost_connection
 examples/aec_dac_echo
 examples/ame_exact_path
+examples/group_enrollment
 
 # Android/Gradle output
 .android-home/

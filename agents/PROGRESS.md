@@ -1,4 +1,56 @@
-Commit Message: Operator decisions recorded (generic protocols and test clients stay); RelayBookSave answers ok/err; the src SECRETS candidates are derivation labels, marked
+Commit Message: Group enrollment: one enroller key admits AME public keys into groups; predefined list, operator CLI, roster codec
+
+## 2026-11-13 PLAN: group enrollment — one enroller key admits public keys into groups
+
+What was asked: ONE public key (an enroller) that lets other public keys enroll
+into groups; the operator can also add public keys via a CLI; a predefined public
+key list too; reuse the existing AME identities. The operator chose a NEW
+enrollment trust module (not the relay rmGroup, not the archive spaces).
+
+Plan (what goes where), all in Bifrost, bottom first, example written first:
+
+```text
+  examples/group_enrollment.nim             the API, written before the module
+  src/protocols/enrollment/types.nim        GroupEnrollment, GroupRoster, limits
+  src/protocols/enrollment/level0/token.nim the enroller-signed admission:
+                                            issue / verify / encode / decode
+  src/protocols/enrollment/level1/roster.nim membership + add/remove key + codec
+  evaluation/tests/test_group_enrollment.nim
+  src/clients/cli/enrollment.nim            operator CLI: init / add / list / remove
+```
+
+Reuse, not reinvent: the enroller is an `AmeAuthorityKey` (public pin
+`AmeAuthorityRoot`); a member is an `AmeIdentityKey` named by `ameIdentityKeyId`;
+the admission is signed once per enroller slot with `signAmeMessage` and checked
+with `verifyAmeMessage`, exactly like an AME certificate. The protocol module
+touches no disk; only the CLI does roster file I/O.
+
+Def (membership): key K is a member of group G when K is in the predefined list,
+OR K was added by the operator, OR K holds a valid enroller-signed enrollment
+naming (G, K) inside its validity window. Every refusal answers ok/err, never "".
+
+What was done, and how it was checked:
+
+```text
+  built                                   proof
+  --------------------------------------  -------------------------------------
+  enrollment/types, level0/token,         nim-check clean on every new file;
+    level1/roster, enrollment.nim           Otter gate: no new findings
+  examples/group_enrollment.nim           runs: all three ways in, wrong-group
+                                          refusal, both codec round-trips true
+  evaluation/tests/test_group_enrollment  21 checks green, incl. truncated /
+                                          over-sized token, roster and enroller
+                                          bytes, a tampered proof, a dropped
+                                          hybrid slot, a wrong enroller root
+  src/clients/cli/enrollment.nim          init/add/list/remove exercised on a
+                                          temp roster; a bad key id exits 1;
+                                          nimble buildCli builds it via cliEntry
+```
+
+The enroller key is persisted by the CLI as FILE.key (encodeGroupEnroller); the
+roster as FILE (encodeGroupRoster). The protocol module itself touches no disk.
+The test is in the hand-picked `test` task; the example is picked up by the shared
+runExamples; the CLI is wired through cliEntry.
 
 ## 2026-11-12 PLAN: the TODO items that need nobody's decision, plus the operator's answers
 

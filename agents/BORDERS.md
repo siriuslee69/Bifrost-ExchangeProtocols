@@ -20,3 +20,9 @@ part of the test harness, not a product client, and they stay in this repo by th
 operator's decision (2026-11-12). Do not propose cutting them out again, and do not
 grow them into a product app — a real window or app belongs in its own repo.
 `src/clients/README.md` repeats this at the folder itself.
+
+One exception, added 2026-11-13: `src/clients/cli/enrollment.nim` is an OPERATOR
+tool, not a test client and not an app. It is the command line a library is allowed
+to have: it lets the operator admit public keys into a group-enrollment roster
+(`protocols/enrollment`). It is the only part of enrollment that touches a disk;
+the protocol module itself stays bytes-in, bytes-out.
