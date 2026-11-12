@@ -150,11 +150,12 @@ proc tickSuperFastControl*(C: var SuperFastControl, F: RelaySuperFastUdp,
   result = tickSuperFastControl(C, F.forwardedTotal, F.brake, F.nas, nowMs)
 
 proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8],
-    nowMs: uint64): string {.role: actor, tag: "appApi|relay|udp"} =
-  ## C/payload/nowMs: a datagram that came back from the server. "" when it was
-  ## understood, else why not. Any frame that authenticates counts as a sign of
-  ## life (`controlSilent`). The one word read is dmkBrakeStance: whether the
-  ## server follows orders. Anything else is refused.
+    nowMs: uint64): tuple[ok: bool, err: string] {.role: actor,
+    tag: "appApi|relay|udp"} =
+  ## C/payload/nowMs: a datagram that came back from the server. ok when it was
+  ## understood, else err says why not. Any frame that authenticates counts as
+  ## a sign of life (`controlSilent`). The one word read is dmkBrakeStance:
+  ## whether the server follows orders. Anything else is refused.
   var
     opened: AmeDacControlOpen = default(AmeDacControlOpen)
   try:
@@ -162,11 +163,11 @@ proc fromServerControl*(C: var SuperFastControl, payload: openArray[uint8],
     if opened.ok and opened.kind == dmkBrakeStance:
       C.deaf = not decodeDacBrakeStance(opened.body)
       C.heardMs = nowMs
-      return ""
+      return (ok: true, err: "")
   except CatchableError as exc:
-    return exc.msg
-  result = if opened.ok: "the forwarder reads only the brake stance"
-    else: opened.err
+    return (ok: false, err: exc.msg)
+  result = (ok: false, err: if opened.ok:
+    "the forwarder reads only the brake stance" else: opened.err)
 
 proc openFromServer*(C: var SuperFastControl, payload: openArray[uint8],
     nowMs: uint64): AmeDacControlOpen {.role: actor, tag: "appApi|relay|udp"} =

@@ -2714,7 +2714,7 @@ the NAS, **all clients together**. The rest are dropped and counted in
 slow them down.
 
 ```nim
-discard F.setSuperFastBrake(2'u8)   # "" when set; level 0 lifts it again
+discard F.setSuperFastBrake(2'u8)   # (ok: true, err: "") when set; level 0 lifts it again
 ```
 
 | level | datagrams per second (all clients) |

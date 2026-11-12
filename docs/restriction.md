@@ -186,14 +186,20 @@ mode it lacks, rather than failing to parse.
 ### At run time
 
 When the binary has the mode, the operator switches it on with
-`setRelayRestriction(R, mode)`. When the binary does not, the call returns
-the reason and the mode stays as it was:
+`setRelayRestriction(R, mode)`. It answers with two fields, `ok` and `err`.
+When the binary does not have the mode, `ok` is false, `err` holds the reason
+and the mode stays as it was:
 
 ```text
-  setRelayRestriction(R, rmGroup)   -> ""                          (switched on)
-  setRelayRestriction(R, rmListed)  -> "not compiled into this relay"
+  setRelayRestriction(R, rmGroup)   -> (ok: true,  err: "")        (switched on)
+  setRelayRestriction(R, rmListed)  -> (ok: false, err: "restriction mode rmListed
+                                        is not compiled into this relay")
                                        (the relay stays where it was)
 ```
+
+Every routine of the relay that can refuse answers this way: `ok` says
+whether it worked, `err` says why not. An empty text is never the sign of
+success.
 
 ## 4. How a device sets its part: AME kind 0x17
 

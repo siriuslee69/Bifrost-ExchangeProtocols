@@ -31,20 +31,20 @@ suite "VIP list":
     var
       F: RelaySuperFastUdp = initRelaySuperFastUdp(nas(),
         initUdpForwardConfig(vipSlots = 2))
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
-    check F.addSuperFastVip(ep("198.51.100.2", 5000'u16)) == ""
-    check F.addSuperFastVip(ep("198.51.100.3", 1'u16)) != ""
-    check F.addSuperFastVip(default(transport_types.UdpAddress)) != ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
+    check F.addSuperFastVip(ep("198.51.100.2", 5000'u16)).ok
+    check not F.addSuperFastVip(ep("198.51.100.3", 1'u16)).ok
+    check not F.addSuperFastVip(default(transport_types.UdpAddress)).ok
     F.clearSuperFastVips()
-    check F.addSuperFastVip(ep("198.51.100.3", 1'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.3", 1'u16)).ok
 
   # {.testKind: tkUnit, covers: "fromClient".}
   test "while nothing is congested the list is not used":
     var
       F: RelaySuperFastUdp = initRelaySuperFastUdp(nas())
       i: int = 0
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     while i < 20:
       check fromClient(F, ep("198.51.100.1"), @[byte 1], 1000'u64).event ==
         ufeForwarded
@@ -60,8 +60,8 @@ suite "VIP under a brake":
       plain: int = 0
       vip: int = 0
       i: int = 0
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
-    check F.setSuperFastBrake(3'u8) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
+    check F.setSuperFastBrake(3'u8).ok
     while i < 40:
       if fromClient(F, ep("203.0.113." & $(1 + i mod 20)), @[byte 1],
           1000'u64).event == ufeForwarded:
@@ -81,7 +81,7 @@ suite "VIP with a full table":
     var
       F: RelaySuperFastUdp = initRelaySuperFastUdp(nas(),
         initUdpForwardConfig(maxClients = 2))
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     check fromClient(F, ep("203.0.113.1"), @[byte 1], 100'u64).event == ufeForwarded
     check fromClient(F, ep("203.0.113.2"), @[byte 1], 200'u64).event == ufeForwarded
     check F.usedSlots == 2
@@ -98,8 +98,8 @@ suite "VIP with a full table":
     var
       F: RelaySuperFastUdp = initRelaySuperFastUdp(nas(),
         initUdpForwardConfig(maxClients = 1))
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
-    check F.addSuperFastVip(ep("198.51.100.2", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
+    check F.addSuperFastVip(ep("198.51.100.2", 0'u16)).ok
     check fromClient(F, ep("198.51.100.1"), @[byte 1], 100'u64).event == ufeForwarded
     check fromClient(F, ep("198.51.100.2"), @[byte 1], 200'u64).event == ufeDropped
 
@@ -111,7 +111,7 @@ suite "VIP while the NAS is away":
         nasSilentMs = 2000'u64, bufferDatagrams = 2, vipBufferDatagrams = 2))
       back: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     while i < 4:
       discard fromClient(F, ep("203.0.113.1"), @[byte(10 + i)], 10_000'u64)
       i = i + 1
@@ -131,7 +131,7 @@ suite "VIP while the NAS is away":
       F: RelaySuperFastUdp = away(initUdpForwardConfig(nasKeepaliveMs = 1000'u64,
         nasSilentMs = 2000'u64, vipBufferDatagrams = 2))
       back: UdpForwardStep = default(UdpForwardStep)
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     discard fromClient(F, ep("198.51.100.1"), @[byte 1], 10_000'u64)
     discard fromClient(F, ep("198.51.100.1"), @[byte 2], 10_001'u64)
     discard fromClient(F, ep("198.51.100.1"), @[byte 3], 10_002'u64)
@@ -148,7 +148,7 @@ suite "the NAS is never held back":
         initUdpForwardConfig(maxClients = 1, brakePerSecond = [0, 1, 1, 1]))
       first: UdpForwardStep = default(UdpForwardStep)
       i: int = 0
-    check F.setSuperFastBrake(3'u8) == ""
+    check F.setSuperFastBrake(3'u8).ok
     first = fromClient(F, ep("203.0.113.1"), @[byte 1], 1000'u64)
     check first.event == ufeForwarded
     while i < 50:

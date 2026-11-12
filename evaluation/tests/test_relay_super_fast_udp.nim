@@ -308,7 +308,7 @@ suite "UDP forward, hardening":
       F: RelaySuperFastUdp = relay(initUdpForwardConfig(
         nasKeepaliveMs = 1000'u64, nasSilentMs = 2000'u64))
       step: UdpForwardStep = default(UdpForwardStep)
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     discard fromNas(F, F.nas, 0'u32, @[byte 1], 0'u64)
     step = fromClient(F, ep("198.51.100.1", 40000'u16), @[byte 7], 10_000'u64)
     check step.event == ufeBuffered
@@ -365,7 +365,7 @@ suite "UDP forward, hardening":
     ## Told the same address in its other spelling, the NAS has not moved.
     check noteNasSeen(F, ep("::ffff:10.0.0.2", 9000'u16), 1200'u64).event ==
       ufeNone
-    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)) == ""
+    check F.addSuperFastVip(ep("198.51.100.1", 0'u16)).ok
     back = fromClient(F, ep("::ffff:198.51.100.1", 40000'u16), @[byte 7],
       20_000'u64)
     check back.event == ufeBuffered

@@ -201,13 +201,13 @@ suite "AM1P: the sealed hello":
         a = auth)
       edited: AmeClientHello = default(AmeClientHello)
     edited = decodeAmeClientHello(encodeAmeClientHello(h.hello))
-    check openAmeHelloOffer(edited, auth) == ""
+    check openAmeHelloOffer(edited, auth).ok
     edited = decodeAmeClientHello(encodeAmeClientHello(h.hello))
     edited.sessionId = 16'u64
-    check openAmeHelloOffer(edited, auth) != ""
+    check not openAmeHelloOffer(edited, auth).ok
     edited = decodeAmeClientHello(encodeAmeClientHello(h.hello))
     edited.offerSalt[0] = edited.offerSalt[0] xor 1'u8
-    check openAmeHelloOffer(edited, auth) != ""
+    check not openAmeHelloOffer(edited, auth).ok
 
 suite "AM1P+S: shared secret AND pinned signature":
   # {.testKind: tkIntegration, covers: "initAmePskPinnedAuthentication".}

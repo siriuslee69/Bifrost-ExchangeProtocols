@@ -99,28 +99,30 @@ when restrictionGroupBuilt:
     result = linkPair(kept, memberOf(G, link), endpointOf(G, link))
 
   proc setGroup*(B: var RestrictionBook, endpoint: string,
-      claimed: seq[string]): string {.role: actor.} =
+      claimed: seq[string]): tuple[ok: bool, err: string] {.role: actor.} =
     ## B/endpoint/claimed: the endpoint replaces ITS links with exactly these.
-    ## "" when applied, else why nothing changed.
+    ## ok when applied, else err says why nothing changed.
     var
       kept: GroupBook = GroupBook()
       taken: string = ""
       e: string = ""
     if claimed.len > restrictionMaxMembers:
-      return "a group update claims at most " & $restrictionMaxMembers & " members"
+      return (ok: false, err: "a group update claims at most " &
+        $restrictionMaxMembers & " members")
     for m in claimed:
       if m == endpoint:
-        return "an endpoint names itself as a member"
+        return (ok: false, err: "an endpoint names itself as a member")
     taken = claimedByOther(B, endpoint, claimed)
     if taken.len > 0:
-      return "member " & taken & " already belongs to another endpoint"
+      return (ok: false,
+        err: "member " & taken & " already belongs to another endpoint")
     for link in B.group.links:
       e = keepLink(kept, B.group, link, endpoint)
       if e.len > 0:
-        return e
+        return (ok: false, err: e)
     for m in claimed:
       e = linkPair(kept, m, endpoint)
       if e.len > 0:
-        return e
+        return (ok: false, err: e)
     B.group = kept
-    result = ""
+    result = (ok: true, err: "")

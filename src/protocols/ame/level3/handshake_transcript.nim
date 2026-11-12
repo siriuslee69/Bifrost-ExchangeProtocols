@@ -235,18 +235,19 @@ proc sealAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication) {.
   h.offerTag = sealed.authTag
   secureClearAmeBytes(material)
 
-proc openAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication): string {.
-    role: decryptor, tag: "cryptoBoundary|validation".} =
+proc openAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication): tuple[
+    ok: bool, err: string] {.role: decryptor,
+    tag: "cryptoBoundary|validation".} =
   ## h: a decoded pre-shared hello; on success its `offer` is filled in.
   ## a: this side's authentication, already matched to the hello's
   ##   next-secret flag by the caller.
-  ## Returns "" on success, otherwise why it would not open.
+  ## ok on success, otherwise err says why it would not open.
   var
     clear: ByteSeq = @[]
     material: ByteSeq = @[]
     opened: tuple[ok: bool, payload: ByteSeq] = (ok: false, payload: @[])
   if h.sealedOffer.len == 0 or h.offerTag.len != int(ord(ameHelloTagLen)):
-    return "client hello sealed offer is missing"
+    return (ok: false, err: "client hello sealed offer is missing")
   try:
     clear = clientHelloClearSubject(h)
     material = helloOfferKey(a, h, clear)
@@ -254,11 +255,14 @@ proc openAmeHelloOffer*(h: var AmeClientHello, a: AmeAuthentication): string {.
       h.offerTag, clear, ameHelloTagLen)
     secureClearAmeBytes(material)
     if not opened.ok:
-      return "client hello did not open under the shared secret"
+      return (ok: false,
+        err: "client hello did not open under the shared secret")
     h.offer = decodeAmeExchangeOffer(h.layout.kems, 0'u8, opened.payload)
   except ValueError as e:
     secureClearAmeBytes(material)
-    return "client hello sealed offer is malformed: " & e.msg
+    return (ok: false,
+      err: "client hello sealed offer is malformed: " & e.msg)
+  result = (ok: true, err: "")
 
 proc serverHelloClearSubject*(c: AmeClientHello,
     s: AmeServerHello): ByteSeq {.role: truthBuilder.} =

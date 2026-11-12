@@ -40,7 +40,7 @@ suite "UDP forward brake":
   test "a level limits all clients together, per second":
     var
       F: RelaySuperFastUdp = relay([0, 4000, 100, 20])
-    check F.setSuperFastBrake(3'u8) == ""
+    check F.setSuperFastBrake(3'u8).ok
     check passed(F, 60, 1000'u64) == 20
     check F.braked == 40'u64
     check passed(F, 60, 1999'u64) == 0
@@ -59,7 +59,7 @@ suite "UDP forward brake":
   test "a level above 3 is refused and changes nothing":
     var
       F: RelaySuperFastUdp = relay()
-    check F.setSuperFastBrake(4'u8) != ""
+    check not F.setSuperFastBrake(4'u8).ok
     check F.brake == 0'u8
 
   # {.testKind: tkUnit, covers: "fromNas".}

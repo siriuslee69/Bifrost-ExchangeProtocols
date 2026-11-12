@@ -31,15 +31,17 @@ when restrictionAllowedBuilt:
     result = false
 
   proc setAllowed*(B: var RestrictionBook, identity: string,
-      allowed: seq[SourceAddr]): string {.role: actor.} =
+      allowed: seq[SourceAddr]): tuple[ok: bool, err: string] {.role: actor.} =
     ## B/identity/allowed: replace who may reach that connection.
-    ## "" when applied, else why not.
+    ## ok when applied, else err says why not.
     var
       i: int = 0
     if allowed.len > restrictionMaxRules:
-      return "an allowed list holds at most " & $restrictionMaxRules & " addresses"
+      return (ok: false, err: "an allowed list holds at most " &
+        $restrictionMaxRules & " addresses")
     i = ensureReach(B, identity)
     if i < 0:
-      return "the book holds at most " & $restrictionMaxEntries & " connections"
+      return (ok: false, err: "the book holds at most " &
+        $restrictionMaxEntries & " connections")
     B.reach[i].rules.allowed = allowed
-    result = ""
+    result = (ok: true, err: "")

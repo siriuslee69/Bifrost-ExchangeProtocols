@@ -631,12 +631,12 @@ proc feedRelayAsk*(R: var RelayNode, slot: int,
     result.event = reDropped
     result.err = exc.msg
 
-proc setRelayRestriction*(R: var RelayNode, mode: RestrictionMode): string {.
-    role: actor, tag: "appApi".} =
-  ## R/mode: switch the mode on at runtime. "" when it is on, else why not:
-  ## the mode was not compiled into this binary.
+proc setRelayRestriction*(R: var RelayNode, mode: RestrictionMode): tuple[
+    ok: bool, err: string] {.role: actor, tag: "appApi".} =
+  ## R/mode: switch the mode on at runtime. ok when it is on, else err says
+  ## why not: the mode was not compiled into this binary.
   result = checkRestrictionMode(mode)
-  if result.len == 0:
+  if result.ok:
     R.restriction = mode
 
 proc setRestrictionAnswerMs*(R: var RelayNode, ms: uint32) {.role: actor,
@@ -660,10 +660,11 @@ proc restrictionAnswerDue(R: var RelayNode, slot: int, nowMs: uint32): bool {.
   result = true
 
 proc attachRestrictionBook*(R: var RelayNode, load: RelayBookLoad,
-    save: RelayBookSave): string {.role: actor, tag: "appApi".} =
+    save: RelayBookSave): tuple[ok: bool, err: string] {.role: actor,
+    tag: "appApi".} =
   ## R/load/save: how the application keeps the book. A book saved before is
-  ## read back now. "" when it is ready, else why not (a damaged book is
-  ## refused, and the relay keeps its empty book).
+  ## read back now. ok when it is ready, else err says why not (a damaged book
+  ## is refused, and the relay keeps its empty book).
   ##
   ## The node itself touches no storage, so a router built from this module
   ## compiles no database. Nebel holds the ready hook pair for a Geist folder
@@ -674,10 +675,11 @@ proc attachRestrictionBook*(R: var RelayNode, load: RelayBookLoad,
   if load != nil:
     got = load()
   if not got.ok:
-    return got.err
+    return (ok: false, err: got.err)
   if got.found:
     R.book = got.book
   R.bookSave = save
+  result = (ok: true, err: "")
 
 proc setRelayGroupClaimers*(R: var RelayNode,
     identities: openArray[string]) {.role: configurator, tag: "appApi".} =
@@ -716,6 +718,7 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
   ## between two updates of one neighbour is counted by it).
   var
     u: RestrictionUpdate = RestrictionUpdate()
+    applied: tuple[ok: bool, err: string] = (ok: true, err: "")
     e: string = ""
     prev: RestrictionBook = RestrictionBook()
   result.slot = slot
@@ -731,11 +734,11 @@ proc feedRelayRestriction(R: var RelayNode, slot: int,
     result.err = u.err
     return
   prev = R.book
-  e = applyRestrictionUpdate(R.book, R.neighbours[slot].identity, u)
-  if e.len > 0:
+  applied = applyRestrictionUpdate(R.book, R.neighbours[slot].identity, u)
+  if not applied.ok:
     R.dropped = R.dropped + 1'u32
     result.event = reDropped
-    result.err = e
+    result.err = applied.err
     return
   if R.bookSave != nil:
     e = R.bookSave(R.book)

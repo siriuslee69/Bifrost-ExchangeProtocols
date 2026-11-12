@@ -127,7 +127,7 @@ suite "super-fast control link":
       steps: seq[AmeDacRelayStep] = tickAmeDacRelay(H.server, 10'u32)
     check steps.len == 1
     check dacKeyEqual(steps[0].peer, H.fwdKey)
-    check H.ctl.fromServerControl(steps[0].send[0], 10'u64) == ""
+    check H.ctl.fromServerControl(steps[0].send[0], 10'u64).ok
     check H.ctl.deaf
     discard H.F.setSuperFastBrake(2'u8)
     check pass(H, 1_000'u32) == 0
@@ -168,7 +168,7 @@ suite "super-fast control link":
   test "junk on the control socket is refused":
     var
       H: Chain = newChain()
-    check H.ctl.fromServerControl(@[byte 1, 2, 3], 10'u64) != ""
+    check not H.ctl.fromServerControl(@[byte 1, 2, 3], 10'u64).ok
 
 suite "super-fast control link is kept alive":
   # {.testKind: tkIntegration, covers: "controlSilent|tickSuperFastControl".}
@@ -191,7 +191,7 @@ suite "super-fast control link is kept alive":
     back = tickAmeDacRelay(H.server, 70_001'u32)
     while i < back.len:
       if dacKeyEqual(back[i].peer, H.fwdKey) and back[i].send.len > 0:
-        check H.ctl.fromServerControl(back[i].send[0], 70_002'u64) == ""
+        check H.ctl.fromServerControl(back[i].send[0], 70_002'u64).ok
       i = i + 1
     check H.ctl.heardMs == 70_002'u64
 

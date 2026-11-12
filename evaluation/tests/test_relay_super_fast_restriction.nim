@@ -55,7 +55,7 @@ when restrictionListedBuilt:
         F: RelaySuperFastUdp = freshRelay()
         step: UdpForwardStep = default(UdpForwardStep)
       check setSuperFastRestriction(F, rmListed, SourceRules(reject: @[
-        sourceOf("203.0.113.7", 0'u16).src])) == ""
+        sourceOf("203.0.113.7", 0'u16).src])).ok
       step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 1], 1000'u64)
       check step.event == ufeDropped
       check step.err.startsWith("restricted")
@@ -73,12 +73,12 @@ when restrictionAllowedBuilt:
       var
         F: RelaySuperFastUdp = freshRelay()
         step: UdpForwardStep = default(UdpForwardStep)
-      check setSuperFastRestriction(F, rmAllowed, SourceRules()) == ""
+      check setSuperFastRestriction(F, rmAllowed, SourceRules()).ok
       step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 1], 1000'u64)
       check step.event == ufeDropped
       check udpForwardClients(F) == 0
       check setSuperFastRestriction(F, rmAllowed, SourceRules(allowed: @[
-        sourceOf("203.0.113.7", 0'u16).src])) == ""
+        sourceOf("203.0.113.7", 0'u16).src])).ok
       step = fromClient(F, ep("203.0.113.7", 40000'u16), @[byte 2], 1000'u64)
       check step.event == ufeForwarded
       step = fromClient(F, ep("203.0.113.8", 40000'u16), @[byte 3], 1000'u64)
@@ -91,7 +91,7 @@ when restrictionAllowedBuilt:
         F: RelaySuperFastUdp = freshRelay()
         step: UdpForwardStep = default(UdpForwardStep)
       check setSuperFastRestriction(F, rmAllowed, SourceRules(allowed: @[
-        anySource()])) == ""
+        anySource()])).ok
       step = fromClient(F, ep("localhost", 40000'u16), @[byte 1], 1000'u64)
       check step.event == ufeDropped
       check step.err.startsWith("restricted")
@@ -102,7 +102,7 @@ suite "super-fast, what it refuses":
   test "the group mode is refused: this relay reads no control frames":
     var
       F: RelaySuperFastUdp = freshRelay()
-    check setSuperFastRestriction(F, rmGroup, SourceRules()).contains(
+    check setSuperFastRestriction(F, rmGroup, SourceRules()).err.contains(
       "cannot run the group mode")
     check F.restriction == rmOpen
 
@@ -112,8 +112,8 @@ suite "super-fast, what it refuses":
       F: RelaySuperFastUdp = freshRelay()
     for m in [rmListed, rmAllowed]:
       if restrictionBuilt(m):
-        check setSuperFastRestriction(F, m, SourceRules()) == ""
+        check setSuperFastRestriction(F, m, SourceRules()).ok
       else:
-        check setSuperFastRestriction(F, m, SourceRules()).contains(
+        check setSuperFastRestriction(F, m, SourceRules()).err.contains(
           "not compiled")
         check F.restriction != m

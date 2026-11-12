@@ -354,10 +354,12 @@ proc reapIdleSlots(F: var RelaySuperFastUdp, nowMs: uint64): int {.role: actor,
       result = result + 1
     i = i + 1
 
-proc addSuperFastVip*(F: var RelaySuperFastUdp, client: transport_types.UdpAddress): string {.
+proc addSuperFastVip*(F: var RelaySuperFastUdp,
+    client: transport_types.UdpAddress): tuple[ok: bool, err: string] {.
     role: actor, tag: "appApi|relay|udp".} =
-  ## F/client: name a client address VIP. "" when added, else why not. Port 0
-  ## means every port of that host (a phone changes its port, its address stays).
+  ## F/client: name a client address VIP. ok when added (or already there),
+  ## else err says why not. Port 0 means every port of that host (a phone
+  ## changes its port, its address stays).
   ##
   ## A VIP client is only treated differently while the relay is CONGESTED:
   ##
@@ -371,15 +373,16 @@ proc addSuperFastVip*(F: var RelaySuperFastUdp, client: transport_types.UdpAddre
   var
     i: int = 0
   if client.host.len == 0:
-    return "a VIP needs an address"
+    return (ok: false, err: "a VIP needs an address")
   while i < F.cfg.vipSlots:
     if F.vips[i].host.len == 0:
       F.vips[i] = client
-      return ""
+      return (ok: true, err: "")
     if F.vips[i] == client:
-      return ""
+      return (ok: true, err: "")
     i = i + 1
-  result = "the VIP list holds at most " & $F.cfg.vipSlots & " addresses"
+  result = (ok: false,
+    err: "the VIP list holds at most " & $F.cfg.vipSlots & " addresses")
 
 proc clearSuperFastVips*(F: var RelaySuperFastUdp) {.role: actor,
     tag: "appApi|relay|udp".} =
@@ -527,20 +530,25 @@ proc nasIsAway(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
   result = nowMs > F.nasSeenMs and nowMs - F.nasSeenMs > F.cfg.nasSilentMs
 
 proc setSuperFastRestriction*(F: var RelaySuperFastUdp, mode: RestrictionMode,
-    rules: SourceRules): string {.role: actor, tag: "appApi|relay|udp".} =
+    rules: SourceRules): tuple[ok: bool, err: string] {.role: actor,
+    tag: "appApi|relay|udp".} =
   ## F/mode/rules: the operator's restriction on who may send to the NAS.
-  ## "" when set, else why not. rmGroup needs AME control frames, which this
-  ## relay never opens, so it is refused here.
+  ## ok when set, else err says why not. rmGroup needs AME control frames,
+  ## which this relay never opens, so it is refused here.
   if mode == rmGroup:
-    return "the super-fast relay cannot run the group mode: it reads no control frames"
+    return (ok: false, err: "the super-fast relay cannot run the group mode: " &
+      "it reads no control frames")
   if not restrictionBuilt(mode):
-    return "restriction mode " & $mode & " is not compiled into this relay"
-  if rules.accept.len > restrictionMaxRules or rules.reject.len > restrictionMaxRules or
+    return (ok: false,
+      err: "restriction mode " & $mode & " is not compiled into this relay")
+  if rules.accept.len > restrictionMaxRules or
+      rules.reject.len > restrictionMaxRules or
       rules.allowed.len > restrictionMaxRules:
-    return "a list holds at most " & $restrictionMaxRules & " addresses"
+    return (ok: false, err: "a list holds at most " & $restrictionMaxRules &
+      " addresses")
   F.restriction = mode
   F.filter = rules
-  result = ""
+  result = (ok: true, err: "")
 
 proc congested(F: RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
     tag: "relay|udp", inline.} =
@@ -579,10 +587,10 @@ proc clientMayReach(F: RelaySuperFastUdp, client: transport_types.UdpAddress): b
     return false
   result = filterAllows(F.restriction, F.filter, src.src)
 
-proc setSuperFastBrake*(F: var RelaySuperFastUdp, level: uint8): string {.
-    role: actor, tag: "appApi|relay|udp".} =
+proc setSuperFastBrake*(F: var RelaySuperFastUdp, level: uint8): tuple[
+    ok: bool, err: string] {.role: actor, tag: "appApi|relay|udp".} =
   ## F/level: the operator's slow-down for ALL clients at once, 0 (go ham)
-  ## .. 3 (full brakes). "" when set, else why not.
+  ## .. 3 (full brakes). ok when set, else err says why not.
   ##
   ## Two things happen at this level. (1) With a control link to the server
   ## (relay/super_fast_control.nim) the level is SENT to the server, which
@@ -595,11 +603,11 @@ proc setSuperFastBrake*(F: var RelaySuperFastUdp, level: uint8): string {.
   ##     2     1000          Clients feel it as loss, and DAC's own repair
   ##     3      200          and path reports slow them down.
   if level > 3'u8:
-    return "the brake level is 0..3"
+    return (ok: false, err: "the brake level is 0..3")
   F.brake = level
   F.brakeWindowMs = 0'u64
   F.brakeCount = 0
-  result = ""
+  result = (ok: true, err: "")
 
 proc brakeAllows(F: var RelaySuperFastUdp, nowMs: uint64): bool {.role: parser,
     tag: "relay|udp".} =

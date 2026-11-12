@@ -85,18 +85,21 @@ proc restrictionAllows*(B: RestrictionBook, mode: RestrictionMode,
     else:
       result = filterAllows(mode, B.reach[i].rules, srcAddress)
 
-proc checkRestrictionMode*(mode: RestrictionMode): string {.role: parser.} =
-  ## mode: a mode a relay is about to switch on. "" when compiled in, else why not.
+proc checkRestrictionMode*(mode: RestrictionMode): tuple[ok: bool, err: string] {.
+    role: parser.} =
+  ## mode: a mode a relay is about to switch on. ok when it is compiled in,
+  ## else err says why not.
   if restrictionBuilt(mode):
-    return ""
-  result = "restriction mode " & $mode & " is not compiled into this relay"
+    return (ok: true, err: "")
+  result = (ok: false,
+    err: "restriction mode " & $mode & " is not compiled into this relay")
 
 proc applyRestrictionUpdate*(B: var RestrictionBook, identity: string,
-    U: RestrictionUpdate): string {.role: actor.} =
+    U: RestrictionUpdate): tuple[ok: bool, err: string] {.role: actor.} =
   ## B/identity/U: the book, the neighbour that sent U, and the decoded update.
-  ## "" when applied, else why not.
+  ## ok when applied, else err says why not.
   if U.ack:
-    return "an acknowledgement is not an update"
+    return (ok: false, err: "an acknowledgement is not an update")
   case U.op
   of restrictionOpListed:
     when restrictionListedBuilt:
@@ -114,7 +117,8 @@ proc applyRestrictionUpdate*(B: var RestrictionBook, identity: string,
     else:
       result = checkRestrictionMode(rmGroup)
   else:
-    result = "restriction op " & $U.op & " is not one of 1, 2, 3"
+    result = (ok: false,
+      err: "restriction op " & $U.op & " is not one of 1, 2, 3")
 
 ## ------------------------------ the bytes ------------------------------
 

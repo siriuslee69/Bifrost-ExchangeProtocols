@@ -67,7 +67,7 @@ suite "relaySlowExtractEncrypt, restrictions":
         back: RelayStep = default(RelayStep)
       check phoneNode.admitRelayNeighbour(n.phone.left, idR1, "relay",
         at(idR1), acrDac, router = true).ok
-      check n.R.setRelayRestriction(rmAllowed) == ""
+      check n.R.setRelayRestriction(rmAllowed).ok
       step = n.R.feedRelaySlowExtractEncrypt(at(idPhone), sealSlowForward(
         n.phone.left, acrDac, idNas, @[byte 1, 2, 3]), 0'u32)
       check step.event == reRefused
@@ -83,7 +83,7 @@ suite "relaySlowExtractEncrypt, restrictions":
       var
         n: SlowNet = slowSetup(50'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmAllowed) == ""
+      check n.R.setRelayRestriction(rmAllowed).ok
       step = n.R.feedRelaySlowExtractEncrypt(at(idNas), sealAllowedUpdate(
         n.nas.left, acrDac, @[srcOf(idPhone)]), 0'u32)
       check step.event == reAnswered
@@ -103,7 +103,7 @@ suite "relaySlowExtractEncrypt, restrictions":
       var
         n: SlowNet = slowSetup(60'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmListed) == ""
+      check n.R.setRelayRestriction(rmListed).ok
       step = n.R.feedRelaySlowExtractEncrypt(at(idNas), sealListedUpdate(
         n.nas.left, acrDac, @[], @[srcOf(idLaptop)]), 0'u32)
       check step.event == reAnswered
@@ -125,7 +125,7 @@ suite "relaySlowExtractEncrypt, restrictions":
       var
         n: SlowNet = slowSetup(70'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmGroup) == ""
+      check n.R.setRelayRestriction(rmGroup).ok
       step = n.R.feedRelaySlowExtractEncrypt(at(idNas), sealGroupUpdate(
         n.nas.left, acrDac, @["phone"]), 0'u32)
       check step.event == reAnswered

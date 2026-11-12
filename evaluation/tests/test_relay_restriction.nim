@@ -124,12 +124,12 @@ suite "restriction modes, as rules":
 
   # {.testKind: tkUnit, covers: "checkRestrictionMode".}
   test "every mode is either compiled in, or refused by name":
-    check checkRestrictionMode(rmOpen) == ""
+    check checkRestrictionMode(rmOpen).ok
     for m in [rmGroup, rmListed, rmAllowed]:
       if restrictionBuilt(m):
-        check checkRestrictionMode(m) == ""
+        check checkRestrictionMode(m).ok
       else:
-        check checkRestrictionMode(m).contains("not compiled")
+        check checkRestrictionMode(m).err.contains("not compiled")
 
 when restrictionGroupBuilt:
   suite "restriction mode group":
@@ -138,7 +138,7 @@ when restrictionGroupBuilt:
     test "a member reaches its endpoint and back, never another member":
       var
         B: RestrictionBook = RestrictionBook()
-      check setGroup(B, "nas", @["phone", "laptop"]) == ""
+      check setGroup(B, "nas", @["phone", "laptop"]).ok
       check groupAllows(B.group, "phone", "nas")
       check groupAllows(B.group, "nas", "laptop")
       check not groupAllows(B.group, "phone", "laptop")
@@ -148,8 +148,8 @@ when restrictionGroupBuilt:
     test "a member already linked to another endpoint is refused, nothing changes":
       var
         B: RestrictionBook = RestrictionBook()
-      check setGroup(B, "nas", @["phone"]) == ""
-      check setGroup(B, "cam", @["phone", "tv"]).contains("already belongs")
+      check setGroup(B, "nas", @["phone"]).ok
+      check setGroup(B, "cam", @["phone", "tv"]).err.contains("already belongs")
       check groupAllows(B.group, "phone", "nas")
       check not groupAllows(B.group, "tv", "cam")
 
@@ -157,8 +157,8 @@ when restrictionGroupBuilt:
     test "an endpoint that claims again replaces only its own links":
       var
         B: RestrictionBook = RestrictionBook()
-      check setGroup(B, "nas", @["phone", "laptop"]) == ""
-      check setGroup(B, "nas", @["phone"]) == ""
+      check setGroup(B, "nas", @["phone", "laptop"]).ok
+      check setGroup(B, "nas", @["phone"]).ok
       check not groupAllows(B.group, "laptop", "nas")
       check groupAllows(B.group, "phone", "nas")
       check B.group.links.len == 1
@@ -168,7 +168,7 @@ when restrictionGroupBuilt:
     test "an endpoint cannot name itself as a member":
       var
         B: RestrictionBook = RestrictionBook()
-      check setGroup(B, "nas", @["nas"]).contains("names itself")
+      check setGroup(B, "nas", @["nas"]).err.contains("names itself")
 
     # {.testKind: tkIntegration, covers: "feedRelayControl|feedRelayFastExtraFrame".}
     test "on the relay: clients never reach each other, and reach the server":
@@ -176,7 +176,7 @@ when restrictionGroupBuilt:
         n: RtNet = rtSetup(40'u8)
         step: RelayStep = default(RelayStep)
         ack: tuple[ok: bool, err: string] = (false, "")
-      check n.R.setRelayRestriction(rmGroup) == ""
+      check n.R.setRelayRestriction(rmGroup).ok
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealGroupUpdate(n.nas.left, acrDac, @["phone", "laptop"]), rtNowMs)
       check step.event == reAnswered
@@ -211,7 +211,7 @@ when restrictionListedBuilt:
       var
         n: RtNet = rtSetup(50'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmListed) == ""
+      check n.R.setRelayRestriction(rmListed).ok
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealListedUpdate(n.nas.left, acrDac, @[], @[srcOf(rtPhone)]), rtNowMs)
       check step.event == reAnswered
@@ -239,7 +239,7 @@ when restrictionAllowedBuilt:
     test "a new connection starts with an empty allowed list":
       var
         B: RestrictionBook = RestrictionBook()
-      check setAllowed(B, "nas", @[srcOf(rtPhone)]) == ""
+      check setAllowed(B, "nas", @[srcOf(rtPhone)]).ok
       check B.reach.len == 1
       check B.reach[0].rules.allowed == @[srcOf(rtPhone)]
 
@@ -248,7 +248,7 @@ when restrictionAllowedBuilt:
       var
         n: RtNet = rtSetup(60'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmAllowed) == ""
+      check n.R.setRelayRestriction(rmAllowed).ok
       step = n.R.feedRelayFastExtraFrame(n.sPhone,
         sealAmeRouteForward(n.phone.left, rtNas, @[byte 1]), rtNowMs)
       check step.event == reRefused
@@ -273,7 +273,7 @@ when restrictionAllowedBuilt:
       var
         n: RtNet = rtSetup(70'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmAllowed) == ""
+      check n.R.setRelayRestriction(rmAllowed).ok
       check n.R.restrictionAnswerMs == restrictionAnswerDefaultMs
       step = n.R.feedRelayFastExtraFrame(n.sPhone,
         sealAmeRouteForward(n.phone.left, rtNas, @[byte 1]), 1000'u32)
@@ -294,7 +294,7 @@ when restrictionAllowedBuilt:
       var
         n: RtNet = rtSetup(80'u8)
         step: RelayStep = default(RelayStep)
-      check n.R.setRelayRestriction(rmAllowed) == ""
+      check n.R.setRelayRestriction(rmAllowed).ok
       step = n.R.feedRelayFastExtraFrame(n.sPhone,
         sealAmeRouteForward(n.phone.left, rtNas, @[byte 1]), 1000'u32)
       check step.event == reRefused
@@ -319,9 +319,9 @@ suite "restriction on a relay, all builds":
       R: RelayFastExtraFrame = initRelayFastExtraFrame(rtRelay, 4)
     for m in [rmGroup, rmListed, rmAllowed]:
       if restrictionBuilt(m):
-        check R.setRelayRestriction(m) == ""
+        check R.setRelayRestriction(m).ok
       else:
-        check R.setRelayRestriction(m).len > 0
+        check not R.setRelayRestriction(m).ok
         check R.restriction != m
 
   # {.testKind: tkRegression, covers: "attachRestrictionBook".}
@@ -339,7 +339,7 @@ suite "restriction on a relay, all builds":
         kept = B
         saved = true
         result = ""
-    check n.R.attachRestrictionBook(load, save) == ""
+    check n.R.attachRestrictionBook(load, save).ok
     when restrictionGroupBuilt:
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs)
@@ -351,7 +351,7 @@ suite "restriction on a relay, all builds":
         sealAllowedUpdate(n.nas.left, acrDac, @[srcOf(rtPhone)]), rtNowMs)
     check step.event == reAnswered
     check saved
-    check back.attachRestrictionBook(load, save) == ""
+    check back.attachRestrictionBook(load, save).ok
     check back.book == n.R.book
 
 suite "restriction, limits a neighbour can reach":
@@ -367,7 +367,7 @@ suite "restriction, limits a neighbour can reach":
         saves = saves + 1
         result = ""
     when restrictionAllowedBuilt:
-      check n.R.attachRestrictionBook(load, save) == ""
+      check n.R.attachRestrictionBook(load, save).ok
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealAllowedUpdate(n.nas.left, acrDac, @[srcOf(rtPhone)]), 1000'u32)
       check step.event == reAnswered
@@ -395,7 +395,7 @@ suite "restriction, limits a neighbour can reach":
       n: RtNet = rtSetup(110'u8)
       step: RelayStep = default(RelayStep)
     when restrictionGroupBuilt:
-      check n.R.setRelayRestriction(rmGroup) == ""
+      check n.R.setRelayRestriction(rmGroup).ok
       n.R.setRelayGroupClaimers(["nas"])
       ## The laptop says "the phone is mine": dropped, the book stays empty.
       step = n.R.feedRelayFastExtraFrame(n.sLaptop,
@@ -418,11 +418,11 @@ suite "restriction, limits a neighbour can reach":
       B.reach.add ReachEntry(identity: "dev" & $i)
       i = i + 1
     when restrictionAllowedBuilt:
-      check setAllowed(B, "one-more", @[]).contains("at most")
+      check setAllowed(B, "one-more", @[]).err.contains("at most")
       ## One that is already kept can still change its list.
-      check setAllowed(B, "dev7", @[anySource()]) == ""
+      check setAllowed(B, "dev7", @[anySource()]).ok
     when restrictionListedBuilt:
-      check setListed(B, "one-more", @[], @[]).contains("at most")
+      check setListed(B, "one-more", @[], @[]).err.contains("at most")
     check B.reach.len == restrictionMaxEntries
 
   # {.testKind: tkFuzz, covers: "decodeBook".}

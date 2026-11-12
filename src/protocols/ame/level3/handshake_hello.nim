@@ -284,6 +284,21 @@ proc sessionKeyPolicyError(c: AmeClientHello,
     secureClearAmeBytes(a.sessionKey)
     a.sessionKey = @[]
 
+proc presharedHelloError(h: var AmeClientHello,
+    a: var AmeAuthentication): string {.role: parser,
+    tag: "cryptoBoundary|validation".} =
+  ## h/a: the hello of a pre-shared mode and this side's authentication.
+  ## Two steps, in this order: the session-key policy, then the sealed offer
+  ## opened (it fills `h.offer`). "" when both pass, else why not.
+  var
+    opened: tuple[ok: bool, err: string] = (ok: true, err: "")
+  result = sessionKeyPolicyError(h, a)
+  if result.len > 0:
+    return
+  opened = openAmeHelloOffer(h, a)
+  if not opened.ok:
+    result = opened.err
+
 proc answerAmeHandshake*(c: AmeClientHello,
     supported: openArray[AmeTierPath], a: AmeAuthentication,
     descriptor: AmeIdentityCertificate = default(AmeIdentityCertificate),
@@ -324,9 +339,7 @@ proc answerAmeHandshake*(c: AmeClientHello,
     result.err = "client asked for an authentication mode this side does not run"
     return
   if ameModeUsesPsk(a.mode):
-    policyError = sessionKeyPolicyError(hello, local)
-    if policyError.len == 0:
-      policyError = openAmeHelloOffer(hello, local)
+    policyError = presharedHelloError(hello, local)
     if policyError.len > 0:
       result.err = policyError
       return

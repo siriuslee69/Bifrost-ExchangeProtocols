@@ -1,4 +1,32 @@
-Commit Message: Relay hardening: hop ceiling, one form per address, NAS-only answers, limits on the book and the dump
+Commit Message: One answer shape for the relay routines, one copy of each shared helper, catalog out of the test names
+
+## 2026-11-12 PLAN: the open items of agents/TODO.md that need nobody's decision
+
+Everything below stays in Bifrost: it is a change of how Bifrost's own routines
+answer and where Bifrost's own helpers stand. Nebel follows two changed calls
+when it moves its pin (its agents/TODO.md names the order).
+
+```text
+  item                                   what will exist                           where
+  -------------------------------------  ----------------------------------------  ---------------------------
+  eight routines answer "" for success   they answer tuple[ok: bool, err: string]  relay/*, ame/level3/
+                                         (the three set* of the restriction book
+                                          too: same defect, indented in `when`,
+                                          so repo-check could not see them)
+  twin routine bodies                    ONE copy each, in the lowest module both  protocols/types or
+                                         callers already import                    ame/level0/bytes
+  test_otter_catalog is not a test       evaluation/tests/otter_catalog.nim. It    evaluation/tests/
+                                         must STAY below evaluation/tests/:
+                                         Otter's window walks that folder for
+                                         the `otterUiTest` marker, so the TODO's
+                                         "evaluation/otter_catalog.nim" would
+                                         have emptied the window
+  desktop demo types 20 colours          tokens.css with the UI.md 6 roles; two    src/clients/desktop/web/
+                                         labels go, the placeholders stay
+```
+
+Not done here, because they need the user: the repo split (SIZE), the start value of
+`rmGroup` claimers, B2 (browser build) and B3 (Fjord's SMTP) of the teaching plan.
 
 ## 2026-11-12 Hardening pass over the three relays, the restriction modes and the dump
 

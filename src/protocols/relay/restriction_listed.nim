@@ -36,16 +36,19 @@ when restrictionListedBuilt:
     result = false
 
   proc setListed*(B: var RestrictionBook, identity: string,
-      accept, reject: seq[SourceAddr]): string {.role: actor.} =
+      accept, reject: seq[SourceAddr]): tuple[ok: bool, err: string] {.
+      role: actor.} =
     ## B/identity/accept/reject: replace the two lists of one connection.
-    ## "" when applied, else why not.
+    ## ok when applied, else err says why not.
     var
       i: int = 0
     if accept.len > restrictionMaxRules or reject.len > restrictionMaxRules:
-      return "a list holds at most " & $restrictionMaxRules & " addresses"
+      return (ok: false, err: "a list holds at most " & $restrictionMaxRules &
+        " addresses")
     i = ensureReach(B, identity)
     if i < 0:
-      return "the book holds at most " & $restrictionMaxEntries & " connections"
+      return (ok: false, err: "the book holds at most " &
+        $restrictionMaxEntries & " connections")
     B.reach[i].rules.accept = accept
     B.reach[i].rules.reject = reject
-    result = ""
+    result = (ok: true, err: "")

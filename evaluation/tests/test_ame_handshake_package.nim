@@ -797,14 +797,14 @@ suite "AME handshake transport":
       edited: AmeClientHello = default(AmeClientHello)
     check decoded.mode == atmPreSharedKey
     ## A sealed hello has to be opened before its transcript exists.
-    check openAmeHelloOffer(decoded, auth) == ""
+    check openAmeHelloOffer(decoded, auth).ok
     check clientHelloSubject(decoded) == clientHelloSubject(h.hello)
     ## Editing the mode changes the record, AND the sealed offer no longer
     ## opens: the mode byte is under the seal's tag.
     edited = decoded
     edited.mode = atmPreSharedPinned
     check clientHelloSubject(edited) != clientHelloSubject(h.hello)
-    check openAmeHelloOffer(edited, auth) != ""
+    check not openAmeHelloOffer(edited, auth).ok
 
   # {.testKind: tkEdgeCase.}
   test "records ride ordinary AME frames and refuse to arrive out of order":
