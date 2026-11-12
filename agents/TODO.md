@@ -24,12 +24,12 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: nobody
   plan: keep ONE of each in the lowest module both callers already import (protocols/types or ame/level0/bytes), export it, delete the others. The byte appenders are also in Nebel and Geist: move those to Fylgia-Utils in the same pass.
 
-- [ ] evaluation/tests/test_otter_catalog.nim is in no nimble task, so nobody runs it.
-  why: a test that never runs holds nothing down.
+- [ ] repo-check lists evaluation/tests/test_otter_catalog.nim under ORPHAN TESTS, but it is not a test: it is the list of entries for Otter's test window, and it starts `nimble test` itself.
+  why: the line stays in every check as a FIX, and adding the file to the test task would make the suite start itself.
   start: ../Otter-RepoEvaluation/tools/agent_hooks/repo-check.sh . | grep -A2 "ORPHAN TESTS"
   done when: repo-check prints no ORPHAN TESTS.
   needs: nobody
-  plan: run it once by hand; if it passes, add it to the `test` task's list in the .nimble file; if it tests something that no longer exists, remove it.
+  plan: move it out of the test_ name (evaluation/otter_catalog.nim) and point the Otter test window task at the new name; check that `nimble` still opens the window with the three suites listed.
 
 - [ ] src/ holds about 39 500 lines of Nim (limit 15 000) and BORDERS.md names no planned cut.
   why: a repo this size has more than one job, and every reader pays for all of them.
