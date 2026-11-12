@@ -40,7 +40,7 @@ proc sampleChunkBody(): ByteSeq =
 proc sampleManifest(): ByteSeq =
   ## A well-formed package manifest body.
   var
-    digest: array[32, uint8]
+    digest: array[32, uint8] = default(array[32, uint8])
   digest[0] = 0x5A'u8
   result = encodeDacPackageManifest(initDacPackageManifest(7'u64, dtcUserData,
     dacDefaultsFor(dscBadSignal), 20_000'u64, digest))
@@ -109,7 +109,7 @@ suite "DAC body decoder fuzz":
   # {.testKind: tkFuzz.}
   test "package commit":
     var
-      digest: array[32, uint8]
+      digest: array[32, uint8] = default(array[32, uint8])
     digest[0] = 0x11'u8
     fuzzBody("decodeDacPackageCommit", 9'u64,
         encodeDacPackageCommit(initDacPackageCommit(7'u64, digest, 4'u16,
@@ -133,7 +133,7 @@ suite "DAC link fuzz":
       R: Rng = Rng(seed: 4242'u64)
       sample: ByteSeq = sampleChunkBody()
       data: ByteSeq = @[]
-      step: DacLinkStep
+      step: DacLinkStep = default(DacLinkStep)
       round: int = 0
       broke: bool = false
     while round < 4000 and not broke:
@@ -202,7 +202,7 @@ suite "DAC link fuzz":
       payload: ByteSeq = rampBytes(9_000)
       frames: seq[DacTaggedMessage] = beginDacPackage(sender, 5'u64,
         payload, 0'u32)
-      step: DacLinkStep
+      step: DacLinkStep = default(DacLinkStep)
       done: bool = false
       i: int = 0
     while i < frames.len:
