@@ -8,7 +8,6 @@
 
 import std/unittest
 
-import ../../src/protocols/types
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level3/handshake_identity
 import ../../src/protocols/enrollment

@@ -14,7 +14,6 @@
 ## name it chose. The roster also admits a predefined list and keys the operator
 ## adds by hand. Nothing here touches a disk.
 
-import ../src/protocols/types
 import ../src/protocols/ame/level3/handshake_identity
 import ../src/protocols/enrollment
 
