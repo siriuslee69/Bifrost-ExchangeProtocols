@@ -25,6 +25,7 @@ when defined(windows):
 else:
   import std/posix
 import runePragmas
+import ./wait_readable
 
 type
   SocketReadResult* {.role: preparedData,
@@ -46,8 +47,8 @@ proc socketReadable(sock: Socket, timeoutMs: int): bool {.role: dataFetcher.} =
   var
     fds: seq[SocketHandle] = @[sock.getFd()]
   if timeoutMs <= 0:
-    return selectRead(fds, -1) > 0
-  result = selectRead(fds, timeoutMs) > 0
+    return waitReadable(fds, -1) > 0
+  result = waitReadable(fds, timeoutMs) > 0
 
 proc readOnce(sock: Socket, maxBytes: int): string {.role: dataFetcher.} =
   ## sock/maxBytes: one OS read. "" means the peer closed or it failed.

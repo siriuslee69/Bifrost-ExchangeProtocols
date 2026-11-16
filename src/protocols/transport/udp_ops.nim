@@ -11,6 +11,7 @@ import ../byte_codec
 import ./types
 import ./socket_write
 import ./host_literal
+import ./wait_readable
 import runePragmas
 
 proc formatUdpAddress*(a: UdpAddress): string {.role: truthBuilder.} =
@@ -356,7 +357,7 @@ proc recvUdpDatagram*(sock: Socket, maxBytes: int,
     result.err = "invalid max datagram size"
     return
   fds = @[sock.getFd()]
-  if selectRead(fds, timeoutMs) <= 0:
+  if waitReadable(fds, timeoutMs) <= 0:
     result.ok = false
     result.err = "timed out waiting for datagram"
     return

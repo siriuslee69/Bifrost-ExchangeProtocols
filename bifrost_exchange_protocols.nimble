@@ -554,6 +554,8 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_dac_brake.nim", @["-r"])
     runNim("c", "evaluation/tests/test_super_fast_control.nim", @["-r"])
     runNim("c", "evaluation/tests/test_udp_shared_port.nim", @["-r"])
+    # built with glibc fortify checks: they stop a program that overruns select's table
+    runNim("c", "evaluation/tests/test_wait_readable.nim", @["-d:release", "--passC:-O2 -D_FORTIFY_SOURCE=2", "-r"])
     runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
     runNim("c", "evaluation/tests/test_attack_surface.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_tcp_handshake.nim", @["--threads:on", "-r"])

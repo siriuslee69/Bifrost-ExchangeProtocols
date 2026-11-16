@@ -3,6 +3,13 @@
 What is still to do in this repo. Rules: Agent-Conventions/WORKFLOW.md, section 8.
 An item that is done is removed here and named in PROGRESS.md.
 
+- [ ] TCP calls that wait with a timeout still go through Nim's own `select`: tcp_ops.nim `sock.recv(n, timeoutMs)` (line ~220), `sock.connect(host, port, timeoutMs)` (line ~280), and udp_ops.nim `connectUdp` (`sock.connect(..., timeoutMs)`, line ~304).
+  why: Nim's wait keeps a table of 1024 sockets (64 on Windows). A TCP server or client whose process holds a socket numbered above 1023 overruns it: a build with glibc's fortify checks is stopped, another overwrites memory next to it. The UDP receive path and `readAvailableSocket` already wait through transport/wait_readable.nim. Nebel's UDP programs do not reach these calls with high numbers; a TCP server with over 1000 connections (a mail or web server built on Bifrost) does.
+  start: grep -rn "recv(.*timeout\|connect(.*timeoutMs" src/protocols/transport/*.nim
+  done when: no transport routine hands a timeout to std/net's recv, connect or accept; evaluation/tests/test_wait_readable.nim has a TCP case with a socket above 1023.
+  needs: nobody
+  plan: wait with `waitReadable` (readable) and a short non-blocking connect loop for the connect, then read or finish without a timeout; keep the error texts the callers match on.
+
 - [ ] Teaching project: this repo has items in ../Vegvisir-TeachingPlan/plan/repos/Backbone.md (B2 and B3; B1 is done).
   why: the class room, room share and mail for teaching stand on them; their order across repos is kept in one place, not here.
   start: read ../Vegvisir-TeachingPlan/plan/STATUS.md, then the file above

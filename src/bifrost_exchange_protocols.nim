@@ -10,6 +10,7 @@ import ./protocols/transport/stream_framing as transport_stream_framing
 import ./protocols/transport/async_stream_ops as transport_async_stream_ops
 import ./protocols/transport/tcp_ops as transport_tcp_ops
 import ./protocols/transport/udp_ops as transport_udp_ops
+import ./protocols/transport/wait_readable as transport_wait_readable
 import ./protocols/transport/tls_ops as transport_tls_ops
 import ./protocols/tls13 as native_tls13
 import ./protocols/bfx2/types as bfx2_types
@@ -79,6 +80,7 @@ export transport_stream_framing
 export transport_async_stream_ops
 export transport_tcp_ops
 export transport_udp_ops
+export transport_wait_readable
 export transport_tls_ops
 export native_tls13
 export bfx2_types

@@ -1,6 +1,31 @@
-Commit Message: A plain UDP bind is exclusive: two sockets on port 0 never share a port
+Commit Message: One wait for sockets that has no 1024-socket table; recvUdpDatagram and readAvailableSocket use it
 
-## 2026-11-16 Found by running Nebel's forwarder with 1100 clients
+## 2026-11-16 Found by running Nebel's forwarder with 1100 clients (two faults)
+
+Fault 2 (this commit): `recvUdpDatagram` and `readAvailableSocket` waited with
+Nim's `selectRead`, even for a zero wait. Nim keeps the sockets of a wait in a
+table of 1024 (64 on Windows). A socket numbered 1024 or more is written past the
+end of it: a build with glibc's fortify checks is stopped ("bit out of range 0 -
+FD_SETSIZE on fd_set", SIGABRT; seen: Nebel's release forwarder died on the first
+datagram of client 1000-ish), another build overwrites what lies next to the
+table. On Windows the socket is left out and never read.
+
+```text
+  what                                   where now
+  -------------------------------------  ----------------------------------------
+  waitReadable(fds, ms): poll (Linux),   transport/wait_readable.nim (moved here
+    groups of 60 (Windows)                 from Nebel, which now imports it)
+  recvUdpDatagram, readAvailableSocket   use it
+  exported for the programs above        bifrost_exchange_protocols: waitReadable
+  test: 1100 sockets, a datagram on      test_wait_readable.nim, built with fortify
+    the last one                           checks in the nimble task (the old call
+                                           aborts there; checked)
+```
+
+Not done here, written down: the TCP calls that hand a timeout to std/net
+(`recv`, `connect`) still wait through Nim's select (agents/TODO.md, first item).
+
+Fault 1 (commit e60a6ae):
 
 ```text
   what was seen                                    why
