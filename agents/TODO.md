@@ -59,3 +59,17 @@ An item that is done is removed here and named in PROGRESS.md.
   done when: every line was looked at; real keys are removed, the rest are built at run time or marked as samples (see Otter's TODO.md, SECRETS item).
   needs: nobody
   plan: DONE 2026-11-12: every src/ candidate was looked at and marked `# otter:allow` — they are key-DERIVATION LABELS or a mode name, not keys (archive/level1/keys.nim, ame/level3/handshake_transcript.nim, fomke/level1/chain.nim, fomke/level1/jump.nim); test_attack_surface.nim's canary and test_xhkdf.nim's published vectors are marked too. REMAINING: the test fixtures (test_chunkyaead, test_mitm_and_loss, test_tls13_webpki, test_config_exact, tls_test_support, test_smtp, test_transport_ops, lowmem_probe, test_ame_tcp_handshake, test_task_contract, tools/*) and docs/chat-archive.md:188 (derivation labels in a diagram). NOTE: a fixture file that uses `let` must have its `let` turned into `var` blocks first, or nim-check flags the file the moment it is touched (test_chunkyaead was backed out for this reason). The two python-looking EMBEDDED blocks in dac/types.nim and dac/level3/link.nim are ASCII tables in doc comments — say so, do not hide them.
+
+- [ ] The forwarder's per-address cap does not group IPv6 addresses: one customer who owns a /64 gets the cap once per address.
+  why: `maxClientsPerHost` (default 64) exists so that one sender cannot fill the whole client table. An IPv6 customer owns 2^64 addresses and can use a new one for every client, so the cap never bites and one sender can still fill the table. IPv4 is not affected.
+  start: grep -n "proc hostIsFull" -A18 src/protocols/relay/super_fast_udp.nim   (it compares `client.host == host`)
+  done when: a test shows that two addresses of one IPv6 /64 share one cap, two different /64s do not, and an IPv4 host behaves as before.
+  needs: nobody
+  plan: count by a key: the whole text for IPv4, the first 64 bits for IPv6 (an IPv4-mapped IPv6 address counts as its IPv4 address, as `sameHost` already reads it). Keep "the port does not count". Then say "per IPv4 address or IPv6 /64" in Nebel's forwarder docs and in the `--max-clients-per-host` help. Source and reasoning: ../Nebel-DecentralizedDB/docs/attack_catalog.md, rows U11 and U12.
+
+- [ ] Chunked file encryption: no test shows that a file with its last chunk(s) cut off is refused.
+  why: a cut-off file must never open as if it were complete. The chunk header holds chunk index, plain length and nonce, but no total count or last-chunk flag was found, and the tests only cover moved and swapped chunks.
+  start: sed -n 52,60p src/protocols/chunkyaead/level0/types.nim; grep -n "file chunks" -A30 evaluation/tests/test_archive_contact.nim
+  done when: a test seals a file of at least three chunks, removes the last one (and then the last two), and the open is refused; if it opens, the chunk count or a last-chunk flag is bound into the tag / associated data (the STREAM construction) and the test passes.
+  needs: nobody
+  plan: look first at what the archive manifest above the chunks already binds (it may already catch this: then the test is all that is missing). Source: ../Nebel-DecentralizedDB/docs/attack_catalog.md, row C9.
