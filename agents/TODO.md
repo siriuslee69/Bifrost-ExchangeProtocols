@@ -38,7 +38,7 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: nobody
   plan: controlled_handshake.nim first (cut each routine into the steps its comments already name; test_tls13_foundation and the interop tasks cover it).
 
-- [ ] Otter lists 52 LAYOUT places (routines far from the one that calls them, mostly in ame/level1 and ame/level2) and 32 FAMILIES (groups of routines that differ in one type or one case).
+- [ ] Otter lists 52 LAYOUT places (routines far from the one that calls them, mostly in ame/level1 and ame/level2) and 33 FAMILIES (groups of routines that differ in one type or one case).
   why: a reader has to jump through hundreds of lines to follow one routine.
   start: ../Otter-RepoEvaluation/tools/agent_hooks/otter-gate.sh --force . | grep -A30 "LAYOUT"
   done when: those two headings are gone, or each remaining line is answered in docs (a misreading of Otter, with the reason).
