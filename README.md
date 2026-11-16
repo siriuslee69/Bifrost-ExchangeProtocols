@@ -3589,6 +3589,15 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
   is probing those ports (nothing to do: they are dropped), or the NAS
   moved and the relay was not told. The relay learns a move only through
   `noteNasSeen`.
+- **A TCP server built on Bifrost crashes with over about 1000 open
+  connections**: the TCP calls that take a timeout (`recv`, `connect`) wait
+  through Nim's `select`, which has room for 1024 socket numbers (64 on
+  Windows). A socket numbered above that is written past the end of its table:
+  the process is stopped or its memory is damaged. The UDP receive paths (AME,
+  DAC, the relays) wait through Bifrost's own `waitReadable` and are not
+  affected; only `connectUdp` (one client connect with a timeout) still uses
+  Nim's. Cap a TCP server's open connections well below 1000 until the item in
+  `agents/TODO.md` is done.
 - **An answer from far away is refused after a while**: the way back exists
   only as a return note, which lives 120 s after the last forward from that
   origin. A target that answers later needs a directory line for the origin

@@ -8,6 +8,7 @@ An item that is done is removed here and named in PROGRESS.md.
   start: grep -rn "recv(.*timeout\|connect(.*timeoutMs" src/protocols/transport/*.nim
   done when: no transport routine hands a timeout to std/net's recv, connect or accept; evaluation/tests/test_wait_readable.nim has a TCP case with a socket above 1023.
   needs: nobody (the user decided on 2026-11-16: later, when a TCP server with over 1000 connections exists; AME and DAC run over UDP and do not reach these calls with high numbers)
+  until then: a TCP server built on Bifrost must cap its open connections well below 1000 (the README issue playbook says so), or a stranger who opens enough of them can crash it.
   plan: wait with `waitReadable` (readable) and a short non-blocking connect loop for the connect (it needs a "writable" wait beside the readable one), then read what is there. A TLS socket must still be read through its own `recv`: only the WAIT moves, never the read. Keep the error texts the callers match on. Run every tls13 and http test after.
 
 - [ ] Teaching project: this repo has items in ../Vegvisir-TeachingPlan/plan/repos/Backbone.md (B2 and B3; B1 is done).
