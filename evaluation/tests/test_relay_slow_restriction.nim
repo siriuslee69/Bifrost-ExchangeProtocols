@@ -126,6 +126,7 @@ suite "relaySlowExtractEncrypt, restrictions":
         n: SlowNet = slowSetup(70'u8)
         step: RelayStep = default(RelayStep)
       check n.R.setRelayRestriction(rmGroup).ok
+      n.R.setRelayGroupClaimers(["nas"])
       step = n.R.feedRelaySlowExtractEncrypt(at(idNas), sealGroupUpdate(
         n.nas.left, acrDac, @["phone"]), 0'u32)
       check step.event == reAnswered

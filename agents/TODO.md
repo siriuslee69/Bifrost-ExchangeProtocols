@@ -17,13 +17,6 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: user (B2 waits for D2); B3 is needs: nobody now — D3 answered 2026-11-12
   plan: ../Vegvisir-TeachingPlan/README.md, "How to use this repo": claim one item, do it here, close it there. B3 (Fjord imports Bifrost's smtp and mail) is ready to claim; its crypto uses Tyr's native Nim protocols, not libsodium/OpenSSL (D3 answer).
 
-- [ ] rmGroup believes a claim from every neighbour unless the operator names the claimers.
-  why: on a relay that admits neighbours the operator does not know, the first to say "that device is mine" may reach it, and its real server is refused afterwards.
-  start: grep -n "setRelayGroupClaimers" -A12 src/protocols/relay/relay_node.nim
-  done when: the user decided the start value.
-  needs: user
-  plan: recommended: keep the open start value for now (Nebel's hop daemon and three tests rely on it) and have Nebel's hop config name the claimers; flip the start value to "nobody may claim" in the same commit that moves Nebel's pin.
-
 - [ ] Wire the enrollment trust (protocols/enrollment) into the group systems — the relay rmGroup and/or the archive spaces.
   why: groupMemberAllowed is a standalone primitive today; the relay GroupBook and the archive spaces still decide membership by identity strings, not by the enroller key + roster. The operator said this makes sense and deferred it (2026-11-13).
   start: grep -n "groupMemberAllowed" src/protocols/enrollment/level1/roster.nim; grep -n "groupAllows\|setGroup" src/protocols/relay/restriction_group.nim

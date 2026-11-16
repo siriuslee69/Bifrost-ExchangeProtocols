@@ -177,6 +177,7 @@ when restrictionGroupBuilt:
         step: RelayStep = default(RelayStep)
         ack: tuple[ok: bool, err: string] = (false, "")
       check n.R.setRelayRestriction(rmGroup).ok
+      n.R.setRelayGroupClaimers(["nas"])
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealGroupUpdate(n.nas.left, acrDac, @["phone", "laptop"]), rtNowMs)
       check step.event == reAnswered
@@ -342,6 +343,7 @@ suite "restriction on a relay, all builds":
         result = (ok: true, err: "")
     check n.R.attachRestrictionBook(load, save).ok
     when restrictionGroupBuilt:
+      n.R.setRelayGroupClaimers(["nas"])
       step = n.R.feedRelayFastExtraFrame(n.sNas,
         sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs)
     elif restrictionListedBuilt:
@@ -408,6 +410,33 @@ suite "restriction, limits a neighbour can reach":
       check step.err.contains("disk full")
       ## The change was not kept: the book is back to empty.
       check n.R.book.reach.len == 0
+
+  # {.testKind: tkRegression, covers: "updateRefusal", pins: "rmGroup believed every neighbour until claimers were named".}
+  test "with no claimers named, nobody can claim a device":
+    var
+      n: RtNet = rtSetup(111'u8)
+      step: RelayStep = default(RelayStep)
+    when restrictionGroupBuilt:
+      check n.R.setRelayRestriction(rmGroup).ok
+      ## The start value: the laptop AND the real server are both dropped.
+      step = n.R.feedRelayFastExtraFrame(n.sLaptop,
+        sealGroupUpdate(n.laptop.left, acrDac, @["phone"]), rtNowMs)
+      check step.event == reDropped
+      check step.err.contains("may not claim")
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs)
+      check step.event == reDropped
+      check n.R.book.group.links.len == 0
+      ## The phone reaches nobody.
+      step = n.R.feedRelayFastExtraFrame(n.sPhone,
+        sealAmeRouteForward(n.phone.left, rtNas, @[byte 1]), rtNowMs)
+      check step.event == reRefused
+      ## Naming the server opens exactly that door.
+      n.R.setRelayGroupClaimers(["nas"])
+      step = n.R.feedRelayFastExtraFrame(n.sNas,
+        sealGroupUpdate(n.nas.left, acrDac, @["phone"]), rtNowMs + 2000'u32)
+      check step.event == reAnswered
+      check n.R.book.group.links.len == 1
 
   # {.testKind: tkEdgeCase, covers: "setRelayGroupClaimers|updateRefusal".}
   test "with claimers named, nobody else can claim a device":

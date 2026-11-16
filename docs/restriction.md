@@ -113,19 +113,25 @@ replaces only its own links.
 
 Memory: a member is one name and a link is two small numbers.
 
-Who may claim. By default every neighbour may send a claim, and the first
-claim for a device wins. On a relay whose neighbours are not all yours, name
-the servers; a claim from anyone else is dropped:
+Who may claim. By default NOBODY may. A relay in `rmGroup` has to be told which
+neighbours are servers, and a claim from anyone else is dropped:
 
 ```nim
 relay.setRelayGroupClaimers(["nas", "cam-server"])
 ```
 
 ```text
-  claimers = []         laptop claims "phone"  -> laptop may reach the phone,
-                        and the phone's real server is refused afterwards
-  claimers = ["nas"]    laptop claims "phone"  -> dropped: "may not claim"
+  claimers = []         nas claims "phone"     -> dropped: "may not claim"; the
+                        (the start value)         group stays empty and every
+                                                  frame is refused
+  claimers = ["nas"]    nas claims "phone"     -> kept
+                        laptop claims "phone"  -> dropped: "may not claim"
 ```
+
+Why closed: with an open start value the first neighbour to say "that device is
+mine" got it, and the phone's real server was refused afterwards. A relay that
+admits neighbours the operator does not know by name must never start like that.
+(Until 2026-11-16 the empty list believed every neighbour.)
 
 ### 2.3 rmListed: accept and reject lists of addresses
 

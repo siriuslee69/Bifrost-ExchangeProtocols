@@ -1,4 +1,31 @@
-Commit Message: One wait for sockets that has no 1024-socket table; recvUdpDatagram and readAvailableSocket use it
+Commit Message: rmGroup starts closed: until the operator names the claimers, no neighbour may claim a device
+
+## 2026-11-16 rmGroup: nobody may claim until claimers are named (user's decision)
+
+The user decided to flip the start value. Plan (bottom first, Nebel only follows):
+
+```text
+  what                                    before                  after
+  --------------------------------------  ----------------------  ---------------------------
+  claimers = []   (the start value)       every neighbour may     NO neighbour may claim; the
+                                          claim, first one wins   group stays empty and every
+                                                                  frame is refused
+  claimers = ["nas"]                      only nas may claim      the same
+  a relay in rmGroup and nobody named     any laptop could take   nothing can be taken; the
+                                          the phone's place       operator sees "may not claim"
+```
+
+Where: `updateRefusal` in relay/relay_node.nim (the one place that reads the list),
+the doc comments of `groupClaimers` and `setRelayGroupClaimers`, docs/restriction.md
+(2.2), the README issue playbook. Tests that claimed with no list now name "nas":
+test_relay_restriction (two tests), test_relay_slow_restriction (one); one new test
+pins the new start value. Nebel follows in its own commits: pin move, the message of
+its group-needs-claimers refusal (it said "every claim is believed"), docs.
+Eris and Fjord do not use rmGroup (grep), so no other caller changes.
+
+Decided (user, 2026-11-16): the TCP timeout calls of the entry below wait until a TCP
+server with over 1000 connections exists (agents/TODO.md, first item).
+
 
 ## 2026-11-16 Found by running Nebel's forwarder with 1100 clients (two faults)
 
@@ -22,12 +49,11 @@ table. On Windows the socket is left out and never read.
                                            aborts there; checked)
 ```
 
-Open (needs your decision): should the TCP calls that hand a timeout to std/net
-(`recv`, `connect`) also leave Nim's select now? Recommended: not yet. Only a TCP
-server holding over 1000 connections meets the table limit, Nebel's programs speak
-UDP, and the change touches every TLS read (a raw read of the OS socket would
-return ciphertext), so it needs its own pass with the TLS tests. It is the first
-item of agents/TODO.md, marked `needs: user`.
+Decided (user, 2026-11-16): the TCP calls that hand a timeout to std/net (`recv`,
+`connect`) stay on Nim's select for now. Only a TCP server holding over 1000
+connections meets the table limit, AME and DAC speak UDP, and the change touches
+every TLS read (a raw read of the OS socket would return ciphertext), so it needs
+its own pass with the TLS tests. It is the first item of agents/TODO.md.
 
 Fault 1 (commit e60a6ae):
 

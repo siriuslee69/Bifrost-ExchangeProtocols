@@ -222,7 +222,7 @@ type
       ## Where the book is kept. nil keeps it in memory only.
     groupClaimers: seq[string]
       ## rmGroup: the identities that may claim members (the servers). Empty
-      ## lets every neighbour claim. See `setRelayGroupClaimers`.
+      ## (the start value) lets nobody claim. See `setRelayGroupClaimers`.
     overflow: OverflowRing[RelaySend]
       ## Frames that could not leave this turn (the budget was spent), oldest
       ## first; a fixed-width ring (overflow_ring.nim).
@@ -687,14 +687,16 @@ proc setRelayGroupClaimers*(R: var RelayNode,
     identities: openArray[string]) {.role: configurator, tag: "appApi".} =
   ## R/identities: in rmGroup, the only neighbours whose claim "these devices
   ## are mine" is believed -- the servers. Everyone else's group update is
-  ## dropped. An empty list (the start value) believes every neighbour:
+  ## dropped. An empty list (the start value) believes NOBODY:
   ##
-  ##   claimers = []        mallory claims "alice"  -> mallory may reach alice,
-  ##                        and alice's real server is refused afterwards
-  ##   claimers = ["nas"]   mallory claims "alice"  -> dropped
+  ##   claimers = []        nas claims "alice"      -> dropped, the group stays
+  ##                                                   empty and every frame is refused
+  ##   claimers = ["nas"]   nas claims "alice"      -> kept
+  ##                        mallory claims "alice"  -> dropped
   ##
-  ## So a relay that admits neighbours the operator does not know by name
-  ## should always name its servers here.
+  ## So a relay in rmGroup must name its servers here, or it admits nothing.
+  ## (Before 2026-11-16 the empty list believed every neighbour, and the first
+  ## one to say "alice is mine" got her.)
   R.groupClaimers = @identities
 
 proc updateRefusal(R: var RelayNode, slot: int, u: RestrictionUpdate,
@@ -706,9 +708,10 @@ proc updateRefusal(R: var RelayNode, slot: int, u: RestrictionUpdate,
   if R.neighbours[slot].updated and
       nowMs - R.neighbours[slot].updatedMs < restrictionUpdateGapMs:
     return "restriction update came too soon after the last one"
-  if u.op == restrictionOpGroup and R.groupClaimers.len > 0 and
+  if u.op == restrictionOpGroup and
       R.neighbours[slot].identity notin R.groupClaimers:
-    return "this neighbour may not claim group members"
+    return "this neighbour may not claim group members " &
+      "(the relay's claimers: setRelayGroupClaimers)"
   R.neighbours[slot].updated = true
   R.neighbours[slot].updatedMs = nowMs
 

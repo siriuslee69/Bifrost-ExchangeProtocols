@@ -3576,8 +3576,10 @@ Offer and reply sizes grow with the KEM public keys and ciphertexts
 - **A restriction update gets no acknowledgement**: one neighbour may change
   its part of the book once per second. A second update inside that second
   is dropped (`step.err`: "came too soon"). Send it again after the gap.
-  The same silence, with "may not claim", means the relay named its group
-  claimers (`setRelayGroupClaimers`) and this neighbour is not one of them.
+  The same silence, with "may not claim", means this neighbour is not one of
+  the relay's group claimers (`setRelayGroupClaimers`). A relay in `rmGroup`
+  that was never given claimers starts with NONE: it refuses every claim, so
+  every frame is refused until the servers are named.
 - **relaySuperFastUDP refuses a client although the table is not full**: its
   address already holds `udpForwardMaxClientsPerHost` (64) relay tags. Many
   users behind one shared address can reach that; raise the number, or set
