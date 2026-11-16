@@ -22,8 +22,12 @@ table. On Windows the socket is left out and never read.
                                            aborts there; checked)
 ```
 
-Not done here, written down: the TCP calls that hand a timeout to std/net
-(`recv`, `connect`) still wait through Nim's select (agents/TODO.md, first item).
+Open (needs your decision): should the TCP calls that hand a timeout to std/net
+(`recv`, `connect`) also leave Nim's select now? Recommended: not yet. Only a TCP
+server holding over 1000 connections meets the table limit, Nebel's programs speak
+UDP, and the change touches every TLS read (a raw read of the OS socket would
+return ciphertext), so it needs its own pass with the TLS tests. It is the first
+item of agents/TODO.md, marked `needs: user`.
 
 Fault 1 (commit e60a6ae):
 
