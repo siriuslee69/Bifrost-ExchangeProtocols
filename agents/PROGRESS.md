@@ -1,4 +1,24 @@
-Commit Message: Group enrollment: one enroller key admits AME public keys into groups; predefined list, operator CLI, roster codec
+Commit Message: A plain UDP bind is exclusive: two sockets on port 0 never share a port
+
+## 2026-11-16 Found by running Nebel's forwarder with 1100 clients
+
+```text
+  what was seen                                    why
+  -----------------------------------------------  --------------------------------------
+  25 of 1100 clients had their datagrams leave     bindUdp set SO_REUSEADDR on every UDP
+    the forwarder from a port another client's     socket. A socket asking for port 0 may
+    datagrams also left from; home's answer for    then be given a port that is already
+    one reached the other                          in use, so two of the forwarder's
+                                                   per-client sockets shared a port
+```
+
+Fix (bottom first, so Nebel only moves its pin): `bindUdp` no longer sets
+SO_REUSEADDR. A port is held by ONE plain socket; sharing a port stays what it
+was meant to be, `bindUdpShared` (SO_REUSEPORT, a warning, one client always on
+the same holder). Quick restart is not affected: UDP has no waiting period.
+Test: test_udp_shared_port, "port 0 never hands out a port that is in use" (opens
+as many as the machine allows, up to 1500) and "a second plain bind of a held port
+is refused".
 
 ## 2026-11-13 PLAN: group enrollment — one enroller key admits public keys into groups
 

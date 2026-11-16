@@ -196,14 +196,30 @@ proc bindUdp*(a: UdpAddress, recvBufferBytes: int = 0): Socket {.
   ## a: local address to bind.
   ## recvBufferBytes: how much the kernel should queue for this socket, or 0
   ## for its default. See `setUdpReceiveBuffer` for why a server wants more.
+  ##
+  ## The socket is EXCLUSIVE: no other socket may hold its port. That is on
+  ## purpose, and it matters most for port 0 ("any free port"):
+  ##
+  ##   with SO_REUSEADDR set        port 0 may hand out a port that is already
+  ##                                held; two sockets then share it and the
+  ##                                system gives each datagram to either one
+  ##                                (1100 sockets: about 25 shared ports)
+  ##   exclusive (this proc)        every port 0 socket gets a port of its own
+  ##
+  ## UDP has no waiting period after a close, so a restarted program binds its
+  ## port again at once without the option. Several holders of ONE port are
+  ## what `bindUdpShared` is for.
   var
     host: string = ""
   host = normalizeHostLiteral(a.host)
   result = newSocket(udpDomainForHost(host), SOCK_DGRAM, IPPROTO_UDP)
-  result.setSockOpt(OptReuseAddr, true)
   maybeEnableDualStackWildcard(result, host)
   discard setUdpReceiveBuffer(result, recvBufferBytes)
-  result.bindAddr(Port(a.port), host)
+  try:
+    result.bindAddr(Port(a.port), host)
+  except OSError:
+    closeSocketQuietly(result)
+    raise
 
 proc udpPortInUse*(a: UdpAddress): bool {.role: parser.} =
   ## a: the address to test. True only when somebody already holds that exact
@@ -245,10 +261,9 @@ proc bindUdpShared*(a: UdpAddress, recvBufferBytes: int = 0): tuple[
   ## workers on one port). Forwarders for different targets need different
   ## ports, or clients land on the wrong one.
   ##
-  ## Every holder should bind with this proc. A holder made by plain `bindUdp`
-  ## is still let in on Linux (it sets reuse-address), but it is NOT part of
-  ## the split: the system may hand it every datagram or none of them. The
-  ## warning is printed for it all the same.
+  ## Every holder must bind with this proc. A plain `bindUdp` socket holds its
+  ## port alone: a shared bind to that port is refused, and a plain bind to a
+  ## shared port is refused too.
   ## Windows has no per-client split: there it only allows the second bind,
   ## and which socket gets a datagram is up to the system.
   var

@@ -2,7 +2,7 @@
 ## UDP Shared Port Tests <- several forwarders on one port, with a warning
 ## ---------------------------------------------------------------------
 
-import std/[unittest, net]
+import std/[sets, unittest, net]
 
 import ../../src/protocols/types
 import ../../src/protocols/transport/types as transport_types
@@ -21,6 +21,37 @@ proc tryRead(s: Socket): int =
     got = recvUdpDatagram(s, 64, 100)
 
 suite "UDP shared port":
+  # {.testKind: tkRegression, covers: "bindUdp", pins: "port 0 handed out a port already in use".}
+  test "port 0 never hands out a port that is already in use":
+    ## A forwarder opens one socket on port 0 per client. When the sockets could
+    ## share ports, 1100 of them shared about 25, and home's answer for one
+    ## client reached another. Open as many as this machine allows (up to 1500).
+    var
+      socks: seq[Socket] = @[]
+      ports: HashSet[uint16] = initHashSet[uint16]()
+      i: int = 0
+    try:
+      while i < 1500:
+        socks.add bindUdp(initUdpAddress("127.0.0.1", 0'u16))
+        ports.incl portOf(socks[i])
+        i = i + 1
+    except CatchableError:
+      echo "  (only " & $socks.len & " sockets could be opened: file limit)"
+    check socks.len >= 200
+    check ports.len == socks.len
+    for s in socks:
+      closeSocketQuietly(s)
+
+  # {.testKind: tkEdgeCase, covers: "bindUdp".}
+  test "a second plain bind of a held port is refused, and leaves no socket open":
+    var
+      a: Socket = bindUdp(initUdpAddress("127.0.0.1", 0'u16))
+      p: uint16 = portOf(a)
+    expect OSError:
+      discard bindUdp(initUdpAddress("127.0.0.1", p))
+    closeSocketQuietly(a)
+    check not udpPortInUse(initUdpAddress("127.0.0.1", p))
+
   # {.testKind: tkUnit, covers: "udpPortInUse".}
   test "a free port is not in use, a held one is":
     var
