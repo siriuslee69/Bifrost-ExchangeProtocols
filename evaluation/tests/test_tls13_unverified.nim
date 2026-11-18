@@ -12,7 +12,7 @@
 ##   visible            tls13PeerVerified says false, so a log line can say "unverified"
 ##   never by accident  refused together with a root or a trust store
 
-import std/[unittest, times]
+import std/[unittest, times, base64, os]
 import protocols/tls13
 import ../../src/protocols/types
 import runePragmas
@@ -120,3 +120,59 @@ suite "TLS 1.3 acceptAnyCertificate":
       r: Outcome = handshake(rsaServer(), anyClient(), flipLastByte = true)
     check not r.ok
     check r.err.len > 0
+
+proc pemOf(der: ByteSeq): string {.role: helper.} =
+  ## der: one certificate as the armoured text a CA bundle holds.
+  var
+    raw: string = newString(der.len)
+    i: int = 0
+  while i < der.len:
+    raw[i] = char(der[i])
+    i = i + 1
+  result = "-----BEGIN CERTIFICATE-----\n" & encodeMime(raw, lineLen = 64, newLine = "\n") &
+    "\n-----END CERTIFICATE-----\n"
+
+suite "tls13RootsFromPem (a CA bundle becomes trust anchors)":
+  # {.testKind: tkIntegration, covers: "tls13RootsFromPem".}
+  test "a bundle's root verifies a server: the checked path works end to end":
+    var
+      r: tuple[ok: bool, roots: seq[ByteSeq], skipped: int, err: string] =
+        tls13RootsFromPem(pemOf(rd("evaluation/tests/fixtures/webpki/rroot.der")))
+      c: Tls13ClientConfig = Tls13ClientConfig()
+      o: Outcome = (ok: false, err: "", verified: false)
+    check r.ok
+    check r.roots.len == 1 and r.skipped == 0
+    c.trustedRootsDer = r.roots
+    c.serverName = "mail.fjord.example"
+    c.nowUnix = getTime().toUnix()
+    o = handshake(rsaServer(), c)
+    check o.ok
+    check o.verified
+
+  # {.testKind: tkEdgeCase, covers: "tls13RootsFromPem".}
+  test "a block that is not a certificate is skipped and counted, the rest is kept":
+    var
+      junk: string = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+      r: tuple[ok: bool, roots: seq[ByteSeq], skipped: int, err: string] =
+        tls13RootsFromPem(junk & pemOf(rd("evaluation/tests/fixtures/webpki/rroot.der")))
+    check r.ok
+    check r.roots.len == 1
+    check r.skipped == 1
+
+  # {.testKind: tkEdgeCase, covers: "tls13RootsFromPem".}
+  test "text with no usable certificate is refused":
+    check not tls13RootsFromPem("").ok
+    check not tls13RootsFromPem("hello").ok
+    check not tls13RootsFromPem("-----BEGIN CERTIFICATE-----\nAAAA\n").ok
+
+  # {.testKind: tkIntegration, covers: "tls13RootsFromPem".}
+  test "this machine's own CA bundle loads (skipped when the machine has none)":
+    var
+      path: string = "/etc/ssl/certs/ca-certificates.crt"
+      r: tuple[ok: bool, roots: seq[ByteSeq], skipped: int, err: string] =
+        (ok: true, roots: @[], skipped: 0, err: "")
+    if fileExists(path):
+      r = tls13RootsFromPem(readFile(path))
+      check r.ok
+      check r.roots.len > 50
+      check r.skipped < r.roots.len

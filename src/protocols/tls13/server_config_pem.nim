@@ -23,7 +23,7 @@
 
 import std/strutils
 
-import tyr/certs/[der, pem]
+import tyr/certs/[der, pem, x509, chain]
 import tyr/certs/keys
 import tyr/certs/rsa
 import tyr/signatures/ed25519
@@ -192,3 +192,39 @@ proc tls13ServerConfigFromPem*(certChainPem, keyPem: string,
     result.err = e.msg
     return
   result.ok = true
+
+const
+  tlsMaxTrustBundleCertificates* = 1024
+    ## a CA bundle holds about 140 roots; far more than this is not a bundle
+
+proc tls13RootsFromPem*(bundlePem: string): tuple[ok: bool,
+    roots: seq[ByteSeq], skipped: int, err: string] {.role: truthBuilder,
+    tag: "tls|config|cryptoBoundary".} =
+  ## bundlePem: the TEXT of a CA bundle (`ca-certificates.crt`, `ca-bundle.crt`).
+  ## Gives the roots this engine can use, as DER, for
+  ## `Tls13ClientConfig.trustedRootsDer`. A root with a key or signature kind
+  ## the engine does not know is SKIPPED and counted, not fatal: one exotic
+  ## root must not make every other one unusable. ok is false when none is usable.
+  var
+    all: PemSplit = splitPemBlocks(bundlePem, "CERTIFICATE",
+      tlsMaxTrustBundleCertificates)
+    one: PemReadResult = PemReadResult()
+    parsed: X509ReadResult = X509ReadResult()
+    scratch: TrustStore = initTrustStore()
+    i: int = 0
+  if not all.ok:
+    result.err = all.err
+    return
+  while i < all.blocks.len:
+    one = readPemBlock(all.blocks[i], "CERTIFICATE")
+    parsed = X509ReadResult()
+    if one.ok:
+      parsed = parseX509CertificateDer(one.pemBlock.der)
+    if one.ok and parsed.ok and scratch.addTrustedRoot(parsed.certificate).len == 0:
+      result.roots.add(one.pemBlock.der)
+    else:
+      result.skipped = result.skipped + 1
+    i = i + 1
+  result.ok = result.roots.len > 0
+  if not result.ok:
+    result.err = "no usable root certificate in the bundle"
