@@ -185,6 +185,10 @@ suite "SMTP server with STARTTLS":
     check textOf(o.applicationData).startsWith("221")
     check o.closed
     check S.mode == swDead
+    ## after the close, a plain byte on the same connection is not read (Exim "Dead.Letter" class)
+    step = feedSmtpTlsServer(S, "MAIL FROM:<late@x.example>\r\n", mine)
+    check step.closed
+    check step.reply.len == 0 and step.mails.len == 0
 
   # {.testKind: tkFuzz, covers: "feedSmtpTlsServer".}
   test "garbage in the handshake or in the clear closes the conversation, never raises":
