@@ -23,6 +23,7 @@ import std/unittest
 import ../../src/protocols/types
 import ../../src/protocols/transport/types as transport_types
 import ../../src/protocols/relay/super_fast_udp
+import ../../src/protocols/relay/restriction_address
 import runePragmas
 
 proc ep(h: string, p: uint16): transport_types.UdpAddress {.role: configurator.} =
@@ -348,6 +349,40 @@ suite "UDP forward, hardening":
       ufeForwarded
     expect ValueError:
       discard initUdpForwardConfig(maxClientsPerHost = -1)
+
+  # {.testKind: tkRegression, covers: "hostGroupKey|hostIsFull",
+  #   pins: "an IPv6 customer owns a /64 and used a new address per client".}
+  test "an IPv6 /64 counts as one sender, two /64s as two, IPv4 as before":
+    var
+      F: RelaySuperFastUdp = relay(initUdpForwardConfig(maxClients = 16,
+        maxClientsPerHost = 2))
+      step: UdpForwardStep = default(UdpForwardStep)
+    ## the key itself
+    check hostGroupKey("203.0.113.7") == "203.0.113.7"
+    check hostGroupKey("::ffff:203.0.113.7") == "203.0.113.7"
+    check hostGroupKey("2001:db8:1:2::1") == hostGroupKey("2001:db8:1:2:f:f:f:f")
+    check hostGroupKey("2001:db8:1:2::1") ==
+      "2001:0db8:0001:0002:0000:0000:0000:0000/64"
+    check hostGroupKey("2001:db8:1:3::1") != hostGroupKey("2001:db8:1:2::1")
+    check hostGroupKey("not an address") == "not an address"
+    ## one /64: the third new address is refused, whatever its last 64 bits are
+    check fromClient(F, ep("2001:db8:1:2::1", 4000'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    check fromClient(F, ep("2001:db8:1:2:aaaa:bbbb:cccc:dddd", 4000'u16),
+      @[byte 1], 1000'u64).event == ufeForwarded
+    step = fromClient(F, ep("2001:db8:1:2:1:2:3:4", 4000'u16), @[byte 1], 1000'u64)
+    check step.event == ufeDropped
+    check udpForwardClients(F) == 2
+    ## another /64 is another sender
+    check fromClient(F, ep("2001:db8:1:3::1", 4000'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    ## an IPv4 sender written as an IPv6 one is still ONE IPv4 sender
+    check fromClient(F, ep("203.0.113.7", 4000'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    check fromClient(F, ep("::ffff:203.0.113.7", 4001'u16), @[byte 1],
+      1000'u64).event == ufeForwarded
+    step = fromClient(F, ep("203.0.113.7", 4002'u16), @[byte 1], 1000'u64)
+    check step.event == ufeDropped
 
   # {.testKind: tkEdgeCase, covers: "sameHost|fromNas|isVip".}
   test "the NAS and a VIP are known by address, however the socket spells it":

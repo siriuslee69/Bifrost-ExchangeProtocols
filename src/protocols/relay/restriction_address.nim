@@ -249,3 +249,32 @@ proc formatSource*(s: SourceAddr): string {.role: helper.} =
   else: result = "?"
   if s.port != 0'u16:
     result = (if s.family == 6: "[" & result & "]" else: result) & ":" & $s.port
+
+proc hostGroupKey*(host: string): string {.role: sanitizer.} =
+  ## host: a sender's address as text. Answers the text that stands for ONE
+  ## sender, so a cap "per address" cannot be walked around:
+  ##
+  ##   203.0.113.7             ->  203.0.113.7
+  ##   ::ffff:203.0.113.7      ->  203.0.113.7          (the same machine)
+  ##   2001:db8:1:2:a:b:c:d    ->  2001:0db8:0001:0002:0000:0000:0000:0000/64
+  ##   2001:db8:1:2:f:f:f:f    ->  the same /64 text: ONE sender
+  ##   not an address at all   ->  the text itself
+  ##
+  ## Why a /64. A customer who is given an IPv6 line is given a whole /64: 2^64
+  ## addresses. Counted per address, the cap would never bite, because every new
+  ## client could come from a new one. The first 64 bits belong to the customer,
+  ## the rest are theirs to change (RFC 4291, 2.5.4; RFC 7421).
+  var
+    r: tuple[ok: bool, src: SourceAddr, err: string] = (false,
+      SourceAddr(family: 0), "")
+    first64: Ipv6 = default(Ipv6)
+    i: int = 0
+  r = sourceOf(host, 0'u16)
+  if not r.ok or r.src.family == 0'u8:
+    return host
+  if r.src.family == 4'u8:
+    return formatSource(r.src)
+  while i < 8:
+    first64[i] = r.src.v6[i]
+    i = i + 1
+  result = formatIpv6(first64) & "/64"

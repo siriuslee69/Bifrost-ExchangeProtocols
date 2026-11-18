@@ -140,6 +140,8 @@ type
   UdpForwardSlot* {.role: truthState,
     expectedCount: [0, udpForwardMaxClients], lifeCycle: lcSession.} = object
     client*: transport_types.UdpAddress
+    hostKey*: string
+      ## `hostGroupKey` of the client's address: what the per-address cap counts
     tag*: uint32
     lastSeenMs*: uint64
     inUse*: bool
@@ -327,6 +329,7 @@ proc releaseSlot(F: var RelaySuperFastUdp, i: int) {.role: actor,
   F.slots[i].inUse = false
   F.usedSlots = F.usedSlots - 1
   F.slots[i].client = default(transport_types.UdpAddress)
+  F.slots[i].hostKey = ""
 
 proc freeSlotIndex(F: var RelaySuperFastUdp): int {.role: parser,
     tag: "relay|udp".} =
@@ -429,19 +432,24 @@ proc reapForNewcomer(F: var RelaySuperFastUdp, nowMs: uint64) {.role: actor,
 
 proc hostIsFull(F: RelaySuperFastUdp, host: string): bool {.role: parser,
     tag: "relay|udp".} =
-  ## F/host: true when that host already holds `cfg.maxClientsPerHost` places
+  ## F/host: true when that sender already holds `cfg.maxClientsPerHost` places
   ## (counted over every port). Only asked when a NEW place would be opened.
+  ## A sender is one IPv4 address, or one IPv6 /64 (`hostGroupKey`).
   ##
   ##   limit 2:  203.0.113.7:4000  203.0.113.7:4001   -> both get a place
   ##             203.0.113.7:4002                      -> refused: host is full
   ##             198.51.100.4:4000                     -> gets a place
+  ##             [2001:db8:1:2::1]  [2001:db8:1:2::2]  -> both get a place
+  ##             [2001:db8:1:2::3]                     -> refused: the same /64
   var
     i: int = 0
     n: int = 0
+    key: string = ""
   if F.cfg.maxClientsPerHost == 0:
     return false
+  key = hostGroupKey(host)
   while i < F.slots.len:
-    if F.slots[i].inUse and F.slots[i].client.host == host:
+    if F.slots[i].inUse and F.slots[i].hostKey == key:
       n = n + 1
     i = i + 1
   result = n >= F.cfg.maxClientsPerHost
@@ -474,6 +482,7 @@ proc slotForClient(F: var RelaySuperFastUdp, client: transport_types.UdpAddress,
     return
   F.usedSlots = F.usedSlots + 1
   F.slots[result].client = client
+  F.slots[result].hostKey = hostGroupKey(client.host)
   F.slots[result].lastSeenMs = nowMs
   F.slots[result].inUse = true
   F.index[client] = result
