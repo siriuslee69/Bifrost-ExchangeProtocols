@@ -48,7 +48,7 @@ when isMainModule:
     nasNode: RelayFastExtraFrame = initRelayFastExtraFrame(idNas, 1)
     step: RelayStep = default(RelayStep)
     dir: AmeRouteDirectory = default(AmeRouteDirectory)
-    layout: AmeSuiteLayout = defaultAmeLayout(kems)
+    layout: AmeSuiteLayout = defaultBifrostConfig().ameLayout
     tier: AmeMaskTier = fullAmeMaskTier(layout, 1'u32)
     psk: seq[byte] = newSeq[byte](32)
     e2eAuth: AmeAuthentication = default(AmeAuthentication)
@@ -103,6 +103,7 @@ when isMainModule:
   server = answerAmeHandshake(decodeAmeClientHello(phoneToNas(
     encodeAmeClientHello(client.hello))), [initAmeTierPath(layout, [tier])],
     e2eAuth)
+  doAssert server.ok, server.err
   clientDone = finishAmeHandshake(client, decodeAmeServerHello(layout,
     nasToPhone(encodeAmeServerHello(server.state.serverHello))), e2eAuth)
   serverDone = acceptAmeHandshake(server.state, decodeAmeClientFinish(
