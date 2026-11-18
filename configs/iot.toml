@@ -49,6 +49,8 @@ defaultAmeInboxCapacity = 8
 fomkeReorderCeiling = 16
 
 [runtime.ame]
+# Permit X25519-only selections on constrained peers.
+ameMinPqKems = 0
 # The bitmasks this device speaks -- pinned, so both ends agree for good.
 # Every algorithm named here is compiled, whatever [define] says.
 #

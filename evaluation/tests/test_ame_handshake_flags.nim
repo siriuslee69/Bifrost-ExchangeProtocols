@@ -17,6 +17,7 @@
 import std/unittest
 
 import ../../src/protocols/types
+import ../../src/protocols/config
 import ../../src/protocols/ame/types
 import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/path_triggers
@@ -28,7 +29,6 @@ const
   nowUnix: int64 = 500'i64
   validFrom: int64 = 100'i64
   validUntil: int64 = 1000'i64
-  flagKems: AmeKemAlgorithms = [akaX25519]
 
 type
   Ends = object
@@ -92,7 +92,7 @@ proc endsFor(m: AmeTrustMode, L: AmeSuiteLayout): Ends {.role: configurator.} =
 proc roundTrip(m: AmeTrustMode): string {.role: orchestrator.} =
   ## m: one whole handshake in mode m, through the wire codecs. "" = ok.
   var
-    L: AmeSuiteLayout = defaultAmeLayout(flagKems)
+    L: AmeSuiteLayout = defaultBifrostConfig().ameLayout
     t: AmeMaskTier = fullAmeMaskTier(L)
     e: Ends = endsFor(m, L)
     client: AmeClientHandshake = beginAmeHandshake(21'u64, L, t, a = e.c)
@@ -142,7 +142,7 @@ suite "AME handshake flags":
   # {.testKind: tkEdgeCase, covers: "decodeAmeClientHello".}
   test "a left-out mode byte from the wire is refused":
     var
-      L: AmeSuiteLayout = defaultAmeLayout(flagKems)
+      L: AmeSuiteLayout = defaultBifrostConfig().ameLayout
       e: Ends = endsFor(someBuiltMode(), L)
       wire: ByteSeq = encodeAmeClientHello(beginAmeHandshake(22'u64, L,
         fullAmeMaskTier(L), a = e.c).hello)
@@ -158,7 +158,7 @@ suite "AME handshake flags":
   # {.testKind: tkEdgeCase, covers: "ameModeBuiltError".}
   test "a default value naming a left-out mode is refused at the start":
     var
-      L: AmeSuiteLayout = defaultAmeLayout(flagKems)
+      L: AmeSuiteLayout = defaultBifrostConfig().ameLayout
     check ameModeBuiltError(someBuiltMode()) == ""
     if atmAuthorityCertificate notin ameModesBuilt:
       expect ValueError:

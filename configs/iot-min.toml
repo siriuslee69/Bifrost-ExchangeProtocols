@@ -45,6 +45,8 @@ defaultAmeInboxCapacity = 8
 fomkeReorderCeiling = 16
 
 [runtime.ame]
+# This layout contains only X25519.
+ameMinPqKems = 0
 # The bitmasks this device speaks -- pinned, so both ends agree for good.
 #
 #   02 | 01 0f | 01 10 | 01 10 | 01 10 | 01 10 | 01 10

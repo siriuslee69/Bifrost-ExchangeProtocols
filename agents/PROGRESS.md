@@ -1,4 +1,16 @@
-Commit Message: chunkyaead version 2: the last chunk and the whole chunk header are under the tag; a manifest is checked as hostile input
+Commit Message: Validate UDP addresses before handshake reassembly
+
+## 2026-11-19 Default handshake policy and input limits
+
+- Put the approved one-KEM minimum in the default AME preset and keep the IoT
+  presets at zero. Check the actual compiled policy and the responder decision.
+- Run the existing decoder checks with runtime checks disabled, including the
+  IoT builds, through `nimble testDanger`.
+- Enforce the advertised SMTP size limit at MAIL when the sender supplies SIZE.
+  During DATA, release the body and send one 552 as soon as it exceeds the limit.
+  Find the end of DATA within a bounded discard window or close the conversation.
+- Add a bounded UDP probe and use the existing address cookie on client shards.
+  Validate it before DAC allocates a handshake package. Keep the stream framing.
 
 ## 2026-11-18 (second session) chunkyaead: a cut file never opens
 

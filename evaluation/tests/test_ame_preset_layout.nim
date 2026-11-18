@@ -27,7 +27,14 @@ import ../../src/protocols/ame/level1/suites
 import ../../src/protocols/ame/level1/preset_layout
 import runePragmas
 
+const
+  expectedMinPqKems {.intdefine.} = 1
+
 suite "AME preset layout":
+  # {.testKind: tkRegression, covers: "defaultBifrostConfig".}
+  test "the compiled preset sets the expected post-quantum minimum":
+    check defaultBifrostConfig().ameMinPqKems == expectedMinPqKems
+
   # {.testKind: tkIntegration, covers: "presetKemSlotSet".}
   test "every slot the pinned layout names is compiled":
     check presetKemSlotSet <= ameKemSlotsBuilt

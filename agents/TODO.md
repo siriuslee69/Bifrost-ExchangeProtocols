@@ -73,24 +73,3 @@ An item that is done is removed here and named in PROGRESS.md.
   done when: for each of the five, a test (or a line of the docs with the code reference) shows the answer: (1) a replayed frame changes no stored state; (2) the forwarder's NAS address changes only after a datagram that proves it is the NAS (say what proves it); (3) a frame that fails to open leaves every counter where it was; (4) the longest list in a hello (suites, keys) is capped before any key operation, and the cap is a number in the docs; (5) an unsigned or wrongly signed handshake is refused in every suite. A "no" becomes a fix in the same task.
   needs: nobody
   plan: read the forwarder first (it follows the NAS: that is question 2 in our words), then ame/level2 for counters. Source: ../Nebel-DecentralizedDB/docs/attack_catalog.md, rows N19, N21, N22, N23, N26.
-
-- [ ] The `iot` and `iot-min` presets build with `danger = true`: no bounds, overflow or range checks while reading bytes from strangers.
-  why: with checks on (the default, also in `-d:release`: run on 2026-11-18, Nim 2.4) an overlooked length makes a crash that is caught; with `danger` the same bug reads or writes past the end of a buffer. Our garbage tests are run on the default build only.
-  start: grep -n "danger" configs/*.toml; ls evaluation/tests | grep -i "garbage\|fuzz\|attack_surface"
-  done when: the garbage and attack-surface tests (test_attack_surface.nim and the fuzz-style tests of each decoder) pass when compiled with `-d:danger`, or the ones that cannot are listed with the reason in docs/tests.md; the README's issue playbook says that the iot presets trade checks for size.
-  needs: nobody
-  plan: add one nimble task `testDanger` that runs the decoder garbage tests with -d:danger; run it; any test that fails or passes only by luck points at a decoder that relied on a check. Source: ../Nebel-DecentralizedDB/docs/attack_catalog.md, row N25.
-
-- [ ] The handshake package table is filled before ANY check of the sender: a spoofer with many addresses can still push honest half-received messages out.
-  why: the first shard of a hello is stored before the cookie (which sits inside the reassembled hello) can be read. 2026-11-18 the table was made fair (128 places, 3 per sender, the biggest holder loses first), so one machine can no longer lock clients out, but a spoofer using about 43 different /64 senders every 20 s still can. Found by running the real nebeld (Nebel's attack_live_archive.nim).
-  start: grep -n "makeRoom\|sourceGroup" src/protocols/ame/level3/handshake_package.nim; sed -n '/^  H1 /,/^  Q1 /p' ../Nebel-DecentralizedDB/docs/attack_catalog.md
-  done when: a shard is stored only after the sender proved it can receive at its address (a cookie in the SHARD header, issued by a stateless HelloRetry), and a test with 5000 spoofed senders shows an honest newcomer completes its handshake.
-  needs: user (this changes the wire format of handshake shards, and an old client would no longer connect)
-  plan: the HelloRetry that already exists answers the first (empty) hello with a cookie; carry that cookie in the AME shard header's unused `requestId` field, checked before the table is touched. The first datagram of a new sender gets a retry instead of a slot.
-
-- [ ] `ameMinPqKems` is 0 by default: a client may ask a responder for X25519-only keys and be served.
-  why: nobody on the path can force it (every edit of the handshake is refused: `nimble testDowngrade`), but the margin of a session is then the client's choice. Nebel's responder checks the exact layout itself and is not affected; any other program built on Bifrost's responder is.
-  start: grep -n "ameMinPqKems" configs/default.toml src/protocols/config.nim; evaluation/tests/test_downgrade.nim, the last test
-  done when: the decision is written in the README playbook ("Downgrade") and, if the answer is "1", configs/default.toml says 1 and the iot presets say 0 on purpose.
-  needs: user (post-quantum KEMs are large: 0 keeps the iot presets small)
-  plan: recommended: 1 in default.toml (servers), 0 in iot.toml and iot-min.toml.

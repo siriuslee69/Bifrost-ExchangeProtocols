@@ -678,8 +678,8 @@ task testPresetLayout, "Check that a preset's pinned layout always gets its algo
   var
     probe: tuple[output: string, exitCode: int] = ("", 0)
   runNim("c", t, @["-r"])
-  runNim("c", t, @["-d:preset=iot", "-r"])
-  runNim("c", t, @["-d:preset=iot-min", "-r"])
+  runNim("c", t, @["-d:preset=iot", "-d:expectedMinPqKems=0", "-r"])
+  runNim("c", t, @["-d:preset=iot-min", "-d:expectedMinPqKems=0", "-r"])
   runNim("c", t, @["-d:preset=" & fx & "adds_falcon_gimli.toml", "-r"])
   probe = gorgeEx(shellCommand("nim", @["c", "-f", "-r", "-d:preset=" & fx &
     "adds_mlkem.toml", "-o:build/preset_probe_mlkem", t]))
@@ -743,6 +743,15 @@ task testFuzz, "Run every wire decoder against mutated frames":
   ## and the TLS 1.3 record and handshake decoders.
   runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-r"])
   runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-r"])
+
+task testDanger, "Run decoder checks with runtime checks disabled, including both IoT presets":
+  runNim("c", "evaluation/tests/test_wire_fuzz.nim", @["-d:danger", "-r"])
+  runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim", @["-d:danger", "-r"])
+  for p in ["iot", "iot-min"]:
+    runNim("c", "evaluation/tests/test_wire_fuzz_protocols.nim",
+      @["-d:preset=" & p, "-d:danger", "-r"])
+    runNim("c", "evaluation/tests/test_dac_wire.nim",
+      @["-d:preset=" & p, "-d:danger", "-r"])
 
 
 proc soakRunnerPath(): string =

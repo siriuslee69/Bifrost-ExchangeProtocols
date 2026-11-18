@@ -1,12 +1,13 @@
 ## Handshake packages <- large AME records carried by native DAC shards.
-## AME(kind=0x13, session, step) | DAC kind u8 | existing DAC message body.
-## Shards are untrusted until the reconstructed handshake authenticates them.
+## AME(0x19, session, step) | 40-byte cookie | DAC kind u8 | DAC body.
+## Server-to-client shards use kind 0x13 and omit the cookie.
 import std/[tables, times, os, strutils]
 import runePragmas
 import ../../types
 import ../../relay/restriction_address
 import ../types
 import ../level2/wire
+import ./handshake_cookie
 import ./handshake_transport
 import ../../dac/types
 import ../../dac/level0/[transport, defaults, wire_helpers]
@@ -36,6 +37,8 @@ type
     ok*: bool
     done*: bool
     payload*: ByteSeq
+    reply*: ByteSeq
+      ## Stateless response to an address probe. No record was assembled.
     err*: string
 
 proc handshakePackageLimits(): DacPackageLimits {.role: configurator.} =
@@ -44,32 +47,39 @@ proc handshakePackageLimits(): DacPackageLimits {.role: configurator.} =
   result.maxPackageBytes = ameHandshakePackageMaxBytes
   result.maxChunks = 512
 
-proc ameHandshakeDatagrams*(A: openArray[uint8]): seq[ByteSeq] {.
+proc ameHandshakeDatagrams*(A: openArray[uint8], C: openArray[uint8] = []): seq[ByteSeq] {.
     role: orchestrator, tag: "appApi".} =
-  ## A: complete AME handshake; output is MTU-sized AME/DAC, with XOR repair.
+  ## A: complete record. C: the address cookie on client hello and finish.
   var
     f = decodeAmeHandshakeFrame(A)
     d = dacDefaultsFor(dscCleanLan)
     sender: DacLink = default(DacLink)
     messages: seq[DacTaggedMessage] = @[]
     body: ByteSeq = @[]
+    kind: AmePacketKind = ampkHandshakePackage
     id: uint64 = f.sessionId xor ((uint64(f.step) + 1) shl 56)
-  if A.len <= 1200:
+  if C.len == 0 and A.len <= 1200:
     return @[@A]
+  if C.len > 0:
+    if C.len != ameCookieBytes or f.kind notin {ampkClientHello, ampkClientFinish}:
+      raise newException(ValueError, "AME address cookie shard is invalid")
+    kind = ampkHandshakeCookieShard
+    d.chunkBytes = d.chunkBytes - uint16(ameCookieBytes)
   if id == 0: id = 1
   sender = initDacLink(d, id, limits = handshakePackageLimits())
   messages = beginDacPackage(sender, id, A, 0)
   for msg in messages:
-    body = @[uint8(ord(msg.kind))]
+    body = @C
+    body.add uint8(ord(msg.kind))
     body.add msg.body
-    result.add encodeAmeFrame(ampkHandshakePackage, amcControl, 0,
+    result.add encodeAmeFrame(kind, amcControl, 0,
       f.sessionId, 0, 0, f.step, body)
 
 proc sendAmeHandshakeDac*(sock: DacSocket, remote: DacAddress,
-    A: openArray[uint8]) {.role: dataWriter, tag: "appApi".} =
-  ## sock/remote/A: send every native DAC shard; no alternate carrier is used.
+    A: openArray[uint8], C: openArray[uint8] = []) {.role: dataWriter, tag: "appApi".} =
+  ## sock/remote/A/C: send the record with the optional address cookie C.
   var
-    frames = ameHandshakeDatagrams(A)
+    frames = ameHandshakeDatagrams(A, C)
   for frame in frames:
     sendDacFrameBytes(sock, remote, frame)
     if frames.len > 1: sleep(1)
@@ -149,42 +159,83 @@ proc makeRoom(S: var AmeHandshakePackages, group: string) {.role: actor.} =
   if victim.len > 0:
     S.entries.del(victim)
 
+proc shardRecordMatches(f: AmeHandshakeFrame, h: AmeFrameHeader): bool {.
+    role: parser.} =
+  ## f/h: whether the reassembled record belongs to the enclosing datagrams.
+  if f.sessionId != h.sessionId or f.step != h.sequence:
+    return false
+  if h.packetKind == ampkHandshakeCookieShard:
+    return (f.kind == ampkClientHello and f.step == ameHandshakeStepRetriedHello) or
+      (f.kind == ampkClientFinish and f.step == ameHandshakeStepFinish)
+  result = true
+
+proc probeReply(A: openArray[uint8], s: string, c: AmeCookieSecret,
+    now: int64): AmeHandshakeFeed {.role: truthBuilder.} =
+  ## A/s/c/now: a small stateless challenge for this source.
+  if s.len == 0 or A.len > 1280:
+    return AmeHandshakeFeed(err: "invalid AME address probe")
+  result = AmeHandshakeFeed(ok: true, reply: answerAmeHandshakeProbe(
+    decodeAmeHandshakeFrame(A), c, s.toOpenArrayByte(0, s.high), now))
+
+proc shardCookieValid(A: openArray[uint8], h: AmeFrameHeader, s: string,
+    c: AmeCookieSecret, now: int64): bool {.role: parser.} =
+  ## A/h/s/c/now: verify the cookie in this shard before reserving any space.
+  const
+    cookieEnd = ameFrameHeaderLen + ameCookieBytes
+  if s.len == 0 or A.len < cookieEnd + 2:
+    return false
+  if h.sequence != ameHandshakeStepRetriedHello and h.sequence != ameHandshakeStepFinish:
+    return false
+  result = ameCookieValid(c, s.toOpenArrayByte(0, s.high), now,
+    h.sessionId, A.toOpenArray(ameFrameHeaderLen, cookieEnd - 1))
+
 proc feedAmeHandshakeDatagram*(S: var AmeHandshakePackages,
-    A: openArray[uint8], source: string): AmeHandshakeFeed {.
+    A: openArray[uint8], source: string, c: AmeCookieSecret = default(AmeCookieSecret),
+    requireCookie: bool = false): AmeHandshakeFeed {.
     role: orchestrator, tag: "appApi".} =
-  ## S/A/source: reassemble per address, session AND step; bound every package.
+  ## S/A/source: reassemble by source address, session and step. c: the
+  ## server secret, empty on a client. requireCookie: gate client shards.
   var
-    f: AmeDecodedFrame = default(AmeDecodedFrame)
+    h: AmeFrameHeader = default(AmeFrameHeader)
     original: AmeHandshakeFrame = default(AmeHandshakeFrame)
     kind: DacMessageKind = dmkUnknown
     key: string = ""
     entry: HandshakePackage = nil
     step: DacLinkStep = default(DacLinkStep)
     now: float = epochTime()
+    offset: int = ameFrameHeaderLen
   try:
-    f = decodeAmeFrame(A)
-    if f.header.packetKind != ampkHandshakePackage:
+    h = decodeAmeFrameHeader(A)
+    if h.packetKind == ampkHandshakeProbe:
+      return probeReply(A, source, c, int64(now))
+    if requireCookie and h.packetKind in {ampkClientHello, ampkClientFinish,
+        ampkHandshakePackage}:
+      return AmeHandshakeFeed(ok: true)
+    if not ameHandshakeShardKind(h.packetKind):
       return AmeHandshakeFeed(ok: true, done: true, payload: @A)
-    if f.header.flags != 0 or f.header.messageClass != amcControl or
-        f.header.sessionId == 0 or f.header.rootLaneId != 0 or
-        f.header.laneId != 0 or f.header.sequence > ameHandshakeStepFinish or
-        f.payload.len < 2 or A.len > 1280:
+    if h.flags != 0 or h.messageClass != amcControl or h.sessionId == 0 or
+        h.rootLaneId != 0 or h.laneId != 0 or h.sequence > ameHandshakeStepFinish or
+        A.len < offset + 2 or A.len > 1280:
       return AmeHandshakeFeed(err: "invalid AME handshake shard")
-    kind = dacMessageKindFromId(f.payload[0])
+    if h.packetKind == ampkHandshakeCookieShard and
+        not shardCookieValid(A, h, source, c, int64(now)):
+      return AmeHandshakeFeed(ok: true)
+    offset = offset + ord(h.packetKind == ampkHandshakeCookieShard) * ameCookieBytes
+    kind = dacMessageKindFromId(A[offset])
     if kind notin {dmkPackageManifest, dmkPackageChunk, dmkParityShard}:
       return AmeHandshakeFeed(err: "unexpected DAC handshake message")
     S.expireHandshakePackages(now)
-    key = source & "/" & $f.header.sessionId & "/" & $f.header.sequence
+    key = source & "/" & $h.sessionId & "/" & $h.sequence
     if not S.entries.hasKey(key) and kind != dmkPackageManifest:
       return AmeHandshakeFeed(ok: true)
     if not S.entries.hasKey(key):
       S.makeRoom(sourceGroup(source))
       entry = HandshakePackage(link: initDacLink(dacDefaultsFor(dscCleanLan),
-        f.header.sessionId, limits = handshakePackageLimits()), touched: now,
+        h.sessionId, limits = handshakePackageLimits()), touched: now,
         born: now, group: sourceGroup(source))
       S.entries[key] = entry
     entry = S.entries[key]
-    step = feedDacMessage(entry.link, kind, f.payload[1 .. ^1], 0)
+    step = feedDacMessage(entry.link, kind, A.toOpenArray(offset + 1, A.high), 0)
     entry.touched = now
     if step.kind == dlkPackageFailed or step.err.len > 0:
       S.entries.del(key)
@@ -193,7 +244,7 @@ proc feedAmeHandshakeDatagram*(S: var AmeHandshakePackages,
       return AmeHandshakeFeed(ok: true)
     S.entries.del(key)
     original = decodeAmeHandshakeFrame(step.payload)
-    if original.sessionId != f.header.sessionId or original.step != f.header.sequence:
+    if not shardRecordMatches(original, h):
       return AmeHandshakeFeed(err: "AME handshake package binding changed")
     result = AmeHandshakeFeed(ok: true, done: true, payload: step.payload)
   except CatchableError as exc:

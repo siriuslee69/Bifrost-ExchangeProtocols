@@ -50,6 +50,7 @@ import runePragmas
 
 const
   ameCookieSecretLen* = 32
+  ameCookieBytes* = 40
   ameCookieLifetimeSeconds* = 30'i64
     ## How long a cookie stays good. Long enough to survive one round trip on
     ## a slow link, short enough that a captured cookie is worthless later.
@@ -129,17 +130,17 @@ proc ameCookieValid*(secret: AmeCookieSecret, peerId: openArray[uint8],
     subject: ByteSeq = @[]
     expected: ByteSeq = @[]
     i: int = 0
-  if secret.key.len != ameCookieSecretLen or cookie.len != 40:
+  if secret.key.len != ameCookieSecretLen or cookie.len != ameCookieBytes:
     return
   while i < 8:
     issuedAtUnix = issuedAtUnix or
       cast[int64](uint64(cookie[i]) shl (8 * i))
     i = i + 1
-  if nowUnix < issuedAtUnix or
+  if issuedAtUnix < 0 or nowUnix < issuedAtUnix or
       nowUnix - issuedAtUnix > ameCookieLifetimeSeconds:
     return
   subject = cookieSubject(peerId, issuedAtUnix, sessionId)
   expected = ameMacTag(amaBlake3, secret.key, subject, 32)
-  result = constantTimeEqual(expected, cookie[8 .. 39])
+  result = constantTimeEqual(expected, cookie.toOpenArray(8, ameCookieBytes - 1))
   secureClearAmeBytes(subject)
   secureClearAmeBytes(expected)

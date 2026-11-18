@@ -58,6 +58,24 @@ proc parseSmtpPath*(prefix, arg: string): tuple[ok: bool, address: string] {.
     return
   result = (true, inner)
 
+proc smtpMailSize*(a: string, m: int): tuple[ok, tooLarge: bool] {.
+    role: parser, tag: "smtp|wire".} =
+  ## a: MAIL argument with an already parsed path. m: maximum message bytes.
+  var
+    limit: string = $m
+    value: string = ""
+    size: string = ""
+  for p in a[a.find('>') + 1 .. ^1].splitWhitespace():
+    if not p.toUpperAscii().startsWith("SIZE="):
+      continue
+    value = p[5 .. ^1]
+    if size.len > 0 or value.len notin 1 .. 20 or not value.allCharsInSet(Digits):
+      return
+    size = value.strip(leading = true, trailing = false, chars = {'0'})
+    if size.len == 0:
+      size = "0"
+  result = (true, size.len > limit.len or (size.len == limit.len and size > limit))
+
 proc parseSmtpReply*(line: string): tuple[ok: bool, code: int, more: bool,
     text: string] {.role: parser, tag: "smtp|wire".} =
   ## line: one reply line. `more` is true for "250-..." (another line follows).

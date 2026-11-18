@@ -94,9 +94,9 @@ type
     err: array[serverErrMax, char]
 
 var
-  serverReport: DacServerReport
-  serverReady: Atomic[bool]
-  serverPort: Atomic[int]
+  serverReport: DacServerReport = default(DacServerReport)
+  serverReady: Atomic[bool] = default(Atomic[bool])
+  serverPort: Atomic[int] = default(Atomic[int])
 
 proc reportErr(text: string) =
   ## text: failure text copied into the shared fixed buffer.
@@ -129,11 +129,12 @@ proc runDacServer(a: DacServerArgs) {.thread.} =
     tier: AmeMaskTier = dacTier(layout)
     authority: AmeAuthorityKey = authorityFor(1)
     serverKey: AmeIdentityKey = identityFor("dac-server", 3)
-    config: AmeResponderPolicy
-    done: tuple[outcome: AmeHandshakeOutcome, remote: DacAddress]
-    got: DacFrameBytesResult
-    session: AmeSession
-    opened: AmeOpenResult
+    config: AmeResponderPolicy = default(AmeResponderPolicy)
+    done: tuple[outcome: AmeHandshakeOutcome, remote: DacAddress] =
+      (default(AmeHandshakeOutcome), default(DacAddress))
+    got: DacFrameBytesResult = default(DacFrameBytesResult)
+    session: AmeSession = default(AmeSession)
+    opened: AmeOpenResult = default(AmeOpenResult)
   defer:
     closeDac(sock)
   if not bound.ok:
@@ -201,10 +202,10 @@ proc rampBytes(n: int): ByteSeq =
 proc runClientAgainst(args: DacServerArgs, payload: ByteSeq):
     tuple[outcome: AmeHandshakeOutcome, echoed: AmeOpenResult] {.role: orchestrator.} =
   var
-    th: Thread[DacServerArgs]
-    sock: DacSocket
-    peer: DacAddress
-    got: DacFrameBytesResult
+    th: Thread[DacServerArgs] = default(Thread[DacServerArgs])
+    sock: DacSocket = default(DacSocket)
+    peer: DacAddress = default(DacAddress)
+    got: DacFrameBytesResult = default(DacFrameBytesResult)
   serverReport = default(DacServerReport)
   serverReady.store(false)
   serverPort.store(0)
@@ -241,7 +242,7 @@ suite "AME handshake over real UDP sockets":
     clearAmeSession(run.outcome.connection)
 
   # {.testKind: tkIntegration.}
-  test "a responder that wants no cookie answers the first hello":
+  test "an initiator proves its address even when the responder permits legacy hellos":
     var
       payload: ByteSeq = rampBytes(64)
       run = runClientAgainst(DacServerArgs(requireCookie: false), payload)
@@ -253,14 +254,14 @@ suite "AME handshake over real UDP sockets":
     clearAmeSession(run.outcome.connection)
 
   # {.testKind: tkIntegration.}
-  test "a lost hello is recovered by retransmission":
+  test "a lost address probe is recovered by retransmission":
     var
       payload: ByteSeq = rampBytes(200)
       run = runClientAgainst(DacServerArgs(requireCookie: true,
         swallowFirst: true), payload)
     ## The responder threw the first datagram away. Nothing else changes, so
     ## anything that completes here completed because the initiator sent its
-    ## hello again rather than because the wire was kind.
+    ## probe again.
     check run.outcome.err == ""
     check run.outcome.ok
     check serverError() == ""
@@ -274,10 +275,10 @@ suite "records that no datagram can carry":
   test "a record over the datagram limit is refused at the sender":
     var
       sock: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))
-      outcome: AmeHandshakeOutcome
+      outcome: AmeHandshakeOutcome = default(AmeHandshakeOutcome)
     defer:
       closeDac(sock)
-    ## 64 bytes cannot hold a hello, so the driver has to say so rather than
+    ## 64 bytes cannot hold a probe, so the driver has to say so rather than
     ## hand the socket something that would be dropped somewhere out on the
     ## path with no error anybody could act on.
     outcome = ameDacClientHandshake(sock,
@@ -288,12 +289,12 @@ suite "records that no datagram can carry":
     check outcome.err.contains("datagram limit")
 
   # {.testKind: tkIntegration.}
-  test "an unanswered hello gives up instead of retrying forever":
+  test "an unanswered probe gives up instead of retrying forever":
     var
       sock: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))
       silent: DacSocket = openDacListener(initDacAddress("127.0.0.1", 0'u16))
       bound: tuple[ok: bool, port: uint16] = dacLocalPort(silent)
-      outcome: AmeHandshakeOutcome
+      outcome: AmeHandshakeOutcome = default(AmeHandshakeOutcome)
     defer:
       closeDac(sock)
       closeDac(silent)

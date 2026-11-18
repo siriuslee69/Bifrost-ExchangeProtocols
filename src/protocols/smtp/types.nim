@@ -61,8 +61,10 @@ type
       ## doubles its buffer as it fills (an 18 MiB mail then costs about 110 MB
       ## while it arrives); blocks cost the text plus one copy when it is joined.
     dataLen*: int
-      ## bytes held in dataBlocks
+      ## Message bytes received, capped at maxBytes while discarding DATA.
     tooLarge*: bool
+    dataDiscarded*: int
+      ## Bytes drained past maxBytes, excluding any partial line in pending.
 
   SmtpServerStep* {.role: preparedData, tag: "smtp|types".} = object
     ## What one `feedSmtpServer` produced.

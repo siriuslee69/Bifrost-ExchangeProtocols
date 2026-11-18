@@ -185,15 +185,18 @@ suite "AME change requests: deny and wait":
     var
       p: tuple[a, b: AmeSession] = pairSessions()
       saved: BifrostConfig = currentBifrostConfig()
-      strict: BifrostConfig = currentBifrostConfig()
+      permissive: BifrostConfig = saved
+      strict: BifrostConfig = saved
       offer: ByteSeq = @[]
       answer: ByteSeq = @[]
+    defer: applyBifrostConfig(saved)
+    permissive.ameMinPqKems = 0
+    applyBifrostConfig(permissive)
     offer = beginAmeTcpExchangeFrame(p.a, ameChangeRequest(p.a,
       ameSelection(p.a, kems = [akaX25519])))
     strict.ameMinPqKems = 1
     applyBifrostConfig(strict)
     answer = answerAmeTcpExchangeFrame(p.b, offer)
-    applyBifrostConfig(saved)
     check not p.b.pendingIncoming.active
     check finishAmeTcpExchangeFrame(p.a, answer).len == 0
     check p.a.lastExchangeDenial.len > 0

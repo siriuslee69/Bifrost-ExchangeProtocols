@@ -37,6 +37,7 @@ import ../level1/suites
 import ../level2/wire
 import ../level2/session
 import ./handshake
+import ./handshake_cookie
 import ./handshake_wire
 import runePragmas
 
@@ -46,6 +47,8 @@ const
   ameHandshakeStepRetriedHello* = 2'u32
   ameHandshakeStepServerHello* = 3'u32
   ameHandshakeStepFinish* = 4'u32
+  ameHandshakeProbeBytes = 64
+    ## Make the probe at least as large as the reply.
   ameHandshakeMaxRecordBytes* = 8_388_608
     ## A hello carrying eight of the largest public keys (FrodoKEM-1344,
     ## 21 KB each) is genuinely large; Classic McEliece, removed 2026-10-16,
@@ -62,9 +65,13 @@ type
     record*: ByteSeq
 
 proc ameHandshakeKindValid*(k: AmePacketKind): bool {.role: parser.} =
-  ## k: is this packet kind one of the four handshake records?
+  ## k: is this packet kind a handshake record or address probe?
   result = k in {ampkClientHello, ampkHelloRetry, ampkServerHello,
-    ampkClientFinish}
+    ampkClientFinish, ampkHandshakeProbe}
+
+proc ameHandshakeShardKind*(k: AmePacketKind): bool {.role: parser.} =
+  ## k: whether the frame carries one piece of a handshake record.
+  result = k in {ampkHandshakePackage, ampkHandshakeCookieShard}
 
 proc encodeAmeHandshakeFrame*(kind: AmePacketKind, sessionId: uint64,
     step: uint32, record: openArray[uint8]): ByteSeq {.
@@ -132,6 +139,34 @@ proc encodeAmeHelloRetryFrame*(r: AmeHelloRetry): ByteSeq {.
   ## r: the server's cookie challenge.
   result = encodeAmeHandshakeFrame(ampkHelloRetry, r.sessionId,
     ameHandshakeStepRetry, encodeAmeHelloRetry(r))
+
+proc encodeAmeHandshakeProbe*(s: uint64): ByteSeq {.role: dataWriter.} =
+  ## s: the proposed session ID. The body is padding for the small reply.
+  result = encodeAmeHandshakeFrame(ampkHandshakeProbe, s,
+    ameHandshakeStepHello, default(array[ameHandshakeProbeBytes, uint8]))
+
+proc answerAmeHandshakeProbe*(f: AmeHandshakeFrame, c: AmeCookieSecret,
+    A: openArray[uint8], now: int64): ByteSeq {.role: truthBuilder.} =
+  ## f/c/A/now: statelessly answer a valid probe from this source address.
+  requireHandshakeFrame(f, ampkHandshakeProbe, ameHandshakeStepHello)
+  if f.record.len != ameHandshakeProbeBytes:
+    raise newException(ValueError, "AME address probe length is invalid")
+  for b in f.record:
+    if b != 0:
+      raise newException(ValueError, "AME address probe padding is invalid")
+  result = encodeAmeHelloRetryFrame(AmeHelloRetry(sessionId: f.sessionId,
+    cookie: issueAmeCookie(c, A, now, f.sessionId)))
+
+proc readAmeHandshakeCookie*(f: AmeHandshakeFrame, s: uint64): ByteSeq {.
+    role: parser.} =
+  ## f/s: the reply to the probe for this session.
+  var
+    retry: AmeHelloRetry = default(AmeHelloRetry)
+  requireHandshakeFrame(f, ampkHelloRetry, ameHandshakeStepRetry, s)
+  retry = decodeAmeHelloRetry(f.record)
+  if retry.sessionId != s or retry.cookie.len != ameCookieBytes:
+    raise newException(ValueError, "AME address cookie reply is invalid")
+  result = move(retry.cookie)
 
 proc encodeAmeServerHelloFrame*(sessionId: uint64,
     h: AmeServerHello): ByteSeq {.role: dataWriter,

@@ -335,8 +335,8 @@ suite "downgrade by choosing a weaker mode or layout":
     check not r.ok
 
   # {.testKind: tkEdgeCase, covers: "answerAmeHandshake",
-  #   pins: "a client may ask for classical-only keys unless the responder sets a floor".}
-  test "a classical-only selection is accepted at floor 0 and refused at floor 1":
+  #   pins: "the default responder requires a post-quantum KEM".}
+  test "the default rejects a classical-only selection and floor 0 accepts it":
     var
       L: AmeSuiteLayout = layoutOf()
       classical: AmeMaskTier = initAmeMaskTier(L, 1'u32, initAmeTierMasks(
@@ -345,22 +345,21 @@ suite "downgrade by choosing a weaker mode or layout":
         occupiedAmeMask(L.signatures.length), occupiedAmeMask(L.kdfs.length)))
       S: Setup = setupAm1a()
       saved: BifrostConfig = currentBifrostConfig()
-      floor1: BifrostConfig = currentBifrostConfig()
+      permissive: BifrostConfig = saved
       client: AmeClientHandshake = beginAmeHandshake(79'u64, L, classical,
         a = S.cA)
       hello: AmeClientHello = decodeAmeClientHello(
         encodeAmeClientHello(client.hello))
       r: tuple[ok: bool, state: AmeServerHandshake, err: string] = (
         ok: false, state: default(AmeServerHandshake), err: "")
-    floor1.ameMinPqKems = 1
+    permissive.ameMinPqKems = 0
+    check saved.ameMinPqKems == 1
     r = answerAmeHandshake(hello, [initAmeTierPath(L, [tierOf(L)])], S.sA,
       S.sDesc, S.sKey)
-    ## the shipped default: no floor, so the classical-only hello is answered
-    check saved.ameMinPqKems == 0
-    check r.ok
-    applyBifrostConfig(floor1)
+    check not r.ok
+    check "post-quantum" in r.err
+    applyBifrostConfig(permissive)
     r = answerAmeHandshake(hello, [initAmeTierPath(L, [tierOf(L)])], S.sA,
       S.sDesc, S.sKey)
     applyBifrostConfig(saved)
-    check not r.ok
-    check "post-quantum" in r.err
+    check r.ok

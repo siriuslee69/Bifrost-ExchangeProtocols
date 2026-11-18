@@ -26,6 +26,7 @@ import ../../src/protocols/ame/level1/compression
 import ../../src/protocols/ame/level3/secure_package
 import ../../src/protocols/ame/level3/handshake_wire
 import ../../src/protocols/ame/level3/handshake_transport
+import ../../src/protocols/ame/level3/handshake_package
 import ../../src/protocols/dac/types
 import ../../src/protocols/dac/level0/defaults
 import ../../src/protocols/dac/level2/package_transfer
@@ -84,6 +85,46 @@ proc newPair(name: string): Pair {.role: configurator.} =
   result.auth = initAmeCertificateAuthentication(result.root)
   result.layout = handshakeLayout()
   result.tier = handshakeTier(result.layout)
+
+suite "UDP address admission before handshake reassembly":
+  # {.testKind: tkRegression, covers: "feedAmeHandshakeDatagram".}
+  test "a bounded probe keeps no state and only its source can reserve a slot":
+    const
+      source = "dac://127.0.0.1:47656"
+      other = "dac://127.0.0.1:47657"
+      sid = 73'u64
+    var
+      S: AmeHandshakePackages = default(AmeHandshakePackages)
+      secret: AmeCookieSecret = initAmeCookieSecret()
+      probe: ByteSeq = encodeAmeHandshakeProbe(sid)
+      step: AmeHandshakeFeed = S.feedAmeHandshakeDatagram(probe, source, secret, true)
+      p: Pair = newPair("address")
+      c: ByteSeq = @[]
+      hello: AmeClientHandshake = default(AmeClientHandshake)
+      record: ByteSeq = @[]
+      frames: seq[ByteSeq] = @[]
+    require step.ok and step.reply.len > 0
+    check not step.done and step.reply.len <= probe.len
+    check S.ameHandshakePackageCount() == 0
+    c = readAmeHandshakeCookie(decodeAmeHandshakeFrame(step.reply), sid)
+    hello = beginAmeHandshake(sid, p.layout, p.tier, cookie = c, a = p.auth)
+    defer: clearAmeClientHandshake(hello)
+    record = encodeAmeClientHelloFrame(hello.hello, retried = true)
+    frames = ameHandshakeDatagrams(record)
+    step = S.feedAmeHandshakeDatagram(frames[0], source, secret, true)
+    check not step.done and S.ameHandshakePackageCount() == 0
+    frames = ameHandshakeDatagrams(record, c)
+    require frames.len > 1
+    step = S.feedAmeHandshakeDatagram(frames[0], other, secret, true)
+    check not step.done and S.ameHandshakePackageCount() == 0
+    for frame in frames:
+      step = S.feedAmeHandshakeDatagram(frame, source, secret, true)
+      checkpoint(step.err)
+      require step.ok
+      if step.done:
+        break
+    check step.done and step.payload == record
+    check S.ameHandshakePackageCount() == 0
 
 suite "AME private handshake":
   # {.testKind: tkUnit.}

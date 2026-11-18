@@ -80,6 +80,10 @@ type
       ## lists, a profile index, or the members its server claims. Sealed on
       ## the link like every control frame; Bifrost applies it, no app sees it.
       ## See relay/restriction.nim.
+    ampkHandshakeProbe = 0x18'u8
+      ## Small, stateless UDP request for an address cookie.
+    ampkHandshakeCookieShard = 0x19'u8
+      ## A client handshake package shard with its address cookie attached.
 
   AmeMessageClass* = enum
     amcStatus = 0x00'u8,

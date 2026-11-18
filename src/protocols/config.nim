@@ -38,7 +38,7 @@ type
     ameMinPqKems*: int
       ## The fewest post-quantum KEMs (anything but X25519) a selection must
       ## keep switched on -- in a client's hello and in every later change
-      ## request, whichever side sends it. 0 (the default) asks for none.
+      ## request, whichever side sends it. The default is 1. IoT presets use 0.
       ## A request below it is answered with a deny, not a switch.
     ameSignedExchanges*: bool
       ## false (default): in-session exchanges are proved with a tag under
@@ -237,9 +237,13 @@ proc parseBifrostConfigText*(text: string,
   result = sanitizeBifrostConfig(result)
 
 proc readPresetTexts(): seq[string] {.compileTime, role: dataFetcher.} =
-  ## The preset files this build used (base first), read while compiling.
+  ## Read Bifrost's defaults first, including when imported by another repo.
+  const
+    defaults = currentSourcePath().parentDir().parentDir().parentDir() /
+      "configs" / "default.toml"
+  result = @[readFile(defaults)]
   for path in presetFiles.split(';'):
-    if path.len > 0:
+    if path.len > 0 and path != defaults:
       result.add(readFile(path))
 
 const

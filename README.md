@@ -124,8 +124,9 @@ ameLayoutHex                 ""        "" = derived from the build; a value
                                        pins it (every algorithm in it is then
                                        compiled, see "Tiny devices")
 ameInitialTierHex            ""        only together with every endpoint
-ameMinPqKems                 0         yes: fewest post-quantum KEMs any
-                                       selection keeps on (hello, requests)
+ameMinPqKems                 1         yes: fewest post-quantum KEMs any
+                                       selection keeps on (hello, requests).
+                                       The iot and iot-min presets use 0.
 ameSignedExchanges           false     false = requests tagged under the
                                        session secret; true = signed, and
                                        unsigned ones denied (not AM1P)
@@ -1204,14 +1205,17 @@ var outcome = ameDacClientHandshake(sock, peer, client, sessionId = 1'u64,
   nowUnix = nowUnix)
 ```
 
-The DAC responder returns the address it answered: on a datagram socket it
-learns the other endpoint by listening. It sends nothing twice (the initiator
-owns every timer), so a responder holds no state per endpoint until a
-handshake completes.
+On UDP, the initiator sends an address probe before building its key offer.
+The responder sends back a cookie tied to that endpoint and session ID and
+keeps no state for the probe. The reply is smaller than the probe. Keep
+`requireCookie` on for reachable responders. Cookie-required UDP responders
+and their clients must be upgraded together.
 
-Keep `requireCookie` on for DAC. Nothing proves a source address there, and a
-responder without the cookie runs post-quantum KEM work for datagrams nobody
-sent.
+With DAC handshake packages, the client places the 40-byte cookie on every
+hello and finish shard. The responder checks it before reserving space for
+the record. The source address includes the port, so a client whose endpoint
+changes during the handshake must start with a new probe. For an authenticated
+peer routed through Nebel, the route's peer ID is used as the source.
 
 `nowUnix` comes from the caller on purpose. A library that reads an unset
 system clock and judges certificates by it is worse than one that makes the
@@ -1361,7 +1365,7 @@ refuses to send while a request is out (error: "AME waits for the answer to
 its exchange request..."), and a responder that replied refuses until
 epoch-ready has arrived.
 
-**The minimum.** `ameMinPqKems` (runtime config, default 0) is the fewest
+**The minimum.** `ameMinPqKems` (runtime config, default 1) is the fewest
 post-quantum KEMs a selection must keep on. It applies to a client's hello,
 to a request this side sends, and to a request it receives -- which is then
 answered with a deny, not dropped, so the requester never waits forever.
@@ -3514,12 +3518,11 @@ they could be cut short without notice and cannot be told apart from whole files
   a hello of another mode is refused (12 of 12 mismatches, tested).
 - **A CLIENT may choose a smaller selection than the responder offers.** The
   responder accepts any layout that fits inside the one it lists. The one floor is
-  `ameMinPqKems` (default `0` = none): at 0 a client may ask for X25519-only keys
-  and be served. Nobody on the path can force that, but the server's own margin
-  for that session is the client's choice. A server that wants post-quantum keys
-  always sets `ameMinPqKems = 1` (or more) in its config; the floor also covers
-  every later change request from either side. Nebel's responder is stricter on
-  its own (exact layout and a tier at or above its policy).
+  `ameMinPqKems`. The default requires one post-quantum KEM at handshake and
+  during later change requests from either side. The `iot` and `iot-min` presets
+  set the floor to zero, allowing X25519-only selections when the peer's policy
+  permits them. To connect to a default responder, use a layout and tier with a
+  post-quantum KEM it offers. Nebel also enforces its own exact layout and tier policy.
 - **`acceptAnyCertificate` is encryption against listeners only.** The TLS client can be
   told to skip the chain, name and date checks (opportunistic mail transfer). The server
   must still prove it holds its certificate's key and the Finished messages still bind

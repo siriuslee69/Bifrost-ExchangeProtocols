@@ -25,6 +25,10 @@ import ../level0/lines
 import runePragmas
 import var_invariants
 
+const
+  smtpSizeReply = "552 5.3.4 message too large\r\n"
+  smtpDataDiscardBytes = 1024 * 1024
+
 proc initSmtpServer*(hostname: string, maxBytes: int = smtpDefaultMaxBytes,
     maxRecipients: int = smtpDefaultMaxRecipients,
     offerTls: bool = false): SmtpServer {.role: configurator,
@@ -47,6 +51,7 @@ proc clearEnvelope(S: var SmtpServer) {.role: actor, inline.} =
   S.dataBlocks = @[]
   S.dataLen = 0
   S.tooLarge = false
+  S.dataDiscarded = 0
 
 proc resetSmtpServer*(S: var SmtpServer) {.role: actor, tag: "smtp|appApi".} =
   ## S: after STARTTLS. Everything said before the switch is forgotten, so
@@ -75,10 +80,16 @@ proc onMail(S: var SmtpServer, arg: string): string {.role: actor.} =
   ## S/arg: MAIL FROM.
   var
     got: tuple[ok: bool, address: string] = parseSmtpPath("FROM:", arg)
+    size: tuple[ok, tooLarge: bool] = (false, false)
   if S.phase != sspReady:
     return "503 say hello first, one mail at a time\r\n"
   if not got.ok:
     return "501 bad sender address\r\n"
+  size = smtpMailSize(arg, S.maxBytes)
+  if not size.ok:
+    return "501 bad SIZE parameter\r\n"
+  if size.tooLarge:
+    return smtpSizeReply
   S.mailFrom = got.address
   S.phase = sspRecipients
   result = "250 ok\r\n"
@@ -147,29 +158,52 @@ proc addData(S: var SmtpServer, text: string) {.role: actor.} =
 
 proc finishMail(S: var SmtpServer, R: var SmtpServerStep) {.role: actor.} =
   ## S/R: the line holding only a dot arrived.
-  if S.tooLarge:
-    R.reply.add("552 message too large\r\n")
-  else:
+  if not S.tooLarge:
     R.mails.add(SmtpMail(mailFrom: S.mailFrom, recipients: S.recipients,
       data: S.joinedData()))
     R.reply.add("250 kept\r\n")
   S.clearEnvelope()
   S.phase = sspReady
 
+proc closeSmtpInput(S: var SmtpServer, R: var SmtpServerStep) {.role: actor.} =
+  ## S/R: release buffers and tell the caller to close the conversation.
+  S.clearEnvelope()
+  S.pending = ""
+  S.phase = sspClosed
+  R.closed = true
+
+proc rejectDataSize(S: var SmtpServer, R: var SmtpServerStep) {.role: actor.} =
+  ## S/R: send one refusal and free the body. Keep reading DATA up to the cap.
+  if S.tooLarge:
+    return
+  S.tooLarge = true
+  S.dataBlocks = @[]
+  R.reply.add(smtpSizeReply)
+
+proc dataLineBytes(s: string): int {.role: parser, inline.} =
+  ## s: DATA bytes with the transparency dot still present, if any.
+  result = s.len - ord(s.len > 0 and s[0] == '.')
+
 proc onDataLine(S: var SmtpServer, line: string, R: var SmtpServerStep) {.
     role: actor.} =
   ## S/line/R: one line of the message text.
+  var
+    l: int = dataLineBytes(line)
+    room: int = S.maxBytes - S.dataLen
+    excess: int = 0
   if line == ".":
     S.finishMail(R)
     return
-  if S.tooLarge:
+  if S.tooLarge or l > room - 2:
+    S.rejectDataSize(R)
+    excess = (if S.dataDiscarded > 0: line.len else: l) - (room - 2)
+    if excess >= smtpDataDiscardBytes - S.dataDiscarded:
+      S.closeSmtpInput(R)
+      return
+    S.dataDiscarded = S.dataDiscarded + excess
+    S.dataLen = S.maxBytes
     return
-  if S.dataLen + line.len + 2 > S.maxBytes:
-    S.tooLarge = true
-    S.dataBlocks = @[]
-    S.dataLen = 0
-    return
-  if line.len > 0 and line[0] == '.':
+  if l < line.len:
     S.addData(line[1 .. ^1] & "\r\n")
   else:
     S.addData(line & "\r\n")
@@ -185,9 +219,16 @@ proc takeSmtpLine*(pending: var string): tuple[ok: bool, line: string] {.
   result = (true, pending[0 ..< cut])
   pending = pending[cut + 2 .. ^1]
 
-proc overlong(S: SmtpServer): bool {.role: parser, inline.} =
-  ## S: true when the unfinished line is longer than any line may be.
-  result = S.pending.len > (if S.phase == sspData: S.maxBytes else: smtpMaxLineBytes)
+proc checkPendingData(S: var SmtpServer, R: var SmtpServerStep) {.role: actor.} =
+  ## S/R: apply the same limit before a long, unfinished DATA line ends.
+  var
+    l: int = if S.dataDiscarded > 0: S.pending.len else: dataLineBytes(S.pending)
+    excess: int = l - (S.maxBytes - S.dataLen)
+  if excess <= 0 or S.pending == ".\r":
+    return
+  S.rejectDataSize(R)
+  if excess >= smtpDataDiscardBytes - S.dataDiscarded:
+    S.closeSmtpInput(R)
 
 proc feedSmtpServer*(S: var SmtpServer, bytes: string,
     isMine: proc (a: string): bool {.gcsafe.}): SmtpServerStep {.
@@ -196,6 +237,8 @@ proc feedSmtpServer*(S: var SmtpServer, bytes: string,
   ## this server takes mail for.
   var
     got: tuple[ok: bool, line: string] = (false, "")
+  if S.phase == sspClosed:
+    return SmtpServerStep(closed: true)
   S.pending.add(bytes)
   while S.phase != sspClosed and not result.startTls:
     got = takeSmtpLine(S.pending)
@@ -205,7 +248,8 @@ proc feedSmtpServer*(S: var SmtpServer, bytes: string,
       S.onDataLine(got.line, result)
     else:
       S.onCommand(got.line, result, isMine)
-  if S.overlong():
+  if S.phase == sspData:
+    S.checkPendingData(result)
+  elif S.phase != sspClosed and not result.startTls and S.pending.len > smtpMaxLineBytes:
     result.reply.add("500 line too long\r\n")
-    result.closed = true
-    S.phase = sspClosed
+    S.closeSmtpInput(result)

@@ -64,13 +64,51 @@ suite "server":
     check r.mails[0].data == "first\n.\nMAIL FROM:<evil@a>\r\n"
 
   # {.testKind: tkEdgeCase, covers: "feedSmtpServer".}
-  test "too large is refused, and the connection goes on":
+  test "oversized DATA is refused before the dot, with one reply":
     var
       S = initSmtpServer("h", maxBytes = 10)
       r = S.talk("EHLO a\r\nMAIL FROM:<x@a>\r\nRCPT TO:<y@example.org>\r\nDATA\r\n")
-    r = S.talk("aaaaaaaaaaaaaaaa\r\nb\r\n.\r\n")
-    check r.mails.len == 0 and r.reply == "552 message too large\r\n"
+    r = S.talk("aaaaaaaaaaaaaaaa")
+    check r.mails.len == 0 and r.reply == "552 5.3.4 message too large\r\n"
+    check not r.closed
+    r = S.talk("\r\nb\r\n.\r\n")
+    check r.mails.len == 0 and r.reply == ""
     check S.talk("MAIL FROM:<x@a>\r\n").reply == "250 ok\r\n"
+
+  # {.testKind: tkRegression, covers: "feedSmtpServer".}
+  test "oversized declared SIZE is refused before DATA":
+    var S = initSmtpServer("h", maxBytes = 10)
+    discard S.talk("EHLO a\r\n")
+    check S.talk("MAIL FROM:<> size=11\r\n").reply.startsWith("552")
+    check S.talk("MAIL FROM:<> SIZE=99999999999999999999\r\n").reply.startsWith("552")
+    check S.talk("MAIL FROM:<> SIZE=+1\r\n").reply.startsWith("501")
+    check S.talk("MAIL FROM:<> SIZE=0 SIZE=1\r\n").reply.startsWith("501")
+    check S.talk("MAIL FROM:<> SIZE=0010\r\n").reply.startsWith("250")
+
+  # {.testKind: tkRegression, covers: "feedSmtpServer".}
+  test "the discard window ends even without a complete DATA line":
+    var
+      S = initSmtpServer("h", maxBytes = 4)
+      r: SmtpServerStep = SmtpServerStep()
+    discard S.talk("EHLO a\r\nMAIL FROM:<>\r\nRCPT TO:<y@example.org>\r\nDATA\r\n")
+    r = S.talk("body\r\n")
+    check r.reply.startsWith("552") and not r.closed
+    r = S.talk(repeat('a', 1024 * 1024 - 3))
+    check not r.closed
+    r = S.talk("a")
+    check r.closed and r.reply == "" and r.mails.len == 0
+    check S.pending.len == 0
+
+  # {.testKind: tkRegression, covers: "feedSmtpServer".}
+  test "a transparency dot does not count toward message SIZE":
+    var
+      S = initSmtpServer("h", maxBytes = 4)
+      r: SmtpServerStep = SmtpServerStep()
+    discard S.talk("EHLO a\r\nMAIL FROM:<> SIZE=4\r\nRCPT TO:<y@example.org>\r\nDATA\r\n")
+    r = S.talk("..x\r\n.\r")
+    check r.reply == ""
+    r = S.talk("\n")
+    check r.mails.len == 1 and r.mails[0].data == ".x\r\n"
 
   # {.testKind: tkEdgeCase, covers: "feedSmtpServer".}
   test "commands out of order are refused":
