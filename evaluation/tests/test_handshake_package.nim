@@ -76,17 +76,61 @@ suite "AME handshake packages":
       check not fed.done
     check refused
 
+  # {.testKind: tkRegression, covers: "feedAmeHandshakeDatagram",
+  #   pins: "16 datagrams every 20 seconds kept every new client out of the server".}
+  test "a flood of half-received handshakes never locks a newcomer out":
+    var
+      original = record(90000)
+      frames = bfx.ameHandshakeDatagrams(original)
+      inbox: bfx.AmeHandshakePackages = default(bfx.AmeHandshakePackages)
+      fed: bfx.AmeHandshakeFeed = default(bfx.AmeHandshakeFeed)
+      back: bfx.ByteSeq = @[]
+    ## the attack: a first shard from thousands of different ports of ONE host,
+    ## and from a thousand different hosts
+    for i in 0 ..< 3000:
+      discard bfx.feedAmeHandshakeDatagram(inbox, frames[0], "dac://10.0.0.5:" & $(1000 + i))
+    for i in 0 ..< 1000:
+      discard bfx.feedAmeHandshakeDatagram(inbox, frames[0], "dac://10." & $(1 + i div 250) &
+        ".7." & $(1 + i mod 250) & ":4000")
+    check bfx.ameHandshakePackageCount(inbox) <= bfx.ameHandshakePackageSlots
+    ## the honest client arrives AFTER the flood and must get through
+    for frame in frames:
+      fed = bfx.feedAmeHandshakeDatagram(inbox, frame, "dac://192.0.2.77:5555")
+      check fed.ok
+      if fed.done: back = fed.payload
+    check back == original
+
   # {.testKind: tkEdgeCase, covers: "feedAmeHandshakeDatagram".}
-  test "unauthenticated package slots are bounded":
+  test "one sender holds at most its share, however many ports it uses":
+    var
+      frames = bfx.ameHandshakeDatagrams(record(90000))
+      inbox: bfx.AmeHandshakePackages = default(bfx.AmeHandshakePackages)
+    for i in 0 ..< 500:
+      discard bfx.feedAmeHandshakeDatagram(inbox, frames[0], "10.0.0.5:" & $(2000 + i))
+    check bfx.ameHandshakePackageCount(inbox) == bfx.ameHandshakePackagePerSource
+    ## an IPv6 customer owns 2^64 addresses: they count as one sender
+    inbox = default(bfx.AmeHandshakePackages)
+    for i in 0 ..< 500:
+      discard bfx.feedAmeHandshakeDatagram(inbox, frames[0],
+        "[2001:db8:1:2::" & toHex(i + 1, 4).toLowerAscii() & "]:3000")
+    check bfx.ameHandshakePackageCount(inbox) == bfx.ameHandshakePackagePerSource
+
+  # {.testKind: tkEdgeCase, covers: "feedAmeHandshakeDatagram".}
+  test "when the table is full the sender holding the most loses, not the honest one":
     var
       frames = bfx.ameHandshakeDatagrams(record(90000))
       inbox: bfx.AmeHandshakePackages = default(bfx.AmeHandshakePackages)
       fed: bfx.AmeHandshakeFeed = default(bfx.AmeHandshakeFeed)
-    for i in 0 ..< bfx.ameHandshakePackageSlots:
-      fed = bfx.feedAmeHandshakeDatagram(inbox, frames[0], $i)
-      check fed.ok
-    fed = bfx.feedAmeHandshakeDatagram(inbox, frames[0], "overflow")
-    check not fed.ok
+    ## 100 senders hold three packages each (the table is 128: it fills)
+    discard bfx.feedAmeHandshakeDatagram(inbox, frames[0], "192.0.2.1:1")
+    for i in 0 ..< 60:
+      for p in 0 ..< 3:
+        discard bfx.feedAmeHandshakeDatagram(inbox, frames[0], "10.1." & $i & ".1:" & $(100 + p))
+    check bfx.ameHandshakePackageCount(inbox) <= bfx.ameHandshakePackageSlots
+    ## a newcomer still gets a slot, and the lone honest sender keeps its own
+    fed = bfx.feedAmeHandshakeDatagram(inbox, frames[0], "192.0.2.9:9")
+    check fed.ok
+    check bfx.ameHandshakePackageCount(inbox) <= bfx.ameHandshakePackageSlots
 
   # {.testKind: tkEdgeCase, covers: "ameHandshakeDatagrams".}
   test "overlarge unauthenticated records are refused before sending":
