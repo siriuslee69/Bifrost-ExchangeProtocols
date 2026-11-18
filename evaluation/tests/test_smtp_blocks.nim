@@ -4,8 +4,8 @@ import std/[unittest, strutils]
 import protocols/smtp
 import runePragmas
 
-proc mineAll(a: string): bool {.gcsafe, role: parser.} =
-  result = true
+proc isMine(a: string): bool {.gcsafe, role: parser.} =
+  result = a.endsWith("@mine.example")
 
 proc conversation(body: string, maxBytes: int): tuple[mails: seq[SmtpMail], reply: string] {.
     role: orchestrator.} =
@@ -17,7 +17,7 @@ proc conversation(body: string, maxBytes: int): tuple[mails: seq[SmtpMail], repl
       body & ".\r\nQUIT\r\n"
     at: int = 0
   while at < text.len:
-    step = feedSmtpServer(S, text[at ..< min(text.len, at + 16384)], mineAll)
+    step = feedSmtpServer(S, text[at ..< min(text.len, at + 16384)], isMine)
     result.mails.add(step.mails)
     result.reply.add(step.reply)
     at = at + 16384

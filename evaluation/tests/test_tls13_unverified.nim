@@ -31,7 +31,7 @@ proc rd(p: string): ByteSeq {.role: dataFetcher.} =
 
 proc rsaServer(): Tls13ServerConfig {.role: configurator.} =
   result.certificateChainDer = @[rd("evaluation/tests/fixtures/webpki/rleaf.der")]
-  result.rsaPrivateKeyDer = rd("evaluation/tests/fixtures/webpki/rleaf.pk8")
+  result.rsaPrivateKeyDer = rd("evaluation/tests/fixtures/webpki/rleaf.pk8")  # otter:allow (a fixture path)
 
 proc anyClient(): Tls13ClientConfig {.role: configurator.} =
   result.acceptAnyCertificate = true
