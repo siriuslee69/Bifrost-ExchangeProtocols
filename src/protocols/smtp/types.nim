@@ -18,6 +18,8 @@ const
   smtpMaxLineBytes* = 4096
     ## a command line; a line of the message text is limited by maxBytes
   smtpDefaultMaxBytes* = 25 * 1024 * 1024
+  smtpDataBlockBytes* = 65536
+    ## the message text is collected in blocks of this size (see SmtpServer.dataBlocks)
   smtpDefaultMaxRecipients* = 100
 
 type
@@ -54,7 +56,12 @@ type
       ## bytes received that do not end in a whole line yet
     mailFrom*: string
     recipients*: seq[string]
-    data*: string
+    dataBlocks*: seq[string]
+      ## the message text so far, in blocks of about 64 KB. One growing string
+      ## doubles its buffer as it fills (an 18 MiB mail then costs about 110 MB
+      ## while it arrives); blocks cost the text plus one copy when it is joined.
+    dataLen*: int
+      ## bytes held in dataBlocks
     tooLarge*: bool
 
   SmtpServerStep* {.role: preparedData, tag: "smtp|types".} = object

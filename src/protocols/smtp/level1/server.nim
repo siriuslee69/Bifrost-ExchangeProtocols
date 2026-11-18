@@ -44,7 +44,8 @@ proc clearEnvelope(S: var SmtpServer) {.role: actor, inline.} =
   ## S: forgets the mail under way, keeps the connection.
   S.mailFrom = ""
   S.recipients = @[]
-  S.data = ""
+  S.dataBlocks = @[]
+  S.dataLen = 0
   S.tooLarge = false
 
 proc resetSmtpServer*(S: var SmtpServer) {.role: actor, tag: "smtp|appApi".} =
@@ -131,12 +132,26 @@ proc onCommand(S: var SmtpServer, line: string, R: var SmtpServerStep,
   else:
     R.reply.add("500 what?\r\n")
 
+proc joinedData(S: SmtpServer): string {.role: truthBuilder.} =
+  ## S: the message text, the blocks joined into exactly one string.
+  result = newStringOfCap(S.dataLen)
+  for b in S.dataBlocks:
+    result.add(b)
+
+proc addData(S: var SmtpServer, text: string) {.role: actor.} =
+  ## S/text: appended to the message text, in blocks of about 64 KB.
+  if S.dataBlocks.len == 0 or S.dataBlocks[S.dataBlocks.high].len + text.len > smtpDataBlockBytes:
+    S.dataBlocks.add(newStringOfCap(max(smtpDataBlockBytes, text.len)))
+  S.dataBlocks[S.dataBlocks.high].add(text)
+  S.dataLen = S.dataLen + text.len
+
 proc finishMail(S: var SmtpServer, R: var SmtpServerStep) {.role: actor.} =
   ## S/R: the line holding only a dot arrived.
   if S.tooLarge:
     R.reply.add("552 message too large\r\n")
   else:
-    R.mails.add(SmtpMail(mailFrom: S.mailFrom, recipients: S.recipients, data: S.data))
+    R.mails.add(SmtpMail(mailFrom: S.mailFrom, recipients: S.recipients,
+      data: S.joinedData()))
     R.reply.add("250 kept\r\n")
   S.clearEnvelope()
   S.phase = sspReady
@@ -149,15 +164,15 @@ proc onDataLine(S: var SmtpServer, line: string, R: var SmtpServerStep) {.
     return
   if S.tooLarge:
     return
-  if S.data.len + line.len + 2 > S.maxBytes:
+  if S.dataLen + line.len + 2 > S.maxBytes:
     S.tooLarge = true
-    S.data = ""
+    S.dataBlocks = @[]
+    S.dataLen = 0
     return
   if line.len > 0 and line[0] == '.':
-    S.data.add(line[1 .. ^1])
+    S.addData(line[1 .. ^1] & "\r\n")
   else:
-    S.data.add(line)
-  S.data.add("\r\n")
+    S.addData(line & "\r\n")
 
 proc takeSmtpLine*(pending: var string): tuple[ok: bool, line: string] {.
     role: parser, tag: "smtp|wire".} =

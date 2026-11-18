@@ -528,6 +528,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_archive_contact.nim", @["-r"])
     runNim("c", "evaluation/tests/test_group_enrollment.nim", @["-r"])
     runNim("c", "evaluation/tests/test_smtp.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_smtp_blocks.nim", @["-r"])
     runNim("c", "evaluation/tests/test_smtp_server_tls.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_dump.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_open_door.nim", @["-r"])
