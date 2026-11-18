@@ -20,6 +20,7 @@ import std/strutils
 
 import bifrost_exchange_protocols
 import protocols/smtp/level2/server_tls
+import runePragmas
 
 const
   certificatePem = """-----BEGIN CERTIFICATE-----
@@ -35,11 +36,11 @@ WteXJmIa0HlRAZjxNfWbsSGLnTYbsGTbxKx3QU9H9g0=
 MC4CAQAwBQYDK2VwBCIEIAjtEwCECqbot5RZxSmiNDWcPp+Xc9Y9WJcUhti3JgSP
 -----END PRIVATE KEY-----"""
 
-proc isOurs(a: string): bool {.gcsafe.} =
+proc isOurs(a: string): bool {.gcsafe, role: parser.} =
   ## Mail for mine.example is ours.
   result = a.endsWith("@mine.example")
 
-proc main() =
+proc main() {.role: orchestrator.} =
   var
     config = tls13ServerConfigFromPem(certificatePem, keyPem)
     conn: SmtpTlsServer = SmtpTlsServer()
