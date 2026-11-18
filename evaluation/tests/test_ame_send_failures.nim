@@ -33,7 +33,7 @@ import runePragmas
 proc pairAuth(role: AmeEndpointRole): AmeAuthPackage {.role: configurator.} =
   ## role: one end of a pair that shares one fixed first exchange.
   var
-    layout: AmeSuiteLayout = defaultAmeLayout([akaX25519])
+    layout: AmeSuiteLayout = defaultAmeLayout([akaLightSaber])
     tier: AmeMaskTier = fullAmeMaskTier(layout)
     state: AmeExchangeState = initAmeExchangeState(layout.kems)
   applyAmeExchange(state, layout, initAmeExchangeRequest(layout.kems, tier,
@@ -71,7 +71,7 @@ suite "AME send failures":
       before: uint64 = p.a.fomke.lane1.nextIndex
     ## Sending is refused while this side waits for an answer.
     discard beginAmeTcpExchangeFrame(p.a, ameAddExchangeRequest(p.a,
-      [akaX25519]))
+      [akaLightSaber]))
     before = p.a.fomke.lane1.nextIndex
     expect ValueError:
       sendAmeDac(tx, unreachable, p.a, [byte 1])
