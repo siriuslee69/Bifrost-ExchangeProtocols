@@ -3503,6 +3503,31 @@ they could be cut short without notice and cannot be told apart from whole files
 
 ## Issue Playbook
 
+**Downgrade (making two honest ends accept something weaker)**
+
+- **A man in the middle cannot do it to AME.** `nimble testDowngrade` changes every
+  byte of each of the four handshake records, with two bit masks, in each trust
+  mode (AM1A, AM1S, AM1P, AM1P+S: about 49 900 edits): every edit is refused. None
+  gives a weaker accepted handshake, none is silently ignored, none splits the keys.
+  The reason is the transcript (every field is signed and keys come from it).
+- **A responder answers only its own trust mode.** AM1P+S never falls back to AM1P:
+  a hello of another mode is refused (12 of 12 mismatches, tested).
+- **A CLIENT may choose a smaller selection than the responder offers.** The
+  responder accepts any layout that fits inside the one it lists. The one floor is
+  `ameMinPqKems` (default `0` = none): at 0 a client may ask for X25519-only keys
+  and be served. Nobody on the path can force that, but the server's own margin
+  for that session is the client's choice. A server that wants post-quantum keys
+  always sets `ameMinPqKems = 1` (or more) in its config; the floor also covers
+  every later change request from either side. Nebel's responder is stricter on
+  its own (exact layout and a tier at or above its policy).
+- **TLS 1.3 has one profile**: TLS 1.3, ChaCha20-Poly1305, x25519, null compression.
+  An older version, another suite or compression is refused, so there is no
+  fallback to negotiate (test_tls13_downgrade.nim).
+- **STARTTLS can be stripped by someone on the path** (a sender that only asks for
+  TLS when offered sends plain mail when the offer disappears). That is how
+  opportunistic mail works and not a flaw of the engine; `needTls` on the SMTP
+  client refuses to go on without it.
+
 **Chunked files**
 
 - **"unsupported chunk version 1"**: the file was sealed by a release before

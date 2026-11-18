@@ -8,6 +8,7 @@
 +---------------------------+----------------------------------------------+
 | nimble test               | full Nim suite                               |
 | nimble testFomke          | XHKDF, standalone AEADs, the FOMKE ratchet, its forward-secrecy properties, and AME session composition |
+| nimble testDowngrade      | every byte of every handshake record changed in all four trust modes; TLS 1.3 refuses an older version, a weaker suite or compression |
 | nimble testChunkyAead    | CHUNKYAEAD chunk encryption, authentication, hash tree; a cut file, an edited chunk header and a hostile manifest never open |
 | nimble testDac            | DAC defaults, wire codecs, ACK pacing and the five ACK modes, repair, scramble, path adaptation, link loop, link table, fuzz |
 | nimble testDacFlag        | -d:bifrostDac=off keeps the wire and refuses the adaptive layer |

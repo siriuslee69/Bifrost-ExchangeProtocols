@@ -559,6 +559,8 @@ task test, "Run bifrost_exchange_protocols tests":
     # built with glibc fortify checks: they stop a program that overruns select's table
     runNim("c", "evaluation/tests/test_wait_readable.nim", @["-d:release", "--passC:-O2 -D_FORTIFY_SOURCE=2", "-r"])
     runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_downgrade.nim", @["-d:release", "-d:downgradeStride=32", "-r"])
+    runNim("c", "evaluation/tests/test_tls13_downgrade.nim", @["-r"])
     runNim("c", "evaluation/tests/test_attack_surface.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_tcp_handshake.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_ame_dac_handshake.nim", @["--threads:on", "-r"])
@@ -822,6 +824,13 @@ task testFomke, "Run XHKDF, AEAD preset, and FOMKE ratchet tests":
 task testMitm, "Run on-path attacker, loss, and repair tests":
   if not handoffTestTaskToLibsodiumShell("testMitm"):
     runNim("c", "evaluation/tests/test_mitm_and_loss.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_downgrade.nim", @["-d:release", "-d:downgradeStride=32", "-r"])
+    runNim("c", "evaluation/tests/test_tls13_downgrade.nim", @["-r"])
+
+task testDowngrade, "Change every byte of every handshake record, in all four trust modes, and require refusal (about 20 s)":
+  ## The quick form runs inside `nimble test` (every 32nd byte). This is every byte.
+  runNim("c", "evaluation/tests/test_downgrade.nim", @["-d:release", "-d:downgradeStride=1", "-r"])
+  runNim("c", "evaluation/tests/test_tls13_downgrade.nim", @["-r"])
 
 task testChunkyAead, "Run CHUNKYAEAD chunk encryption and hash tests":
   runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
