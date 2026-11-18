@@ -80,3 +80,17 @@ An item that is done is removed here and named in PROGRESS.md.
   done when: the garbage and attack-surface tests (test_attack_surface.nim and the fuzz-style tests of each decoder) pass when compiled with `-d:danger`, or the ones that cannot are listed with the reason in docs/tests.md; the README's issue playbook says that the iot presets trade checks for size.
   needs: nobody
   plan: add one nimble task `testDanger` that runs the decoder garbage tests with -d:danger; run it; any test that fails or passes only by luck points at a decoder that relied on a check. Source: ../Nebel-DecentralizedDB/docs/attack_catalog.md, row N25.
+
+- [ ] The handshake package table is filled before ANY check of the sender: a spoofer with many addresses can still push honest half-received messages out.
+  why: the first shard of a hello is stored before the cookie (which sits inside the reassembled hello) can be read. 2026-11-18 the table was made fair (128 places, 3 per sender, the biggest holder loses first), so one machine can no longer lock clients out, but a spoofer using about 43 different /64 senders every 20 s still can. Found by running the real nebeld (Nebel's attack_live_archive.nim).
+  start: grep -n "makeRoom\|sourceGroup" src/protocols/ame/level3/handshake_package.nim; sed -n '/^  H1 /,/^  Q1 /p' ../Nebel-DecentralizedDB/docs/attack_catalog.md
+  done when: a shard is stored only after the sender proved it can receive at its address (a cookie in the SHARD header, issued by a stateless HelloRetry), and a test with 5000 spoofed senders shows an honest newcomer completes its handshake.
+  needs: user (this changes the wire format of handshake shards, and an old client would no longer connect)
+  plan: the HelloRetry that already exists answers the first (empty) hello with a cookie; carry that cookie in the AME shard header's unused `requestId` field, checked before the table is touched. The first datagram of a new sender gets a retry instead of a slot.
+
+- [ ] `ameMinPqKems` is 0 by default: a client may ask a responder for X25519-only keys and be served.
+  why: nobody on the path can force it (every edit of the handshake is refused: `nimble testDowngrade`), but the margin of a session is then the client's choice. Nebel's responder checks the exact layout itself and is not affected; any other program built on Bifrost's responder is.
+  start: grep -n "ameMinPqKems" configs/default.toml src/protocols/config.nim; evaluation/tests/test_downgrade.nim, the last test
+  done when: the decision is written in the README playbook ("Downgrade") and, if the answer is "1", configs/default.toml says 1 and the iot presets say 0 on purpose.
+  needs: user (post-quantum KEMs are large: 0 keeps the iot presets small)
+  plan: recommended: 1 in default.toml (servers), 0 in iot.toml and iot-min.toml.
