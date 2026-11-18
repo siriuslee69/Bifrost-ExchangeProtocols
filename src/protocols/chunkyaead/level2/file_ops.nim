@@ -3,6 +3,7 @@
 ## ============================================================
 
 import std/os
+import std/strutils
 when compileOption("threads"):
   import std/locks
 
@@ -16,9 +17,12 @@ import tyr/ciphers/gimli_sponge
 import runePragmas
 
 const
-  chunkHeaderLen = 52
+  chunkHeaderLen = 53
   chunkHashLen = 32
   maxTagLen = 1024'u16
+  maxManifestChunkBytes = 1'i64 shl 40
+    ## a manifest may not claim a chunk over 1 TiB (keeps size sums in range)
+  maxManifestFileBytes = 1'i64 shl 60
 
 when compileOption("threads") and (defined(gcOrc) or defined(gcArc)):
   const chunkyThreaded = true
@@ -94,6 +98,7 @@ proc encodeHeader(h: ChunkHeader): array[chunkHeaderLen, uint8] {.
     bs[o] = h.nonce[i]
     i = i + 1
     o = o + 1
+  bs[o] = h.flags
   result = bs
 
 proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
@@ -109,6 +114,10 @@ proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
     o = o + 1
   h.version = bs[o]
   o = o + 1
+  if int(bs[o]) > ord(high(ChunkyAlgo)):
+    ## An enum built from a byte it does not hold is a crash (or, with
+    ## -d:danger, undefined): the byte is checked first.
+    raise newException(ValueError, "unsupported chunk algorithm")
   h.algo = ChunkyAlgo(bs[o])
   o = o + 1
   h.tagLen = loadU16Le(bs, o)
@@ -122,6 +131,7 @@ proc decodeHeader(bs: array[chunkHeaderLen, uint8]): ChunkHeader {.
     h.nonce[i] = bs[o]
     i = i + 1
     o = o + 1
+  h.flags = bs[o]
   result = h
 
 proc requireKey32(s: ChunkyCipherState, idx: int,
@@ -147,19 +157,19 @@ when chunkyThreaded:
 
 ## ╭⟢ one chunk: encrypt, decrypt, hash
 
-proc writeChunkHeader(f: var File, h: ChunkHeader) {.role: dataWriter,
-    tag: "chunkyAead|codecBoundary|write".} =
+proc writeChunkHeader(f: var File, bs: var array[chunkHeaderLen, uint8]) {.
+    role: dataWriter, tag: "chunkyAead|codecBoundary|write".} =
+  ## f/bs: the encoded header, written whole. The same bytes go into the
+  ## tag, so what is written is what is covered.
   var
-    bs: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     wrote: int = 0
-  bs = encodeHeader(h)
   wrote = f.writeBuffer(addr bs[0], bs.len)
   if wrote != bs.len:
     raise newException(IOError, "failed to write chunk header")
 
 proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
-    a: ChunkyAlgo, t: uint16): ChunkHeader {.role: truthBuilder,
-    tag: "chunkyAead|codecBoundary".} =
+    a: ChunkyAlgo, t: uint16, isFinal: bool): ChunkHeader {.
+    role: truthBuilder, tag: "chunkyAead|codecBoundary".} =
   var h: ChunkHeader = default(ChunkHeader)
   h.magic = chunkyMagic
   h.version = chunkyVersion
@@ -168,6 +178,8 @@ proc buildHeader(i: uint64, l: int64, ns: array[24, uint8],
   h.chunkIndex = i
   h.plainLen = uint64(l)
   h.nonce = ns
+  if isFinal:
+    h.flags = chunkFlagFinal
   result = h
 
 proc takeLen(remaining: int64, bufferBytes: int): int {.inline, role: math,
@@ -216,6 +228,7 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
     fIn: File = nil
     fOut: File = nil
     ns: array[24, uint8] = default(array[24, uint8])
+    hdr: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     st: ChunkCryptoState = default(ChunkCryptoState)
   t.ok = false
   t.err = ""
@@ -232,10 +245,11 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
   try:
     setFilePos(fIn, t.chunkOffset)
     ns = deriveChunkNonce(t.baseNonce, t.chunkIndex)
-    writeChunkHeader(fOut, buildHeader(t.chunkIndex, t.chunkLen, ns, t.algo,
-      t.tagLen))
+    hdr = encodeHeader(buildHeader(t.chunkIndex, t.chunkLen, ns, t.algo,
+      t.tagLen, t.isFinal))
+    writeChunkHeader(fOut, hdr)
     initChunkCryptoState(st, t.algo, t.keyXs, t.keyAs, t.keyGs, ns,
-      t.bufferBytes)
+      t.bufferBytes, hdr)
     encryptChunkBody(t, st, fIn, fOut)
     t.ok = true
   except CatchableError as e:
@@ -244,31 +258,45 @@ proc encryptChunkTask(t: var ChunkEncryptTask) {.role: orchestrator,
     close(fIn)
     close(fOut)
 
-proc readChunkHeader(f: var File): ChunkHeader {.role: dataFetcher,
-    tag: "chunkyAead|codecBoundary|read".} =
+proc readChunkHeader(f: var File): array[chunkHeaderLen, uint8] {.
+    role: dataFetcher, tag: "chunkyAead|codecBoundary|read".} =
+  ## f: the chunk file. The raw header bytes come back, because the tag
+  ## covers exactly these bytes.
   var
     bs: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     readBytes: int = 0
   readBytes = f.readBuffer(addr bs[0], bs.len)
   if readBytes != bs.len:
     raise newException(IOError, "failed to read chunk header")
-  result = decodeHeader(bs)
+  result = bs
 
 proc requireChunkHeader(h: ChunkHeader, t: ChunkDecryptTask) {.role: parser,
     tag: "chunkyAead|validation".} =
-  ## h/t: refuses a header that is not the one this task expects.
+  ## h/t: refuses a header that is not the one the CALLER expects. The header
+  ## is a claim made by whoever holds the file; every value that decides what
+  ## is read (length, tag size, algorithm, last or not) comes from `t`.
   if h.magic != chunkyMagic:
     raise newException(ValueError, "invalid chunk magic")
   if h.version != chunkyVersion:
-    raise newException(ValueError, "unsupported chunk version")
-  if h.algo notin {caXChaCha20Gimli, caAesGimli, caXChaCha20AesGimli}:
-    raise newException(ValueError, "unsupported chunk algorithm")
-  if h.tagLen == 0'u16 or h.tagLen > maxTagLen:
-    raise newException(ValueError, "invalid chunk tag length")
+    raise newException(ValueError, "unsupported chunk version " & $h.version &
+      ": this release reads version " & $chunkyVersion &
+      "; a file of the older format must be encrypted again")
+  if h.algo != t.algo:
+    raise newException(ValueError, "chunk algorithm mismatch")
+  if h.tagLen != t.tagLen:
+    raise newException(ValueError, "chunk tag length mismatch")
   if h.chunkIndex != t.chunkIndex:
     raise newException(ValueError, "chunk index mismatch")
+  if h.plainLen != t.plainLen:
+    raise newException(ValueError, "chunk length mismatch")
   if h.nonce != deriveChunkNonce(t.baseNonce, t.chunkIndex):
     raise newException(ValueError, "chunk nonce mismatch")
+  if (h.flags and not chunkFlagFinal) != 0'u8:
+    raise newException(ValueError, "unknown chunk flags")
+  if ((h.flags and chunkFlagFinal) != 0'u8) != t.isFinal:
+    raise newException(ValueError, "chunk is " &
+      (if t.isFinal: "not marked as the last one" else: "marked as the last one") &
+      ": the file was cut or its list of chunks was changed")
 
 proc decryptChunkBody(t: ChunkDecryptTask, h: ChunkHeader,
     st: var ChunkCryptoState, fIn, fOut: var File) {.role: decryptor,
@@ -300,6 +328,7 @@ proc decryptChunkTask(t: var ChunkDecryptTask) {.role: orchestrator,
     fIn: File = nil
     fOut: File = nil
     h: ChunkHeader = default(ChunkHeader)
+    hdr: array[chunkHeaderLen, uint8] = default(array[chunkHeaderLen, uint8])
     st: ChunkCryptoState = default(ChunkCryptoState)
   t.ok = false
   t.err = ""
@@ -311,10 +340,11 @@ proc decryptChunkTask(t: var ChunkDecryptTask) {.role: orchestrator,
     t.err = "failed to open output chunk temp file"
     return
   try:
-    h = readChunkHeader(fIn)
+    hdr = readChunkHeader(fIn)
+    h = decodeHeader(hdr)
     requireChunkHeader(h, t)
     initChunkCryptoState(st, h.algo, t.keyXs, t.keyAs, t.keyGs, h.nonce,
-      t.bufferBytes)
+      t.bufferBytes, hdr)
     decryptChunkBody(t, h, st, fIn, fOut)
     t.ok = true
   except CatchableError as e:
@@ -532,6 +562,41 @@ proc calcChunkCount(sz, cs: int64): int {.role: parser,
     return 1
   result = int((sz + cs - 1) div cs)
 
+proc requireChunkFileName(n: string) {.role: parser,
+    tag: "chunkyAead|validation".} =
+  ## n: a chunk file name taken from a manifest. It names a file INSIDE the
+  ## chunk directory and nothing else: a name with a folder part, a `..`, or a
+  ## NUL would let whoever wrote the manifest point the reader at any file.
+  if n.len == 0 or n.len > 255 or n == "." or n == "..":
+    raise newException(ValueError, "manifest chunk name is not a file name")
+  if n.contains({'/', '\\', '\0'}) or extractFilename(n) != n:
+    raise newException(ValueError, "manifest chunk name is not a file name")
+
+proc requireManifestShape(m: ChunkyManifest) {.role: parser,
+    tag: "chunkyAead|validation".} =
+  ## m: a manifest, as handed in by a caller who may have read it from disk
+  ## or a stranger. The numbers are bounded BEFORE any is multiplied, so a
+  ## manifest cannot make the size arithmetic overflow, and the count has to
+  ## agree with the size: a count edited alone is refused here, and one edited
+  ## together with the size is caught by the last-chunk flag in the tag.
+  var
+    i: int = 0
+  if m.chunkBytes <= 0 or m.chunkBytes > maxManifestChunkBytes:
+    raise newException(ValueError, "manifest chunk size out of range")
+  if m.originalSize < 0 or m.originalSize > maxManifestFileBytes:
+    raise newException(ValueError, "manifest file size out of range")
+  if m.tagLen == 0'u16 or m.tagLen > maxTagLen:
+    raise newException(ValueError, "manifest tag length out of range")
+  if m.chunkCount <= 0:
+    raise newException(ValueError, "manifest has no chunks")
+  if m.chunkCount != calcChunkCount(m.originalSize, m.chunkBytes):
+    raise newException(ValueError, "manifest chunk count does not fit its file size")
+  if m.chunkFiles.len != m.chunkCount:
+    raise newException(ValueError, "manifest chunk list mismatch")
+  while i < m.chunkFiles.len:
+    requireChunkFileName(m.chunkFiles[i])
+    i = i + 1
+
 proc encryptFileChunks*(i: string, o: string, s: ChunkyCipherState,
     opt: ChunkyOptions): ChunkyManifest {.role: orchestrator,
     tag: "appApi|chunkyAead|cryptoBoundary|write".} =
@@ -577,7 +642,7 @@ proc encryptFileChunks*(i: string, o: string, s: ChunkyCipherState,
       chunkIndex: uint64(idx), chunkOffset: int64(idx) * chunkBytes,
       chunkLen: chunkLenAt(idx, chunkBytes, sizeBytes), baseNonce: baseNonce,
       keyXs: keys.x, keyAs: keys.aes, keyGs: keys.g, tagLen: tagLen,
-      bufferBytes: bufferBytes, algo: opt.algo)
+      bufferBytes: bufferBytes, algo: opt.algo, isFinal: idx == chunkCount - 1)
     idx = idx + 1
   runTasks(tasks, resolveThreadCount(opt, chunkBytes, chunkCount),
     encryptChunkTask)
@@ -628,10 +693,7 @@ proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
     idx: int = 0
     tempDir: string = oFile & ".parts"
     tempFiles: seq[string] = @[]
-  if m.chunkCount <= 0:
-    raise newException(ValueError, "manifest has no chunks")
-  if m.chunkFiles.len != m.chunkCount:
-    raise newException(ValueError, "manifest chunk list mismatch")
+  requireManifestShape(m)
   if opt.algo != m.algo:
     raise newException(ValueError, "chunk algorithm mismatch")
   if opt.algo != s.algo:
@@ -644,7 +706,10 @@ proc decryptFileChunks*(m: ChunkyManifest, iDir: string, oFile: string,
     tasks[idx] = ChunkDecryptTask(inputPath: joinPath(iDir, m.chunkFiles[idx]),
       outputPath: joinPath(tempDir, "chunk_" & $idx & ".bin"),
       chunkIndex: uint64(idx), baseNonce: m.baseNonce, keyXs: keys.x,
-      keyAs: keys.aes, keyGs: keys.g, bufferBytes: bufferBytes)
+      keyAs: keys.aes, keyGs: keys.g, bufferBytes: bufferBytes,
+      algo: m.algo, tagLen: m.tagLen,
+      plainLen: uint64(chunkLenAt(idx, m.chunkBytes, m.originalSize)),
+      isFinal: idx == m.chunkCount - 1)
     tempFiles.add(tasks[idx].outputPath)
     idx = idx + 1
   runTasks(tasks, resolveThreadCount(opt, int64(bufferBytes), m.chunkCount),

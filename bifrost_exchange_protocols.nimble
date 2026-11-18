@@ -519,6 +519,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_ame_exchange_paths.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_build_flags.nim", @["-r"])
     runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_chunkyaead_cut.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_fomke.nim", @["-r"])
     runNim("c", "evaluation/tests/test_fomke_forward_secrecy.nim", @["-r"])
     runNim("c", "evaluation/tests/test_fomke_jump.nim", @["-r"])
@@ -824,6 +825,7 @@ task testMitm, "Run on-path attacker, loss, and repair tests":
 
 task testChunkyAead, "Run CHUNKYAEAD chunk encryption and hash tests":
   runNim("c", "evaluation/tests/test_chunkyaead.nim", @["--threads:on", "-r"])
+  runNim("c", "evaluation/tests/test_chunkyaead_cut.nim", @["--threads:on", "-r"])
 
 task testFomkeServerSimd, "Run FOMKE tests with server AVX2 batching":
   if not handoffTestTaskToLibsodiumShell("testFomkeServerSimd"):

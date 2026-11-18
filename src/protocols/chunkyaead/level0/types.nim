@@ -7,7 +7,11 @@ import runePragmas
 const
   chunkyMagic* = [byte('C'), byte('H'), byte('U'), byte('N'), byte('K'),
     byte('Y'), byte('0'), byte('1')]
-  chunkyVersion* = 1'u8
+  chunkyVersion* = 2'u8
+    ## 2: the chunk header is covered by the tag and carries a "final" flag.
+    ## Version 1 files are refused (they could be cut short without notice).
+  chunkFlagFinal* = 1'u8
+    ## header flag bit 0: this is the LAST chunk of the file.
   defaultChunkBytes* = 1_073_741_824'i64
   fallbackChunkBytes* = 524_288_000'i64
   lowRamThresholdBytes* = 4_294_967_296'i64
@@ -59,6 +63,8 @@ type
     chunkIndex*: uint64
     plainLen*: uint64
     nonce*: array[24, uint8]
+    ## flags: bit 0 (`chunkFlagFinal`) is set on the last chunk of the file.
+    flags*: uint8
 
   ChunkEncryptTask* = object
     inputPath*: string
@@ -73,6 +79,8 @@ type
     tagLen*: uint16
     bufferBytes*: int
     algo*: ChunkyAlgo
+    ## isFinal: this is the last chunk of the file (sets the header flag).
+    isFinal*: bool
     ok*: bool
     err*: string
 
@@ -85,6 +93,12 @@ type
     keyAs*: array[32, uint8]
     keyGs*: array[32, uint8]
     bufferBytes*: int
+    ## algo, tagLen, plainLen, isFinal: what the CALLER expects of this chunk.
+    ## The chunk file's own header is a claim, never the source of these.
+    algo*: ChunkyAlgo
+    tagLen*: uint16
+    plainLen*: uint64
+    isFinal*: bool
     ok*: bool
     err*: string
 
@@ -126,7 +140,7 @@ proc initChunkyCipherState*(a: ChunkyAlgo, K: openArray[seq[uint8]],
   ## a/K/n/t: transform, byte-sequence keys, base nonce, and tag length.
   var
     keys: seq[array[32, uint8]] = @[]
-    nonce: array[24, uint8]
+    nonce: array[24, uint8] = default(array[24, uint8])
     i: int = 0
     j: int = 0
   if K.len != chunkyKeyCount(a):

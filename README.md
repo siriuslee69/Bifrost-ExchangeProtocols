@@ -3455,7 +3455,59 @@ bytes differ.
 Offer and reply sizes grow with the KEM public keys and ciphertexts
 (FireSaber pk 1312 / ct 1472; X25519 pk 32 / sender pk 32).
 
+### CHUNKYAEAD chunk file (version 2): header **53 B**
+
+One big file is cut into chunks; each chunk is its own file. The manifest (a
+list: chunk size, file size, chunk count, the chunk file names) is kept by the
+owner. The chunk files may sit on a machine the owner does not trust.
+
+```text
+  one chunk file
+  ╭────────────────────────────── header, 53 bytes ─────────────────────────────╮
+  │ 0..7   magic "CHUNKY01"                                                     │
+  │ 8      version            2                                                 │
+  │ 9      algorithm          0 xchacha20+gimli | 1 aes+gimli | 2 all three     │
+  │ 10..11 tag length         little endian, 1..1024                            │
+  │ 12..19 chunk index        little endian, 0 for the first                    │
+  │ 20..27 plain length       little endian: bytes of data in this chunk        │
+  │ 28..51 nonce              24 bytes, derived from the base nonce + index     │
+  │ 52     flags              bit 0 = this is the LAST chunk of the file        │
+  ╰─────────────────────────────────────────────────────────────────────────────╯
+  ╭──────────────── ciphertext, "plain length" bytes ───────────────╮
+  ╰─────────────────────────────────────────────────────────────────╯
+  ╭──────────────── tag, "tag length" bytes ────────────────────────╮
+  ╰─────────────────────────────────────────────────────────────────╯
+
+  the tag covers:  key + nonce + the 53 header bytes + the ciphertext
+```
+
+Three rules keep a cut or edited file from opening:
+
+```text
+  what an attacker does                           what stops it
+  ──────────────────────────────────────────────  ─────────────────────────────────
+  deletes the last chunk(s) and edits the         the new last chunk was sealed
+    manifest to match                               with flag 0; the open demands
+                                                    flag 1 there ("not marked as the
+                                                    last one")
+  edits one header byte (index, length, flags,    the header is under the tag
+    tag length, algorithm)
+  hands in a manifest with "../x" as a chunk      names must be plain file names;
+    name, or numbers that overflow                  sizes are bounded before use
+```
+
+The reader takes the tag length, the algorithm, the length and the "last"
+fact from the MANIFEST it was handed, never from the chunk file. Version 1
+files (header 52 B, no flag) are refused with "must be encrypted again":
+they could be cut short without notice and cannot be told apart from whole files.
+
 ## Issue Playbook
+
+**Chunked files**
+
+- **"unsupported chunk version 1"**: the file was sealed by a release before
+  2026-11-18. Open it with that release and seal it again; this release will not
+  read it, because a version 1 file cannot prove it was not cut short.
 
 **Archive**
 

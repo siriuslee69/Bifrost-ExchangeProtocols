@@ -1,4 +1,25 @@
-Commit Message: SMTP server with STARTTLS (TLS 1.3, socket-free), server config from PEM, archiveFileCheckShape; tests for a cut-off file
+Commit Message: chunkyaead version 2: the last chunk and the whole chunk header are under the tag; a manifest is checked as hostile input
+
+## 2026-11-18 (second session) chunkyaead: a cut file never opens
+
+```text
+  what was wrong (run)                                  what is now true
+  ----------------------------------------------------  ------------------------------------------
+  manifest cut to fewer chunks opened a shorter file    the last chunk carries flag bit 0, inside the
+    (3172 bytes became 3072, no error)                    tag; the open demands it on the last one only
+  tag length was read from the chunk file's header      tag length, algorithm, length and "last" come
+    (a header edited to 1 byte forced a 1-byte tag)       from the MANIFEST; the header is a claim
+  the header was outside the tag                        header (53 bytes, was 52) is absorbed into the tag
+  a bad algorithm byte in a chunk file killed the       checked before the enum is built: ValueError
+    process (RangeDefect, not catchable)
+  chunk names from a manifest were joined to a path     plain file names only; sizes bounded before use
+```
+
+Test file: evaluation/tests/test_chunkyaead_cut.nim (10 tests). Against the old source
+4 fail and the header fuzz crashes with the RangeDefect; against the new one all pass.
+chunkyVersion is 2; version 1 files are refused with "must be encrypted again" (README,
+"CHUNKYAEAD chunk file"). No caller outside Bifrost uses encryptFileChunks (grep, 2026-11-18).
+
 
 ## 2026-11-18 Hardening from the attack catalog (user said: do the open items)
 

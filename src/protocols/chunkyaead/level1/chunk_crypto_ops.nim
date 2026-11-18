@@ -27,7 +27,7 @@ proc blocksForLen(l, b: int): uint32 {.role: helper,
 
 proc deriveAesNonce(ns: array[24, uint8]): array[16, uint8] {.
     role: truthBuilder, tag: "chunkyAead|cryptoBoundary".} =
-  var i: int
+  var i: int = 0
   while i < result.len:
     result[i] = ns[i]
     i = i + 1
@@ -50,7 +50,7 @@ proc initGimliTag(s: var tyr_gimli.GimliSpongeState, ks: array[32, uint8],
 proc gimliStreamXorInPlace(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: encryptor,
     tag: "chunkyAead|cryptoBoundary".} =
-  var i: int
+  var i: int = 0
   if bs.len == 0: return
   if s.streamBufs.len < bs.len: s.streamBufs.setLen(bs.len)
   tyr_gimli.gimliSqueezeInto(s.gStream, s.streamBufs.toOpenArray(0, bs.high))
@@ -59,9 +59,12 @@ proc gimliStreamXorInPlace(s: var ChunkCryptoState,
     i = i + 1
 
 proc initChunkCryptoState*(s: var ChunkCryptoState, a: ChunkyAlgo, kxs, kas,
-    kgs: array[32, uint8], ns: array[24, uint8], b: int) {.role: actor,
+    kgs: array[32, uint8], ns: array[24, uint8], b: int,
+    ad: openArray[uint8]) {.role: actor,
     tag: "chunkyAead|cryptoBoundary".} =
   ## a/kxs/kas/kgs/ns/b: algorithm, stage keys, nonce, and buffer capacity.
+  ## ad: bytes the tag covers but the cipher does not touch (the chunk
+  ## header), absorbed before the first ciphertext byte.
   s.algo = a
   s.keyXs = kxs
   s.xEnabled = a in {caXChaCha20Gimli, caXChaCha20AesGimli}
@@ -70,12 +73,13 @@ proc initChunkCryptoState*(s: var ChunkCryptoState, a: ChunkyAlgo, kxs, kas,
   if s.aesEnabled: s.aes = tyr_aes.initAesCtrState(kas, deriveAesNonce(ns))
   initGimliStream(s.gStream, kgs, ns)
   initGimliTag(s.gTag, kgs, ns)
+  if ad.len > 0: tyr_gimli.gimliAbsorbUpdate(s.gTag, ad)
   if b > 0: s.streamBufs.setLen(b)
 
 proc encryptChunkBuffer*(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: encryptor,
     tag: "appApi|chunkyAead|cryptoBoundary".} =
-  var blocks: uint32
+  var blocks: uint32 = 0
   if bs.len == 0: return
   if s.xEnabled:
     tyr_xchacha.xchacha20XorInPlace(s.keyXs, s.ns, s.xCounter, bs)
@@ -88,7 +92,7 @@ proc encryptChunkBuffer*(s: var ChunkCryptoState,
 proc decryptChunkBuffer*(s: var ChunkCryptoState,
     bs: var openArray[uint8]) {.role: decryptor,
     tag: "appApi|chunkyAead|cryptoBoundary".} =
-  var blocks: uint32
+  var blocks: uint32 = 0
   if bs.len == 0: return
   tyr_gimli.gimliAbsorbUpdate(s.gTag, bs)
   gimliStreamXorInPlace(s, bs)
