@@ -1,4 +1,29 @@
-Commit Message: rmGroup starts closed: until the operator names the claimers, no neighbour may claim a device
+Commit Message: SMTP server with STARTTLS (TLS 1.3, socket-free), server config from PEM, archiveFileCheckShape; tests for a cut-off file
+
+## 2026-11-18 Hardening from the attack catalog (user said: do the open items)
+
+Source: ../Nebel-DecentralizedDB/docs/attack_catalog.md. Plan, bottom first (Bifrost
+is the bottom; Fjord and Nebel follow in their own commits):
+
+```text
+  step  what                                          where
+  ----  --------------------------------------------  ---------------------------------
+  1     hostGroupKey(host): one text per sender       relay/restriction_address.nim
+          "203.0.113.7"          -> itself
+          "::ffff:203.0.113.7"   -> "203.0.113.7"
+          "2001:db8:1:2:a:b:c:d" -> "2001:db8:1:2::/64"
+        the forwarder's hostIsFull counts by it       relay/super_fast_udp.nim
+        test: two addresses of one /64 share a cap, two /64s do not, IPv4 as before
+  2     an SMTP server engine WITH STARTTLS           smtp/level2/server_tls.nim
+        (bytes in, bytes out; the switch to TLS 1.3    (socket-free; Fjord's daemon
+        drops everything said before it)               and the tests hold the SAME one)
+        test: EHLO + STARTTLS + MAIL in one burst -> the MAIL is never seen
+  3     certificate and key from PEM text             tls13/server_config_pem.nim
+        (Ed25519, RSA, P-256; chain of any length)
+  4     a test that a cut-off last chunk is refused   evaluation/tests (catalog row C9)
+```
+
+The wait for the TCP calls stays as the user decided (first TODO item).
 
 ## 2026-11-16 rmGroup: nobody may claim until claimers are named (user's decision)
 

@@ -7,6 +7,7 @@ import ./tls13/[types, codec, records, key_schedule, transcript, hello,
 import ./tls13/server_session
 import ./tls13/client_session
 import ./tls13/socket_server
+import ./tls13/server_config_pem
 
 export types
 export codec
@@ -21,3 +22,4 @@ export alerts
 export server_session
 export client_session
 export socket_server
+export server_config_pem

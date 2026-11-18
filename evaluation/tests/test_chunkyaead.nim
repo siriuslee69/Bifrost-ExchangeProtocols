@@ -138,6 +138,48 @@ suite "CHUNKYAEAD":
     expect IOError:
       decryptFileChunks(manifest, chunkDir, outputPath, state, opt)
 
+  # {.testKind: tkRegression, covers: "decryptFileChunks",
+  #   pins: "a file with its last chunk cut off opened as if it were whole".}
+  test "a file whose last chunk file is gone is refused":
+    var
+      tmpDir: string = joinPath(getTempDir(), "bifrost_chunkyaead_cut_" & $getCurrentProcessId())
+      inputPath: string = joinPath(tmpDir, "input.bin")
+      chunkDir: string = joinPath(tmpDir, "chunks")
+      outputPath: string = joinPath(tmpDir, "output.bin")
+      data: seq[uint8] = newSeq[uint8](3 * 1024 + 100)
+      state: ChunkyCipherState = buildState(
+        hexToBytes("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000000000000"),
+        hexToBytes("00000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        hexToBytes("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccc"),
+        hexToBytes("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+      opt: ChunkyOptions = initChunkyOptions()
+      manifest: ChunkyManifest = ChunkyManifest()
+      i: int = 0
+    if dirExists(tmpDir):
+      removeTree(tmpDir)
+    createDir(tmpDir)
+    defer:
+      removeTree(tmpDir)
+    while i < data.len:
+      data[i] = uint8((i * 7) mod 253)
+      i = i + 1
+    writeBytes(inputPath, data)
+    opt.chunkBytes = 1024
+    opt.bufferBytes = 256
+    opt.outputDir = chunkDir
+    manifest = encryptFileChunks(inputPath, chunkDir, state, opt)
+    check manifest.chunkCount == 4
+    ## the server hides the last chunk, then the last two: the manifest the user
+    ## holds still says 4, so the open stops and writes no output file
+    removeFile(joinPath(chunkDir, manifest.chunkFiles[3]))
+    expect IOError:
+      decryptFileChunks(manifest, chunkDir, outputPath, state, opt)
+    check not fileExists(outputPath)
+    removeFile(joinPath(chunkDir, manifest.chunkFiles[2]))
+    expect IOError:
+      decryptFileChunks(manifest, chunkDir, outputPath, state, opt)
+    check not fileExists(outputPath)
+
   # {.testKind: tkIntegration.}
   test "aes gimli chunk mode roundtrip":
     let tmpDir = joinPath(getTempDir(), "bifrost_chunkyaead_aes_gimli_" & $getCurrentProcessId())

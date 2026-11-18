@@ -527,6 +527,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_archive_contact.nim", @["-r"])
     runNim("c", "evaluation/tests/test_group_enrollment.nim", @["-r"])
     runNim("c", "evaluation/tests/test_smtp.nim", @["-r"])
+    runNim("c", "evaluation/tests/test_smtp_server_tls.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_dump.nim", @["-r"])
     runNim("c", "evaluation/tests/test_ame_open_door.nim", @["-r"])
     runNim("c", "evaluation/tests/test_xhkdf.nim", @["-r"])
@@ -584,6 +585,7 @@ task test, "Run bifrost_exchange_protocols tests":
     runNim("c", "evaluation/tests/test_ui_contrast.nim", @["-r"])
     runNim("c", "evaluation/tests/test_tls13_foundation.nim", @["-r"])
     runNim("c", "evaluation/tests/test_tls13_socket_server.nim", @["--threads:on", "-r"])
+    runNim("c", "evaluation/tests/test_tls13_server_pem.nim", @["--threads:on", "-r"])
     runNim("c", "evaluation/tests/test_socket_read.nim", @["-r"])
     runNim("c", "evaluation/tests/test_tls13_webpki.nim", @["-r"])
 

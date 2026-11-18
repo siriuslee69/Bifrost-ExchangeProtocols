@@ -7,10 +7,10 @@
 ##   "member signatures"  in a group, one member cannot write as another
 ##   "message bodies"     every kind, padding, every malformed length
 ##   "openings"           start, answer, read pointer
-##   "file chunks"        moved or swapped chunks do not open; manifest
+##   "file chunks"        moved or swapped chunks do not open; manifest; a cut-off file
 ##   "login"              the auth hash and the decoy settings
 
-import std/unittest
+import std/[strutils, unittest]
 
 import ../../src/protocols/types
 import ../../src/protocols/ame/types
@@ -212,6 +212,36 @@ suite "file chunks":
       M = ArchiveFileManifest(size: 9, chunkBytes: 4, chunks: 3,
         hash: newSeq[uint8](32), name: "a.bin")
     check openArchiveFileManifest(key, f, sealArchiveFileManifest(key, f, M)) == (true, M)
+
+  # {.testKind: tkRegression, covers: "archiveFileCheckShape",
+  #   pins: "a file with its last chunk cut off opened as if it were whole".}
+  test "a file with its last chunk or two cut off is refused":
+    var
+      key = newSeq[uint8](32)
+      f = newSeq[uint8](16)
+      M = ArchiveFileManifest(size: 9, chunkBytes: 4, chunks: 3,
+        hash: newSeq[uint8](32), name: "a.bin")
+      c0 = sealArchiveFileChunk(key, f, 0, b("aaaa"))
+      c1 = sealArchiveFileChunk(key, f, 1, b("bbbb"))
+      c2 = sealArchiveFileChunk(key, f, 2, b("c"))
+      o0 = openArchiveFileChunk(key, f, 0, c0)
+      o1 = openArchiveFileChunk(key, f, 1, c1)
+      o2 = openArchiveFileChunk(key, f, 2, c2)
+    ## every chunk opens on its own, also when the last ones are never fetched
+    check o0.ok and o1.ok and o2.ok
+    check archiveFileCheckShape(M, [o0.plain.len, o1.plain.len, o2.plain.len]).ok
+    ## the last chunk hidden: nothing failed to open, the manifest notices
+    check not archiveFileCheckShape(M, [o0.plain.len, o1.plain.len]).ok
+    check "cut" in archiveFileCheckShape(M, [o0.plain.len, o1.plain.len]).err
+    ## the last two hidden
+    check not archiveFileCheckShape(M, [o0.plain.len]).ok
+    ## nothing at all, an extra chunk, a short chunk in the middle, a wrong size
+    check not archiveFileCheckShape(M, newSeq[int]()).ok
+    check not archiveFileCheckShape(M, [4, 4, 1, 1]).ok
+    check not archiveFileCheckShape(M, [4, 3, 2]).ok
+    check not archiveFileCheckShape(M, [4, 4, 2]).ok
+    ## a chunk moved to the place of the hidden one does not open
+    check not openArchiveFileChunk(key, f, 2, c1).ok
 
   # {.testKind: tkEdgeCase, covers: "sealArchiveFileChunk".}
   test "a chunk over the limit is refused":
