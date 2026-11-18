@@ -42,9 +42,25 @@ type
   ##
   ## Set one or the other. Setting both is a configuration that cannot mean
   ## two things at once, so it is refused rather than silently ranked.
+  ##
+  ##   acceptAnyCertificate       NO identity check at all: encryption against
+  ##                              someone who only LISTENS. The server must
+  ##                              still prove it holds the key of the
+  ##                              certificate it sent (CertificateVerify) and
+  ##                              the whole handshake still ends in Finished,
+  ##                              so the channel is not tampered with after it
+  ##                              starts. But whoever stands in the middle at
+  ##                              the start can present his own certificate and
+  ##                              read everything. Only for opportunistic
+  ##                              mail transfer, where most servers present
+  ##                              certificates that do not match their name;
+  ##                              it is refused together with a root or a
+  ##                              trust store, and `tls13PeerVerified` says
+  ##                              which kind of connection this was.
   Tls13ClientConfig* {.role: configurator.} = object
     pinnedRootCertificateDer*: ByteSeq
     trustedRootsDer*: seq[ByteSeq]
+    acceptAnyCertificate*: bool
     serverName*: string
     alpn*: seq[string]
     nowUnix*: int64
@@ -66,6 +82,7 @@ type
     rootCertificate: X509Certificate
     trustAnchors: TrustStore
     pinned: bool
+    unverified: bool
     peerCertificate*: X509Certificate
     x25519SecretKey: ByteSeq
     handshakeSecrets: Tls13HandshakeSecrets
@@ -104,7 +121,12 @@ proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
   if C.pinnedRootCertificateDer.len > 0 and C.trustedRootsDer.len > 0:
     raise newException(ValueError,
       "TLS client takes a pinned root or a trust store, not both")
-  if C.pinnedRootCertificateDer.len == 0 and C.trustedRootsDer.len == 0:
+  if C.acceptAnyCertificate and
+      (C.pinnedRootCertificateDer.len > 0 or C.trustedRootsDer.len > 0):
+    raise newException(ValueError,
+      "TLS client: acceptAnyCertificate cannot be combined with a root or trust store")
+  if not C.acceptAnyCertificate and C.pinnedRootCertificateDer.len == 0 and
+      C.trustedRootsDer.len == 0:
     raise newException(ValueError,
       "TLS client needs a pinned root or at least one trust anchor")
   result.state = tcsStart
@@ -112,6 +134,7 @@ proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
   result.connection = initTls13Connection()
   result.transcript = initTls13Transcript()
   result.trustAnchors = initTrustStore()
+  result.unverified = C.acceptAnyCertificate
   result.pinned = C.pinnedRootCertificateDer.len > 0
   if result.pinned:
     R = parseX509CertificateDer(C.pinnedRootCertificateDer)
@@ -130,6 +153,13 @@ proc initTls13ClientSession*(C: Tls13ClientConfig): Tls13ClientSession {.
     if added.len > 0:
       raise newException(ValueError, "TLS trust anchor is unusable: " & added)
     i = i + 1
+
+proc tls13PeerVerified*(S: Tls13ClientSession): bool {.role: parser,
+    tag: "tls|validation".} =
+  ## S: true when the server's certificate was judged (chain, name, dates).
+  ## False for a session built with `acceptAnyCertificate`: it is encrypted
+  ## and nothing more, and a log line should say so.
+  result = not S.unverified
 
 proc startTls13Client*(S: var Tls13ClientSession): ByteSeq {.
     role: dataWriter, tag: "tls|transport|cryptoBoundary".} =
@@ -217,6 +247,8 @@ proc serverChainError(S: Tls13ClientSession, E: seq[Tls13CertificateEntry],
     intermediates: seq[X509Certificate] = @[]
     chain: ChainVerifyResult = ChainVerifyResult()
     i: int = 1
+  if S.unverified:
+    return ""
   if S.pinned:
     policy = verifyPinnedServerCertificate(leaf, S.rootCertificate,
       S.config.nowUnix, S.config.serverName)

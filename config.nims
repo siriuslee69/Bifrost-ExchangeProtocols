@@ -177,3 +177,8 @@ else:
 
 if dirExists(joinPath(repoRoot, "submodules", "Var-Invariants", "src")):
   addPathIfExists(joinPath(repoRoot, "submodules", "Var-Invariants", "src"))
+
+## The attack lab (timing, floods, a man in the middle) is a sibling clone used by
+## evaluation/ only; nothing under src/ imports it.
+if dirExists(thisDir() & "/../Nidhogg-AttackLab/src"):
+  switch("path", thisDir() & "/../Nidhogg-AttackLab/src")

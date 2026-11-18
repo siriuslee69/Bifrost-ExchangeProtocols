@@ -3520,6 +3520,11 @@ they could be cut short without notice and cannot be told apart from whole files
   always sets `ameMinPqKems = 1` (or more) in its config; the floor also covers
   every later change request from either side. Nebel's responder is stricter on
   its own (exact layout and a tier at or above its policy).
+- **`acceptAnyCertificate` is encryption against listeners only.** The TLS client can be
+  told to skip the chain, name and date checks (opportunistic mail transfer). The server
+  must still prove it holds its certificate's key and the Finished messages still bind
+  the handshake, so a flipped byte is refused; but someone standing in the middle at the
+  very start can present his own certificate. `tls13PeerVerified` says which it was.
 - **TLS 1.3 has one profile**: TLS 1.3, ChaCha20-Poly1305, x25519, null compression.
   An older version, another suite or compression is refused, so there is no
   fallback to negotiate (test_tls13_downgrade.nim).
