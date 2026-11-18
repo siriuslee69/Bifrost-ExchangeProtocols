@@ -54,6 +54,20 @@ phone ==link A==> relay ==link B==> nas
   "W:/notes"   relay opens it, its rule says no   -> phone hears arrNoRoute
 ```
 
+Run the SMTP STARTTLS example:
+
+```text
+nimble exampleSmtpStartTls
+```
+
+`smtp_starttls.nim` demonstrates:
+
+```text
+certificate + key (PEM text) -> tls13ServerConfigFromPem -> initSmtpTlsServer
+  "EHLO, STARTTLS, MAIL" in ONE burst -> EHLO and "220 go ahead" go out;
+  the MAIL line behind STARTTLS gets no answer and is forgotten
+```
+
 `relay_links.nim` is not an example of its own: it makes the link pairs
 both examples use.
 

@@ -615,6 +615,9 @@ task exampleSecurePackage, "Run authority handshake and repaired package example
 task exampleRelayFast, "Run the relayFastExtraFrame example: directory, forward, answer":
   runNim("c", "examples/relay_fast_extra_frame.nim", @["-r"])
 
+task exampleSmtpStartTls, "Run the SMTP STARTTLS example: a command slipped in before the switch is dropped":
+  runNim("c", "examples/smtp_starttls.nim", @["-r"])
+
 task exampleRelaySlow, "Run the relaySlowExtractEncrypt example: read passes, write refused":
   runNim("c", "examples/relay_slow_extract_encrypt.nim", @["-r"])
 
@@ -834,6 +837,7 @@ task examples, "Run all Bifrost examples":
   runNim("c", "examples/fomke_ame_chain.nim", @["-r"])
   runNim("c", "examples/relay_fast_extra_frame.nim", @["-r"])
   runNim("c", "examples/relay_slow_extract_encrypt.nim", @["-r"])
+  runNim("c", "examples/smtp_starttls.nim", @["-r"])
 
 task releaseHygiene, "Check generated and local repo artifacts that should not ship":
   runRepoHygiene(@["--root=."])

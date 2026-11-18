@@ -111,40 +111,44 @@ proc ecScalarOfPkcs8(A: openArray[byte]): tuple[ok: bool, scalar: seq[byte],
   inner = derContent(A, C.children[2])
   result = ecScalarOfSec1(inner)
 
+proc ecIntoConfig(ec: tuple[ok: bool, scalar: seq[byte], err: string],
+    cfg: var Tls13ServerConfig): string {.role: actor,
+    tag: "tls|config|cryptoBoundary".} =
+  ## ec/cfg: a P-256 scalar read from a key block. Answers "" or why not.
+  if not ec.ok:
+    return ec.err
+  cfg.ecdsaPrivateScalar = ec.scalar
+  result = ""
+
+proc pkcs8IntoConfig(der: seq[byte], cfg: var Tls13ServerConfig): string {.
+    role: actor, tag: "tls|config|cryptoBoundary".} =
+  ## der/cfg: a PKCS#8 key: Ed25519, RSA or P-256, tried in that order.
+  var
+    ed: Ed25519Pkcs8Result = parseEd25519Pkcs8(der)
+  if ed.ok:
+    cfg.ed25519SecretKey = ed25519TyrKeypairFromSeed(ed.seed).secretKey
+    return ""
+  if parseRsaPkcs8PrivateKey(der).ok:
+    cfg.rsaPrivateKeyDer = der
+    return ""
+  result = ecIntoConfig(ecScalarOfPkcs8(der), cfg)
+
 proc keyIntoConfig(label: string, der: seq[byte], cfg: var Tls13ServerConfig): string {.
     role: actor, tag: "tls|config|cryptoBoundary".} =
   ## label/der/cfg: the key block. Puts it where the leaf's kind will look.
   ## Answers "" when it fitted, otherwise why not.
-  var
-    ed: Ed25519Pkcs8Result = default(Ed25519Pkcs8Result)
-    rsa: RsaPrivateKeyResult = default(RsaPrivateKeyResult)
-    ec: tuple[ok: bool, scalar: seq[byte], err: string] = (false, @[], "")
   case label
   of "RSA PRIVATE KEY":
     cfg.rsaPrivateKeyDer = der
   of "EC PRIVATE KEY":
-    ec = ecScalarOfSec1(der)
-    if not ec.ok:
-      return ec.err
-    cfg.ecdsaPrivateScalar = ec.scalar
+    result = ecIntoConfig(ecScalarOfSec1(der), cfg)
   of "ENCRYPTED PRIVATE KEY":
-    return "the key is protected by a password: remove it first " &
+    result = "the key is protected by a password: remove it first " &
       "(openssl pkey -in key.pem -out plain.pem)"
   of "PRIVATE KEY":
-    ed = parseEd25519Pkcs8(der)
-    rsa = parseRsaPkcs8PrivateKey(der)
-    if ed.ok:
-      cfg.ed25519SecretKey = ed25519TyrKeypairFromSeed(ed.seed).secretKey
-    elif rsa.ok:
-      cfg.rsaPrivateKeyDer = der
-    else:
-      ec = ecScalarOfPkcs8(der)
-      if not ec.ok:
-        return ec.err
-      cfg.ecdsaPrivateScalar = ec.scalar
+    result = pkcs8IntoConfig(der, cfg)
   else:
-    return "the key block is a '" & label & "', not a private key"
-  result = ""
+    result = "the key block is a '" & label & "', not a private key"
 
 proc tls13ServerConfigFromPem*(certChainPem, keyPem: string,
     alpn: seq[string] = @[]): tuple[ok: bool, cfg: Tls13ServerConfig,
