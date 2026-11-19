@@ -472,26 +472,33 @@ proc readClientBlockFields(A: openArray[uint8], a: AmeAuthentication,
   if ameModeUsesSignatures(a.mode):
     result.proofs = readBlockProofs(A, cursor)
 
-proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
-    nowUnix: int64,
-    revokedSerials: openArray[uint64]): AmeHandshakeResult {.
-    role: orchestrator, tag: "cryptoBoundary|exchange".} =
-  ## S/f/nowUnix/revoked: responder state and the client's sealed
-  ## confirmation. The authentication used is the one the responder matched
-  ## to the hello (`S.authentication`), so both ends derive from the same
-  ## secrets -- including whether the session key took part.
+type
+  OpenedFinish {.role: preparedData.} = object
+    ## The client's finish after its sealed block was opened and the transcript
+    ## hash agreed with ours. It says what the block holds, not yet WHO is
+    ## allowed to hold it: that is the verdict of `judgeClientBlock`.
+    ##
+    ##   sealed bytes --open once--> OpenedFinish --judge--> one verdict per pin
+    ok: bool
+    err: string
+    body: AmeClientIdentityBlock
+    transcript: ByteSeq
+
+proc openClientFinish(S: AmeServerHandshake,
+    f: AmeClientFinish): OpenedFinish {.role: orchestrator,
+    tag: "cryptoBoundary|exchange".} =
+  ## S/f: the responder state and the client's sealed confirmation.
   ##
-  ## Only here does the server learn who the client is. Nothing before this
-  ## point produced a session, so a peer that cannot open this block, or whose
-  ## identity does not check out, leaves no trace but a dropped connection.
+  ## Opening needs the key schedule and nothing else: the pin of the peer does
+  ## not enter it (AM1S adds no row; AM1P+S adds one row that comes from the
+  ## shared secret, not from the pin). So this runs ONCE per finish, however
+  ## many pins the server holds.
   var
     full: ByteSeq = @[]
     rows: seq[ByteSeq] = @[]
     material: ByteSeq = @[]
     opened: tuple[ok: bool, payload: ByteSeq] = (ok: false, payload: @[])
-    body: AmeClientIdentityBlock = default(AmeClientIdentityBlock)
     cursor: int = 0
-    transcript: ByteSeq = @[]
     expected: ByteSeq = @[]
     a: AmeAuthentication = S.authentication
   if f.authTag.len != int(ord(S.serverHello.params.authTagLen)) or
@@ -521,7 +528,7 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     return
   try:
     opened.payload = unpadAmeMessage(opened.payload, f.params.padding)
-    body = readClientBlockFields(opened.payload, a, cursor)
+    result.body = readClientBlockFields(opened.payload, a, cursor)
     if cursor != opened.payload.len:
       result.err = "client finish block is malformed"
       return
@@ -530,25 +537,107 @@ proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
     return
   ## The transcript hash is checked BEFORE the proof over it, so a proof is
   ## only ever judged against bytes this side already agreed to.
-  transcript = handshakeTranscript(S.clientHello, S.serverHello)
+  result.transcript = handshakeTranscript(S.clientHello, S.serverHello)
   expected = hashAmeTier(S.clientHello.layout, S.clientHello.initialTier,
-    transcript, 32)
-  if not constantTimeEqual(body.transcriptHash, expected):
+    result.transcript, 32)
+  if not constantTimeEqual(result.body.transcriptHash, expected):
     result.err = "client finish transcript does not match"
     return
-  result.peerTrust = judgeClientBlock(S, a, body, nowUnix, revokedSerials)
-  if not result.peerTrust.ok:
-    result.err = result.peerTrust.err
+  result.ok = true
+
+proc finishFitsSchedule(S: AmeServerHandshake,
+    a: AmeAuthentication): bool {.role: parser,
+    tag: "cryptoBoundary|validation".} =
+  ## S/a: true when `a` would have opened the finish the very same way the
+  ## authentication stored in `S` did: the same mode, the same shared-secret
+  ## name and the same binder row. Pins of different peers differ in none of
+  ## these, so one opening serves them all; a candidate that does differ
+  ## cannot be judged from this opening and is refused.
+  var
+    mine: ByteSeq = ameHandshakeBinder(S.authentication)
+    theirs: ByteSeq = ameHandshakeBinder(a)
+  result = a.mode == S.authentication.mode and a.pskId == S.authentication.pskId and
+    mine.len == theirs.len and constantTimeEqual(mine, theirs)
+  secureClearAmeBytes(mine)
+  secureClearAmeBytes(theirs)
+
+proc judgeCandidate(S: AmeServerHandshake, a: AmeAuthentication,
+    O: OpenedFinish, nowUnix: int64,
+    revokedSerials: openArray[uint64]): AmePeerTrustResult {.role: orchestrator,
+    tag: "cryptoBoundary|validation".} =
+  ## S/a/O/now/revoked: the verdict on an opened finish when the peer is `a`.
+  if not finishFitsSchedule(S, a):
+    result.err = "candidate does not match the handshake that was answered"
     return
+  result = judgeClientBlock(S, a, O.body, nowUnix, revokedSerials)
+
+proc buildAcceptance(S: AmeServerHandshake, a: AmeAuthentication,
+    O: OpenedFinish, T: AmePeerTrustResult): AmeHandshakeResult {.
+    role: truthBuilder, tag: "cryptoBoundary|exchange".} =
+  ## S/a/O/T: the session keys of a finish whose peer `a` was judged `T`.
+  result.peerTrust = T
   result.auth = buildInitialAuth(S.clientHello.layout,
     S.clientHello.initialTier, S.serverHello.reply.request,
-    S.sharedSecrets, transcript, S.clientHello.sessionId, aerResponder,
+    S.sharedSecrets, O.transcript, S.clientHello.sessionId, aerResponder,
     S.serverHello.params, a)
   result.auth.localSignatureSecretKeys = copyByteStack(
     S.localSignatureSecretKeys)
-  for key in body.certificate.signingKeys:
+  for key in O.body.certificate.signingKeys:
     result.auth.peerSignaturePublicKeys.add(key.publicKey & @[])
   result.ok = true
+
+proc acceptAmeHandshakeCore(S: AmeServerHandshake, f: AmeClientFinish,
+    nowUnix: int64,
+    revokedSerials: openArray[uint64]): AmeHandshakeResult {.
+    role: orchestrator, tag: "cryptoBoundary|exchange".} =
+  ## S/f/nowUnix/revoked: responder state and the client's sealed
+  ## confirmation. The authentication used is the one the responder matched
+  ## to the hello (`S.authentication`), so both ends derive from the same
+  ## secrets -- including whether the session key took part.
+  ##
+  ## Only here does the server learn who the client is. Nothing before this
+  ## point produced a session, so a peer that cannot open this block, or whose
+  ## identity does not check out, leaves no trace but a dropped connection.
+  var
+    O: OpenedFinish = openClientFinish(S, f)
+    T: AmePeerTrustResult = default(AmePeerTrustResult)
+  if not O.ok:
+    result.err = O.err
+    return
+  T = judgeClientBlock(S, S.authentication, O.body, nowUnix, revokedSerials)
+  if not T.ok:
+    result.peerTrust = T
+    result.err = T.err
+    return
+  result = buildAcceptance(S, S.authentication, O, T)
+
+type
+  CandidateVerdict {.role: truthState.} = object
+    ## Which candidate was the peer, and why the others were not.
+    at: int
+    trust: AmePeerTrustResult
+    err: string
+
+proc judgeAll(S: AmeServerHandshake, C: openArray[AmeAuthentication],
+    O: OpenedFinish, nowUnix: int64,
+    revokedSerials: openArray[uint64]): CandidateVerdict {.role: orchestrator,
+    tag: "cryptoBoundary|validation".} =
+  ## S/C/O/now/revoked: judge EVERY candidate, and keep the first that
+  ## passes. There is no early exit on purpose: the time spent must not
+  ## depend on which place of the list the peer holds, or an observer could
+  ## read that place off the duration of the handshake.
+  var
+    i: int = 0
+    t: AmePeerTrustResult = default(AmePeerTrustResult)
+  result.at = -1
+  while i < C.len:
+    t = judgeCandidate(S, C[i], O, nowUnix, revokedSerials)
+    if t.ok and result.at < 0:
+      result.at = i
+      result.trust = t
+    if not t.ok and result.at < 0:
+      result.err = t.err
+    i = i + 1
 
 ## ╭⟢ erasing what is finished with
 
@@ -599,3 +688,39 @@ proc acceptAmeHandshake*(S: var AmeServerHandshake, f: AmeClientFinish,
     result = acceptAmeHandshakeCore(S, f, nowUnix, revokedSerials)
   finally:
     clearAmeServerHandshake(S)
+
+proc acceptAmeHandshakeAmong*(S: var AmeServerHandshake, f: AmeClientFinish,
+    C: openArray[AmeAuthentication], nowUnix: int64 = 0'i64,
+    revokedSerials: openArray[uint64] = []): tuple[at: int,
+    res: AmeHandshakeResult] {.role: orchestrator, tag: "appApi".} =
+  ## S/f/C/now/revoked: the responder's fourth step when it does not know WHICH
+  ## of several peers is calling. `at` is the place in `C` of the peer that
+  ## passed, or -1 and `res.err` says why not. The finish is opened once and
+  ## every candidate is judged against what it holds, so the time does not
+  ## tell which candidate it was (see `judgeAll`). The responder's own secrets
+  ## are erased whatever the outcome.
+  ##
+  ## The candidates may differ in the pin they carry and in nothing else
+  ## that reaches the key schedule (`finishFitsSchedule`).
+  ##
+  ##   one finish ──open once──▶ block ──┬─▶ judge C[0]
+  ##                                     ├─▶ judge C[1]      all of them,
+  ##                                     └─▶ judge C[n-1]    first pass wins
+  var
+    O: OpenedFinish = OpenedFinish()
+    V: CandidateVerdict = CandidateVerdict()
+  result.at = -1
+  try:
+    O = openClientFinish(S, f)
+    if not O.ok:
+      result.res.err = O.err
+      return
+    V = judgeAll(S, C, O, nowUnix, revokedSerials)
+    if V.at < 0:
+      result.res.err = V.err
+      return
+    result.at = V.at
+    result.res = buildAcceptance(S, C[V.at], O, V.trust)
+  finally:
+    clearAmeServerHandshake(S)
+

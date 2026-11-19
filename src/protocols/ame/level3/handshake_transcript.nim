@@ -118,7 +118,7 @@ proc amePskExchangeBinder*(a: AmeAuthentication): ByteSeq {.
   secureClearAmeBytes(subject)
   secureClearAmeBytes(key)
 
-proc ameHandshakeBinder(a: AmeAuthentication): ByteSeq {.role: helper,
+proc ameHandshakeBinder*(a: AmeAuthentication): ByteSeq {.role: helper,
     tag: "cryptoBoundary|kdf".} =
   ## a: the extra secret row this mode contributes, empty for AM1A and AM1S.
   if not ameModeUsesPsk(a.mode):
