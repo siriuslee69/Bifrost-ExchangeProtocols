@@ -67,3 +67,10 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: nobody (waits for the first caller)
   plan: when a caller appears, add one routine `openArchiveFile` that does chunk opens, shape check and hash check in one call, so no caller can forget one.
 
+- [ ] `evaluation/stress/soak/soak_client.nim` does not compile: `'soakClientThread' is not GC-safe as it calls 'reconnectPeer'`.
+  why: `nimble soak` (real sockets for hours, with induced loss) cannot start. It was already broken at commit 0e9be8c, before the folder move.
+  start: nimble soak --seconds=2   (the warnings end in Tyr-Crypto/src/tyr/kems/hqc/reed_solomon.nim, `computeRoots`)
+  done when: `nimble soak --seconds=2` builds and runs to its summary.
+  needs: nobody
+  plan: find the global variable that `computeRoots` touches (Tyr's HQC) and make it local or thread-local, in Tyr first. Tyr keeps its algorithm routines separate and is optimised last: change that one place only.
+

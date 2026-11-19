@@ -817,14 +817,14 @@ task soak, "Run the AME+DAC soak: separate processes, real sockets, induced loss
   ##   nimble soak --seconds=3600 --clients=4       an hour, four client processes
   ##   nimble soak --loss=0 --churn=0 --peers=8     throughput, nothing induced
   ##
-  ## Every knob is listed at the top of evaluation/soak/soak_run.nim. A run
+  ## Every knob is listed at the top of evaluation/stress/soak/soak_run.nim. A run
   ## that ends with "every process finished clean" saw no payload mismatch and
   ## no escaped exception on any process.
-  runNim("c", "evaluation/soak/soak_server.nim",
+  runNim("c", "evaluation/stress/soak/soak_server.nim",
     @["--threads:on", "-d:release", "--outdir:build/soak"])
-  runNim("c", "evaluation/soak/soak_client.nim",
+  runNim("c", "evaluation/stress/soak/soak_client.nim",
     @["--threads:on", "-d:release", "--outdir:build/soak"])
-  runNim("c", "evaluation/soak/soak_run.nim",
+  runNim("c", "evaluation/stress/soak/soak_run.nim",
     @["-d:release", "--outdir:build/soak"])
   runCommand(soakRunnerPath(), soakForwardedArgs())
 

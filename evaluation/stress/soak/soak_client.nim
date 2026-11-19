@@ -36,17 +36,17 @@
 
 import std/[atomics, os, strutils]
 
-import ../../src/protocols/types
-import ../../src/protocols/ame/types
-import ../../src/protocols/ame/level2/session
-import ../../src/protocols/ame/level3/dac_relay
-import ../../src/protocols/ame/level3/dac_endpoint
-import ../../src/protocols/ame/level3/handshake_dac
-import ../../src/protocols/dac/types
-import ../../src/protocols/dac/level0/defaults
-import ../../src/protocols/dac/level0/transport
-import ../../src/protocols/dac/level3/link
-import ../../src/protocols/dac/level3/link_table
+import ../../../src/protocols/types
+import ../../../src/protocols/ame/types
+import ../../../src/protocols/ame/level2/session
+import ../../../src/protocols/ame/level3/dac_relay
+import ../../../src/protocols/ame/level3/dac_endpoint
+import ../../../src/protocols/ame/level3/handshake_dac
+import ../../../src/protocols/dac/types
+import ../../../src/protocols/dac/level0/defaults
+import ../../../src/protocols/dac/level0/transport
+import ../../../src/protocols/dac/level3/link
+import ../../../src/protocols/dac/level3/link_table
 import ./soak_common
 import runePragmas
 

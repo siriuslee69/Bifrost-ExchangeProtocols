@@ -16,7 +16,7 @@
 ## Each probe runs twice with different seeds; LEAK counts only when both runs
 ## say LEAK with the same sign. Run pinned to one core on a quiet machine:
 ##
-##   taskset -c 3 nim c -r -d:release evaluation/tests/attack_timing_crypto.nim
+##   taskset -c 3 nim c -r -d:release evaluation/stress/attack_timing_crypto.nim
 
 import std/[strutils, os]
 import nidhogg_attacklab

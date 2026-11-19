@@ -36,14 +36,14 @@
 
 import std/[atomics, monotimes, os, strutils, times]
 
-import ../../src/protocols/types
-import ../../src/protocols/ame/types
-import ../../src/protocols/ame/level1/exchange_paths
-import ../../src/protocols/ame/level1/suites
-import ../../src/protocols/ame/level1/path_triggers
-import ../../src/protocols/ame/level3/handshake_authentication
-import ../../src/protocols/ame/level3/handshake_transport
-import ../../src/protocols/dac/level0/defaults
+import ../../../src/protocols/types
+import ../../../src/protocols/ame/types
+import ../../../src/protocols/ame/level1/exchange_paths
+import ../../../src/protocols/ame/level1/suites
+import ../../../src/protocols/ame/level1/path_triggers
+import ../../../src/protocols/ame/level3/handshake_authentication
+import ../../../src/protocols/ame/level3/handshake_transport
+import ../../../src/protocols/dac/level0/defaults
 import runePragmas
 
 const

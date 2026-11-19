@@ -1,4 +1,14 @@
-Commit Message: the five replay/counter questions answered with tests (a refused frame leaves the session equal to before); the downgrade sweep also zeroes bytes
+Commit Message: evaluation/stress: attack_timing_crypto and the soak leave the test folders; TODO: soak client does not compile
+
+## 2026-11-19 (third session) evaluation/stress
+
+- `evaluation/tests/attack_timing_crypto.nim` -> `evaluation/stress/attack_timing_crypto.nim`;
+  `evaluation/soak/` -> `evaluation/stress/soak/` (its `../../src` imports are now `../../../src`).
+  The rule that sorts a program into tests/ or stress/ is in Proto-RepoTemplate/evaluation/stress/README.md.
+  `nimble runStress` (Nimble-Tasks) runs `attack*.nim` and `stress*.nim`; the soak keeps `nimble soak`.
+- Compiled after the move: soak_server, soak_run, attack_timing_crypto. NOT run.
+- Found: `soak_client.nim` does not compile, before and after the move (`soakClientThread` is not
+  GC-safe; the chain ends in Tyr's HQC `computeRoots`). See agents/TODO.md.
 
 ## 2026-11-19 Replay, counters and list caps (the open item of 2026-11-18, closed)
 

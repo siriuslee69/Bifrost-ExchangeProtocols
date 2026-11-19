@@ -5,7 +5,7 @@ an hour, with dozens of peers, on a wire that loses things". They find
 different faults, and everything in this file was found by the second kind.
 
 ```
-evaluation/soak/
+evaluation/stress/soak/
 ├── soak_common.nim   the payload, the identity, the counters, the clock
 ├── soak_server.nim   the side being measured
 ├── soak_client.nim   the traffic, and the losses
