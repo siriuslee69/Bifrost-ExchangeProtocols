@@ -3,6 +3,13 @@
 What is still to do in this repo. Rules: Agent-Conventions/WORKFLOW.md, section 8.
 An item that is done is removed here and named in PROGRESS.md.
 
+- [ ] The `iot` and `iot-min` presets build with `danger = true` (configs/iot.toml:28, configs/iot-min.toml:28): no bounds check, no overflow check, while the same code reads bytes from strangers.
+  why: with the checks off, a length a stranger sends that reaches past a buffer is not stopped by the compiler; it reads or writes the neighbouring memory. Nim 2.4's `-d:release` keeps the checks, only `-d:danger` removes them (catalog row N25, run on a 12-line program).
+  start: grep -n danger configs/*.toml
+  done when: either the two presets build without `danger` and their size and speed are measured and written down, or every decoder they compile is shown to refuse a length past its end (test_fuzz run with `-d:danger`).
+  needs: nobody
+  plan: first measure what `danger` buys on the iot target (size, speed). If it buys little, drop it. If it buys much, keep it only for the routines that hold no outside bytes (math), through a per-routine pragma, not the whole build.
+
 - [ ] TCP calls that wait with a timeout still go through Nim's own `select`: tcp_ops.nim `sock.recv(n, timeoutMs)` (line ~220), `sock.connect(host, port, timeoutMs)` (line ~280), and udp_ops.nim `connectUdp` (`sock.connect(..., timeoutMs)`, line ~304).
   why: Nim's wait keeps a table of 1024 sockets (64 on Windows). A TCP server or client whose process holds a socket numbered above 1023 overruns it: a build with glibc's fortify checks is stopped, another overwrites memory next to it. The UDP receive path and `readAvailableSocket` already wait through transport/wait_readable.nim. Nebel's UDP programs do not reach these calls with high numbers; a TCP server with over 1000 connections (a mail or web server built on Bifrost) does.
   start: grep -rn "recv(.*timeout\|connect(.*timeoutMs" src/protocols/transport/*.nim
