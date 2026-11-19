@@ -45,7 +45,9 @@ const
   validUntil: int64 = 1000'i64
   stride {.intdefine: "downgradeStride".}: int = 1
     ## 1 = every byte. A larger number samples every n-th byte (quicker).
-  masks: array[2, byte] = [0x01'u8, 0x80'u8]
+  masks: array[3, byte] = [0x01'u8, 0x80'u8, 0x00'u8]
+    ## 0x01 and 0x80 change one bit; 0x00 SETS the byte to zero (a zeroed count of
+    ## signatures is an "unsigned" handshake, which a bit flip rarely makes)
 
 type
   Setup = object
@@ -150,7 +152,10 @@ proc honestRun(S: Setup): Honest {.role: orchestrator.} =
 
 proc flipped(B: ByteSeq, pos: int, mask: byte): ByteSeq {.role: helper.} =
   result = B
-  result[pos] = result[pos] xor mask
+  if mask == 0'u8:
+    result[pos] = 0'u8
+  else:
+    result[pos] = result[pos] xor mask
 
 proc secretsOf(R: AmeHandshakeResult): ByteSeq {.role: helper.} =
   ## everything the two sides must agree on, as one byte string
@@ -208,21 +213,30 @@ proc runChanged(S: Setup, H: Honest, rec: int, pos: int,
   except Defect:
     result = fCrash
 
+proc changesNothing(b: byte, mask: byte): bool {.role: parser.} =
+  ## b/mask: setting a zero byte to zero is not an edit, so it is not counted
+  result = mask == 0'u8 and b == 0'u8
+
+proc noteFate(T: var Tally, f: Fate, rec, pos: int, mask: byte) {.role: actor.} =
+  ## T/f: counts what one edit led to, and names the edits that matter.
+  var
+    name: string = "rec" & $(rec + 1) & "@" & $pos & "^" & toHex(int(mask), 2)
+  T.counts[f] = T.counts[f] + 1
+  if f == fSame:
+    T.same.add(name)
+  if f in {fDowngraded, fCrash}:
+    T.bad.add($f & " " & name)
+
 proc sweep(S: Setup, H: Honest, rec: int, T: var Tally) {.role: actor.} =
   ## Every byte of record `rec`, every mask.
   var
     pos: int = 0
     m: int = 0
-    f: Fate = fRefused
   while pos < H.rec[rec].len:
     m = 0
     while m < masks.len:
-      f = runChanged(S, H, rec, pos, masks[m])
-      T.counts[f] = T.counts[f] + 1
-      if f == fSame:
-        T.same.add("rec" & $(rec + 1) & "@" & $pos & "^" & toHex(int(masks[m]), 2))
-      if f in {fDowngraded, fCrash}:
-        T.bad.add($f & " rec" & $(rec + 1) & "@" & $pos & "^" & toHex(int(masks[m]), 2))
+      if not changesNothing(H.rec[rec][pos], masks[m]):
+        noteFate(T, runChanged(S, H, rec, pos, masks[m]), rec, pos, masks[m])
       m = m + 1
     pos = pos + stride
 
@@ -248,7 +262,7 @@ proc attackMode(S: Setup): Tally {.role: orchestrator.} =
 suite "downgrade by editing the handshake":
   # {.testKind: tkFuzz, covers: "answerAmeHandshake",
   #   pins: "a man in the middle must not be able to make both ends accept less".}
-  test "AM1A: no single-bit edit of any record yields a weaker accepted handshake":
+  test "AM1A: no single-byte edit (bit flips, zeroing) of any record yields a weaker accepted handshake":
     var
       T: Tally = attackMode(setupAm1a())
     check T.counts[fDowngraded] == 0
@@ -256,7 +270,7 @@ suite "downgrade by editing the handshake":
     check T.bad.len == 0
 
   # {.testKind: tkFuzz, covers: "answerAmeHandshake".}
-  test "AM1S: no single-bit edit of any record yields a weaker accepted handshake":
+  test "AM1S: no single-byte edit (bit flips, zeroing) of any record yields a weaker accepted handshake":
     var
       T: Tally = attackMode(setupAm1s())
     check T.counts[fDowngraded] == 0
@@ -264,7 +278,7 @@ suite "downgrade by editing the handshake":
     check T.bad.len == 0
 
   # {.testKind: tkFuzz, covers: "answerAmeHandshake".}
-  test "AM1P: no single-bit edit of any record yields a weaker accepted handshake":
+  test "AM1P: no single-byte edit (bit flips, zeroing) of any record yields a weaker accepted handshake":
     var
       T: Tally = attackMode(setupAm1p())
     check T.counts[fDowngraded] == 0
@@ -272,7 +286,7 @@ suite "downgrade by editing the handshake":
     check T.bad.len == 0
 
   # {.testKind: tkFuzz, covers: "answerAmeHandshake".}
-  test "AM1P+S: no single-bit edit of any record yields a weaker accepted handshake":
+  test "AM1P+S: no single-byte edit (bit flips, zeroing) of any record yields a weaker accepted handshake":
     var
       T: Tally = attackMode(setupAm1ps())
     check T.counts[fDowngraded] == 0

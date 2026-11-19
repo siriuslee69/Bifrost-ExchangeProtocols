@@ -3536,6 +3536,38 @@ they could be cut short without notice and cannot be told apart from whole files
   opportunistic mail works and not a flaw of the engine; `needTls` on the SMTP
   client refuses to go on without it.
 
+**Replay and counters (does a datagram change state before it is proven genuine?)**
+
+Five questions from the 2026 WireGuard, Noise and age advisories, answered for this code:
+
+```text
+  question                                          answer                                   shown by
+  ------------------------------------------------  ---------------------------------------  -----------------------------
+  1 a replayed frame: does it change state?         no. 50 replays leave the whole session   test_replay_state.nim (1):
+                                                    EQUAL to a copy taken before them        `receiver == before`
+  2 what moves the forwarder's NAS address?        only `noteNasSeen`, called for a pong    relay/super_fast_udp.nim
+                                                    on the CONTROL socket from home's own    (fromNas drops every other source);
+                                                    address. A datagram on a client's        Nebel forward.nim fromControlSide;
+                                                    socket never does. `--follow-home`       test_relay_super_fast_udp.nim
+                                                    (off by default) lets a pong from ANY    "not from the NAS goes nowhere"
+                                                    address move it: the Zephyr class, so
+                                                    keep it off; `--liveness file` takes
+                                                    pings out altogether
+  3 a frame that fails to open: counters moved?     no. Every single-byte corruption of    test_replay_state.nim (3)
+                                                    the next frame (three masks), every cut,
+                                                    a tail, and the sender's own frame fed
+                                                    back leave the session EQUAL to before
+  4 a hello's lists: capped before any key work?    yes: 8 algorithms per family            test_replay_state.nim (4):
+                                                    (`ameMaxAlgorithmSlots`) is the size of    all 256 values of every byte
+                                                    the array, the decoder refuses a longer   of a layout
+                                                    list as a ValueError, and decoding a
+                                                    hello is parsing only
+  5 an unsigned or wrongly signed handshake?        refused in every mode: every byte of      nimble testDowngrade (about
+                                                    all four records changed (bit flips and   74 400 edits), incl. the
+                                                    zeroing, so a zeroed count of            signature bytes and counts
+                                                    signatures too)
+```
+
 **Chunked files**
 
 - **"unsupported chunk version 1"**: the file was sealed by a release before

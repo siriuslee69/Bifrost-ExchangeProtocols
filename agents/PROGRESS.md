@@ -1,4 +1,16 @@
-Commit Message: Run the routed handshake example with the configured AME layout
+Commit Message: the five replay/counter questions answered with tests (a refused frame leaves the session equal to before); the downgrade sweep also zeroes bytes
+
+## 2026-11-19 Replay, counters and list caps (the open item of 2026-11-18, closed)
+
+Questions 1, 3, 4: `evaluation/tests/test_replay_state.nim`. A replayed frame (50 times), every
+single-byte corruption of the next frame (three masks), every cut, a tail and the sender's own frame
+fed back are refused, and the whole `AmeSession` stays EQUAL to a copy taken before them
+(`receiver == before`); the genuine next frames still open. Every value of every byte of a suite
+layout either decodes to at most 8 per family or is a ValueError. Question 2: answered in the
+README ("Replay and counters") from relay/super_fast_udp.nim and Nebel's forward.nim; question 5:
+`testDowngrade` now also SETS each byte to zero (a zeroed count of signatures is an "unsigned"
+handshake): about 74 400 edits in all four modes, 0 weaker, 0 unchanged, 0 crashes.
+
 
 ## 2026-11-19 Default handshake policy and input limits
 
