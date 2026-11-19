@@ -74,6 +74,7 @@ import ../transport/types as transport_types
 import runePragmas
 import ./overflow_ring
 import ./restriction_types
+import protocols/intake/address
 import ./restriction_address
 import ./restriction_filter
 

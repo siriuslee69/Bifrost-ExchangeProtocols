@@ -69,6 +69,7 @@ proc feedRelayFastExtraFrame*(R: var RelayFastExtraFrame, slot: int,
     return
   if not isAmeRouteFrame(frame):
     if isDacControlFrame(frame):
+      # otter: door reread told apart by the clear header only; feedRelayBrake decodes the whole frame again and refuses what it cannot read
       return feedRelayBrake(R, slot, frame)
     return feedRelayControl(R, slot, frame, nowMs)
   result = feedOpenedRelayFrame(R, slot,

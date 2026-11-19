@@ -16,7 +16,7 @@ const
   DesktopNodeName = "Desktop"
 
 var
-  gListener: Socket
+  gListener: Socket = nil
   gEvents: seq[JsonNode] = @[]
   gSequence: uint64 = 1'u64
 
@@ -71,9 +71,9 @@ proc closeSocket(s: Socket) {.role: helper, tag: "networkSurface".} =
 proc handleClient(c: Socket) {.role: orchestrator, tag: "networkSurface".} =
   ## c: accepted one-message BMSG connection.
   var
-    frame: TcpFrameResult
-    m: LanMessage
-    ack: LanMessage
+    frame: TcpFrameResult = default(TcpFrameResult)
+    m: LanMessage = default(LanMessage)
+    ack: LanMessage = default(LanMessage)
     peer: string = "peer"
   try:
     peer = c.getPeerAddr()[0]
@@ -94,9 +94,10 @@ proc handleClient(c: Socket) {.role: orchestrator, tag: "networkSurface".} =
 proc pumpListener() {.role: orchestrator, tag: "networkSurface".} =
   ## Accepts all currently waiting clients without blocking the WebUI loop.
   var
-    c: owned(Socket)
+    c: owned(Socket) = nil
   while true:
     try:
+      # otter: door deadline gListener is made non-blocking above (setBlocking(false)): accept raises at once when nobody waits
       gListener.accept(c)
       handleClient(c)
     except CatchableError:
@@ -107,7 +108,7 @@ proc sendMessage(host, body: string): JsonNode {.role: orchestrator, tag: "netwo
   var
     cleanHost: string = host.strip()
     cleanBody: string = body.strip()
-    c: Socket
+    c: Socket = nil
     frame: TcpFrameResult
     m: LanMessage
     ack: LanMessage
@@ -147,7 +148,7 @@ proc drainEvents(): JsonNode {.role: dataFetcher, tag: "interop".} =
 proc handleInterop(raw: string): string {.role: parser, tag: "interop".} =
   ## raw: one JSON browser request.
   var
-    request: JsonNode
+    request: JsonNode = nil
     reply: JsonNode = newJObject()
   try:
     request = parseJson(raw)

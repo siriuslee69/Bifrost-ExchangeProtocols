@@ -76,6 +76,7 @@ proc feedRelaySlowExtractEncrypt*(R: var RelaySlowExtractEncrypt, slot: int,
   if droppedFromEmptySlot(R, slot, result):
     return
   if isDacControlFrame(frame):
+    # otter: door reread told apart by the clear header only; feedRelayBrake decodes the whole frame again and refuses what it cannot read
     return feedRelayBrake(R, slot, frame)
   if isAmeRouteControl(frame):
     return feedRelayControl(R, slot, frame, nowMs)

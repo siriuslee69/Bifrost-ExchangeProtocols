@@ -24,6 +24,7 @@ import ../../src/protocols/types
 import ../../src/protocols/transport/types as transport_types
 import ../../src/protocols/relay/super_fast_udp
 import ../../src/protocols/relay/restriction_address
+import protocols/intake/address
 import runePragmas
 
 proc ep(h: string, p: uint16): transport_types.UdpAddress {.role: configurator.} =

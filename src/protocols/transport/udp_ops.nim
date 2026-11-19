@@ -363,6 +363,7 @@ proc recvUdpDatagram*(sock: Socket, maxBytes: int,
     return
   body = newString(maxBytes)
   try:
+    # otter: door deadline waitReadable(fds, timeoutMs) answered just above: a datagram is waiting, recvFrom returns at once
     n = sock.recvFrom(body, maxBytes, host, port)
   except CatchableError as e:
     result.ok = false

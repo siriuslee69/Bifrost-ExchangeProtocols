@@ -33,7 +33,7 @@
 import std/strutils
 
 import runePragmas
-import ./restriction_address
+import protocols/intake/address
 
 const
   restrictionSelected* {.strdefine: "bifrostRestriction".}: string = "all"

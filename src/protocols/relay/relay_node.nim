@@ -768,6 +768,7 @@ proc feedRelayControl*(R: var RelayNode, slot: int,
   ## (kind 0x14) or a restriction update (kind 0x17). Told apart by the clear
   ## AME header. Both feed procs call this on their own. nowMs: their clock.
   if isRestrictionFrame(frame):
+    # otter: door reread told apart by the clear header only; feedRelayRestriction decodes the whole frame again and refuses what it cannot read
     return feedRelayRestriction(R, slot, frame, nowMs)
   return feedRelayAsk(R, slot, frame)
 

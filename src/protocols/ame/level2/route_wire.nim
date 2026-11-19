@@ -166,6 +166,7 @@ proc routeHeaderError(S: AmeSession, A: openArray[uint8]): string {.
     return "not an AME route frame"
   if A[4] != uint8(ord(arkForward)) and A[4] != uint8(ord(arkRefuse)):
     return "AME route kind is unknown"
+  # otter: door reread isAmeRouteFrame checked the length these fixed offsets need; no other parser reads A here
   if not acceptsSessionId(S, readU64Le(A, 6)):
     return "AME route frame belongs to another session"
   if A[4] == uint8(ord(arkRefuse)) and A.len != ameRouteOverhead:

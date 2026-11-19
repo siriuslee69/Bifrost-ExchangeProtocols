@@ -29,7 +29,7 @@ proc readAsyncLine*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
   ## m: maximum accepted line length.
   ## t: timeout in milliseconds; zero disables the timeout.
   var
-    f: Future[string]
+    f: Future[string] = nil
     done: bool = false
   if s.isNil:
     result.err = "socket is nil"
@@ -38,6 +38,7 @@ proc readAsyncLine*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
     result.err = "maximum line length must be positive"
     return
   try:
+    # otter: door deadline the future is waited on through withTimeout(f, t) below; t = 0 is the caller's own choice of no limit
     f = s.recvLine(maxLength = m)
     if t > 0:
       done = await withTimeout(f, t)
@@ -75,11 +76,14 @@ proc recvAvailable(s: AsyncSocket; m: int): Future[string] {.async,
   var
     k: int = bufferedBytes(s)
   if k < 0:
+    # otter: door deadline the only caller, readAsyncChunk, waits on this future through withTimeout(f, t)
     return await s.recv(m)
   if k == 0:
+    # otter: door deadline the same caller deadline covers this wait
     result = await s.recv(1)
     k = bufferedBytes(s)
   if result.len > 0 or k > 0:
+    # otter: door deadline the same caller deadline; the bytes are already in the buffer here
     result.add(await s.recv(min(k, m - result.len)))
 
 proc readAsyncChunk*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async,
@@ -88,7 +92,7 @@ proc readAsyncChunk*(s: AsyncSocket; m, t: int): Future[AsyncStreamRead] {.async
   ## m: maximum bytes requested from the socket.
   ## t: timeout in milliseconds; zero disables the timeout.
   var
-    f: Future[string]
+    f: Future[string] = nil
     done: bool = false
   if s.isNil:
     result.err = "socket is nil"
@@ -139,7 +143,7 @@ proc copyAsyncStream*(s, d: AsyncSocket; c: int = 8192): Future[void] {.async,
   ## d: connected destination socket.
   ## c: bounded bytes requested per read.
   var
-    r: AsyncStreamRead
+    r: AsyncStreamRead = default(AsyncStreamRead)
     sent: bool = false
   if c <= 0:
     return

@@ -12,10 +12,14 @@ import ./types
 import ./tls_ops
 import ./socket_write
 import ./host_literal
+import ./wait_readable
 import runePragmas
 
 const
   maxTcpFrameBytes* = 16_777_216'u32
+  tcpAcceptTimeoutMs* = 30_000
+    ## The longest `acceptTcpClient` waits for a client before it raises a
+    ## TimeoutError. A caller that wants another time passes its own.
 
 proc encodeLen32*(v: uint32): string {.role: helper.} =
   ## encodeLen32: encode len 32.
@@ -321,11 +325,17 @@ proc listenTcp*(e: TcpEndpoint): Socket {.role: orchestrator.} =
   ## listenTcp: listen TCP.
   result = listenTcp(e.address)
 
-proc acceptTcpClient*(sock: Socket,
-    t: TlsConfig = defaultTlsConfig()): Socket {.role: orchestrator.} =
-  ## acceptTcpClient: accept TCP client.
+proc acceptTcpClient*(sock: Socket, t: TlsConfig = defaultTlsConfig(),
+    timeoutMs: int = tcpAcceptTimeoutMs): Socket {.role: orchestrator.} =
+  ## sock: the listening socket. t: how the client's connection is wrapped.
+  ## timeoutMs: the longest wait for a client to arrive; a TimeoutError after
+  ## that, so a server loop is never stuck inside one accept.
   var
     c: owned(Socket) = nil
+    fds: seq[SocketHandle] = @[sock.getFd()]
+  if waitReadable(fds, timeoutMs) <= 0:
+    raise newException(TimeoutError, "no client within " & $timeoutMs & " ms")
+  # otter: door deadline waitReadable(fds, timeoutMs) answered just above: a client is waiting, accept returns at once
   sock.accept(c)
   result = c
   if t.enabled:

@@ -12,7 +12,7 @@
 
 import runePragmas
 import ./restriction_types
-import ./restriction_address
+import protocols/intake/address
 import ./restriction_listed
 import ./restriction_allowed
 

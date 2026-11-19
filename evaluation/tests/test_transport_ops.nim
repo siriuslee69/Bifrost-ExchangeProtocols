@@ -2,7 +2,7 @@
 ## Transport Ops Tests <- generic TCP/UDP transport helpers
 ## ---------------------------------------------------
 
-import std/[os, net, strutils, unittest]
+import std/[os, net, strutils, times, unittest]
 when defined(ssl):
   from ./tls_test_support import
     ensureTlsTestCertificate,
@@ -284,6 +284,26 @@ suite "transport ops":
     recvRes = recvTcpFrame(serverSock, 4000)
     check recvRes.ok
     check recvRes.payload == payload
+
+  # {.testKind: tkEdgeCase, covers: "acceptTcpClient", pins: "accept waited forever for a client that never came".}
+  test "acceptTcpClient gives up after its timeout when nobody connects":
+    var
+      listener: Socket = nil
+      gaveUp: bool = false
+      started: float = 0.0
+      took: float = 0.0
+    listener = listenTcp(initTcpAddress("127.0.0.1", 0'u16))
+    defer:
+      listener.close()
+    started = epochTime()
+    try:
+      discard acceptTcpClient(listener, defaultTlsConfig(), 80)
+    except TimeoutError:
+      gaveUp = true
+    took = epochTime() - started
+    check gaveUp
+    check took >= 0.05
+    check took < 2.0
 
   # {.testKind: tkIntegration.}
   test "tcp localhost reaches an ipv6-only listener":

@@ -81,3 +81,17 @@ An item that is done is removed here and named in PROGRESS.md.
   needs: nobody
   plan: find the global variable that `computeRoots` touches (Tyr's HQC) and make it local or thread-local, in Tyr first. Tyr keeps its algorithm routines separate and is optimised last: change that one place only.
 
+
+- [ ] `src/clients/desktop/app.nim` does not compile: `Error: attempting to call routine: 'clean'` (app.nim line 193; the same error is in the committed version before 2026-11-19).
+  why: the desktop client is listed in the repo and cannot be built; nobody notices because no test or task compiles it.
+  start: nim check src/clients/desktop/app.nim
+  done when: `nim check src/clients/desktop/app.nim` prints no error, or the client is removed because nothing uses it.
+  needs: nobody
+  plan: find where `clean` came from (a template of the UI library the file was written against, no longer imported); restore the import or replace the call. If the desktop client is dead, move it out and say so in the README.
+
+- [ ] evaluation/tests/test_transport_ops.nim has 16 `var` lines with no start value (lines 34-36, 50, 61-63, 77, 89, 124, 144, 190, 222-224, 241).
+  why: CONVENTIONS.md "give var definitions a default value"; the hook reports them on every edit of the file.
+  start: tools via Otter: ../Otter-RepoEvaluation/tools/agent_hooks/nim-check.sh evaluation/tests/test_transport_ops.nim
+  done when: nim-check prints nothing for the file.
+  needs: nobody
+  plan: `= nil` for Socket, `= default(T)` for objects; run the file after.

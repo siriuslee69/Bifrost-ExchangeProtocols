@@ -58,6 +58,7 @@ proc readOnce(sock: Socket, maxBytes: int): string {.role: dataFetcher.} =
   when defined(windows):
     n = int(winlean.recv(sock.getFd(), addr result[0], cint(maxBytes), 0))
   else:
+    # otter: door deadline its only caller, readAvailableSocket, asks socketReadable (waitReadable with the caller's timeoutMs) first, so this read returns what is already there
     n = int(posix.recv(sock.getFd(), addr result[0], maxBytes, 0'i32))
   if n < 0:
     n = 0

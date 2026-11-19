@@ -50,13 +50,14 @@ import ../ame/types
 import ../ame/level2/seal_open
 import ../ame/level2/wire
 import ./restriction_types
+import protocols/intake/address
 import ./restriction_address
 import ./restriction_group
 import ./restriction_listed
 import ./restriction_allowed
 import ./restriction_filter
 
-export restriction_types, restriction_address, restriction_group,
+export restriction_types, address, restriction_address, restriction_group,
   restriction_listed, restriction_allowed, restriction_filter
 
 ## ------------------------------ the check ------------------------------

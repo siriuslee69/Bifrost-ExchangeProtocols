@@ -4,7 +4,7 @@
 import std/[tables, times, os, strutils]
 import runePragmas
 import ../../types
-import ../../relay/restriction_address
+import protocols/intake/address
 import ../types
 import ../level2/wire
 import ./handshake_cookie

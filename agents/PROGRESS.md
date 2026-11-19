@@ -1,4 +1,33 @@
-Commit Message: evaluation/stress: attack_timing_crypto and the soak leave the test folders; TODO: soak client does not compile
+Commit Message: The five door rules read zero here: address reader moved to Fylgia (intake), acceptTcpClient has a deadline, 11 sites say why they are right
+
+## 2026-11-19 (evening) the door rules (Otter `doors`) applied to Bifrost
+
+Nebel's docs/attack_classes.md, class rules. Otter's `door-check.sh` found 46 places at the first
+run and 12 after it was tuned (see Otter's PROGRESS); now 0.
+
+```text
+  what                                              where
+  ------------------------------------------------  ----------------------------------------
+  the address reader (SourceAddr, parseIpv4/6,       moved to Fylgia-Utils protocols/intake/
+    foldMapped, hostGroupKey) -- one place says       address.nim, so `Who` (Fylgia) has ONE
+    which addresses are the SAME sender               source; its 12 tests moved with it
+  relay/restriction_address.nim                      keeps only sourceOfAddress (needs the
+                                                     UDP type); the other importers read the
+                                                     Fylgia module directly (no re-export)
+  acceptTcpClient(sock, t, timeoutMs = 30 000)       waitReadable first, TimeoutError after;
+                                                     test: test_transport_ops "gives up"
+  11 sites that are right for a reason               `# otter: door <word> <reason>` on the
+                                                     line: relay dispatch by clear header (4),
+                                                     non-blocking or already-waited reads (5),
+                                                     the one future waited with withTimeout (3)
+  submodules/Fylgia-Utils                            pinned to 4468745 (intake). NOT on a remote
+                                                     until Fylgia is pushed.
+```
+
+Run: 9 test files (relay restriction x3, super_fast_udp, fast_extra_frame, slow_extract_encrypt,
+handshake_package 9, accept_among 8, transport_ops 25, ame_tcp_handshake 7) all OK. Not run: the rest
+of the suite.
+
 
 ## 2026-11-19 (third session) evaluation/stress
 

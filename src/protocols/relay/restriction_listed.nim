@@ -15,7 +15,7 @@
 
 import runePragmas
 import ./restriction_types
-import ./restriction_address
+import protocols/intake/address
 
 when restrictionListedBuilt:
   proc listedAllows*(F: SourceRules, src: SourceAddr): bool {.role: parser.} =
