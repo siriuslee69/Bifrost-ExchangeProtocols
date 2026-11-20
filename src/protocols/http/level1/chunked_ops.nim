@@ -75,6 +75,13 @@ proc onlyBlanksLeft(l: string, start, stop: int): bool {.inline,
     i = i + 1
   result = true
 
+const
+  maxChunkSizeDigits = 15
+    ## Hex digits of a chunk size: 15 of them are at most 2^60 - 1, so
+    ## `v * 16 + d` can never pass int64. A 16th digit could (FFFFFFFFFFFFFFFF),
+    ## and an overflow is a Defect: nothing above this routine catches it, so
+    ## one request would end the whole server. No body is that long anyway.
+
 proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
     tag: "protocol|parsing|validation".} =
   ## l: one chunk-size line, `\r\n` already removed.
@@ -103,7 +110,7 @@ proc parseChunkSize(l: string): tuple[ok: bool, size: int64] {.role: parser,
       return (seen > 0 and onlyBlanksLeft(l, i, stop), v)
     else:
       return (false, 0'i64)
-    if seen > 15:
+    if seen >= maxChunkSizeDigits:
       return (false, 0'i64)
     v = v * 16 + int64(d)
     seen = seen + 1

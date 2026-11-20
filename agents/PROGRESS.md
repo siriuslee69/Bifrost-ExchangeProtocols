@@ -1,4 +1,21 @@
-Commit Message: The five door rules read zero here: address reader moved to Fylgia (intake), acceptTcpClient has a deadline, 11 sites say why they are right
+Commit Message: HTTP chunked bodies: a chunk size of 16 or more hex digits is refused (it overflowed int64 and ended the whole server)
+
+## 2026-11-20 one request could end a web server (found by Torii's attack lab)
+
+`parseChunkSize` (src/protocols/http/level1/chunked_ops.nim) multiplied up to 16 hex digits into an
+`int64`: `FFFFFFFFFFFFFFFF` passed the digit check (`seen > 15` allowed the 16th digit) and then
+`v * 16 + d` overflowed. In a normal build an overflow raises an `OverflowDefect`. A Defect is not
+a `CatchableError`, so no handler on the way up caught it and the process ended: ONE request with
+`Transfer-Encoding: chunked` and that chunk size stopped the server for everybody (Torii, and any
+program that reads HTTP through Bifrost).
+
+- Fixed: the size has at most `maxChunkSizeDigits` = 15 digits (below 2^60), so the arithmetic cannot
+  overflow; a longer one is "malformed chunk size" and the connection is answered 400 and closed.
+- Test: `test_http_protocol` "a chunk size too long for a number is refused, never raised" (16 to 40
+  digits of F and of 8, and 15 digits against a small cap). Run against the old code it dies with
+  `over- or underflow [OverflowDefect]`; with the fix it passes.
+- Found by: Torii-Webserver `evaluation/stress/attack_live_torii.nim`, the case "a chunk size that
+  overflows" (18 F's). Bifrost's own fuzz test did not reach it.
 
 ## 2026-11-19 (evening) the door rules (Otter `doors`) applied to Bifrost
 

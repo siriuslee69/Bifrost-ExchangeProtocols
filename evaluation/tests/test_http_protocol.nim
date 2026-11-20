@@ -298,6 +298,23 @@ suite "http chunked codec":
       r = feedChunked(D, stringToBytes("10\r\n0123456789abcdef\r\n0\r\n\r\n"), 4)
     check not r.ok
 
+  # {.testKind: tkRegression, covers: "parseChunkSize",
+  #   pins: "a chunk size of 16 hex digits overflowed int64 and raised a Defect that no handler catches: one request ended the whole server".}
+  test "a chunk size too long for a number is refused, never raised":
+    var
+      D: ChunkedDecoder = initChunkedDecoder()
+      r: ChunkedFeedResult = default(ChunkedFeedResult)
+    for digits in 16 .. 40:
+      D = initChunkedDecoder()
+      r = feedChunked(D, stringToBytes(repeat('F', digits) & "\r\nx"), high(int64))
+      check not r.ok
+      D = initChunkedDecoder()
+      r = feedChunked(D, stringToBytes(repeat('8', digits) & "\r\nx"), high(int64))
+      check not r.ok
+    D = initChunkedDecoder()
+    r = feedChunked(D, stringToBytes(repeat('F', 15) & "\r\nx"), 1024)
+    check not r.ok                      # 15 digits fit a number, and the cap refuses it
+
 suite "http response writing":
   # {.testKind: tkUnit.}
   test "framing headers are written by the writer, not the handler":
