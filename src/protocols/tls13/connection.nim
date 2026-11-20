@@ -184,8 +184,8 @@ proc drainHandshakeEvents(C: var Tls13Connection,
     tag: "tls|parsing".} =
   ## C/E: connection handshake buffer and emitted complete messages.
   var
-    R: Tls13HandshakeResult
-    event: Tls13Event
+    R: Tls13HandshakeResult = default(Tls13HandshakeResult)
+    event: Tls13Event = default(Tls13Event)
   while C.handshakeBuffer.len > 0:
     R = decodeTls13Handshake(C.handshakeBuffer, C.maxHandshakeBuffer)
     if R.needMore:
@@ -206,7 +206,7 @@ proc routeContent(C: var Tls13Connection, t: Tls13ContentType,
     A: openArray[byte], E: var seq[Tls13Event]) {.role: orchestrator,
     tag: "tls|parsing".} =
   ## C/t/A/E: connection, authenticated content type, bytes, and event output.
-  var event: Tls13Event
+  var event: Tls13Event = default(Tls13Event)
   case t
   of tctHandshake:
     if C.handshakeBuffer.len > C.maxHandshakeBuffer - A.len:
@@ -228,7 +228,7 @@ proc routeRecord(C: var Tls13Connection, R: Tls13Record,
     E: var seq[Tls13Event]) {.role: orchestrator,
     tag: "tls|parsing|cryptoBoundary".} =
   ## C/R/E: connection, complete record, and emitted events.
-  var opened: Tls13OpenResult
+  var opened: Tls13OpenResult = default(Tls13OpenResult)
   if R.contentType != tctApplicationData:
     C.routeContent(R.contentType, R.fragment, E)
     return
@@ -245,7 +245,7 @@ proc feedTls13One*(C: var Tls13Connection,
     A: openArray[byte]): Tls13FeedStep {.role: orchestrator,
     tag: "tls|transport|parsing".} =
   ## C/A: connection and new bytes; process at most one complete record.
-  var R: Tls13RecordResult
+  var R: Tls13RecordResult = default(Tls13RecordResult)
   if C.failed:
     result.events.add(C.errorEvent("TLS connection is already failed"))
     return
@@ -289,7 +289,7 @@ proc feedTls13*(C: var Tls13Connection, A: openArray[byte]): seq[Tls13Event] {.
 proc encodeTls13PlainHandshakeRecord*(A: openArray[byte]): ByteSeq {.
     role: dataWriter, tag: "tls|transport".} =
   ## A: encoded pre-key handshake messages to place in one plaintext record.
-  var R: Tls13Record
+  var R: Tls13Record = default(Tls13Record)
   if A.len > tls13PlaintextLimit:
     raise newException(ValueError, "TLS plaintext handshake record is too large")
   R.contentType = tctHandshake
@@ -301,7 +301,7 @@ proc encodeTls13Protected*(C: var Tls13Connection, t: Tls13ContentType,
     A: openArray[byte], paddingLen: int = 0): ByteSeq {.role: dataWriter,
     tag: "tls|transport|cryptoBoundary".} =
   ## C/t/A/paddingLen: write connection, inner type, bytes, and zero padding.
-  var R: Tls13Record
+  var R: Tls13Record = default(Tls13Record)
   if C.failed or C.localClosed:
     raise newException(IOError, "TLS connection cannot write")
   if not C.writeKeysInstalled:
@@ -313,7 +313,29 @@ proc encodeTls13Application*(C: var Tls13Connection, A: openArray[byte],
     paddingLen: int = 0): ByteSeq {.role: dataWriter,
     tag: "tls|transport|cryptoBoundary".} =
   ## C/A/paddingLen: connection and authenticated application bytes.
-  result = C.encodeTls13Protected(tctApplicationData, A, paddingLen)
+  ##
+  ## One record may hold `tls13PlaintextLimit` (16384) bytes in all, and the
+  ## hidden content-type byte and any padding count inside that (RFC 8446,
+  ## 5.1 and 5.4; `sealTls13Record` refuses more). Longer input is cut into
+  ## pieces of 16384 - 1 - paddingLen bytes, in order, and the records are
+  ## returned back to back:
+  ##
+  ##   A (40000 bytes)  ->  [record 16383] [record 16383] [record 7234]
+  ##
+  ## Without the cut a reply of 16 KB or more could not be sent at all.
+  var
+    i: int = 0
+    n: int = 0
+    piece: int = tls13PlaintextLimit - 1 - paddingLen
+  if paddingLen < 0 or piece < 1:
+    raise newException(ValueError, "TLS padding leaves no room for content")
+  if A.len <= piece:
+    return C.encodeTls13Protected(tctApplicationData, A, paddingLen)
+  while i < A.len:
+    n = min(piece, A.len - i)
+    result.add(C.encodeTls13Protected(tctApplicationData,
+      A.toOpenArray(i, i + n - 1), paddingLen))
+    i = i + n
 
 proc encodeTls13CloseNotify*(C: var Tls13Connection): ByteSeq {.
     role: dataWriter, tag: "tls|transport|cryptoBoundary".} =
@@ -326,7 +348,7 @@ proc encodeTls13KeyUpdate*(C: var Tls13Connection,
     tag: "tls|transport|cryptoBoundary".} =
   ## C/requestPeerUpdate: rotate local application keys after encoding KeyUpdate.
   var
-    H: Tls13Handshake
+    H: Tls13Handshake = default(Tls13Handshake)
     encoded: ByteSeq = @[]
   if not C.writeTrafficSecretInstalled:
     raise newException(IOError, "TLS application traffic secret is not installed")
