@@ -2,7 +2,8 @@
 ## TLS 1.3 Server Session <- event-driven controlled-profile server flight
 ## -----------------------------------------------------------------------
 
-import tyr/certs/[oid, x509]
+import std/strutils
+import tyr/certs/[oid, x509, verify]
 import tyr/signatures/ed25519
 import tyr/helpers/random
 import tyr/hashes/sha256
@@ -29,12 +30,47 @@ type
   Tls13ServerKeyKind* {.role: configurator.} = enum
     tskEd25519, tskRsa, tskEcdsaP256
 
+  Tls13ServerIdentity* {.role: configurator.} = object
+    ## One certificate the server may show, and the names it is shown for.
+    ##
+    ##   names                a browser asks for a name (SNI); this identity
+    ##                        answers when the name matches one of these:
+    ##                        "example.com", or "*.example.com" (one label)
+    ##   certificateChainDer  leaf first, then the chain
+    ##   the three keys       exactly the one that fits the leaf, as in
+    ##                        Tls13ServerConfig
+    names*: seq[string]
+    certificateChainDer*: seq[ByteSeq]
+    ed25519SecretKey*: ByteSeq
+    rsaPrivateKeyDer*: ByteSeq
+    ecdsaPrivateScalar*: ByteSeq
+
   Tls13ServerConfig* {.role: configurator.} = object
+    ## The four fields below are the DEFAULT certificate: shown when the
+    ## browser names nothing or a name no identity answers for.
+    ## `identities` adds more certificates, picked by the name asked for:
+    ##
+    ##   ClientHello "a.example.com" -> identities[k] whose names match,
+    ##                                   the first one in list order
+    ##   ClientHello "other.net"     -> the default certificate
+    ##   ClientHello (no name)       -> the default certificate
     certificateChainDer*: seq[ByteSeq]
     ed25519SecretKey*: ByteSeq   ## used when the leaf carries an Ed25519 key
     rsaPrivateKeyDer*: ByteSeq   ## PKCS#1 or PKCS#8 DER for an RSA leaf
     ecdsaPrivateScalar*: ByteSeq ## 32-byte P-256 scalar for an EC leaf
     alpn*: seq[string]
+    identities*: seq[Tls13ServerIdentity]
+
+  Tls13ReadyIdentity {.role: memory,
+      expectedCount: [1, 512], lifeCycle: lcSession.} = object
+    ## A Tls13ServerIdentity after its key was proved to fit its leaf.
+    ## One session holds the default and every named one (at most 512).
+    names: seq[string]
+    chain: seq[ByteSeq]
+    keyKind: Tls13ServerKeyKind
+    ed25519SecretKey: ByteSeq
+    rsaKey: RsaPrivateKey
+    ecdsaScalar: BigInt
 
   Tls13ServerOutput* {.role: truthState.} = object
     outbound*: seq[ByteSeq]
@@ -54,13 +90,13 @@ type
     applicationSecrets: Tls13ApplicationSecrets
     selectedAlpn*: string
     requestedServerName*: string
-    keyKind: Tls13ServerKeyKind
-    rsaKey: RsaPrivateKey
-    ecdsaScalar: BigInt
+    ready: seq[Tls13ReadyIdentity]   ## [0] = the default, then `identities`
+    chosen: int                      ## index into `ready`, set by the ClientHello
 
-proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
-    role: truthBuilder, tag: "tls|transport".} =
-  ## C: server certificate chain, Ed25519 key, and supported ALPN identifiers.
+proc readyIdentity(C: Tls13ServerIdentity): Tls13ReadyIdentity {.
+    role: truthBuilder, tag: "tls|transport|cryptoBoundary".} =
+  ## C: one certificate and its key -> the same, checked: the key belongs to
+  ## the leaf (proved here, before any session can use it).
   var
     R: X509ReadResult = default(X509ReadResult)
     leaf: X509Certificate = default(X509Certificate)
@@ -72,6 +108,11 @@ proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
     scalar: BigInt = default(BigInt)
   if C.certificateChainDer.len == 0:
     raise newException(ValueError, "TLS server certificate chain is empty")
+  while i < C.names.len:
+    if C.names[i].len == 0 or C.names[i].len > 253 or ' ' in C.names[i]:
+      raise newException(ValueError, "TLS server identity name is invalid")
+    i = i + 1
+  i = 0
   while i < C.certificateChainDer.len:
     R = parseX509CertificateDer(C.certificateChainDer[i])
     if not R.ok:
@@ -130,10 +171,60 @@ proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
     raise newException(ValueError,
       "TLS leaf certificate key algorithm is unsupported: " &
       leaf.publicKeyAlgorithm)
+  result.names = C.names
+  result.chain = C.certificateChainDer
+  result.ed25519SecretKey = C.ed25519SecretKey
+
+proc initTls13ServerSession*(C: Tls13ServerConfig): Tls13ServerSession {.
+    role: truthBuilder, tag: "tls|transport".} =
+  ## C: the default certificate and key, more named certificates, and the
+  ## supported ALPN identifiers. Every key is checked against its leaf here,
+  ## so a mismatched pair fails at start-up and not on a visitor's first
+  ## handshake.
+  var
+    D: Tls13ServerIdentity = Tls13ServerIdentity(
+      certificateChainDer: C.certificateChainDer,
+      ed25519SecretKey: C.ed25519SecretKey,
+      rsaPrivateKeyDer: C.rsaPrivateKeyDer,
+      ecdsaPrivateScalar: C.ecdsaPrivateScalar)
+    i: int = 0
+  if C.identities.len > 511:
+    raise newException(ValueError, "TLS server holds at most 512 certificates")
+  result.ready.add(readyIdentity(D))
+  while i < C.identities.len:
+    result.ready.add(readyIdentity(C.identities[i]))
+    i = i + 1
+  result.chosen = 0
   result.state = tssAwaitClientHello
   result.config = C
   result.connection = initTls13Connection()
   result.transcript = initTls13Transcript()
+
+proc answersTo(I: Tls13ReadyIdentity, host: string): bool {.role: parser,
+    tag: "tls|validation".} =
+  ## I/host: an identity and the lowercase name the browser asked for ->
+  ## whether one of the identity's names matches it ("*.x.org" = one label).
+  var
+    i: int = 0
+  while i < I.names.len:
+    if matchDnsPattern(I.names[i], host):
+      return true
+    i = i + 1
+
+proc pickIdentity(S: Tls13ServerSession, host: string): int {.role: parser,
+    tag: "tls|validation".} =
+  ## S/host: a session and the name from the ClientHello ("" = none) -> the
+  ## index of the first named identity that answers to it, else 0 (default).
+  var
+    i: int = 1
+    h: string = host.toLowerAscii()
+  if h.len == 0:
+    return 0
+  while i < S.ready.len:
+    if S.ready[i].answersTo(h):
+      return i
+    i = i + 1
+  result = 0
 
 proc chooseAlpn(offered, supported: openArray[string]): string {.role: parser,
     tag: "tls|validation".} =
@@ -219,6 +310,7 @@ proc emitServerFlight(S: var Tls13ServerSession, H: Tls13ClientHello,
   S.connection.installTls13WriteKeys(serverHandshakeKeys)
   S.connection.installTls13ReadKeys(clientHandshakeKeys)
   S.requestedServerName = H.serverName
+  S.chosen = S.pickIdentity(H.serverName)
   S.selectedAlpn = chooseAlpn(H.alpn, S.config.alpn)
   # RFC 7301: a client that sends no ALPN extension gets no ALPN back, and
   # the connection proceeds normally. Only an ALPN list we share nothing
@@ -231,29 +323,30 @@ proc emitServerFlight(S: var Tls13ServerSession, H: Tls13ClientHello,
   ee = encodeTls13EncryptedExtensions(S.selectedAlpn)
   S.transcript.appendTls13Transcript(ee)
   O.outbound.add(S.connection.encodeTls13Protected(tctHandshake, ee))
-  while i < S.config.certificateChainDer.len:
+  while i < S.ready[S.chosen].chain.len:
     certificateMessage.entries.add(Tls13CertificateEntry(
-      certificateDer: S.config.certificateChainDer[i]))
+      certificateDer: S.ready[S.chosen].chain[i]))
     i = i + 1
   cert = encodeTls13Certificate(certificateMessage)
   S.transcript.appendTls13Transcript(cert)
   O.outbound.add(S.connection.encodeTls13Protected(tctHandshake, cert))
   transcriptHash = S.transcript.tls13TranscriptHash()
-  scheme = schemeForKeyKind(S.keyKind)
+  scheme = schemeForKeyKind(S.ready[S.chosen].keyKind)
   # RFC 8446 4.4.3: only sign with a scheme the client advertised.
   if H.signatureSchemes.len > 0 and not clientOffered(H.signatureSchemes, scheme):
     S.failServer(O,
       "TLS client does not accept the server certificate's signature scheme")
     return
-  case S.keyKind
+  case S.ready[S.chosen].keyKind
   of tskEd25519:
-    signature = signTls13CertificateVerify(S.config.ed25519SecretKey, true,
-      transcriptHash)
+    signature = signTls13CertificateVerify(S.ready[S.chosen].ed25519SecretKey,
+      true, transcriptHash)
   of tskRsa:
-    signature = signTls13CertificateVerifyRsaPss(S.rsaKey, true, transcriptHash)
-  of tskEcdsaP256:
-    signature = signTls13CertificateVerifyEcdsaP256(S.ecdsaScalar, true,
+    signature = signTls13CertificateVerifyRsaPss(S.ready[S.chosen].rsaKey, true,
       transcriptHash)
+  of tskEcdsaP256:
+    signature = signTls13CertificateVerifyEcdsaP256(S.ready[S.chosen].ecdsaScalar,
+      true, transcriptHash)
   cv = encodeTls13CertificateVerify(signature, scheme)
   S.transcript.appendTls13Transcript(cv)
   O.outbound.add(S.connection.encodeTls13Protected(tctHandshake, cv))

@@ -756,6 +756,41 @@ for plaintext in output.applicationData:
   handleAuthenticatedBytes(plaintext)
 ```
 
+Many domains on one server: each domain gets its own certificate, picked by the
+name the browser asks for (the "server name" in its first message). The fields
+above are the DEFAULT, shown for a name nobody holds or no name at all:
+
+```nim
+var config = Tls13ServerConfig(
+  certificateChainDer: @[defaultLeafDer],        # the default certificate
+  ed25519SecretKey: defaultSecretKey,
+  alpn: @["http/1.1"],
+  identities: @[
+    Tls13ServerIdentity(names: @["example.com", "www.example.com"],
+      certificateChainDer: @[exampleLeafDer, exampleIntermediateDer],
+      ecdsaPrivateScalar: exampleScalar),
+    Tls13ServerIdentity(names: @["*.sites.example.org"],      # one label
+      certificateChainDer: @[wildLeafDer],
+      rsaPrivateKeyDer: wildKeyDer)])
+var server = initTls13ServerSession(config)     # every key is checked here
+```
+
+```text
+browser asks for     server shows         names are compared in lower case;
+-------------------  -------------------  "*.x.org" matches ONE label ("a.x.org"),
+www.example.com      example.com's        not "a.b.x.org" and not "x.org"; when two
+a.sites.example.org  the wildcard one     identities answer, the first in the list
+other.net, nothing   the default          wins; at most 512 certificates
+```
+
+A key that does not belong to its leaf, an empty or spaced name, or more than
+512 certificates raise `ValueError` when the session is made, never on a
+visitor's first handshake. Tests: `evaluation/tests/test_tls13_identities.nim`.
+
+A reply longer than one TLS record (16383 bytes) is cut into records by
+`encodeTls13ServerApplication` itself; the caller hands over the whole reply.
+Tests: `evaluation/tests/test_tls13_big_reply.nim`.
+
 Client setup:
 
 ```nim
