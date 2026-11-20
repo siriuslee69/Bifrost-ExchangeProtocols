@@ -3548,10 +3548,10 @@ Five questions from the 2026 WireGuard, Noise and age advisories, answered for t
   2 what moves the forwarder's NAS address?        only `noteNasSeen`, called for a pong    relay/super_fast_udp.nim
                                                     on the CONTROL socket from home's own    (fromNas drops every other source);
                                                     address. A datagram on a client's        Nebel forward.nim fromControlSide;
-                                                    socket never does. `--follow-home`       test_relay_super_fast_udp.nim
-                                                    (off by default) lets a pong from ANY    "not from the NAS goes nowhere"
-                                                    address move it: the Zephyr class, so
-                                                    keep it off; `--liveness file` takes
+                                                    socket never does. Nebel's forwarder     test_relay_super_fast_udp.nim
+                                                    has no follow-home switch (its list of   "not from the NAS goes nowhere"
+                                                    targets is the operator's alone: the
+                                                    Zephyr class); `--liveness file` takes
                                                     pings out altogether
   3 a frame that fails to open: counters moved?     no. Every single-byte corruption of    test_replay_state.nim (3)
                                                     the next frame (three masks), every cut,
