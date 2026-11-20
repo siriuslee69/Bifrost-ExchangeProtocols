@@ -77,3 +77,8 @@ nimble.paths
 evaluation/tests/.otter/results/
 .otter/
 /animation/
+
+# migration top-up 2026-11-20
+nimcache*/
+*.trash
+.local/
